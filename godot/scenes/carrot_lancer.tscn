@@ -1,0 +1,28 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/carrot_lancer.gd" id="1_carrot"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_carrot"]
+radius = 0.42
+height = 1.7
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_carrot"]
+albedo_color = Color(0.96, 0.42, 0.06, 1)
+roughness = 0.45
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_carrot"]
+material = SubResource("StandardMaterial3D_carrot")
+top_radius = 0.4
+bottom_radius = 0.06
+height = 1.6
+
+[node name="CarrotLancer" type="CharacterBody3D" groups=["enemies"]]
+script = ExtResource("1_carrot")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CapsuleShape3D_carrot")
+
+[node name="FallbackMesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+mesh = SubResource("CylinderMesh_carrot")

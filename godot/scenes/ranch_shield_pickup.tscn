@@ -1,0 +1,30 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/powerup_pickup.gd" id="1_powerup"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_pickup"]
+radius = 0.65
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_ranch"]
+albedo_color = Color(0.96, 0.97, 0.94, 1)
+roughness = 0.3
+emission_enabled = true
+emission = Color(0.85, 0.95, 0.88, 1)
+emission_energy_multiplier = 0.3
+
+[sub_resource type="SphereMesh" id="SphereMesh_ranch"]
+material = SubResource("StandardMaterial3D_ranch")
+radius = 0.38
+height = 0.76
+
+[node name="RanchShieldPickup" type="Area3D"]
+script = ExtResource("1_powerup")
+powerup_type = "ranch_shield"
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+shape = SubResource("SphereShape3D_pickup")
+
+[node name="FallbackMesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 0)
+mesh = SubResource("SphereMesh_ranch")

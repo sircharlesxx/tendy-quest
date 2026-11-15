@@ -1,0 +1,43 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/broccoli_enemy.gd" id="1_enemy"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_enemy"]
+radius = 0.48
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_stalk"]
+albedo_color = Color(0.45, 0.72, 0.28, 1)
+roughness = 0.6
+
+[sub_resource type="CylinderMesh" id="CylinderMesh_stalk"]
+material = SubResource("StandardMaterial3D_stalk")
+top_radius = 0.4
+bottom_radius = 0.45
+height = 1.1
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_crown"]
+albedo_color = Color(0.09, 0.36, 0.11, 1)
+roughness = 0.9
+
+[sub_resource type="SphereMesh" id="SphereMesh_crown"]
+material = SubResource("StandardMaterial3D_crown")
+radius = 0.75
+height = 1.1
+
+[node name="BroccoliEnemy" type="CharacterBody3D" groups=["enemies"]]
+script = ExtResource("1_enemy")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.95, 0)
+shape = SubResource("CapsuleShape3D_enemy")
+
+[node name="FallbackMesh" type="Node3D" parent="."]
+
+[node name="Stalk" type="MeshInstance3D" parent="FallbackMesh"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.65, 0)
+mesh = SubResource("CylinderMesh_stalk")
+
+[node name="Crown" type="MeshInstance3D" parent="FallbackMesh"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.55, 0)
+mesh = SubResource("SphereMesh_crown")

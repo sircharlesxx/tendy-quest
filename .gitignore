@@ -1,0 +1,9 @@
+# Godot internal cache
+godot/.godot/
+
+# Packaged zip (dist/web/ is deployed directly to GitHub Pages)
+dist/tendy-quest-web.zip
+
+# OS / temp files
+.DS_Store
+*.tmp

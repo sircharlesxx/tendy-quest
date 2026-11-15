@@ -1,0 +1,26 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/kale_slime.gd" id="1_kale"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_kale"]
+radius = 0.65
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_kale"]
+albedo_color = Color(0.09, 0.28, 0.12, 1)
+roughness = 0.85
+
+[sub_resource type="SphereMesh" id="SphereMesh_kale"]
+material = SubResource("StandardMaterial3D_kale")
+radius = 0.65
+height = 0.7
+
+[node name="KaleSlime" type="CharacterBody3D" groups=["enemies"]]
+script = ExtResource("1_kale")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.45, 0)
+shape = SubResource("SphereShape3D_kale")
+
+[node name="FallbackMesh" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.35, 0)
+mesh = SubResource("SphereMesh_kale")

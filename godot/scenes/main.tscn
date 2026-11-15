@@ -1,0 +1,359 @@
+[gd_scene load_steps=40 format=3]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="Script" path="res://scripts/wave_manager.gd" id="2_wave"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="3_hud"]
+[ext_resource type="PackedScene" path="res://scenes/tendy_pickup.tscn" id="4_tendy"]
+[ext_resource type="PackedScene" path="res://scenes/broccoli_enemy.tscn" id="5_enemy"]
+[ext_resource type="PackedScene" path="res://scenes/carrot_lancer.tscn" id="6_carrot"]
+[ext_resource type="PackedScene" path="res://scenes/kale_slime.tscn" id="7_kale"]
+[ext_resource type="PackedScene" path="res://scenes/honey_mustard_pickup.tscn" id="8_mustard"]
+[ext_resource type="PackedScene" path="res://scenes/ranch_shield_pickup.tscn" id="9_ranch"]
+[ext_resource type="PackedScene" path="res://assets/models/giant_toaster.glb" id="10_toaster"]
+[ext_resource type="PackedScene" path="res://assets/models/giant_stove.glb" id="11_stove"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_sky"]
+sky_top_color = Color(0.55, 0.78, 0.95, 1)
+sky_horizon_color = Color(0.95, 0.88, 0.78, 1)
+ground_bottom_color = Color(0.35, 0.3, 0.25, 1)
+
+[sub_resource type="Sky" id="Sky_kitchen"]
+sky_material = SubResource("ProceduralSkyMaterial_sky")
+
+[sub_resource type="Environment" id="Environment_kitchen"]
+background_mode = 2
+sky = SubResource("Sky_kitchen")
+ambient_light_source = 3
+ambient_light_energy = 0.6
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_floor"]
+albedo_color = Color(0.86, 0.84, 0.78, 1)
+roughness = 0.75
+
+[sub_resource type="BoxMesh" id="BoxMesh_floor"]
+material = SubResource("StandardMaterial3D_floor")
+size = Vector3(40, 1, 40)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_floor"]
+size = Vector3(40, 1, 40)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_cabinet"]
+albedo_color = Color(0.58, 0.4, 0.25, 1)
+roughness = 0.65
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_counter"]
+albedo_color = Color(0.94, 0.94, 0.92, 1)
+roughness = 0.25
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_stool"]
+albedo_color = Color(0.76, 0.26, 0.2, 1)
+roughness = 0.5
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fridge"]
+albedo_color = Color(0.76, 0.8, 0.84, 1)
+metallic = 0.4
+roughness = 0.3
+
+[sub_resource type="BoxMesh" id="BoxMesh_island_base"]
+material = SubResource("StandardMaterial3D_cabinet")
+size = Vector3(8, 2, 4.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_island_base"]
+size = Vector3(8, 2, 4.5)
+
+[sub_resource type="BoxMesh" id="BoxMesh_island_top"]
+material = SubResource("StandardMaterial3D_counter")
+size = Vector3(8.5, 0.3, 5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_island_top"]
+size = Vector3(8.5, 0.3, 5)
+
+[sub_resource type="BoxMesh" id="BoxMesh_stool"]
+material = SubResource("StandardMaterial3D_stool")
+size = Vector3(2.4, 1.1, 2.4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_stool"]
+size = Vector3(2.4, 1.1, 2.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_north_base"]
+material = SubResource("StandardMaterial3D_cabinet")
+size = Vector3(30, 2.5, 4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_north_base"]
+size = Vector3(30, 2.5, 4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_north_top"]
+material = SubResource("StandardMaterial3D_counter")
+size = Vector3(30.5, 0.3, 4.4)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_north_top"]
+size = Vector3(30.5, 0.3, 4.4)
+
+[sub_resource type="BoxMesh" id="BoxMesh_side_base"]
+material = SubResource("StandardMaterial3D_cabinet")
+size = Vector3(4, 2.5, 24)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_side_base"]
+size = Vector3(4, 2.5, 24)
+
+[sub_resource type="BoxMesh" id="BoxMesh_fridge"]
+material = SubResource("StandardMaterial3D_fridge")
+size = Vector3(4.2, 7, 4.5)
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_fridge"]
+size = Vector3(4.2, 7, 4.5)
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_char"]
+radius = 0.45
+height = 1.8
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_plaid"]
+albedo_color = Color(0.72, 0.11, 0.14, 1)
+roughness = 0.8
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_hero"]
+material = SubResource("StandardMaterial3D_plaid")
+radius = 0.42
+height = 1.7
+
+[node name="Main" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_kitchen")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866, -0.354, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 14, 0)
+shadow_enabled = true
+
+[node name="Floor" type="StaticBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.5, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Floor"]
+mesh = SubResource("BoxMesh_floor")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Floor"]
+shape = SubResource("BoxShape3D_floor")
+
+[node name="KitchenCountertops" type="Node3D" parent="."]
+
+[node name="CentralIsland" type="StaticBody3D" parent="KitchenCountertops"]
+
+[node name="BaseMesh" type="MeshInstance3D" parent="KitchenCountertops/CentralIsland"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+mesh = SubResource("BoxMesh_island_base")
+
+[node name="BaseCollision" type="CollisionShape3D" parent="KitchenCountertops/CentralIsland"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
+shape = SubResource("BoxShape3D_island_base")
+
+[node name="TopMesh" type="MeshInstance3D" parent="KitchenCountertops/CentralIsland"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.15, 0)
+mesh = SubResource("BoxMesh_island_top")
+
+[node name="TopCollision" type="CollisionShape3D" parent="KitchenCountertops/CentralIsland"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.15, 0)
+shape = SubResource("BoxShape3D_island_top")
+
+[node name="IslandStepStool" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.55, 4.2)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/IslandStepStool"]
+mesh = SubResource("BoxMesh_stool")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/IslandStepStool"]
+shape = SubResource("BoxShape3D_stool")
+
+[node name="NorthCountertop" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -16)
+
+[node name="BaseMesh" type="MeshInstance3D" parent="KitchenCountertops/NorthCountertop"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 0)
+mesh = SubResource("BoxMesh_north_base")
+
+[node name="BaseCollision" type="CollisionShape3D" parent="KitchenCountertops/NorthCountertop"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.25, 0)
+shape = SubResource("BoxShape3D_north_base")
+
+[node name="TopMesh" type="MeshInstance3D" parent="KitchenCountertops/NorthCountertop"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.65, 0)
+mesh = SubResource("BoxMesh_north_top")
+
+[node name="TopCollision" type="CollisionShape3D" parent="KitchenCountertops/NorthCountertop"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.65, 0)
+shape = SubResource("BoxShape3D_north_top")
+
+[node name="NorthStepStool" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 0.55, -12.5)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/NorthStepStool"]
+mesh = SubResource("BoxMesh_stool")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/NorthStepStool"]
+shape = SubResource("BoxShape3D_stool")
+
+[node name="WestCountertop" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -16, 1.25, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/WestCountertop"]
+mesh = SubResource("BoxMesh_side_base")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/WestCountertop"]
+shape = SubResource("BoxShape3D_side_base")
+
+[node name="WestStepStool" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -12.5, 0.55, 4)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/WestStepStool"]
+mesh = SubResource("BoxMesh_stool")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/WestStepStool"]
+shape = SubResource("BoxShape3D_stool")
+
+[node name="GiantFridge" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -16, 3.5, -10)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/GiantFridge"]
+mesh = SubResource("BoxMesh_fridge")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/GiantFridge"]
+shape = SubResource("BoxShape3D_fridge")
+
+[node name="EastCountertop" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 1.25, 0)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/EastCountertop"]
+mesh = SubResource("BoxMesh_side_base")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/EastCountertop"]
+shape = SubResource("BoxShape3D_side_base")
+
+[node name="EastStepStool" type="StaticBody3D" parent="KitchenCountertops"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 12.5, 0.55, -4)
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="KitchenCountertops/EastStepStool"]
+mesh = SubResource("BoxMesh_stool")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="KitchenCountertops/EastStepStool"]
+shape = SubResource("BoxShape3D_stool")
+
+[node name="TendyPickups" type="Node3D" parent="."]
+
+[node name="TendyFloor1" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -6, 0.4, 6)
+
+[node name="TendyFloor2" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 6, 0.4, 6)
+
+[node name="TendyFloor3" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -7, 0.4, -6)
+
+[node name="TendyFloor4" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 7, 0.4, -6)
+
+[node name="TendyIsland1" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.5, 2.7, 0)
+
+[node name="TendyIsland2" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.7, 0)
+
+[node name="TendyIsland3" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.5, 2.7, 0)
+
+[node name="TendyNorth1" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -8, 3.2, -16)
+
+[node name="TendyNorth2" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.2, -16)
+
+[node name="TendyNorth3" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8, 3.2, -16)
+
+[node name="TendyWest1" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -16, 2.9, 4)
+
+[node name="TendyEast1" parent="TendyPickups" instance=ExtResource("4_tendy")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 16, 2.9, -4)
+
+[node name="Powerups" type="Node3D" parent="."]
+
+[node name="HoneyMustard1" parent="Powerups" instance=ExtResource("8_mustard")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4, 0.3, 4)
+
+[node name="RanchShield1" parent="Powerups" instance=ExtResource("9_ranch")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4, 0.3, 4)
+
+[node name="KitchenProps" type="Node3D" parent="."]
+
+[node name="GiantToaster" parent="KitchenProps" instance=ExtResource("10_toaster")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -11, 2.8, -16)
+
+[node name="GiantStove" parent="KitchenProps" instance=ExtResource("11_stove")]
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 16, 0, 14)
+
+[node name="SpawnPoints" type="Node3D" parent="."]
+
+[node name="Spawn1" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.5, -8)
+
+[node name="Spawn2" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.5, -8)
+
+[node name="Spawn3" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -10, 0.5, 8)
+
+[node name="Spawn4" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 10, 0.5, 8)
+
+[node name="Spawn5" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, -10)
+
+[node name="Spawn6" type="Marker3D" parent="SpawnPoints"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.8, 0)
+
+[node name="WaveManager" type="Node" parent="."]
+script = ExtResource("2_wave")
+enemy_scene = ExtResource("5_enemy")
+extra_enemy_scenes = Array[PackedScene]([ExtResource("6_carrot"), ExtResource("7_kale")])
+spawn_points_path = NodePath("../SpawnPoints")
+
+[node name="Player" type="CharacterBody3D" parent="." groups=["player"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 9)
+script = ExtResource("1_player")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+shape = SubResource("CapsuleShape3D_char")
+
+[node name="FallbackMesh" type="MeshInstance3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
+mesh = SubResource("CapsuleMesh_hero")
+
+[node name="Camera3D" type="Camera3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 0.866, 0.5, 0, -0.5, 0.866, 0, 5.5, 8.5)
+current = true
+
+[node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("3_hud")
+player_path = NodePath("../Player")
+wave_manager_path = NodePath("../WaveManager")
+
+[node name="Panel" type="PanelContainer" parent="HUD"]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 236.0
+offset_bottom = 112.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="HUD/Panel"]
+layout_mode = 2
+
+[node name="TendyLabel" type="Label" parent="HUD/Panel/VBoxContainer"]
+layout_mode = 2
+text = "Tendies: 0"
+
+[node name="CravingLabel" type="Label" parent="HUD/Panel/VBoxContainer"]
+layout_mode = 2
+text = "Craving: 100%"
+
+[node name="WaveLabel" type="Label" parent="HUD/Panel/VBoxContainer"]
+layout_mode = 2
+text = "Wave: 1 / 3"
