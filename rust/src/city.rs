@@ -62,6 +62,9 @@ pub struct CityIntroBeatBadge;
 pub struct CityPlayUi;
 
 #[derive(Component)]
+pub struct LexieBossHudRoot;
+
+#[derive(Component)]
 pub struct CityMinimapPlayerDot;
 
 #[derive(Component)]
@@ -148,7 +151,7 @@ pub fn enter_mom_victory_cutscene(
     mut stats: ResMut<PlayerStats>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut hud_q: Query<&mut Node, With<HudOverlay>>,
-    old_level_q: Query<Entity, Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>>,
+    old_level_q: Query<Entity, (Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>, Without<Player>)>,
 ) {
     for mut node in &mut hud_q {
         node.display = Display::None;
@@ -194,9 +197,11 @@ pub fn enter_mom_victory_cutscene(
         3.2,
     );
     commands.entity(mom_ent).insert((AnimeStageEntity, AnimeCutsceneMom));
-    commands
-        .entity(mom_ent)
-        .insert(Transform::from_xyz(0.0, 0.0, -3.4).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)));
+    commands.entity(mom_ent).insert(
+        Transform::from_xyz(0.0, 0.0, -3.4)
+            .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
+            .with_scale(Vec3::splat(3.2)),
+    );
 
     // Anime Dojo / Shrine Courtyard Stage
     let wood_mat = materials.add(StandardMaterial {
@@ -379,7 +384,7 @@ pub fn enter_mom_victory_cutscene(
                 .with_children(|hdr| {
                     hdr.spawn((
                         AnimeSpeakerText,
-                        Text::new("STAN — HONORABLE SON"),
+                        Text::new("STAN - HONORABLE SON"),
                         TextFont {
                             font_size: 15.0,
                             ..default()
@@ -388,7 +393,7 @@ pub fn enter_mom_victory_cutscene(
                     ));
                     hdr.spawn((
                         AnimeBeatBadge,
-                        Text::new("ANIME FINALE • SCENE 1/4"),
+                        Text::new("ANIME FINALE | SCENE 1/4"),
                         TextFont {
                             font_size: 13.0,
                             ..default()
@@ -486,29 +491,28 @@ pub fn update_mom_victory_cutscene(
     if let Ok(mut cam_tf) = cam_q.get_single_mut() {
         let (eye, target) = match active_beat {
             0 => (
-                Vec3::new(4.2, 2.3 + (t * 0.12).min(0.6), 0.6),
-                Vec3::new(0.0, 2.4, -1.0),
+                Vec3::new(6.2, 3.8 + (t * 0.12).min(0.6), 4.4),
+                Vec3::new(0.0, 3.0, -1.0),
             ),
             1 => {
-                // Sweep gracefully right around Stan performing his deep Japanese saikeirei bow
+                // Heroic anime three-quarter shot framing bowing Stan & proud Mom beneath Torii & Rising Sun
                 let u = ((t - 5.0) / 5.5).clamp(0.0, 1.0);
-                let ang = -0.75 + u * 1.5;
                 (
-                    Vec3::new(ang.sin() * 4.2, 2.4 - u * 0.4, 2.2 + ang.cos() * 3.8),
-                    Vec3::new(0.0, 1.8, 0.2),
+                    Vec3::new(6.8 - u * 1.4, 3.1 - u * 0.25, 1.4 - u * 1.2),
+                    Vec3::new(0.0, 2.8, -0.4),
                 )
             }
             2 => (
-                // Heroic anime close-up of proud Mom beneath the Torii gate & Rising Sun
-                Vec3::new(1.85, 3.85, 1.15),
-                Vec3::new(0.0, 4.1, -3.4),
+                // Dramatic anime close-up of proud 3.2x Mom beneath the Torii gate & Rising Sun
+                Vec3::new(2.2, 5.2, 1.8),
+                Vec3::new(0.0, 5.1, -3.4),
             ),
             _ => {
                 // Slow anime pull-up toward sunset sky before Manhattan transition
                 let u = ((t - 17.5) / 4.0).clamp(0.0, 1.0);
                 (
-                    Vec3::new(0.0, 3.8 + u * 6.5, 9.2 + u * 5.0),
-                    Vec3::new(0.0, 3.0 + u * 2.5, -6.0),
+                    Vec3::new(0.0, 5.2 + u * 6.5, 10.5 + u * 5.0),
+                    Vec3::new(0.0, 4.2 + u * 2.5, -6.0),
                 )
             }
         };
@@ -537,23 +541,23 @@ pub fn update_mom_victory_subtitles(
 ) {
     let (speaker, badge, line) = match stats.cutscene_beat {
         0 => (
-            "STAN — HONORABLE SON",
-            "ANIME FINALE • SCENE 1/4",
+            "STAN - HONORABLE SON",
+            "ANIME FINALE | SCENE 1/4",
             "\"Okasan... Forgive this foolish warrior for raising his tendy-blade against the one who gave him life!\"",
         ),
         1 => (
-            "STAN — DEEPEST BOW",
-            "ANIME FINALE • SCENE 2/4",
+            "STAN - DEEPEST BOW",
+            "ANIME FINALE | SCENE 2/4",
             "\"Arigatou gozaimasu, Mother! Every crispy tendy, every veggie warning, forged my Viking spirit! I am who I am today because of you!\"",
         ),
         2 => (
-            "MOM — PROUD SENSEI",
-            "ANIME FINALE • SCENE 3/4",
+            "MOM - PROUD SENSEI",
+            "ANIME FINALE | SCENE 3/4",
             "\"Rise, my sweet Viking samurai. You have surpassed your old mother! Now fly to New York... an enormous menace named Lexie is wrecking Manhattan!\"",
         ),
         _ => (
-            "NARRATOR — NEXT CHAPTER",
-            "ANIME FINALE • SCENE 4/4",
+            "NARRATOR - NEXT CHAPTER",
+            "ANIME FINALE | SCENE 4/4",
             "\"With tears of honor and fifty Manhattan tendies calling his name, Stan leaps into a new world... NEXT STAGE: NEW YORK CITY!\"",
         ),
     };
@@ -629,7 +633,7 @@ pub fn spawn_nyc_world_if_needed(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     existing_city_q: &Query<Entity, With<CityWorldMarker>>,
-    old_level_q: &Query<Entity, Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>>,
+    old_level_q: &Query<Entity, (Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>, Without<Player>)>,
 ) {
     if !existing_city_q.is_empty() {
         return;
@@ -1519,7 +1523,7 @@ pub fn enter_city_intro_cutscene(
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut hud_q: Query<&mut Node, With<HudOverlay>>,
     existing_city_q: Query<Entity, With<CityWorldMarker>>,
-    old_level_q: Query<Entity, Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>>,
+    old_level_q: Query<Entity, (Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>, Without<Player>)>,
 ) {
     for mut node in &mut hud_q {
         node.display = Display::None;
@@ -1598,7 +1602,7 @@ pub fn enter_city_intro_cutscene(
                 .with_children(|hdr| {
                     hdr.spawn((
                         CityIntroSpeakerText,
-                        Text::new("NEW YORK CITY • AERIAL OVERLOOK"),
+                        Text::new("NEW YORK CITY - AERIAL OVERLOOK"),
                         TextFont {
                             font_size: 15.0,
                             ..default()
@@ -1607,7 +1611,7 @@ pub fn enter_city_intro_cutscene(
                     ));
                     hdr.spawn((
                         CityIntroBeatBadge,
-                        Text::new("MANHATTAN • SCENE 1/4"),
+                        Text::new("MANHATTAN | SCENE 1/4"),
                         TextFont {
                             font_size: 13.0,
                             ..default()
@@ -1692,10 +1696,10 @@ pub fn update_city_intro_cutscene(
             0 => {
                 // High aerial sweep orbiting the huge 270m skyline!
                 let u = (t / 5.6).clamp(0.0, 1.0);
-                let ang = -0.65 + u * 1.15;
+                let ang = -0.60 + u * 1.10;
                 (
-                    Vec3::new(ang.sin() * 138.0, 96.0 - u * 18.0, ang.cos() * 128.0),
-                    Vec3::new(0.0, 22.0, -14.0),
+                    Vec3::new(ang.sin() * 98.0, 66.0 - u * 16.0, ang.cos() * 92.0),
+                    Vec3::new(0.0, 18.0, -24.0),
                 )
             }
             1 => {
@@ -1753,23 +1757,23 @@ pub fn update_city_intro_subtitles(
 ) {
     let (speaker, badge, line) = match stats.cutscene_beat {
         0 => (
-            "NEW YORK CITY • AERIAL OVERLOOK",
-            "MANHATTAN • SCENE 1/4",
+            "NEW YORK CITY - AERIAL OVERLOOK",
+            "MANHATTAN | SCENE 1/4",
             "\"Welcome to New York City! Towering skyscrapers, speeding cars, crowds, and 50 golden tendies span across Manhattan!\"",
         ),
         1 => (
             "EMPIRE CITADEL TOWER",
-            "MANHATTAN • SCENE 2/4",
+            "MANHATTAN | SCENE 2/4",
             "\"Look! High atop the Empire Citadel Tower, a King-Kong-sized colossus is tearing the skyline apart!\"",
         ),
         2 => (
-            "LEXIE — PICKLED GARLIC TITAN",
-            "MANHATTAN • SCENE 3/4",
+            "LEXIE - PICKLED GARLIC TITAN",
+            "MANHATTAN | SCENE 3/4",
             "\"HAHAHA! Nobody stops Lexie and her extra-stinky Pickled Garlic Cloves! Eat garlic fumes, tiny New York!\"",
         ),
         _ => (
-            "MISSION BRIEFING — SKYSCRAPER TITAN",
-            "MANHATTAN • SCENE 4/4",
+            "MISSION BRIEFING - SKYSCRAPER TITAN",
+            "MANHATTAN | SCENE 4/4",
             "\"Use the corner radar to collect all 50 TENDIES! Grow to SKYSCRAPER SCALE, dodge the cars & garlic fumes, and defeat Lexie!\"",
         ),
     };
@@ -1806,7 +1810,7 @@ pub fn enter_city_play(
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut hud_q: Query<&mut Node, With<HudOverlay>>,
     existing_city_q: Query<Entity, With<CityWorldMarker>>,
-    old_level_q: Query<Entity, Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>>,
+    old_level_q: Query<Entity, (Or<(With<LevelEntity>, With<Enemy>, With<FiberPuddle>)>, Without<Player>)>,
 ) {
     for mut node in &mut hud_q {
         node.display = Display::Flex;
@@ -1864,9 +1868,11 @@ pub fn enter_city_play(
     commands
         .spawn((
             CityPlayUi,
+            LexieBossHudRoot,
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(8.0),
+                bottom: Val::Auto,
                 left: Val::Px(0.0),
                 right: Val::Px(0.0),
                 justify_content: JustifyContent::Center,
@@ -1893,7 +1899,7 @@ pub fn enter_city_play(
             .with_children(|bar| {
                 bar.spawn((
                     LexieBossHudText,
-                    Text::new("LEXIE — KING-KONG PICKLED GARLIC QUEEN"),
+                    Text::new("LEXIE - KING-KONG PICKLED GARLIC QUEEN"),
                     TextFont {
                         font_size: 13.5,
                         ..default()
@@ -2190,7 +2196,7 @@ pub fn update_city_pickups(
             if stats.tendies >= stats.total_tendies {
                 stats.score += 5000;
                 stats.hint_text =
-                    "50/50 TENDIES — FULL SKYSCRAPER KAIJU! Slash Lexie [CLICK / SLASH]!"
+                    "50/50 TENDIES - FULL SKYSCRAPER KAIJU! Slash Lexie [CLICK / SLASH]!"
                         .to_string();
                 speak_voice(
                     "Maximum skyscraper power reached! Finish Lexie now, Stan!",
@@ -2422,11 +2428,11 @@ pub fn update_city_lexie(
         if let Ok(mut lbl) = label_q.get_single_mut() {
             lbl.0 = if stats.tendies < 50 {
                 format!(
-                    "LEXIE • PICKLED GARLIC QUEEN ({}/50 TENDIES FOR MAX TITAN)",
+                    "LEXIE | PICKLED GARLIC QUEEN ({}/50 TENDIES FOR MAX TITAN)",
                     stats.tendies
                 )
             } else {
-                format!("LEXIE • SKYSCRAPER TITAN SHOWDOWN! HP {:.0}%", lexie.hp / lexie.max_hp * 100.0)
+                format!("LEXIE | SKYSCRAPER TITAN SHOWDOWN! HP {:.0}%", lexie.hp / lexie.max_hp * 100.0)
             };
         }
     }

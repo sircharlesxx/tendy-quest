@@ -101,7 +101,7 @@ impl PlayerStats {
                 12..=24 => "Subway Crusher",
                 25..=37 => "Midrise Mutant",
                 38..=49 => "Empire Titan",
-                _ => "SKYSCRAPER KAIJU — SMASH LEXIE!",
+                _ => "SKYSCRAPER KAIJU - SMASH LEXIE!",
             };
         }
         if self.boss_mode {
@@ -111,7 +111,7 @@ impl PlayerStats {
             0..=3 => "Tiny Toy",
             4..=7 => "Counter Climber",
             8..=11 => "Kid Size",
-            _ => "ADULT — OPEN FRIDGE!",
+            _ => "ADULT - OPEN FRIDGE!",
         }
     }
 }

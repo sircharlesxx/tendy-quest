@@ -193,7 +193,7 @@ pub fn update_hud(
     }
     if let Ok(mut t) = score_q.get_single_mut() {
         if stats.in_city {
-            t.0 = format!("SCORE: {:06}\nNYC • {}/50", stats.score, stats.tendies);
+            t.0 = format!("SCORE: {:06}\nNYC | {}/50", stats.score, stats.tendies);
         } else {
             t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
         }
@@ -322,6 +322,14 @@ pub fn adapt_ui_to_viewport(
     window_q: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut root_q: Query<&mut Node, With<TutorialOverlay>>,
     mut card_q: Query<&mut Node, (With<TutorialCard>, Without<TutorialOverlay>)>,
+    mut lexie_hud_q: Query<
+        &mut Node,
+        (
+            With<crate::city::LexieBossHudRoot>,
+            Without<TutorialOverlay>,
+            Without<TutorialCard>,
+        ),
+    >,
     mut title_q: Query<&mut TextFont, With<TutorialTitleText>>,
     mut body_q: Query<&mut TextFont, (With<TutorialBodyText>, Without<TutorialTitleText>)>,
     mut ctrl_q: Query<
@@ -409,6 +417,15 @@ pub fn adapt_ui_to_viewport(
     }
     for mut tf in &mut hud_text_q {
         tf.font_size = if is_short || is_narrow { 12.5 } else { 15.0 };
+    }
+    for mut node in &mut lexie_hud_q {
+        if w < 720.0 {
+            node.top = Val::Auto;
+            node.bottom = Val::Px(122.0);
+        } else {
+            node.top = Val::Px(8.0);
+            node.bottom = Val::Auto;
+        }
     }
 }
 
@@ -504,9 +521,9 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
     if stats.lexie_defeated {
         spawn_end_card(
             commands,
-            "LEXIE DEFEATED — NEW YORK CITY SAVED!",
+            "LEXIE DEFEATED - NEW YORK CITY SAVED!",
             &format!(
-                "SKYSCRAPER KAIJU STAN MASTERED THE TENDY-VERSE!\n50 / 50 MANHATTAN TENDIES • LEXIE & PICKLED GARLIC BANISHED!\nFINAL SCORE: {:06}",
+                "SKYSCRAPER KAIJU STAN MASTERED THE TENDY-VERSE!\n50 / 50 MANHATTAN TENDIES | LEXIE & PICKLED GARLIC BANISHED!\nFINAL SCORE: {:06}",
                 stats.score
             ),
             "PLAY AGAIN (R / TAP)",
@@ -515,7 +532,7 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
     } else if stats.boss_mode {
         spawn_end_card(
             commands,
-            "MOM DEFEATED — TENDY CHAMPION!",
+            "MOM DEFEATED - TENDY CHAMPION!",
             &format!(
                 "STAN MASTERED THE CHRISTMAS VIKINGS ONESIE!\nDODGE & ROLL + LIGHTSABER SECURED THE TENDIES!\nFINAL SCORE: {:06}",
                 stats.score
@@ -526,7 +543,7 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
     } else {
         spawn_end_card(
             commands,
-            "FRIDGE OPENED — STAGE CLEAR!",
+            "FRIDGE OPENED - STAGE CLEAR!",
             &format!(
                 "YOU GREW TO {}cm ({})!\nTENDIES COLLECTED: {} / {}\nFINAL SCORE: {:06} (+5000 FRIDGE BONUS)",
                 stats.height_cm(),
