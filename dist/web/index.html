@@ -175,8 +175,10 @@
     html, body {
       margin: 0;
       padding: 0;
+      position: fixed;
+      inset: 0;
       width: 100%;
-      height: 100%;
+      height: 100dvh;
       overflow: hidden;
       background: #1a120b;
       font-family: system-ui, -apple-system, sans-serif;
@@ -187,8 +189,8 @@
     }
     canvas {
       display: block;
-      width: 100vw !important;
-      height: 100vh !important;
+      width: 100% !important;
+      height: 100dvh !important;
       outline: none;
       touch-action: none;
     }
@@ -322,8 +324,39 @@
       font-weight: 700;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
     }
+    @media (max-height: 500px) {
+      #joystick-zone {
+        width: 106px;
+        height: 106px;
+        left: max(12px, env(safe-area-inset-left));
+        bottom: max(12px, env(safe-area-inset-bottom));
+      }
+      #joystick-knob {
+        width: 44px;
+        height: 44px;
+      }
+      #action-buttons {
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        gap: 10px;
+      }
+      #btn-jump {
+        width: 68px;
+        height: 68px;
+        font-size: 0.82rem;
+      }
+      #btn-dash {
+        width: 56px;
+        height: 56px;
+        font-size: 0.72rem;
+        margin-bottom: 6px;
+      }
+      #mobile-top-btns {
+        top: 68px;
+      }
+    }
   </style>
-<link rel="modulepreload" href="./tendy-quest-77d4e71770fce493.js" crossorigin="anonymous" integrity="sha384-qezK+w4XtFteVajBTGaMpCCR3FDP3N40X969DDtvcLR7bCJtMrasafeSMH0cM8mh"><link rel="preload" href="./tendy-quest-77d4e71770fce493_bg.wasm" crossorigin="anonymous" integrity="sha384-A6yESGvaZV5WuC1RYavQvS3V9Pu6UkBWeFOzEdP4J7F58MtesHqPpK9EGpbF5Xp5" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-a4dd3c5c9eb8cf1f.js" crossorigin="anonymous" integrity="sha384-bp6Qqv3V9jFOdyBvqhpezfbuc6LhrlgYQKo74IgDgMEG3CWzzyhP9DFI/NQniVkr"><link rel="preload" href="./tendy-quest-a4dd3c5c9eb8cf1f_bg.wasm" crossorigin="anonymous" integrity="sha384-nZcyBTHcFebHtfNYxcL/QlLVhCpxj7aqShiMO/YBYY3Q7OpDKRwq+xaBPQDQopif" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -538,8 +571,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-77d4e71770fce493.js';
-const wasm = await init({ module_or_path: './tendy-quest-77d4e71770fce493_bg.wasm' });
+import init, * as bindings from './tendy-quest-a4dd3c5c9eb8cf1f.js';
+const wasm = await init({ module_or_path: './tendy-quest-a4dd3c5c9eb8cf1f_bg.wasm' });
 
 
 window.wasmBindings = bindings;

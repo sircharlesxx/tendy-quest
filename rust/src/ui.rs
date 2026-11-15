@@ -34,6 +34,21 @@ pub struct StatusText;
 #[derive(Component)]
 pub struct DashBarFill;
 
+#[derive(Component)]
+pub struct TutorialCard;
+
+#[derive(Component)]
+pub struct TutorialTitleText;
+
+#[derive(Component)]
+pub struct TutorialBodyText;
+
+#[derive(Component)]
+pub struct TutorialControlsText;
+
+#[derive(Component)]
+pub struct TutorialBtnText;
+
 pub fn spawn_hud(mut commands: Commands) {
     commands
         .spawn((
@@ -48,11 +63,12 @@ pub fn spawn_hud(mut commands: Commands) {
             },
         ))
         .with_children(|parent| {
-            // Top-left: Hearts, Dash Bar, Tendy Counter
+            // Top-left: Hearts, Dash Bar, Tendy & Size Counter
             parent
                 .spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
+                        max_width: Val::Percent(56.0),
                         row_gap: Val::Px(4.0),
                         padding: UiRect::all(Val::Px(9.0)),
                         ..default()
@@ -94,9 +110,9 @@ pub fn spawn_hud(mut commands: Commands) {
                     });
                     col.spawn((
                         TendyText,
-                        Text::new("TENDIES: 0 / 10"),
+                        Text::new("TENDIES: 0 / 12\nSIZE: 15cm (Tiny Toy)"),
                         TextFont {
-                            font_size: 15.5,
+                            font_size: 14.5,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.82, 0.22)),
@@ -105,7 +121,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         StatusText,
                         Text::new(""),
                         TextFont {
-                            font_size: 14.0,
+                            font_size: 12.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.75, 1.0, 0.78)),
@@ -167,7 +183,13 @@ pub fn update_hud(
         t.0 = format!("HEARTS: {} / {}", stats.hearts.max(0), stats.max_hearts);
     }
     if let Ok(mut t) = tendy_q.get_single_mut() {
-        t.0 = format!("TENDIES: {} / {}", stats.tendies, stats.total_tendies);
+        t.0 = format!(
+            "TENDIES: {} / {}\nSIZE: {}cm ({})",
+            stats.tendies,
+            stats.total_tendies,
+            stats.height_cm(),
+            stats.size_tier()
+        );
     }
     if let Ok(mut t) = score_q.get_single_mut() {
         t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
@@ -175,15 +197,22 @@ pub fn update_hud(
     if let Ok(mut t) = status_q.get_single_mut() {
         let mut tags = Vec::new();
         if stats.speed_boost_timer > 0.0 {
-            tags.push(format!("HONEY MUSTARD {:.0}s", stats.speed_boost_timer));
+            tags.push(format!("MUSTARD {:.0}s", stats.speed_boost_timer));
         }
         if stats.has_ranch_shield {
             tags.push("RANCH SHIELD".to_string());
         }
         if stats.audio_muted {
-            tags.push("AUDIO MUTED".to_string());
+            tags.push("MUTED".to_string());
         }
-        t.0 = tags.join("  |  ");
+        let buff_line = tags.join(" | ");
+        if buff_line.is_empty() {
+            t.0 = stats.hint_text.clone();
+        } else if stats.hint_text.is_empty() {
+            t.0 = buff_line;
+        } else {
+            t.0 = format!("{}\n{}", buff_line, stats.hint_text);
+        }
     }
     if let Ok(mut node) = dash_q.get_single_mut() {
         node.width = Val::Percent(stats.dash_energy.clamp(0.0, 100.0));
@@ -198,53 +227,63 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
-                align_items: AlignItems::FlexEnd,
-                padding: UiRect::bottom(Val::Px(16.0)),
+                align_items: AlignItems::Center,
+                padding: UiRect {
+                    top: Val::Px(58.0),
+                    bottom: Val::Px(14.0),
+                    left: Val::Px(10.0),
+                    right: Val::Px(10.0),
+                },
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.16)),
+            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.28)),
         ))
         .with_children(|root| {
             root.spawn((
+                TutorialCard,
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(5.0),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    row_gap: Val::Px(8.0),
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(14.0)),
                     width: Val::Percent(92.0),
-                    max_width: Val::Px(740.0),
+                    max_width: Val::Px(540.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.78)),
+                BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.86)),
                 BorderRadius::all(Val::Px(14.0)),
             ))
             .with_children(|card| {
                 card.spawn((
+                    TutorialTitleText,
                     Text::new("TENDY QUEST: GIANT KITCHEN"),
                     TextFont {
-                        font_size: 22.0,
+                        font_size: 24.0,
                         ..default()
                     },
                     TextColor(Color::srgb(1.0, 0.82, 0.22)),
                 ));
                 card.spawn((
-                    Text::new("Collect all 10 Golden Tendies along the countertop and reach the Pancake Stack!\nDodge Broccoli Brutes, lunging Carrot Lancers, and Kale Slime trails."),
+                    TutorialBodyText,
+                    Text::new(
+                        "Eat all 12 Golden Tendies to grow from 15cm Toy to 180cm Adult!\nClimb to higher zones & open the Giant Fridge on the floor.",
+                    ),
                     TextFont {
-                        font_size: 13.0,
+                        font_size: 13.5,
                         ..default()
                     },
                     TextColor(Color::srgb(0.95, 0.92, 0.86)),
                 ));
                 card.spawn((
+                    TutorialControlsText,
                     Text::new(
-                        "CONTROLS:\n\
-                         - [Mouse Move] : Look around in 3D ([Scroll] Zoom, [Click] Lock, [ESC] Unlock)\n\
-                         - [WASD / Arrows] + [SPACE] Jump / Double-Jump + [SHIFT] Belly Dash\n\
-                         - [Touch Screen] : Left Stick to Run, Drag Screen to Look, Tap JUMP / DASH\n\
-                         - [H / HELP] : Controls  |  [M / SOUND] : Mute / Unmute Audio",
+                        "- Move: WASD / Arrows or Left Touch Stick\n\
+                         - Jump / Double-Jump: SPACE or JUMP (Dash: SHIFT / DASH)\n\
+                         - Look: Mouse Move / Scroll (Mobile: Drag Screen)\n\
+                         - Help / Audio: H / M",
                     ),
                     TextFont {
-                        font_size: 13.5,
+                        font_size: 13.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.85, 0.95, 1.0)),
@@ -253,8 +292,8 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     StartButton,
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(20.0), Val::Px(8.0)),
-                        margin: UiRect::top(Val::Px(3.0)),
+                        padding: UiRect::axes(Val::Px(22.0), Val::Px(9.0)),
+                        margin: UiRect::top(Val::Px(4.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
@@ -262,9 +301,10 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 ))
                 .with_children(|btn| {
                     btn.spawn((
+                        TutorialBtnText,
                         Text::new("START QUEST (SPACE / TAP)"),
                         TextFont {
-                            font_size: 15.0,
+                            font_size: 16.5,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -272,6 +312,100 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 });
             });
         });
+}
+
+pub fn adapt_ui_to_viewport(
+    window_q: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut root_q: Query<&mut Node, With<TutorialOverlay>>,
+    mut card_q: Query<&mut Node, (With<TutorialCard>, Without<TutorialOverlay>)>,
+    mut title_q: Query<&mut TextFont, With<TutorialTitleText>>,
+    mut body_q: Query<&mut TextFont, (With<TutorialBodyText>, Without<TutorialTitleText>)>,
+    mut ctrl_q: Query<
+        &mut TextFont,
+        (
+            With<TutorialControlsText>,
+            Without<TutorialTitleText>,
+            Without<TutorialBodyText>,
+        ),
+    >,
+    mut btn_q: Query<
+        &mut TextFont,
+        (
+            With<TutorialBtnText>,
+            Without<TutorialTitleText>,
+            Without<TutorialBodyText>,
+            Without<TutorialControlsText>,
+        ),
+    >,
+    mut hud_text_q: Query<
+        &mut TextFont,
+        (
+            Or<(With<HeartsText>, With<TendyText>, With<ScoreText>)>,
+            Without<TutorialTitleText>,
+            Without<TutorialBodyText>,
+            Without<TutorialControlsText>,
+            Without<TutorialBtnText>,
+        ),
+    >,
+) {
+    let Ok(win) = window_q.get_single() else {
+        return;
+    };
+    let w = win.width();
+    let h = win.height();
+    let is_short = h < 500.0;
+    let is_narrow = w < 520.0;
+
+    if let Ok(mut root) = root_q.get_single_mut() {
+        root.padding = if is_short {
+            UiRect {
+                top: Val::Px(44.0),
+                bottom: Val::Px(8.0),
+                left: Val::Px(10.0),
+                right: Val::Px(10.0),
+            }
+        } else {
+            UiRect {
+                top: Val::Px(58.0),
+                bottom: Val::Px(14.0),
+                left: Val::Px(10.0),
+                right: Val::Px(10.0),
+            }
+        };
+    }
+    if let Ok(mut card) = card_q.get_single_mut() {
+        card.max_width = if is_short { Val::Px(640.0) } else { Val::Px(540.0) };
+        card.width = if is_narrow { Val::Percent(94.0) } else { Val::Percent(90.0) };
+        card.padding = if is_short {
+            UiRect::axes(Val::Px(16.0), Val::Px(10.0))
+        } else if is_narrow {
+            UiRect::axes(Val::Px(16.0), Val::Px(14.0))
+        } else {
+            UiRect::axes(Val::Px(24.0), Val::Px(20.0))
+        };
+        card.row_gap = Val::Px(if is_short {
+            5.0
+        } else if is_narrow {
+            8.0
+        } else {
+            11.0
+        });
+    }
+    if let Ok(mut tf) = title_q.get_single_mut() {
+        tf.font_size = if is_short { 19.0 } else if is_narrow { 21.0 } else { 27.0 };
+    }
+    if let Ok(mut tf) = body_q.get_single_mut() {
+        tf.font_size = if is_short { 12.0 } else if is_narrow { 13.0 } else { 15.0 };
+    }
+    if let Ok(mut tf) = ctrl_q.get_single_mut() {
+        tf.font_size = if is_short { 11.5 } else if is_narrow { 12.5 } else { 14.0 };
+    }
+    if let Ok(mut tf) = btn_q.get_single_mut() {
+        tf.font_size = if is_short { 14.5 } else if is_narrow { 16.0 } else { 18.5 };
+    }
+    for mut tf in &mut hud_text_q {
+        tf.font_size = if is_short || is_narrow { 12.5 } else { 15.0 };
+    }
 }
 
 pub fn handle_tutorial_input(
@@ -323,12 +457,16 @@ pub fn despawn_tutorial_overlay(
 pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
     spawn_end_card(
         commands,
-        "STAGE CLEAR!",
+        "FRIDGE OPENED — STAGE CLEAR!",
         &format!(
-            "LEVEL 1 COMPLETE!\nTENDIES COLLECTED: {} / {}\nFINAL SCORE: {:06} (+5000 BONUS)",
-            stats.tendies, stats.total_tendies, stats.score
+            "YOU GREW TO {}cm ({})!\nTENDIES COLLECTED: {} / {}\nFINAL SCORE: {:06} (+5000 FRIDGE BONUS)",
+            stats.height_cm(),
+            stats.size_tier(),
+            stats.tendies,
+            stats.total_tendies,
+            stats.score
         ),
-        "PLAY AGAIN (R / CLICK)",
+        "PLAY AGAIN (R / TAP)",
         Color::srgb(1.0, 0.84, 0.2),
     );
 }
@@ -383,7 +521,7 @@ fn spawn_end_card(
                 card.spawn((
                     Text::new(title),
                     TextFont {
-                        font_size: 36.0,
+                        font_size: 26.0,
                         ..default()
                     },
                     TextColor(title_color),
@@ -391,7 +529,7 @@ fn spawn_end_card(
                 card.spawn((
                     Text::new(body),
                     TextFont {
-                        font_size: 20.0,
+                        font_size: 16.5,
                         ..default()
                     },
                     TextColor(Color::WHITE),

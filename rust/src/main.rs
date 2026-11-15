@@ -14,9 +14,9 @@ use player::{
 };
 use state::{CameraOrbit, GameState, PlayerStats};
 use ui::{
-    despawn_tutorial_overlay, handle_restart_input, handle_tutorial_input, spawn_game_over_overlay,
-    spawn_hud, spawn_stage_clear_overlay, spawn_tutorial_overlay, toggle_audio_hotkey,
-    toggle_tutorial_hotkey, update_hud,
+    adapt_ui_to_viewport, despawn_tutorial_overlay, handle_restart_input, handle_tutorial_input,
+    spawn_game_over_overlay, spawn_hud, spawn_stage_clear_overlay, spawn_tutorial_overlay,
+    toggle_audio_hotkey, toggle_tutorial_hotkey, update_hud,
 };
 
 fn main() {
@@ -43,7 +43,7 @@ fn main() {
                 spawn_hud,
             ),
         )
-        .add_systems(Update, (toggle_audio_hotkey, update_hud))
+        .add_systems(Update, (toggle_audio_hotkey, update_hud, adapt_ui_to_viewport))
         .add_systems(OnEnter(GameState::Tutorial), spawn_tutorial_overlay)
         .add_systems(OnExit(GameState::Tutorial), despawn_tutorial_overlay)
         .add_systems(

@@ -45,7 +45,7 @@ pub fn spawn_player_inner(commands: &mut Commands, asset_server: &AssetServer) {
         LevelEntity,
         Player::default(),
         SceneRoot(hero_scene),
-        Transform::from_xyz(0.0, 0.0, 17.5),
+        Transform::from_xyz(0.0, 0.0, 17.5).with_scale(Vec3::splat(0.55)),
     ));
 }
 
@@ -82,7 +82,7 @@ pub fn camera_mouse_look(
     }
 
     if mouse_scroll.delta.y != 0.0 {
-        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 0.5).clamp(3.5, 13.0);
+        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 0.5).clamp(3.5, 18.0);
     }
 }
 
@@ -110,6 +110,16 @@ pub fn player_movement(
         return;
     };
     let dt = time.delta_secs().min(0.05);
+
+    // Smoothly grow the hero toward their Katamari target scale
+    let target_s = stats.target_scale();
+    if (stats.player_scale - target_s).abs() > 0.001 {
+        stats.player_scale += (target_s - stats.player_scale) * (dt * 6.0).min(1.0);
+    } else {
+        stats.player_scale = target_s;
+    }
+    tf.scale = Vec3::splat(stats.player_scale);
+    let size_ratio = (stats.player_scale / 0.55).max(1.0);
 
     if player.dash_timer > 0.0 {
         player.dash_timer = (player.dash_timer - dt).max(0.0);
@@ -172,13 +182,14 @@ pub fn player_movement(
         } else {
             crate::audio::play_sfx("double_jump");
         }
-        player.velocity.y = 9.2;
+        player.velocity.y = 9.2 + (stats.player_scale - 0.55).max(0.0) * 1.55;
         player.grounded = false;
         player.jumps_used += 1;
     }
 
-    // Horizontal speed
-    let mut speed = if player.dash_timer > 0.0 { 16.5 } else { 7.8 };
+    // Horizontal speed scales with player growth
+    let base_speed = if player.dash_timer > 0.0 { 15.8 } else { 7.4 };
+    let mut speed = base_speed * size_ratio.powf(0.38);
     if stats.speed_boost_timer > 0.0 {
         speed *= 1.75;
     }
@@ -191,7 +202,7 @@ pub fn player_movement(
 
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
     if horiz_speed > 0.25 {
-        player.walk_cycle += horiz_speed * dt * 2.2;
+        player.walk_cycle += horiz_speed * dt * (2.2 / size_ratio.powf(0.28));
     }
 
     if dir.length_squared() > 0.01 {
@@ -204,18 +215,19 @@ pub fn player_movement(
     }
 
     // Gravity & integrate
-    player.velocity.y -= 22.0 * dt;
+    let gravity = 22.0 + (stats.player_scale - 0.55).max(0.0) * 0.55;
+    player.velocity.y -= gravity * dt;
     let prev_y = tf.translation.y;
     tf.translation += player.velocity * dt;
 
-    // Platform AABB landing
+    // Platform AABB landing (top surfaces)
     player.grounded = false;
-    let player_r = 0.45;
+    let land_r = (0.38 * stats.player_scale).clamp(0.38, 0.85);
     for (p_tf, p_box) in &platform_q {
-        let min_x = p_tf.translation.x - p_box.half_extents.x - player_r;
-        let max_x = p_tf.translation.x + p_box.half_extents.x + player_r;
-        let min_z = p_tf.translation.z - p_box.half_extents.z - player_r;
-        let max_z = p_tf.translation.z + p_box.half_extents.z + player_r;
+        let min_x = p_tf.translation.x - p_box.half_extents.x - land_r;
+        let max_x = p_tf.translation.x + p_box.half_extents.x + land_r;
+        let min_z = p_tf.translation.z - p_box.half_extents.z - land_r;
+        let max_z = p_tf.translation.z + p_box.half_extents.z + land_r;
         let top_y = p_tf.translation.y + p_box.half_extents.y;
 
         if tf.translation.x >= min_x
@@ -233,6 +245,41 @@ pub fn player_movement(
         }
     }
 
+    // Solid side-wall pushout against tall platforms (cabinets, island, fridge)
+    let wall_r = (0.24 * stats.player_scale).clamp(0.26, 0.72);
+    let player_top_y = tf.translation.y + (0.35 * stats.player_scale).max(0.5);
+    for (p_tf, p_box) in &platform_q {
+        let min_x = p_tf.translation.x - p_box.half_extents.x - wall_r;
+        let max_x = p_tf.translation.x + p_box.half_extents.x + wall_r;
+        let min_z = p_tf.translation.z - p_box.half_extents.z - wall_r;
+        let max_z = p_tf.translation.z + p_box.half_extents.z + wall_r;
+        let bottom_y = p_tf.translation.y - p_box.half_extents.y;
+        let top_y = p_tf.translation.y + p_box.half_extents.y;
+
+        if tf.translation.x > min_x
+            && tf.translation.x < max_x
+            && tf.translation.z > min_z
+            && tf.translation.z < max_z
+            && tf.translation.y < top_y - 0.35
+            && player_top_y > bottom_y + 0.15
+        {
+            let dx_left = tf.translation.x - min_x;
+            let dx_right = max_x - tf.translation.x;
+            let dz_back = tf.translation.z - min_z;
+            let dz_front = max_z - tf.translation.z;
+            let m = dx_left.min(dx_right).min(dz_back).min(dz_front);
+            if (m - dx_left).abs() < 0.001 {
+                tf.translation.x = min_x;
+            } else if (m - dx_right).abs() < 0.001 {
+                tf.translation.x = max_x;
+            } else if (m - dz_back).abs() < 0.001 {
+                tf.translation.z = min_z;
+            } else {
+                tf.translation.z = max_z;
+            }
+        }
+    }
+
     if player.grounded && horiz_speed > 0.25 {
         let half = (player.walk_cycle / std::f32::consts::PI).floor() as i32;
         if half != player.last_step_half {
@@ -241,10 +288,10 @@ pub fn player_movement(
         }
     }
 
-    // Keep within countertop bounds or respawn on fall
-    tf.translation.x = tf.translation.x.clamp(-6.8, 6.8);
-    tf.translation.z = tf.translation.z.clamp(-21.2, 21.2);
-    if tf.translation.y < -6.0 {
+    // Keep within giant kitchen room walls or respawn on abyssal fall
+    tf.translation.x = tf.translation.x.clamp(-20.5, 22.5);
+    tf.translation.z = tf.translation.z.clamp(-24.0, 24.0);
+    if tf.translation.y < -12.0 {
         tf.translation = Vec3::new(0.0, 0.5, 17.5);
         player.velocity = Vec3::ZERO;
     }
@@ -253,23 +300,27 @@ pub fn player_movement(
 pub fn update_camera(
     time: Res<Time>,
     orbit: Res<CameraOrbit>,
+    stats: Res<PlayerStats>,
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
     mut cam_q: Query<&mut Transform, With<Camera3d>>,
 ) {
     let (Ok(p_tf), Ok(mut c_tf)) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
-    let anchor = p_tf.translation + Vec3::new(0.0, 1.35, 0.0);
+    let cam_dist = orbit.distance * (0.72 + stats.player_scale * 0.35);
+    let anchor_y = 0.45 + stats.player_scale * 0.95;
+    let anchor = p_tf.translation + Vec3::new(0.0, anchor_y, 0.0);
     let offset = Vec3::new(
         orbit.yaw.sin() * orbit.pitch.cos(),
         orbit.pitch.sin(),
         orbit.yaw.cos() * orbit.pitch.cos(),
-    ) * orbit.distance;
+    ) * cam_dist;
     let target_pos = anchor + offset;
     let dt = (time.delta_secs() * 12.0).min(1.0);
     c_tf.translation = c_tf.translation.lerp(target_pos, dt);
-    let look_target = p_tf.translation + Vec3::new(0.0, 1.25, 0.0)
-        - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * 1.5;
+    let look_fwd = 1.2 * (0.5 + stats.player_scale * 0.25);
+    let look_target = p_tf.translation + Vec3::new(0.0, anchor_y * 0.92, 0.0)
+        - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * look_fwd;
     c_tf.look_at(look_target, Vec3::Y);
 }
 
@@ -281,26 +332,51 @@ pub fn animate_and_collect_pickups(
     player_q: Query<&Transform, With<Player>>,
     mut tendy_q: Query<(Entity, &mut Transform, &TendyPickup), Without<Player>>,
     mut power_q: Query<(Entity, &mut Transform, &PowerupPickup), (Without<Player>, Without<TendyPickup>)>,
+    fridge_q: Query<
+        &Transform,
+        (
+            With<crate::state::FridgeGoal>,
+            Without<Player>,
+            Without<TendyPickup>,
+            Without<PowerupPickup>,
+        ),
+    >,
+    mut door_q: Query<
+        (&Name, &mut Transform),
+        (
+            Without<Player>,
+            Without<TendyPickup>,
+            Without<PowerupPickup>,
+            Without<crate::state::FridgeGoal>,
+        ),
+    >,
 ) {
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
     let player_pos = player_q.get_single().map(|p| p.translation).ok();
+    let pickup_r = 1.15 + stats.player_scale * 0.45;
+    let player_mid_y = (0.55 * stats.player_scale).max(0.55);
 
     for (entity, mut tf, tendy) in &mut tendy_q {
         tf.rotate_y(2.4 * dt);
         tf.translation.y = tendy.base_y + ((t * 3.2 + tendy.phase).sin() * 0.16);
 
         if let Some(p_pos) = player_pos {
-            let d = (p_pos + Vec3::Y * 0.8).distance(tf.translation);
-            if d < 1.35 {
+            let d = (p_pos + Vec3::Y * player_mid_y).distance(tf.translation);
+            if d < pickup_r {
                 commands.entity(entity).despawn_recursive();
                 stats.tendies += 1;
-                stats.score += 100;
+                stats.score += 150;
                 crate::audio::play_sfx("tendy");
-                if tendy.is_final_goal || stats.tendies >= stats.total_tendies {
-                    stats.score += 5000;
-                    crate::audio::play_sfx("win");
-                    next_state.set(GameState::StageClear);
+                if stats.tendies >= stats.total_tendies {
+                    stats.score += 1000;
+                    stats.hint_text = "ADULT SIZE! Drop to the floor & open the Giant Fridge!".to_string();
+                } else {
+                    let next_cm = (stats.target_scale() * 30.0).round() as u32;
+                    stats.hint_text = format!(
+                        "Grew to {}cm! ({}/{} Tendies -> Fridge unlocks at 12/12)",
+                        next_cm, stats.tendies, stats.total_tendies
+                    );
                 }
             }
         }
@@ -311,7 +387,7 @@ pub fn animate_and_collect_pickups(
         tf.translation.y = power.base_y + ((t * 2.8 + power.phase).sin() * 0.14);
 
         if let Some(p_pos) = player_pos {
-            if (p_pos + Vec3::Y * 0.8).distance(tf.translation) < 1.35 {
+            if (p_pos + Vec3::Y * player_mid_y).distance(tf.translation) < pickup_r {
                 commands.entity(entity).despawn_recursive();
                 crate::audio::play_sfx("powerup");
                 match power.kind {
@@ -319,6 +395,41 @@ pub fn animate_and_collect_pickups(
                     PowerupKind::RanchShield => stats.has_ranch_shield = true,
                 }
             }
+        }
+    }
+
+    // Giant Refrigerator Goal trigger once Hero grows to Full Adult Size
+    if let (Some(p_pos), Ok(f_tf)) = (player_pos, fridge_q.get_single()) {
+        let horiz_d = Vec2::new(p_pos.x - f_tf.translation.x, p_pos.z - f_tf.translation.z).length();
+        let dy = (p_pos.y - f_tf.translation.y).abs();
+        if horiz_d < 4.5 && dy < 3.0 {
+            if stats.tendies >= stats.total_tendies {
+                if stats.fridge_open <= 0.0 {
+                    stats.fridge_open = 0.02;
+                    stats.score += 5000;
+                    crate::audio::play_sfx("win");
+                    stats.hint_text = "FRIDGE OPEN! Tendy Feast Unlocked!".to_string();
+                }
+            } else {
+                stats.hint_text = format!(
+                    "Too tiny ({}cm) for the Fridge handle! Collect {}/{} Tendies.",
+                    stats.height_cm(),
+                    stats.tendies,
+                    stats.total_tendies
+                );
+            }
+        }
+    }
+
+    if stats.fridge_open > 0.0 {
+        stats.fridge_open = (stats.fridge_open + dt * 1.45).min(1.0);
+        for (name, mut d_tf) in &mut door_q {
+            if name.as_str() == "FridgeDoor" {
+                d_tf.rotation = Quat::from_rotation_y(stats.fridge_open * 2.05);
+            }
+        }
+        if stats.fridge_open >= 0.72 {
+            next_state.set(GameState::StageClear);
         }
     }
 }
@@ -435,12 +546,24 @@ pub fn animate_player_limbs(
 
 pub fn victory_dance(
     time: Res<Time>,
+    mut stats: ResMut<PlayerStats>,
     mut player_q: Query<&mut Transform, With<Player>>,
+    mut door_q: Query<(&Name, &mut Transform), Without<Player>>,
 ) {
+    let dt = time.delta_secs().min(0.05);
+    stats.fridge_open = (stats.fridge_open + dt * 1.4).min(1.0);
+    for (name, mut d_tf) in &mut door_q {
+        if name.as_str() == "FridgeDoor" {
+            d_tf.rotation = Quat::from_rotation_y(stats.fridge_open * 2.05);
+        }
+    }
     let Ok(mut tf) = player_q.get_single_mut() else {
         return;
     };
     let t = time.elapsed_secs();
+    tf.scale = Vec3::splat(6.0);
+    tf.translation.x = 13.0;
+    tf.translation.z = -12.6;
     tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
-    tf.translation.y = 1.9 + (t * 8.0).sin().abs() * 0.35;
+    tf.translation.y = -6.0 + (t * 8.0).sin().abs() * 1.1;
 }

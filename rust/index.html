@@ -175,8 +175,10 @@
     html, body {
       margin: 0;
       padding: 0;
+      position: fixed;
+      inset: 0;
       width: 100%;
-      height: 100%;
+      height: 100dvh;
       overflow: hidden;
       background: #1a120b;
       font-family: system-ui, -apple-system, sans-serif;
@@ -187,8 +189,8 @@
     }
     canvas {
       display: block;
-      width: 100vw !important;
-      height: 100vh !important;
+      width: 100% !important;
+      height: 100dvh !important;
       outline: none;
       touch-action: none;
     }
@@ -321,6 +323,37 @@
       font-size: 0.74rem;
       font-weight: 700;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
+    @media (max-height: 500px) {
+      #joystick-zone {
+        width: 106px;
+        height: 106px;
+        left: max(12px, env(safe-area-inset-left));
+        bottom: max(12px, env(safe-area-inset-bottom));
+      }
+      #joystick-knob {
+        width: 44px;
+        height: 44px;
+      }
+      #action-buttons {
+        right: max(12px, env(safe-area-inset-right));
+        bottom: max(12px, env(safe-area-inset-bottom));
+        gap: 10px;
+      }
+      #btn-jump {
+        width: 68px;
+        height: 68px;
+        font-size: 0.82rem;
+      }
+      #btn-dash {
+        width: 56px;
+        height: 56px;
+        font-size: 0.72rem;
+        margin-bottom: 6px;
+      }
+      #mobile-top-btns {
+        top: 68px;
+      }
     }
   </style>
 </head>

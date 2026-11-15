@@ -1048,8 +1048,75 @@ def build_salt_shaker():
     export_glb(os.path.join(OUTPUT_DIR, "salt_shaker.glb"))
 
 
+def build_giant_fridge():
+    """Articulated brushed stainless-steel refrigerator with warm glowing stocked interior."""
+    clear_scene()
+    steel = create_solid_material("FridgeSteelMat", (0.80, 0.83, 0.87, 1.0), roughness=0.18, metallic=0.90)
+    chrome = create_solid_material("FridgeChromeMat", (0.94, 0.96, 0.99, 1.0), roughness=0.10, metallic=0.96)
+    gasket = create_solid_material("FridgeGasketMat", (0.12, 0.13, 0.15, 1.0), roughness=0.75)
+    interior = create_solid_material("FridgeLightMat", (1.0, 0.96, 0.84, 1.0), roughness=0.25, emission_strength=0.35)
+    shelf_glass = create_solid_material("FridgeGlassMat", (0.72, 0.90, 0.96, 1.0), roughness=0.08)
+    tendy_mat = mat_golden_tendy()
+    mustard_mat = create_solid_material("FridgeMustardMat", (0.95, 0.72, 0.08, 1.0), roughness=0.25)
+    mag_red = create_solid_material("MagnetRedMat", (0.86, 0.14, 0.14, 1.0), roughness=0.30)
+    mag_blue = create_solid_material("MagnetBlueMat", (0.14, 0.56, 0.92, 1.0), roughness=0.30)
+    mag_gold = create_solid_material("MagnetGoldMat", (0.96, 0.76, 0.12, 1.0), roughness=0.28)
+
+    body_parts = [
+        # Outer shell walls around open front (-Y) interior cavity (X in [-3.4, 3.4], Y in [-2.4, 2.4], Z in [0, 13.2])
+        add_cube(1.0, (-3.15, 0.0, 6.6), scale=(0.50, 4.80, 13.2), mat=steel),
+        add_cube(1.0, (3.15, 0.0, 6.6), scale=(0.50, 4.80, 13.2), mat=steel),
+        add_cube(1.0, (0.0, 2.15, 6.6), scale=(6.80, 0.50, 13.2), mat=steel),
+        add_cube(1.0, (0.0, 0.0, 0.25), scale=(6.80, 4.80, 0.50), mat=steel),
+        add_cube(1.0, (0.0, 0.0, 9.25), scale=(6.80, 4.80, 0.35), mat=steel),
+        add_cube(1.0, (0.0, 0.0, 13.0), scale=(6.80, 4.80, 0.40), mat=steel),
+        # Dark rubber seal frame around front main compartment
+        add_cube(1.0, (-2.92, -2.36, 4.75), scale=(0.14, 0.16, 8.70), mat=gasket),
+        add_cube(1.0, (2.92, -2.36, 4.75), scale=(0.14, 0.16, 8.70), mat=gasket),
+        add_cube(1.0, (0.0, -2.36, 0.48), scale=(5.98, 0.16, 0.14), mat=gasket),
+        add_cube(1.0, (0.0, -2.36, 9.05), scale=(5.98, 0.16, 0.14), mat=gasket),
+        # Upper freezer door (Z in [9.4, 13.0]) + chrome horizontal handle
+        add_cube(1.0, (0.0, -2.47, 11.2), scale=(6.70, 0.26, 3.60), mat=steel, smooth=True, bevel=0.06),
+        add_cylinder(0.11, 4.6, (0.0, -2.78, 10.1), rotation=(0.0, math.pi / 2, 0.0), mat=chrome, vertices=20),
+        add_cylinder(0.08, 0.34, (-2.0, -2.62, 10.1), rotation=(math.pi / 2, 0.0, 0.0), mat=chrome, vertices=16),
+        add_cylinder(0.08, 0.34, (2.0, -2.62, 10.1), rotation=(math.pi / 2, 0.0, 0.0), mat=chrome, vertices=16),
+        # Warm glowing back interior panel
+        add_cube(1.0, (0.0, 1.85, 4.75), scale=(5.65, 0.12, 8.30), mat=interior),
+    ]
+
+    # 3 stocked fridge shelves visible as soon as FridgeDoor swings open
+    for sz in (2.6, 5.0, 7.2):
+        body_parts.append(add_cube(1.0, (0.0, 0.0, sz), scale=(5.65, 3.80, 0.14), mat=shelf_glass))
+        # Platter + golden tendy mounds on every shelf
+        body_parts.append(add_cylinder(1.15, 0.14, (-1.1, -0.2, sz + 0.15), mat=interior, vertices=24))
+        for tx, ty, rotz in [(-1.35, -0.1, 0.4), (-0.85, -0.35, -0.5), (-1.05, 0.15, 1.1)]:
+            m = add_sphere(0.42, (tx, ty, sz + 0.44), scale=(1.45, 0.68, 0.55), rotation=(0.15, 0.0, rotz), mat=tendy_mat)
+            displace_organic(m, freq=12.0, amp=0.14, seed=int(sz * 10 + abs(tx * 7)))
+        # Sauce jars on right side of shelves
+        body_parts.append(add_cylinder(0.42, 0.95, (1.55, 0.15, sz + 0.56), mat=mustard_mat, vertices=20))
+        body_parts.append(add_cylinder(0.36, 0.20, (1.55, 0.15, sz + 1.08), mat=chrome, vertices=20))
+
+    join_with_pivot(body_parts, "FridgeBody", (0.0, 0.0, 0.0))
+
+    # Articulated right-hinged lower door (hinge pivot at right-front edge (3.35, -2.45, 4.75))
+    door_parts = [
+        add_cube(1.0, (0.0, -2.47, 4.75), scale=(6.70, 0.24, 8.70), mat=steel, smooth=True, bevel=0.06),
+        # Long vertical brushed chrome handle on left side (X = -2.85)
+        add_cylinder(0.12, 4.8, (-2.85, -2.82, 5.2), mat=chrome, vertices=20),
+        add_cylinder(0.08, 0.36, (-2.85, -2.64, 7.25), rotation=(math.pi / 2, 0.0, 0.0), mat=chrome, vertices=16),
+        add_cylinder(0.08, 0.36, (-2.85, -2.64, 3.15), rotation=(math.pi / 2, 0.0, 0.0), mat=chrome, vertices=16),
+        # Cheerful colorful fridge magnets
+        add_sphere(0.32, (-0.4, -2.62, 6.8), scale=(1.0, 0.35, 1.0), mat=mag_red),
+        add_cube(0.55, (1.1, -2.62, 5.9), scale=(1.2, 0.25, 0.9), rotation=(0.0, 0.18, 0.0), mat=mag_blue, smooth=True),
+        add_sphere(0.28, (0.2, -2.62, 5.1), scale=(1.1, 0.35, 1.1), mat=mag_gold),
+    ]
+    join_with_pivot(door_parts, "FridgeDoor", (3.35, -2.45, 4.75))
+
+    export_glb(os.path.join(OUTPUT_DIR, "giant_fridge.glb"), preserve_pivots=True)
+
+
 def build_kitchen_environment():
-    """Complete photorealistic sunlit kitchen enclosure matching all video details."""
+    """Complete Katamari-scale sunlit kitchen & dining room enclosure matching all levels."""
     clear_scene()
     wood = mat_butcher_block()
     tile = mat_sage_tile()
@@ -1059,7 +1126,10 @@ def build_kitchen_environment():
     cab = create_solid_material("CabinetWoodMat", (0.46, 0.29, 0.16, 1.0), roughness=0.45)
     cab_trim = create_solid_material("CabinetTrimMat", (0.38, 0.23, 0.12, 1.0), roughness=0.52)
     floor = create_solid_material("KitchenFloorMat", (0.58, 0.43, 0.28, 1.0), roughness=0.48)
-    stone = create_solid_material("SideStoneMat", (0.88, 0.86, 0.81, 1.0), roughness=0.28)
+    rug = create_solid_material("KitchenRugMat", (0.72, 0.22, 0.18, 1.0), roughness=0.88)
+    rug_trim = create_solid_material("KitchenRugTrimMat", (0.94, 0.88, 0.72, 1.0), roughness=0.85)
+    stool_leg = create_solid_material("StoolLegMat", (0.20, 0.18, 0.20, 1.0), roughness=0.32, metallic=0.82)
+    table_top = create_solid_material("DiningTableMat", (0.64, 0.42, 0.24, 1.0), roughness=0.38)
     steel = create_solid_material("StainlessMat", (0.86, 0.88, 0.92, 1.0), roughness=0.16, metallic=0.92)
     dark_sink = create_solid_material("SinkBasinMat", (0.30, 0.32, 0.34, 1.0), roughness=0.35, metallic=0.85)
     sky = mat_window_view()
@@ -1072,24 +1142,57 @@ def build_kitchen_environment():
     terracotta = create_solid_material("TerracottaMat", (0.74, 0.36, 0.22, 1.0), roughness=0.72)
     plant_g = create_solid_material("PlantMat", (0.18, 0.52, 0.16, 1.0), roughness=0.62)
 
-    # 1. Varnished Butcher-Block Countertop (14m x 44m, anisotropic world-space UVs) & oak under-cabinet base
-    add_cube(1.0, (0, 0, -0.5), scale=(14.0, 44.0, 1.0), mat=wood, uv_scale=(0.14, 0.032))
-    add_cube(1.0, (0, 0, -2.75), scale=(13.5, 43.5, 3.5), mat=cab)
-    add_cube(1.0, (1.5, -2.0, -4.75), scale=(32.0, 54.0, 0.5), mat=floor)
+    # 1. Prep Butcher-Block Countertop (14m x 44m, top at Z=0) + Oak Base down to Z=-6.0 Floor
+    add_cube(1.0, (0.0, 0.0, -0.5), scale=(14.0, 44.0, 1.0), mat=wood, uv_scale=(0.14, 0.032))
+    add_cube(1.0, (0.0, 0.0, -3.5), scale=(13.5, 43.5, 5.0), mat=cab)
 
-    # 2. Glossy Sage-Green Ceramic Tile Left Wall (X = -7.3) with cream grout lines
-    add_cube(1.0, (-7.35, -0.5, 3.4), scale=(0.45, 48.0, 7.6), mat=tile, uv_scale=0.24)
-    # Left overhanging wooden upper kitchen cabinets (stays left of X = -3.8 so view stays wide open!)
-    add_cube(1.0, (-5.7, 3.5, 8.6), scale=(3.4, 34.0, 5.2), mat=cab)
+    # Full-Room Kitchen & Dining Floor (X in [-22, 24], Y_blender in [-26, 26], top at Z = -6.0)
+    add_cube(1.0, (1.0, 0.0, -6.25), scale=(46.0, 52.0, 0.5), mat=floor)
+    # Cozy Kitchen Runner Rug along main floor aisle
+    add_cube(1.0, (6.5, 4.0, -5.96), scale=(7.0, 26.0, 0.08), mat=rug)
+    add_cube(1.0, (6.5, 4.0, -5.955), scale=(6.2, 25.0, 0.07), mat=rug_trim)
+    add_cube(1.0, (6.5, 4.0, -5.95), scale=(5.4, 24.0, 0.07), mat=rug)
+
+    # Zone 2: Cutting-Board Bridge & Center Kitchen Island (top at Z=0.0, base down to -6.0 floor)
+    add_cube(1.0, (8.2, -2.0, 0.06), scale=(3.8, 3.2, 0.14), mat=board_mat, uv_scale=0.35, smooth=True, bevel=0.03)
+    add_cube(1.0, (13.5, 0.0, -0.4), scale=(8.0, 20.0, 0.8), mat=wood, uv_scale=(0.14, 0.04))
+    add_cube(1.0, (13.5, 0.0, -3.4), scale=(7.6, 19.4, 5.2), mat=cab)
+
+    # Zone 3: 2 Giant Stepping Stools connecting Island/Counter to the -6.0 Floor
+    # Upper Stool at (8.5, -12.5, -2.0 -> Bevy Z = +12.5, top Y = -1.85)
+    add_cube(1.0, (8.5, -12.5, -2.0), scale=(3.2, 3.2, 0.30), mat=table_top, smooth=True, bevel=0.04)
+    for lx, ly in [(-1.25, -1.25), (1.25, -1.25), (-1.25, 1.25), (1.25, 1.25)]:
+        add_cylinder(0.14, 3.85, (8.5 + lx, -12.5 + ly, -4.075), mat=stool_leg, vertices=16)
+
+    # Lower Stool at (5.5, -16.5, -4.0 -> Bevy Z = +16.5, top Y = -3.85)
+    add_cube(1.0, (5.5, -16.5, -4.0), scale=(3.2, 3.2, 0.30), mat=table_top, smooth=True, bevel=0.04)
+    for lx, ly in [(-1.25, -1.25), (1.25, -1.25), (-1.25, 1.25), (1.25, 1.25)]:
+        add_cylinder(0.14, 1.85, (5.5 + lx, -16.5 + ly, -5.075), mat=stool_leg, vertices=16)
+
+    # Dining Table (Y_bl = +9.0 -> Bevy Z = -9.0, top Y = -1.2) & Chair (Y_bl = +3.2 -> Bevy Z = -3.2, top Y = -3.2)
+    add_cube(1.0, (-13.0, 9.0, -1.35), scale=(6.6, 10.0, 0.30), mat=table_top, smooth=True, bevel=0.04)
+    for lx, ly in [(-2.8, -4.4), (2.8, -4.4), (-2.8, 4.4), (2.8, 4.4)]:
+        add_cylinder(0.22, 4.5, (-13.0 + lx, 9.0 + ly, -3.75), mat=cab, vertices=16)
+    add_cube(1.0, (-13.0, 3.2, -3.32), scale=(2.8, 2.8, 0.25), mat=table_top, smooth=True, bevel=0.03)
+    for lx, ly in [(-1.1, -1.1), (1.1, -1.1), (-1.1, 1.1), (1.1, 1.1)]:
+        add_cylinder(0.14, 2.55, (-13.0 + lx, 3.2 + ly, -4.72), mat=cab, vertices=14)
+    add_cube(1.0, (-13.0, 1.9, -1.75), scale=(2.8, 0.24, 3.0), mat=table_top, smooth=True, bevel=0.03)
+
+    # 2. Glossy Sage-Green Ceramic Tile Backsplash (south half X=-7.35, leaving Y_bl > +2 open to Dining Area!) + Outer Walls
+    add_cube(1.0, (-7.35, -10.0, 3.4), scale=(0.45, 24.0, 7.6), mat=tile, uv_scale=0.24)
+    # Far outer walls enclosing the full room cleanly down to Floor (-6.0)
+    add_cube(1.0, (-22.3, 0.0, 5.0), scale=(0.6, 52.0, 22.0), mat=wall)
+    add_cube(1.0, (24.3, 0.0, 5.0), scale=(0.6, 52.0, 22.0), mat=wall)
+    # Left overhanging wooden upper kitchen cabinets along the tiled backsplash
+    add_cube(1.0, (-5.7, -8.0, 8.6), scale=(3.4, 20.0, 5.2), mat=cab)
     for cz in (6.1, 11.1):
-        add_cube(1.0, (-3.95, 3.5, cz), scale=(0.15, 34.0, 0.24), mat=cab_trim)
+        add_cube(1.0, (-3.95, -8.0, cz), scale=(0.15, 20.0, 0.24), mat=cab_trim)
 
-    # 3. Warm Sage Back Wall (open sunlit room matching the reference video)
-    add_cube(1.0, (2.0, 22.8, 5.2), scale=(30.0, 0.6, 17.5), mat=wall)
+    # 3. Wide Warm Sage Back Wall across entire room down to Floor (-6.0)
+    add_cube(1.0, (1.0, 22.8, 5.0), scale=(48.0, 0.8, 22.0), mat=wall)
 
-    # 4. Sunny Kitchen Window (Back-Right: X = +5.0, Y = 22.3) + Garden Foliage Texture + Potted Plant + Gingham Curtains
+    # 4. Sunny Kitchen Window (Back-Right above sink) + Garden Foliage + Potted Plant + Gingham Curtains
     add_cube(1.0, (5.0, 22.35, 6.2), scale=(7.6, 0.2, 5.6), mat=sky, uv_scale=0.16)
-    # Wood window frame + mullions + deep sill
     for mx in (1.2, 5.0, 8.8):
         add_cube(1.0, (mx, 22.18, 6.2), scale=(0.28, 0.35, 5.8), mat=cab)
     for mz in (3.4, 6.2, 9.0):
@@ -1114,50 +1217,39 @@ def build_kitchen_environment():
     add_cylinder(0.16, 2.1, (5.0, 21.75, 1.05), mat=steel)
     add_torus(0.60, 0.13, (5.0, 21.15, 2.05), rotation=(0, math.pi / 2, 0), mat=steel)
 
-    # 6. Open Wooden Back-Left Shelves & Props (X = -5.5..+0.6, Y = 21.6)
-    for sz in (3.8, 6.8):
-        add_cube(1.0, (-2.6, 21.7, sz), scale=(6.6, 1.4, 0.24), mat=board_mat, uv_scale=0.4)
-    # Props on lower shelf (z ~ 4.0)
-    add_sphere(0.55, (-4.8, 21.65, 4.30), scale=(1.0, 1.0, 0.62), mat=blue_cer)
-    add_cylinder(0.42, 0.82, (-3.5, 21.65, 4.35), mat=yellow_cer)
-    for pi in range(5):
-        add_cylinder(0.68, 0.08, (-2.1, 21.65, 3.98 + pi * 0.11), mat=white_cer)
-    add_cylinder(0.32, 0.65, (-0.7, 21.65, 4.26), mat=white_cer)
+    # 6. Open Wooden Back-Left Shelves: climbable lower shelf at (-2.6, 20.2, 2.7) + upper shelf at Z=6.8
+    add_cube(1.0, (-2.6, 20.2, 2.7), scale=(6.6, 2.4, 0.24), mat=board_mat, uv_scale=0.4)
+    add_cube(1.0, (-2.6, 21.7, 6.8), scale=(6.6, 1.4, 0.24), mat=board_mat, uv_scale=0.4)
+    # Props tucked on sides of climbable lower shelf (top at Z=2.82)
+    add_sphere(0.45, (-5.1, 20.8, 3.12), scale=(1.0, 1.0, 0.62), mat=blue_cer)
+    add_cylinder(0.32, 0.65, (-0.3, 20.8, 3.16), mat=white_cer)
     # Props on upper shelf (z ~ 7.0)
     add_cylinder(0.75, 0.34, (-3.6, 21.65, 7.12), mat=plant_g)
     add_cylinder(0.44, 0.95, (-1.6, 21.65, 7.42), mat=white_cer)
 
-    # 7. Left-Side Foreground/Midground Kitchen Props (visible right next to Hero & down the run!)
-    # Leaning Paddle Cutting Board near player start (Blender Y = -12.0 -> Bevy Z = +12.0)
+    # 7. Left-Side Foreground Kitchen Props
     add_cube(1.0, (-6.55, -12.0, 2.05), scale=(0.24, 2.35, 3.9), rotation=(0, -0.14, 0), mat=board_mat, uv_scale=0.45, smooth=True, bevel=0.04)
     add_cube(1.0, (-6.82, -12.0, 4.45), scale=(0.24, 0.68, 1.15), rotation=(0, -0.14, 0), mat=board_mat, uv_scale=0.45, smooth=True, bevel=0.04)
 
-    # Contoured Wooden Pepper Mill (Blender Y = -10.0)
     add_cylinder(0.46, 2.1, (-5.9, -10.0, 1.05), mat=mill_wood)
     add_sphere(0.50, (-5.9, -10.0, 2.25), scale=(1.0, 1.0, 0.85), mat=mill_wood)
     add_sphere(0.14, (-5.9, -10.0, 2.74), mat=steel)
 
-    # Wall Hanging Rail + Stainless Utensils on Left Tile Wall (Blender Y = -10.5..-6.0, Z = 4.6)
     add_cylinder(0.06, 6.2, (-7.0, -8.5, 4.85), rotation=(math.pi / 2, 0, 0), mat=steel)
     for uy, handle_mat in [(-10.2, red_cer), (-8.8, steel), (-7.2, cab)]:
         add_cylinder(0.06, 1.5, (-6.98, uy, 4.05), mat=handle_mat)
         add_cube(0.32, (-6.98, uy, 3.15), scale=(0.15, 1.15, 1.35), mat=steel, smooth=True)
 
-    # White Ceramic Utensil Crock + Wooden Spoons (Blender Y = -6.8)
     add_cylinder(0.72, 1.65, (-6.0, -6.8, 0.82), mat=white_cer)
     add_torus(0.72, 0.08, (-6.0, -6.8, 1.64), mat=white_cer)
     for sx, sy, rot in [(-0.18, -0.1, (0.25, -0.2, 0)), (0.15, 0.14, (-0.22, 0.25, 0)), (0.0, -0.2, (0.3, 0.1, 0))]:
         add_cylinder(0.06, 2.1, (-6.0 + sx, -6.8 + sy, 2.05), rotation=rot, mat=board_mat, uv_scale=0.8)
         add_sphere(0.22, (-6.0 + sx * 1.6, -6.8 + sy * 1.6, 3.05), scale=(0.9, 1.3, 0.35), rotation=rot, mat=board_mat, uv_scale=0.8)
 
-    # Glossy Red Ceramic Bowl with Bright Red Tomatoes (Blender Y = -3.8)
     add_sphere(1.05, (-5.85, -3.8, 0.58), scale=(1.0, 1.0, 0.62), mat=red_cer)
     add_cylinder(0.96, 0.22, (-5.85, -3.8, 0.88), mat=red_cer)
     for tx, ty, tz in [(-0.28, -0.15, 1.10), (0.26, -0.10, 1.12), (-0.02, 0.26, 1.10), (0.04, -0.02, 1.30)]:
         add_sphere(0.32, (-5.85 + tx, -3.8 + ty, tz), scale=(1.08, 1.08, 0.88), mat=tomato)
-
-    # Second distant cutting board on left wall (Blender Y = +13.5) for mid-course detail
-    add_cube(1.0, (-6.6, 13.5, 1.9), scale=(0.24, 2.4, 3.6), rotation=(0, -0.14, 0), mat=board_mat, uv_scale=0.45, smooth=True, bevel=0.04)
 
     export_glb(os.path.join(OUTPUT_DIR, "kitchen_environment.glb"))
 
@@ -1175,5 +1267,6 @@ if __name__ == "__main__":
     build_plate_with_egg()
     build_syrup_bottle()
     build_salt_shaker()
+    build_giant_fridge()
     build_kitchen_environment()
-    print("Successfully exported all 13 photorealistic PBR Tendy Quest .glb assets to:", OUTPUT_DIR)
+    print("Successfully exported all 14 photorealistic PBR Tendy Quest .glb assets to:", OUTPUT_DIR)

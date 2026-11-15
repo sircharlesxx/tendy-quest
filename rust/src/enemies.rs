@@ -51,6 +51,8 @@ pub fn spawn_initial_enemies_inner(commands: &mut Commands, asset_server: &Asset
         (EnemyKind::KaleSlime, Vec3::new(2.8, 0.0, -3.5)),
         (EnemyKind::BroccoliBrute, Vec3::new(-1.8, 0.0, -11.0)),
         (EnemyKind::CarrotLancer, Vec3::new(2.6, 0.0, -13.5)),
+        (EnemyKind::BroccoliBrute, Vec3::new(13.5, 0.0, 4.0)),
+        (EnemyKind::CarrotLancer, Vec3::new(8.0, -6.0, -8.0)),
     ];
     for (kind, pos) in spots {
         spawn_enemy(commands, asset_server, kind, pos);
@@ -100,13 +102,13 @@ pub fn update_enemies(
         return;
     };
 
-    // Wave reinforcements (up to Wave 3)
+    // Wave reinforcements (up to Wave 3) across countertop, island & floor
     if wave_timer.0.tick(time.delta()).just_finished() && stats.wave < 3 {
         stats.wave += 1;
         let spawns = [
             (EnemyKind::BroccoliBrute, Vec3::new(-4.0, 0.0, 4.0)),
-            (EnemyKind::CarrotLancer, Vec3::new(4.0, 0.0, -7.0)),
-            (EnemyKind::KaleSlime, Vec3::new(0.0, 0.0, -14.0)),
+            (EnemyKind::CarrotLancer, Vec3::new(13.5, 0.0, -3.5)),
+            (EnemyKind::KaleSlime, Vec3::new(12.5, -6.0, 3.0)),
         ];
         for (kind, pos) in spawns {
             spawn_enemy(&mut commands, &asset_server, kind, pos);
@@ -114,19 +116,28 @@ pub fn update_enemies(
     }
 
     for (mut e_tf, mut enemy) in &mut enemy_q {
+        let (min_x, max_x, min_z, max_z) = if enemy.origin.y < -1.0 {
+            (7.4_f32, 20.8_f32, -15.2_f32, 22.5_f32)
+        } else if enemy.origin.x > 9.0 {
+            (10.0_f32, 17.0_f32, -9.5_f32, 9.5_f32)
+        } else {
+            (-6.5_f32, 6.5_f32, -20.5_f32, 20.5_f32)
+        };
+
         if enemy.knockback.length_squared() > 0.05 {
             e_tf.translation += enemy.knockback * dt;
             enemy.knockback *= (1.0 - 6.0 * dt).max(0.0);
         }
 
         let to_player = p_tf.translation - e_tf.translation;
+        let same_level = (p_tf.translation.y - e_tf.translation.y).abs() < 2.2;
         let flat_to_player = Vec3::new(to_player.x, 0.0, to_player.z);
         let dist = flat_to_player.length();
 
         let mut move_vec = Vec3::ZERO;
         match enemy.kind {
             EnemyKind::BroccoliBrute => {
-                if dist < 9.0 && dist > 0.2 {
+                if same_level && dist < 9.0 && dist > 0.2 {
                     move_vec = flat_to_player.normalize() * 3.8;
                 } else {
                     enemy.angle += dt * 0.9;
@@ -147,7 +158,7 @@ pub fn update_enemies(
                     if d.length() > 0.15 {
                         move_vec = d.normalize() * 2.6;
                     }
-                    if dist < 10.5 && dist > 0.2 {
+                    if same_level && dist < 10.5 && dist > 0.2 {
                         enemy.carrot_state = CarrotState::Telegraph;
                         enemy.state_timer = 0.8;
                         enemy.lunge_dir = flat_to_player.normalize();
@@ -169,7 +180,10 @@ pub fn update_enemies(
                 CarrotState::Lunge => {
                     enemy.state_timer -= dt;
                     move_vec = enemy.lunge_dir * 11.5;
-                    if e_tf.translation.x.abs() >= 6.4 || enemy.state_timer <= 0.0 {
+                    if e_tf.translation.x <= min_x + 0.1
+                        || e_tf.translation.x >= max_x - 0.1
+                        || enemy.state_timer <= 0.0
+                    {
                         enemy.carrot_state = CarrotState::Stunned;
                         enemy.state_timer = 1.1;
                     }
@@ -182,7 +196,7 @@ pub fn update_enemies(
                 }
             },
             EnemyKind::KaleSlime => {
-                if dist < 9.5 && dist > 0.2 {
+                if same_level && dist < 9.5 && dist > 0.2 {
                     move_vec = flat_to_player.normalize() * 2.1;
                 } else {
                     enemy.angle += dt * 0.7;
@@ -204,7 +218,11 @@ pub fn update_enemies(
                             alpha_mode: AlphaMode::Blend,
                             ..default()
                         })),
-                        Transform::from_xyz(e_tf.translation.x, 0.03, e_tf.translation.z),
+                        Transform::from_xyz(
+                            e_tf.translation.x,
+                            enemy.origin.y + 0.03,
+                            e_tf.translation.z,
+                        ),
                         FiberPuddle { lifetime: 4.5 },
                     ));
                 }
@@ -215,17 +233,31 @@ pub fn update_enemies(
         enemy.walk_phase += move_speed * dt * 2.4;
 
         e_tf.translation += move_vec * dt;
-        e_tf.translation.x = e_tf.translation.x.clamp(-6.5, 6.5);
-        e_tf.translation.z = e_tf.translation.z.clamp(-20.5, 20.5);
+        e_tf.translation.x = e_tf.translation.x.clamp(min_x, max_x);
+        e_tf.translation.z = e_tf.translation.z.clamp(min_z, max_z);
+        e_tf.translation.y = enemy.origin.y;
         if move_vec.length_squared() > 0.05 {
             let yaw = (-move_vec.x).atan2(-move_vec.z);
             e_tf.rotation = Quat::from_rotation_y(yaw);
         }
 
-        // Hit check against player
-        let hit_dist = p_tf.translation.distance(e_tf.translation);
-        if hit_dist < 1.15 && (p_tf.translation.y - e_tf.translation.y).abs() < 1.3 && player.invuln_timer <= 0.0 {
-            if stats.has_ranch_shield {
+        // Hit check against player (big Katamari Hero bowls veggies aside!)
+        let xz_dist = Vec2::new(
+            p_tf.translation.x - e_tf.translation.x,
+            p_tf.translation.z - e_tf.translation.z,
+        )
+        .length();
+        let y_overlap =
+            (p_tf.translation.y - e_tf.translation.y).abs() < (1.25 + stats.player_scale * 0.45);
+        let hit_radius = 1.05 + stats.player_scale * 0.25;
+        if xz_dist < hit_radius && y_overlap && player.invuln_timer <= 0.0 {
+            if stats.player_scale >= 2.2 {
+                enemy.knockback =
+                    -flat_to_player.normalize_or_zero() * (14.0 + stats.player_scale * 1.5);
+                player.invuln_timer = 0.25;
+                stats.score += 250;
+                crate::audio::play_sfx("shield");
+            } else if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
                 player.invuln_timer = 0.8;
                 enemy.knockback = -flat_to_player.normalize_or_zero() * 12.0;
@@ -245,14 +277,22 @@ pub fn update_enemies(
         }
     }
 
-    // Fiber Puddles slow player
+    // Fiber Puddles slow small heroes on matching floor height
     for (entity, pud_tf, mut puddle) in &mut puddle_q {
         puddle.lifetime -= dt;
         if puddle.lifetime <= 0.0 {
             commands.entity(entity).despawn_recursive();
             continue;
         }
-        if (p_tf.translation - pud_tf.translation).length() < 1.0 && p_tf.translation.y < 0.4 {
+        let xz_d = Vec2::new(
+            p_tf.translation.x - pud_tf.translation.x,
+            p_tf.translation.z - pud_tf.translation.z,
+        )
+        .length();
+        if xz_d < 1.0
+            && (p_tf.translation.y - pud_tf.translation.y).abs() < 0.55
+            && stats.player_scale < 2.2
+        {
             player.slow_timer = 0.4;
         }
     }
