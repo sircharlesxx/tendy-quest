@@ -13,9 +13,10 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "assets" / "readme"
 VIDEO_PATH = ROOT / "assets" / "video" / "gemini_generated_video_23f12819.mp4"
 
-SHOT_DESKTOP = Path("/tmp/tendy_live10_desktop.png")
-SHOT_WALKING = Path("/tmp/tendy_live10_walking2.png")
-SHOT_PORTRAIT = Path("/tmp/tendy_live10_mobile_port.png")
+SHOT_DESKTOP = Path("/home/tpeters/.gemini/antigravity-cli/brain/a57795ae-ab44-4094-bfb9-bebac1762ce7/scratch/desktop_playing.png")
+SHOT_WALKING = Path("/home/tpeters/.gemini/antigravity-cli/brain/a57795ae-ab44-4094-bfb9-bebac1762ce7/scratch/desktop_apartment_floor.png")
+SHOT_PORTRAIT = Path("/home/tpeters/.gemini/antigravity-cli/brain/a57795ae-ab44-4094-bfb9-bebac1762ce7/scratch/mobile_pixel11_playing.png")
+SHOT_CITY = Path("/home/tpeters/.gemini/antigravity-cli/brain/a57795ae-ab44-4094-bfb9-bebac1762ce7/scratch/desktop_city_aerial.png")
 
 FONT_DISPLAY = "/usr/share/fonts/aajohan-comfortaa-fonts/Comfortaa-Bold.otf"
 FONT_EXTRA = "/usr/share/fonts/abattis-cantarell-fonts/Cantarell-ExtraBold.otf"
@@ -30,7 +31,7 @@ def font(path: str, size: int) -> ImageFont.FreeTypeFont:
 def verify_inputs() -> None:
     missing = [
         str(p)
-        for p in [VIDEO_PATH, SHOT_DESKTOP, SHOT_WALKING, SHOT_PORTRAIT]
+        for p in [VIDEO_PATH, SHOT_DESKTOP, SHOT_WALKING, SHOT_PORTRAIT, SHOT_CITY]
         if not p.exists()
     ]
     if missing:
@@ -280,18 +281,19 @@ def build_hero_banner(v_hero: Image.Image) -> None:
     # Title with warm crisp drop shadow
     draw.text((53, 91), "TENDY QUEST", font=f_title, fill=(140, 35, 12, 255))
     draw.text((50, 88), "TENDY QUEST", font=f_title, fill=(254, 240, 138, 255))
-    draw.text((52, 168), "GIANT KITCHEN ADVENTURE", font=f_sub, fill=(251, 146, 60, 255))
+    draw.text((52, 166), "1,200 SQ FT APARTMENT ADVENTURE", font=f_sub, fill=(251, 146, 60, 255))
 
     tagline = (
-        "Start as a tiny toy on the countertop, eat all 12 Golden Tendies to grow to "
-        "180cm Adult Size, and open the Giant Refrigerator!"
+        "Start as a tiny 17cm guy on the breakfast island, eat all 12 Golden Tendies "
+        "across a giant 1,200 sq ft apartment to grow into a 180cm Big Boy, and open "
+        "the Giant Refrigerator!"
     )
-    ty = 212
-    for line in wrap_lines(draw, tagline, f_body, 610):
+    ty = 208
+    for line in wrap_lines(draw, tagline, f_body, 625):
         draw.text((52, ty), line, font=f_body, fill=(254, 243, 199, 245))
-        ty += 29
+        ty += 28
 
-    # Feature pills cleanly arranged in 2 balanced rows or 1 row if fitting
+    # Feature pills cleanly arranged in 1 row
     pills = [
         ("Rust + Bevy 0.15", (194, 65, 12, 245)),
         ("Blender PBR 3D", (15, 118, 110, 245)),
@@ -299,7 +301,7 @@ def build_hero_banner(v_hero: Image.Image) -> None:
         ("Mobile Touch Ready", (67, 56, 202, 245)),
     ]
     px_cur = 52
-    py_cur = 328
+    py_cur = 344
     for label, col in pills:
         pw = draw_pill(
             draw,
@@ -436,9 +438,9 @@ def build_gameplay_showcase() -> None:
     draw.rounded_rectangle([1130, 101, 1168, 106], radius=3, fill=(82, 82, 92, 255))
 
     captions = [
-        (274, "Desktop Browser", "Mouse 3D Look, WASD, Jump & Belly Dash"),
-        (782, "Mobile Landscape", "Virtual Stick, Swipe Look & DASH / JUMP"),
-        (1148, "Mobile Portrait", "Responsive Compact HUD View"),
+        (274, "Desktop Apartment View", "Mouse 3D Look, Scroll Zoom & Belly Dash"),
+        (782, "1,200 sq ft Open Floor", "Hunt Tendies Around Cheese Cups & Controllers"),
+        (1140, "Mobile Touch Portrait", "Compact HUD & Virtual Touch Controls"),
     ]
     for cx, c_title, c_sub in captions:
         b1 = draw.textbbox((0, 0), c_title, font=f_cap_title)
@@ -515,21 +517,21 @@ def build_cast_and_powerups(
     f_name = font(FONT_DISPLAY, 21)
     f_desc = font(FONT_REG, 15)
 
-    title = "MEET THE KITCHEN CREW, POWER-UPS & VEGGIE MONSTERS"
+    title = "MEET STAN, SAUCE POWER-UPS & VEGGIE MONSTERS"
     tb = draw.textbbox((0, 0), title, font=f_hdr)
     draw.text(((W - (tb[2] - tb[0])) // 2, 20), title, font=f_hdr, fill=(253, 230, 138, 255))
 
-    sub = "Know your allies, tasty buffs, and grumpy healthy-food adversaries on the countertop"
+    sub = "Eat crispy tenders to grow into a 180cm Big Boy while dodging grumpy greens"
     sb = draw.textbbox((0, 0), sub, font=f_sub)
     draw.text(((W - (sb[2] - sb[0])) // 2, 55), sub, font=f_sub, fill=(254, 215, 170, 225))
 
     cards = [
         {
-            "name": "Plaid Hero",
+            "name": "Stan (Plaid Hero)",
             "role": "HERO • PLAYABLE",
             "accent": (220, 38, 38, 255),
             "role_bg": (184, 29, 36, 255),
-            "desc": "Starts tiny and grows up to 180cm Adult Size! Double-Jump, i-frame Belly Dash, and bowl veggies aside.",
+            "desc": "Starts as a tiny 17cm guy and eats tendies to grow into a 180cm Big Boy! Double-Jump, Belly Dash, and bowl veggies aside.",
             "img": v_hero.crop((185, 435, 505, 835)),
         },
         {
@@ -537,7 +539,7 @@ def build_cast_and_powerups(
             "role": "COLLECTIBLE",
             "accent": (245, 158, 11, 255),
             "role_bg": (180, 83, 9, 255),
-            "desc": "12 crispy tenders across the giant kitchen (+150 pts each). Grow to 180cm & open the Giant Fridge (+5000 pts)!",
+            "desc": "12 crispy tenders across the 1,200 sq ft apartment (+150 pts each). Eat them all to become a Big Boy & open the Giant Fridge!",
             "img": v_tendy_slime.crop((240, 175, 500, 445)),
         },
         {
@@ -631,6 +633,15 @@ def build_cast_and_powerups(
     print(f"Generated {out.name}")
 
 
+def build_city_preview() -> None:
+    """Crop a spoiler-free skyline preview from the city screenshot (no subtitle/UI spoilers)."""
+    im_city = Image.open(SHOT_CITY).convert("RGB")
+    cropped = im_city.crop((0, 0, min(1280, im_city.width), min(515, im_city.height)))
+    out = OUT_DIR / "city_preview.png"
+    cropped.save(out, quality=95)
+    print(f"Generated {out.name} ({cropped.size[0]}x{cropped.size[1]})")
+
+
 def main() -> int:
     verify_inputs()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -647,6 +658,7 @@ def main() -> int:
         build_hero_banner(v_hero)
         build_gameplay_showcase()
         build_cast_and_powerups(v_broccoli, v_carrot, v_tendy_slime, v_hero)
+        build_city_preview()
 
     print("All README assets generated successfully in", OUT_DIR)
     return 0
