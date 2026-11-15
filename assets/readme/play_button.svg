@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="74" viewBox="0 0 560 74" role="img" aria-label="Play Tendy Quest in Your Browser">
+  <defs>
+    <linearGradient id="btnGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="55%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="rimGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#b81d24"/>
+      <stop offset="50%" stop-color="#fde68a"/>
+      <stop offset="100%" stop-color="#b81d24"/>
+    </linearGradient>
+    <filter id="softShadow" x="-4%" y="-8%" width="108%" height="124%">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#1a0d04" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="552" height="64" rx="18" fill="url(#btnGrad)" stroke="url(#rimGrad)" stroke-width="3" filter="url(#softShadow)"/>
+  <rect x="14" y="14" width="12" height="44" rx="5" fill="#b81d24" opacity="0.88"/>
+  <rect x="14" y="28" width="12" height="16" fill="#18181b" opacity="0.85"/>
+  <rect x="534" y="14" width="12" height="44" rx="5" fill="#b81d24" opacity="0.88"/>
+  <rect x="534" y="28" width="12" height="16" fill="#18181b" opacity="0.85"/>
+  <polygon points="48,22 48,48 70,35" fill="#fffbeb" stroke="#78350f" stroke-width="2" stroke-linejoin="round"/>
+  <text x="290" y="34" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="20" font-weight="800" letter-spacing="0.8" fill="#1f1106">PLAY TENDY QUEST IN YOUR BROWSER!</text>
+  <text x="290" y="54" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="12.5" font-weight="700" fill="#451a03">Instant WebGL2 &#8226; Desktop Mouse/Keyboard &amp; Mobile Touch Controls</text>
+</svg>
