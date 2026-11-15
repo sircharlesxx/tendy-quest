@@ -1,6 +1,9 @@
 # Godot internal cache
 godot/.godot/
 
+# Rust build artifacts
+rust/target/
+
 # Packaged zip (dist/web/ is deployed directly to GitHub Pages)
 dist/tendy-quest-web.zip
 
