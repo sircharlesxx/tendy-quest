@@ -283,8 +283,8 @@ def build_hero_banner(v_hero: Image.Image) -> None:
     draw.text((52, 168), "GIANT KITCHEN ADVENTURE", font=f_sub, fill=(251, 146, 60, 255))
 
     tagline = (
-        "Help the Plaid Hero dash, double-jump, and dance across a colossal "
-        "kitchen countertop to rescue all 10 Golden Tendies!"
+        "Start as a tiny toy on the countertop, eat all 12 Golden Tendies to grow to "
+        "180cm Adult Size, and open the Giant Refrigerator!"
     )
     ty = 212
     for line in wrap_lines(draw, tagline, f_body, 610):
@@ -295,7 +295,7 @@ def build_hero_banner(v_hero: Image.Image) -> None:
     pills = [
         ("Rust + Bevy 0.15", (194, 65, 12, 245)),
         ("Blender PBR 3D", (15, 118, 110, 245)),
-        ("125 BPM Pop OST", (190, 24, 93, 245)),
+        ("Eat-to-Grow", (190, 24, 93, 245)),
         ("Mobile Touch Ready", (67, 56, 202, 245)),
     ]
     px_cur = 52
@@ -529,7 +529,7 @@ def build_cast_and_powerups(
             "role": "HERO • PLAYABLE",
             "accent": (220, 38, 38, 255),
             "role_bg": (184, 29, 36, 255),
-            "desc": "Rocking a cozy red-and-black buffalo onesie! Uses Double-Jump, i-frame Belly Dash, and a Victory Dance.",
+            "desc": "Starts tiny and grows up to 180cm Adult Size! Double-Jump, i-frame Belly Dash, and bowl veggies aside.",
             "img": v_hero.crop((185, 435, 505, 835)),
         },
         {
@@ -537,7 +537,7 @@ def build_cast_and_powerups(
             "role": "COLLECTIBLE",
             "accent": (245, 158, 11, 255),
             "role_bg": (180, 83, 9, 255),
-            "desc": "10 crispy golden tenders across counters & sponges (+100 pts each). Final goal grants +5000 pts!",
+            "desc": "12 crispy tenders across the giant kitchen (+150 pts each). Grow to 180cm & open the Giant Fridge (+5000 pts)!",
             "img": v_tendy_slime.crop((240, 175, 500, 445)),
         },
         {
