@@ -1021,6 +1021,8 @@
       pointer-events: none;
       display: none;
       overflow: hidden;
+      -webkit-mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 135px), transparent calc(100% - 96px));
+      mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 135px), transparent calc(100% - 96px));
     }
     body.uzumaki-mode #uzumaki-overlay {
       display: block;
@@ -1074,7 +1076,7 @@
       to { margin-left: 2px; margin-top: 2px; }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-e4227100e51ef377.js" crossorigin="anonymous" integrity="sha384-/ttY/nCfE22su3HUa1jntrj2JT/u4YghQnEqWxdjxzLYr3WLmxeLcxAk1yPMRnvA"><link rel="preload" href="./tendy-quest-e4227100e51ef377_bg.wasm" crossorigin="anonymous" integrity="sha384-GEoswA8qAXyFgafbOiz/bIxwxdY+LoeTNIFYvLnAxe2mF19emI53d5JTmqpNXJW/" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-477b2a671151c249.js" crossorigin="anonymous" integrity="sha384-/ttY/nCfE22su3HUa1jntrj2JT/u4YghQnEqWxdjxzLYr3WLmxeLcxAk1yPMRnvA"><link rel="preload" href="./tendy-quest-477b2a671151c249_bg.wasm" crossorigin="anonymous" integrity="sha384-PV+fD9x93+1OHMAH9+8JmLV0PU/6T4EDgCKxw+bFznIHCVb8keoNrEqUEnYQjEwD" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1644,8 +1646,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-e4227100e51ef377.js';
-const wasm = await init({ module_or_path: './tendy-quest-e4227100e51ef377_bg.wasm' });
+import init, * as bindings from './tendy-quest-477b2a671151c249.js';
+const wasm = await init({ module_or_path: './tendy-quest-477b2a671151c249_bg.wasm' });
 
 
 window.wasmBindings = bindings;

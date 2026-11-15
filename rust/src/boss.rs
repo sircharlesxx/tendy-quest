@@ -2005,7 +2005,7 @@ fn headphone_cutscene_script(
             _ => (
                 "UZUMAKI SPIRAL CRISIS | SCENE 4/4",
                 "STAN - UZUMAKI VOW",
-                "\"BY THE TWISTING SPIRAL OF MADNESS — HEAR MY UNHINGED VOW! NEVER AGAIN SHALL AN IPAD OR HEADSET TOUCH THIS FLOOR!\"",
+                "\"BY THE TWISTING SPIRAL OF MADNESS - HEAR MY UNHINGED VOW! NEVER AGAIN SHALL AN IPAD OR HEADSET TOUCH THIS FLOOR!\"",
                 "By the twisting spiral of madness, hear my unhinged vow! Never again shall an iPad or headset touch this floor!",
                 "stan_vow_2",
             ),
@@ -2501,24 +2501,24 @@ pub fn update_headphone_cutscene(
                 // Elevated sweeping pan across all 5 Cracked iPads & Uzumaki Spiral
                 let u = ((t - 6.2) / 6.6).clamp(0.0, 1.0);
                 (
-                    Vec3::new(-4.0 + u * 8.0, base_y + 2.85, 3.8),
-                    Vec3::new(-0.8 + u * 1.6, base_y + 1.55, -3.4),
+                    Vec3::new(-4.0 + u * 8.0, base_y + 3.05, 5.2),
+                    Vec3::new(-0.8 + u * 1.6, base_y + 1.85, -3.4),
                 )
             }
             3 => {
                 // Existential-crisis push-in on Stan's face with spiral & cracked iPads behind him
                 let u = ((t - 12.8) / 6.6).clamp(0.0, 1.0);
                 (
-                    Vec3::new(-1.35 + u * 0.65, base_y + 2.15, 2.75 - u * 0.35),
-                    Vec3::new(0.0, base_y + 1.95, -0.8),
+                    Vec3::new(-1.55 + u * 0.70, base_y + 2.45, 4.35 - u * 0.35),
+                    Vec3::new(0.0, base_y + 2.10, -0.8),
                 )
             }
             _ => {
                 // Heroic / unhinged low-angle crane orbit as Stan swears his Sacred Vow
                 let u = ((t - 19.4) / 6.6).clamp(0.0, 1.0);
                 (
-                    Vec3::new(2.3 - u * 1.3, base_y + 1.65 + u * 0.75, 4.1 - u * 0.3),
-                    Vec3::new(0.0, base_y + 1.65, -0.9),
+                    Vec3::new(2.5 - u * 1.3, base_y + 1.95 + u * 0.75, 5.4 - u * 0.3),
+                    Vec3::new(0.0, base_y + 1.95, -0.9),
                 )
             }
         };
