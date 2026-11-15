@@ -45,6 +45,7 @@ pub fn spawn_player_inner(commands: &mut Commands, asset_server: &AssetServer) {
         LevelEntity,
         Player::default(),
         SceneRoot(hero_scene),
+        crate::state::SceneRetryPath::new("models/plaid_hero.glb#Scene0"),
         Transform::from_xyz(0.0, 0.0, 17.5).with_scale(Vec3::splat(0.55)),
     ));
 }
@@ -245,37 +246,43 @@ pub fn player_movement(
         }
     }
 
-    // Solid side-wall pushout against tall platforms (cabinets, island, fridge)
-    let wall_r = (0.24 * stats.player_scale).clamp(0.26, 0.72);
-    let player_top_y = tf.translation.y + (0.35 * stats.player_scale).max(0.5);
-    for (p_tf, p_box) in &platform_q {
-        let min_x = p_tf.translation.x - p_box.half_extents.x - wall_r;
-        let max_x = p_tf.translation.x + p_box.half_extents.x + wall_r;
-        let min_z = p_tf.translation.z - p_box.half_extents.z - wall_r;
-        let max_z = p_tf.translation.z + p_box.half_extents.z + wall_r;
-        let bottom_y = p_tf.translation.y - p_box.half_extents.y;
-        let top_y = p_tf.translation.y + p_box.half_extents.y;
+    // Solid side-wall pushout against all props, cabinets, walls, and obstacles (2 passes prevent corner-clipping)
+    let wall_r = (0.28 * stats.player_scale).clamp(0.28, 0.72);
+    let player_top_y = tf.translation.y + (0.45 * stats.player_scale).max(0.55);
+    for _ in 0..2 {
+        for (p_tf, p_box) in &platform_q {
+            let min_x = p_tf.translation.x - p_box.half_extents.x - wall_r;
+            let max_x = p_tf.translation.x + p_box.half_extents.x + wall_r;
+            let min_z = p_tf.translation.z - p_box.half_extents.z - wall_r;
+            let max_z = p_tf.translation.z + p_box.half_extents.z + wall_r;
+            let bottom_y = p_tf.translation.y - p_box.half_extents.y;
+            let top_y = p_tf.translation.y + p_box.half_extents.y;
 
-        if tf.translation.x > min_x
-            && tf.translation.x < max_x
-            && tf.translation.z > min_z
-            && tf.translation.z < max_z
-            && tf.translation.y < top_y - 0.35
-            && player_top_y > bottom_y + 0.15
-        {
-            let dx_left = tf.translation.x - min_x;
-            let dx_right = max_x - tf.translation.x;
-            let dz_back = tf.translation.z - min_z;
-            let dz_front = max_z - tf.translation.z;
-            let m = dx_left.min(dx_right).min(dz_back).min(dz_front);
-            if (m - dx_left).abs() < 0.001 {
-                tf.translation.x = min_x;
-            } else if (m - dx_right).abs() < 0.001 {
-                tf.translation.x = max_x;
-            } else if (m - dz_back).abs() < 0.001 {
-                tf.translation.z = min_z;
-            } else {
-                tf.translation.z = max_z;
+            if tf.translation.x > min_x
+                && tf.translation.x < max_x
+                && tf.translation.z > min_z
+                && tf.translation.z < max_z
+                && tf.translation.y < top_y - 0.05
+                && player_top_y > bottom_y + 0.05
+            {
+                let dx_left = tf.translation.x - min_x;
+                let dx_right = max_x - tf.translation.x;
+                let dz_back = tf.translation.z - min_z;
+                let dz_front = max_z - tf.translation.z;
+                let m = dx_left.min(dx_right).min(dz_back).min(dz_front);
+                if (m - dx_left).abs() < 0.001 {
+                    tf.translation.x = min_x;
+                    player.velocity.x = player.velocity.x.min(0.0);
+                } else if (m - dx_right).abs() < 0.001 {
+                    tf.translation.x = max_x;
+                    player.velocity.x = player.velocity.x.max(0.0);
+                } else if (m - dz_back).abs() < 0.001 {
+                    tf.translation.z = min_z;
+                    player.velocity.z = player.velocity.z.min(0.0);
+                } else {
+                    tf.translation.z = max_z;
+                    player.velocity.z = player.velocity.z.max(0.0);
+                }
             }
         }
     }

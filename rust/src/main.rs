@@ -5,9 +5,10 @@ mod player;
 mod state;
 mod ui;
 
+use bevy::asset::{AssetMetaCheck, AssetPlugin};
 use bevy::prelude::*;
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
-use level::{setup_lighting_and_camera, spawn_kitchen_level};
+use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
 use player::{
     animate_and_collect_pickups, animate_player_limbs, camera_mouse_look, player_movement,
     spawn_player, unlock_cursor, update_camera, victory_dance,
@@ -21,15 +22,22 @@ use ui::{
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Tendy Quest — Giant Kitchen".into(),
-                fit_canvas_to_parent: true,
-                prevent_default_event_handling: true,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Tendy Quest — Giant Kitchen".into(),
+                        fit_canvas_to_parent: true,
+                        prevent_default_event_handling: true,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(AssetPlugin {
+                    meta_check: AssetMetaCheck::Never,
+                    ..default()
+                }),
+        )
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
@@ -43,7 +51,15 @@ fn main() {
                 spawn_hud,
             ),
         )
-        .add_systems(Update, (toggle_audio_hotkey, update_hud, adapt_ui_to_viewport))
+        .add_systems(
+            Update,
+            (
+                retry_failed_scenes,
+                toggle_audio_hotkey,
+                update_hud,
+                adapt_ui_to_viewport,
+            ),
+        )
         .add_systems(OnEnter(GameState::Tutorial), spawn_tutorial_overlay)
         .add_systems(OnExit(GameState::Tutorial), despawn_tutorial_overlay)
         .add_systems(

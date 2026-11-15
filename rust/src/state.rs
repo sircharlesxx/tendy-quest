@@ -123,3 +123,15 @@ pub struct PowerupPickup {
     pub base_y: f32,
     pub phase: f32,
 }
+
+#[derive(Component, Clone, Copy)]
+pub struct SceneRetryPath {
+    pub path: &'static str,
+    pub attempts: u8,
+}
+
+impl SceneRetryPath {
+    pub fn new(path: &'static str) -> Self {
+        Self { path, attempts: 0 }
+    }
+}

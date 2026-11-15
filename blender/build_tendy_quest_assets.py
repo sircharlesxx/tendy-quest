@@ -1,5 +1,6 @@
 import math
 import os
+import bmesh
 import bpy
 import numpy as np
 
@@ -162,7 +163,7 @@ def create_solid_material(name, color, roughness=0.45, metallic=0.0, emission_st
 # --- High-Resolution NumPy PBR Texture Materials ---
 
 def mat_butcher_block():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n_coarse = fbm_noise(s, freqs=(6, 12, 24), weights=(0.5, 0.3, 0.2), seed=101)
     n_fine = fbm_noise(s, freqs=(24, 64, 128), weights=(0.4, 0.35, 0.25), seed=202)
@@ -211,7 +212,7 @@ def mat_butcher_block():
 
 
 def mat_sage_tile():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 16, 48), weights=(0.5, 0.3, 0.2), seed=11)
     tiles = 4
@@ -234,7 +235,7 @@ def mat_sage_tile():
 
 
 def mat_gingham():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     checks = 8
     cw = s / checks
@@ -258,7 +259,7 @@ def mat_gingham():
 
 
 def mat_plaid_onesie():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(16, 48), weights=(0.55, 0.45), seed=5)
     sq = s / 4.0
@@ -278,7 +279,7 @@ def mat_plaid_onesie():
 
 
 def mat_golden_tendy():
-    s = 256
+    s = 128
     n1 = fbm_noise(s, freqs=(8, 16, 32, 64), weights=(0.18, 0.27, 0.30, 0.25), seed=42)
     n2 = fbm_noise(s, freqs=(24, 48, 96), weights=(0.35, 0.35, 0.30), seed=99)
     crisp = np.clip((n1 * 0.55 + n2 * 0.45), 0.0, 1.0)
@@ -295,7 +296,7 @@ def mat_golden_tendy():
 
 
 def mat_broccoli_crown():
-    s = 256
+    s = 128
     n1 = fbm_noise(s, freqs=(12, 24, 48, 96), weights=(0.25, 0.30, 0.28, 0.17), seed=303)
     n2 = fbm_noise(s, freqs=(32, 64, 96), weights=(0.35, 0.40, 0.25), seed=404)
     buds = np.clip(np.sin(n2 * 18.0) * 0.5 + 0.5, 0.0, 1.0)
@@ -312,7 +313,7 @@ def mat_broccoli_crown():
 
 
 def mat_broccoli_stalk():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 24, 64), weights=(0.45, 0.35, 0.20), seed=55)
     fibers = 0.5 + 0.5 * np.sin((x / s) * 90.0 + n * 5.0)
@@ -329,7 +330,7 @@ def mat_broccoli_stalk():
 
 
 def mat_carrot_skin():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 20, 48), weights=(0.45, 0.35, 0.20), seed=88)
     rings = np.sin((y / s) * 34.0 + n * 3.0)
@@ -347,7 +348,7 @@ def mat_carrot_skin():
 
 
 def mat_kale_slime():
-    s = 256
+    s = 128
     n1 = fbm_noise(s, freqs=(6, 14, 32, 64), weights=(0.35, 0.30, 0.22, 0.13), seed=61)
     bubbles = np.clip(n1 - 0.62, 0.0, 1.0) * 2.5
     rgb = np.stack(
@@ -363,7 +364,7 @@ def mat_kale_slime():
 
 
 def mat_sponge_yellow():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(12, 32, 64), weights=(0.4, 0.35, 0.25), seed=77)
     pores = np.zeros((s, s), dtype=np.float32)
@@ -371,7 +372,7 @@ def mat_sponge_yellow():
     for _ in range(150):
         px = rng.uniform(0, s)
         py = rng.uniform(0, s)
-        pr = rng.uniform(2.0, 7.0)
+        pr = rng.uniform(1.0, 3.5)
         dx = np.minimum(np.abs(x - px), s - np.abs(x - px))
         dy = np.minimum(np.abs(y - py), s - np.abs(y - py))
         d2 = (dx * dx + dy * dy) / (pr * pr)
@@ -390,7 +391,7 @@ def mat_sponge_yellow():
 
 
 def mat_sponge_green():
-    s = 256
+    s = 128
     n = fbm_noise(s, freqs=(16, 40, 80), weights=(0.3, 0.4, 0.3), seed=89)
     rgb = np.stack(
         [
@@ -404,7 +405,7 @@ def mat_sponge_green():
 
 
 def mat_pancake():
-    s = 256
+    s = 128
     n = fbm_noise(s, freqs=(8, 20, 48, 80), weights=(0.35, 0.28, 0.22, 0.15), seed=51)
     brown = np.clip((n - 0.42) * 1.9, 0.0, 1.0)
     rgb = np.stack(
@@ -419,7 +420,7 @@ def mat_pancake():
 
 
 def mat_cutting_board():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(6, 18, 48), weights=(0.5, 0.3, 0.2), seed=14)
     grain = 0.5 + 0.5 * np.sin((x / s) * 45.0 + n * 6.0)
@@ -435,7 +436,7 @@ def mat_cutting_board():
 
 
 def mat_syrup_label():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     v = y / s
     # Warm cream parchment label with dark-red top/bottom trim borders & golden-orange center band
@@ -450,7 +451,7 @@ def mat_syrup_label():
 
 
 def mat_hair():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 24, 64), weights=(0.45, 0.35, 0.20), seed=73)
     strands = 0.5 + 0.5 * np.sin((x / s) * 110.0 + n * 4.0)
@@ -460,7 +461,7 @@ def mat_hair():
 
 
 def mat_window_view():
-    s = 256
+    s = 128
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     u, v = x / s, y / s
     n = fbm_noise(s, freqs=(4, 8, 16, 32), weights=(0.45, 0.30, 0.15, 0.10), seed=19)
@@ -627,22 +628,48 @@ def join_with_pivot(objs, name, pivot_xyz):
     return joined
 
 
+def _triangulate_meshes(mesh_objs):
+    """Triangulate meshes so glTF mikktspace tangent export succeeds cleanly on N-gons."""
+    for obj in mesh_objs:
+        if obj.type != "MESH" or not obj.data:
+            continue
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bmesh.ops.triangulate(bm, faces=bm.faces[:])
+        bm.to_mesh(obj.data)
+        bm.free()
+        obj.data.update()
+
+
 def export_glb(filepath, preserve_pivots=False):
-    bpy.ops.object.select_all(action="SELECT")
+    mesh_objs = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    if not preserve_pivots and len(mesh_objs) > 1:
+        join_with_pivot(mesh_objs, "JoinedAsset", (0.0, 0.0, 0.0))
+        mesh_objs = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+
     if preserve_pivots:
+        bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+        _triangulate_meshes(mesh_objs)
+        bpy.ops.object.select_all(action="SELECT")
         bpy.ops.export_scene.gltf(
             filepath=filepath,
             export_format="GLB",
             use_selection=True,
             export_apply=False,
+            export_tangents=True,
         )
     else:
+        bpy.ops.object.select_all(action="SELECT")
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        _triangulate_meshes(mesh_objs)
+        bpy.ops.object.select_all(action="SELECT")
         bpy.ops.export_scene.gltf(
             filepath=filepath,
             export_format="GLB",
             use_selection=True,
             export_apply=True,
+            export_tangents=True,
         )
 
 
@@ -1092,6 +1119,7 @@ def build_giant_fridge():
         for tx, ty, rotz in [(-1.35, -0.1, 0.4), (-0.85, -0.35, -0.5), (-1.05, 0.15, 1.1)]:
             m = add_sphere(0.42, (tx, ty, sz + 0.44), scale=(1.45, 0.68, 0.55), rotation=(0.15, 0.0, rotz), mat=tendy_mat)
             displace_organic(m, freq=12.0, amp=0.14, seed=int(sz * 10 + abs(tx * 7)))
+            body_parts.append(m)
         # Sauce jars on right side of shelves
         body_parts.append(add_cylinder(0.42, 0.95, (1.55, 0.15, sz + 0.56), mat=mustard_mat, vertices=20))
         body_parts.append(add_cylinder(0.36, 0.20, (1.55, 0.15, sz + 1.08), mat=chrome, vertices=20))

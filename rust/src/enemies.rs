@@ -69,6 +69,7 @@ fn spawn_enemy(commands: &mut Commands, asset_server: &AssetServer, kind: EnemyK
     commands.spawn((
         LevelEntity,
         SceneRoot(scene),
+        crate::state::SceneRetryPath::new(path),
         Transform::from_translation(pos),
         Enemy {
             kind,
