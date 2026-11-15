@@ -17,6 +17,9 @@ pub struct Player {
     pub facing_yaw: f32,
     pub walk_cycle: f32,
     pub last_step_half: i32,
+    pub roll_timer: f32,
+    pub attack_timer: f32,
+    pub attack_cooldown: f32,
 }
 
 impl Default for Player {
@@ -31,6 +34,9 @@ impl Default for Player {
             facing_yaw: 0.0,
             walk_cycle: 0.0,
             last_step_half: 0,
+            roll_timer: 0.0,
+            attack_timer: 0.0,
+            attack_cooldown: 0.0,
         }
     }
 }
@@ -111,6 +117,7 @@ pub fn lock_touch_playing() {
 pub fn player_movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
     orbit: Res<CameraOrbit>,
     mut stats: ResMut<PlayerStats>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
@@ -133,6 +140,15 @@ pub fn player_movement(
 
     if player.dash_timer > 0.0 {
         player.dash_timer = (player.dash_timer - dt).max(0.0);
+    }
+    if player.roll_timer > 0.0 {
+        player.roll_timer = (player.roll_timer - dt).max(0.0);
+    }
+    if player.attack_timer > 0.0 {
+        player.attack_timer = (player.attack_timer - dt).max(0.0);
+    }
+    if player.attack_cooldown > 0.0 {
+        player.attack_cooldown = (player.attack_cooldown - dt).max(0.0);
     }
     if player.invuln_timer > 0.0 {
         player.invuln_timer = (player.invuln_timer - dt).max(0.0);
@@ -170,13 +186,32 @@ pub fn player_movement(
     let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
     let raw_move = forward * forward_in + right * right_in;
     let move_mag = raw_move.length().min(1.0);
-    let dir = raw_move.normalize_or_zero();
+    let mut dir = raw_move.normalize_or_zero();
 
-    // Dash (Shift or Touch DASH)
+    // Dash outside boss mode; Dodge & Roll + Lightsaber Slash in boss mode
     let shift_pressed = keys.just_pressed(KeyCode::ShiftLeft)
         || keys.just_pressed(KeyCode::ShiftRight)
-        || crate::audio::take_touch_dash();
-    if shift_pressed && player.dash_timer <= 0.0 && stats.dash_energy >= 35.0 {
+        || crate::audio::take_touch_dash()
+        || (stats.boss_mode && mouse_buttons.just_pressed(MouseButton::Right));
+    let touch_atk = crate::audio::take_touch_attack();
+    if stats.boss_mode {
+        if shift_pressed && player.roll_timer <= 0.0 && stats.dash_energy >= 25.0 {
+            stats.dash_energy -= 25.0;
+            player.roll_timer = 0.42;
+            player.invuln_timer = 0.55;
+            crate::audio::play_sfx("dodge_roll");
+        }
+        if (mouse_buttons.just_pressed(MouseButton::Left)
+            || keys.just_pressed(KeyCode::KeyE)
+            || keys.just_pressed(KeyCode::KeyF)
+            || touch_atk)
+            && player.attack_cooldown <= 0.0
+        {
+            player.attack_timer = 0.28;
+            player.attack_cooldown = 0.34;
+            crate::audio::play_sfx("saber_swing");
+        }
+    } else if shift_pressed && player.dash_timer <= 0.0 && stats.dash_energy >= 35.0 {
         stats.dash_energy -= 35.0;
         player.dash_timer = 0.22;
         player.invuln_timer = 0.35;
@@ -198,7 +233,19 @@ pub fn player_movement(
     }
 
     // Horizontal speed scales with player growth
-    let base_speed = if player.dash_timer > 0.0 { 15.8 } else { 7.4 };
+    let effective_mag = if player.roll_timer > 0.0 && move_mag < 0.05 {
+        dir = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
+        1.0
+    } else {
+        move_mag
+    };
+    let base_speed = if player.roll_timer > 0.0 {
+        19.5
+    } else if player.dash_timer > 0.0 {
+        15.8
+    } else {
+        7.4
+    };
     let mut speed = base_speed * size_ratio.powf(0.38);
     if stats.speed_boost_timer > 0.0 {
         speed *= 1.75;
@@ -207,8 +254,8 @@ pub fn player_movement(
         speed *= 0.6;
     }
 
-    player.velocity.x = dir.x * speed * move_mag;
-    player.velocity.z = dir.z * speed * move_mag;
+    player.velocity.x = dir.x * speed * effective_mag;
+    player.velocity.z = dir.z * speed * effective_mag;
 
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
     if horiz_speed > 0.25 {
@@ -490,6 +537,7 @@ pub fn update_camera(
 pub fn animate_and_collect_pickups(
     mut commands: Commands,
     time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
     player_q: Query<&Transform, With<Player>>,
@@ -514,6 +562,14 @@ pub fn animate_and_collect_pickups(
         ),
     >,
 ) {
+    if keys.just_pressed(KeyCode::KeyK) {
+        next_state.set(GameState::Cutscene);
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyB) {
+        next_state.set(GameState::BossFight);
+        return;
+    }
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
     let player_pos = player_q.get_single().map(|p| p.translation).ok();
@@ -592,7 +648,7 @@ pub fn animate_and_collect_pickups(
             }
         }
         if stats.fridge_open >= 0.72 {
-            next_state.set(GameState::StageClear);
+            next_state.set(GameState::Cutscene);
         }
     }
 }
@@ -626,6 +682,31 @@ pub fn animate_player_limbs(
                 Quat::from_rotation_y((t * 5.0).sin() * 0.25)
                     * Quat::from_rotation_x(-0.10 + swing * 0.08),
                 swing.abs() * 0.05,
+            )
+        } else if player.roll_timer > 0.0 {
+            let p = (1.0 - (player.roll_timer / 0.42)).clamp(0.0, 1.0);
+            let spin = p * std::f32::consts::TAU;
+            (
+                Quat::from_rotation_x(-1.15),
+                Quat::from_rotation_x(-1.15),
+                Quat::from_rotation_x(-0.95) * Quat::from_rotation_z(-0.2),
+                Quat::from_rotation_x(-0.95) * Quat::from_rotation_z(0.2),
+                Quat::from_rotation_x(-spin),
+                Quat::from_rotation_x(0.35),
+                -0.18 * (p * std::f32::consts::PI).sin(),
+            )
+        } else if player.attack_timer > 0.0 {
+            let sw = (1.0 - (player.attack_timer / 0.28)).clamp(0.0, 1.0);
+            (
+                Quat::from_rotation_x(0.38),
+                Quat::from_rotation_x(-0.42),
+                Quat::from_rotation_x(-0.45) * Quat::from_rotation_z(-0.35),
+                Quat::from_rotation_x(-1.45 + sw * 0.65)
+                    * Quat::from_rotation_y(-1.15 + sw * 2.45)
+                    * Quat::from_rotation_z(0.55 - sw * 1.1),
+                Quat::from_rotation_x(-0.20) * Quat::from_rotation_y(-0.48 + sw * 0.96),
+                Quat::from_rotation_x(0.12) * Quat::from_rotation_y(0.20 - sw * 0.40),
+                0.04,
             )
         } else if player.dash_timer > 0.0 {
             (
@@ -724,9 +805,17 @@ pub fn victory_dance(
         return;
     };
     let t = time.elapsed_secs();
-    tf.scale = Vec3::splat(6.0);
-    tf.translation.x = 13.0;
-    tf.translation.z = -12.6;
-    tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
-    tf.translation.y = -6.0 + (t * 8.0).sin().abs() * 1.1;
+    if stats.boss_mode {
+        tf.scale = Vec3::splat(3.4);
+        tf.translation.x = 13.0;
+        tf.translation.z = -12.6;
+        tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
+        tf.translation.y = -6.0 + (t * 8.0).sin().abs() * 0.9;
+    } else {
+        tf.scale = Vec3::splat(6.0);
+        tf.translation.x = 13.0;
+        tf.translation.z = -12.6;
+        tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
+        tf.translation.y = -6.0 + (t * 8.0).sin().abs() * 1.1;
+    }
 }

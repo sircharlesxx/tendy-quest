@@ -28,6 +28,8 @@ pub struct Enemy {
     pub trail_timer: f32,
     pub knockback: Vec3,
     pub walk_phase: f32,
+    pub hp: i32,
+    pub hit_cooldown: f32,
 }
 
 #[derive(Component)]
@@ -60,6 +62,10 @@ pub fn spawn_initial_enemies_inner(commands: &mut Commands, asset_server: &Asset
 }
 
 fn spawn_enemy(commands: &mut Commands, asset_server: &AssetServer, kind: EnemyKind, pos: Vec3) {
+    spawn_enemy_at(commands, asset_server, kind, pos);
+}
+
+pub fn spawn_enemy_at(commands: &mut Commands, asset_server: &AssetServer, kind: EnemyKind, pos: Vec3) {
     let path = match kind {
         EnemyKind::BroccoliBrute => "models/broccoli_brute.glb#Scene0",
         EnemyKind::CarrotLancer => "models/carrot_lancer.glb#Scene0",
@@ -81,6 +87,8 @@ fn spawn_enemy(commands: &mut Commands, asset_server: &AssetServer, kind: EnemyK
             trail_timer: 0.0,
             knockback: Vec3::ZERO,
             walk_phase: pos.z * 0.5,
+            hp: 2,
+            hit_cooldown: 0.0,
         },
     ));
 }
@@ -117,6 +125,9 @@ pub fn update_enemies(
     }
 
     for (mut e_tf, mut enemy) in &mut enemy_q {
+        if enemy.hit_cooldown > 0.0 {
+            enemy.hit_cooldown = (enemy.hit_cooldown - dt).max(0.0);
+        }
         let (min_x, max_x, min_z, max_z) = if enemy.origin.y < -1.0 {
             (7.5_f32, 10.5_f32, -15.2_f32, 9.5_f32)
         } else if enemy.origin.x > 10.5 {
@@ -230,10 +241,11 @@ pub fn update_enemies(
             }
         }
 
-        let move_speed = move_vec.length();
+        let rage_mul = if stats.boss_mode { 1.45 } else { 1.0 };
+        let move_speed = move_vec.length() * rage_mul;
         enemy.walk_phase += move_speed * dt * 2.4;
 
-        e_tf.translation += move_vec * dt;
+        e_tf.translation += move_vec * rage_mul * dt;
         e_tf.translation.x = e_tf.translation.x.clamp(min_x, max_x);
         e_tf.translation.z = e_tf.translation.z.clamp(min_z, max_z);
         e_tf.translation.y = enemy.origin.y;
@@ -242,7 +254,7 @@ pub fn update_enemies(
             e_tf.rotation = Quat::from_rotation_y(yaw);
         }
 
-        // Hit check against player (big Katamari Hero bowls veggies aside!)
+        // Hit check against player (big Katamari Hero bowls veggies aside outside boss mode; Dodge & Roll evades!)
         let xz_dist = Vec2::new(
             p_tf.translation.x - e_tf.translation.x,
             p_tf.translation.z - e_tf.translation.z,
@@ -250,9 +262,18 @@ pub fn update_enemies(
         .length();
         let y_overlap =
             (p_tf.translation.y - e_tf.translation.y).abs() < (1.25 + stats.player_scale * 0.45);
-        let hit_radius = 1.05 + stats.player_scale * 0.25;
-        if xz_dist < hit_radius && y_overlap && player.invuln_timer <= 0.0 {
-            if stats.player_scale >= 2.2 {
+        let hit_radius = if stats.boss_mode {
+            1.65
+        } else {
+            1.05 + stats.player_scale * 0.25
+        };
+        if xz_dist < hit_radius
+            && y_overlap
+            && player.invuln_timer <= 0.0
+            && player.roll_timer <= 0.0
+            && !(stats.boss_mode && player.attack_timer > 0.0)
+        {
+            if !stats.boss_mode && stats.player_scale >= 2.2 {
                 enemy.knockback =
                     -flat_to_player.normalize_or_zero() * (14.0 + stats.player_scale * 1.5);
                 player.invuln_timer = 0.25;

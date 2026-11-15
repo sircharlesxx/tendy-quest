@@ -75,6 +75,70 @@
         } catch (_) {}
       }
 
+      let droneOsc1 = null;
+      let droneOsc2 = null;
+      let droneGain = null;
+      let bossTimer = null;
+      let bossStep = 0;
+
+      function stopSpecialAudio() {
+        try {
+          if (bossTimer) { clearInterval(bossTimer); bossTimer = null; }
+          if (droneOsc1) { droneOsc1.stop(); droneOsc1.disconnect(); droneOsc1 = null; }
+          if (droneOsc2) { droneOsc2.stop(); droneOsc2.disconnect(); droneOsc2 = null; }
+          if (droneGain) { droneGain.disconnect(); droneGain = null; }
+        } catch (_) {}
+      }
+
+      function synthProcSfx(name) {
+        const ac = ensureCtx();
+        if (!ac || !masterGain) return false;
+        const now = ac.currentTime;
+        const mkOsc = (type, f0, f1, dur, gainPeak) => {
+          const osc = ac.createOscillator();
+          const g = ac.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(f0, now);
+          osc.frequency.exponentialRampToValueAtTime(Math.max(20, f1), now + dur);
+          g.gain.setValueAtTime(0.001, now);
+          g.gain.linearRampToValueAtTime(gainPeak, now + 0.015);
+          g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+          osc.connect(g);
+          g.connect(masterGain);
+          osc.start(now);
+          osc.stop(now + dur + 0.02);
+        };
+        if (name === "saber_ignite") {
+          mkOsc("sawtooth", 110, 420, 0.36, 0.28);
+          mkOsc("triangle", 220, 140, 0.45, 0.22);
+          return true;
+        }
+        if (name === "saber_swing") {
+          mkOsc("sawtooth", 340, 135, 0.19, 0.22);
+          mkOsc("sine", 560, 210, 0.17, 0.14);
+          return true;
+        }
+        if (name === "saber_hit") {
+          mkOsc("square", 680, 120, 0.16, 0.30);
+          mkOsc("sawtooth", 980, 240, 0.14, 0.20);
+          return true;
+        }
+        if (name === "dodge_roll") {
+          mkOsc("sine", 240, 520, 0.18, 0.22);
+          return true;
+        }
+        if (name === "thunder") {
+          mkOsc("sawtooth", 95, 32, 0.75, 0.36);
+          return true;
+        }
+        if (name === "mom_yell") {
+          mkOsc("sawtooth", 540, 380, 0.32, 0.26);
+          mkOsc("square", 720, 460, 0.24, 0.14);
+          return true;
+        }
+        return false;
+      }
+
       function startLoops() {
         const ac = ensureCtx();
         if (!ac || ac.state !== "running") return;
@@ -122,10 +186,126 @@
 
       return {
         playBgm() {
+          stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
           unlockAndMaybeStart();
           startLoops();
+          try {
+            const ac = ensureCtx();
+            if (ac && bgmGain) bgmGain.gain.setValueAtTime(0.42, ac.currentTime);
+            if (ac && ambGain) ambGain.gain.setValueAtTime(0.14, ac.currentTime);
+            if (bgmSource) bgmSource.playbackRate.value = 1.0;
+          } catch (_) {}
+        },
+        playCutsceneMusic() {
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
+            if (ambGain) ambGain.gain.setValueAtTime(0.06, ac.currentTime);
+            const filter = ac.createBiquadFilter();
+            filter.type = "lowpass";
+            filter.frequency.value = 240;
+            droneGain = ac.createGain();
+            droneGain.gain.value = 0.22;
+            filter.connect(droneGain);
+            droneGain.connect(masterGain);
+            droneOsc1 = ac.createOscillator();
+            droneOsc1.type = "sawtooth";
+            droneOsc1.frequency.value = 55;
+            droneOsc2 = ac.createOscillator();
+            droneOsc2.type = "sawtooth";
+            droneOsc2.frequency.value = 82.41;
+            droneOsc1.connect(filter);
+            droneOsc2.connect(filter);
+            droneOsc1.start();
+            droneOsc2.start();
+          } catch (_) {}
+        },
+        playBossMusic() {
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.28, ac.currentTime);
+            if (ambGain) ambGain.gain.setValueAtTime(0.0, ac.currentTime);
+            if (bgmSource) bgmSource.playbackRate.value = 1.24;
+            // Epic 150 BPM Chicken-Tendy boss riff + driving synth drums
+            const notes = [146.83, 174.61, 220.0, 261.63, 293.66, 261.63, 220.0, 174.61];
+            const bass = [73.42, 73.42, 87.31, 87.31, 98.0, 98.0, 110.0, 82.41];
+            bossStep = 0;
+            bossTimer = setInterval(() => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const step = bossStep % 16;
+              bossStep += 1;
+              // Kick on 0, 4, 8, 12 + syncopated hits
+              if (step % 4 === 0 || step === 10) {
+                const ko = ac.createOscillator();
+                const kg = ac.createGain();
+                ko.type = "sine";
+                ko.frequency.setValueAtTime(135, now);
+                ko.frequency.exponentialRampToValueAtTime(38, now + 0.13);
+                kg.gain.setValueAtTime(0.32, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                ko.connect(kg);
+                kg.connect(masterGain);
+                ko.start(now);
+                ko.stop(now + 0.15);
+              }
+              // Lead Tendy power-chord arpeggio
+              const lOsc = ac.createOscillator();
+              const lGain = ac.createGain();
+              lOsc.type = "sawtooth";
+              lOsc.frequency.setValueAtTime(notes[step % notes.length] * (step >= 8 ? 2.0 : 1.0), now);
+              lGain.gain.setValueAtTime(0.09, now);
+              lGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+              lOsc.connect(lGain);
+              lGain.connect(masterGain);
+              lOsc.start(now);
+              lOsc.stop(now + 0.17);
+              // Driving bass pulse
+              if (step % 2 === 0) {
+                const bOsc = ac.createOscillator();
+                const bGain = ac.createGain();
+                bOsc.type = "square";
+                bOsc.frequency.setValueAtTime(bass[(step >> 1) % bass.length], now);
+                bGain.gain.setValueAtTime(0.11, now);
+                bGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+                bOsc.connect(bGain);
+                bGain.connect(masterGain);
+                bOsc.start(now);
+                bOsc.stop(now + 0.19);
+              }
+            }, 100);
+          } catch (_) {}
+        },
+        speakVoice(text, role) {
+          try {
+            if (muted || !window.speechSynthesis || !text) return;
+            window.speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance(text);
+            if (role === "mom") {
+              u.pitch = 1.45;
+              u.rate = 1.08;
+              u.volume = 1.0;
+            } else {
+              u.pitch = 0.65;
+              u.rate = 0.92;
+              u.volume = 0.95;
+            }
+            window.speechSynthesis.speak(u);
+          } catch (_) {}
         },
         playSfx(name) {
           try {
@@ -135,6 +315,7 @@
             if (ac.state === "suspended") {
               ac.resume().catch(() => {});
             }
+            if (synthProcSfx(name)) return;
             const buf = buffers[name];
             if (!buf) {
               loadBuffer(name, `assets/audio/${name}.wav`);
@@ -155,6 +336,9 @@
             const ac = ensureCtx();
             if (masterGain && ac) {
               masterGain.gain.setValueAtTime(muted ? 0.0 : 1.0, ac.currentTime);
+            }
+            if (muted && window.speechSynthesis) {
+              window.speechSynthesis.cancel();
             }
           } catch (_) {}
           const btn = document.getElementById("btn-mute");
@@ -304,6 +488,19 @@
       margin-bottom: 10px;
       background: radial-gradient(circle at 30% 30%, rgba(56, 189, 248, 0.90), rgba(3, 105, 161, 0.90));
     }
+    #btn-attack {
+      display: none;
+      width: 76px;
+      height: 76px;
+      font-size: 0.85rem;
+      margin-bottom: 18px;
+      background: radial-gradient(circle at 30% 30%, rgba(168, 85, 247, 0.95), rgba(107, 33, 168, 0.95));
+      border-color: #fde047;
+      box-shadow: 0 0 18px rgba(168, 85, 247, 0.7);
+    }
+    #touch-controls.boss-mode #btn-attack {
+      display: flex;
+    }
     #mobile-top-btns {
       position: fixed;
       top: 92px;
@@ -351,12 +548,18 @@
         font-size: 0.72rem;
         margin-bottom: 6px;
       }
+      #btn-attack {
+        width: 62px;
+        height: 62px;
+        font-size: 0.72rem;
+        margin-bottom: 10px;
+      }
       #mobile-top-btns {
         top: 68px;
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-7394f045e5426e7e.js" crossorigin="anonymous" integrity="sha384-qAsUap9HOF7XqSUkLKo6lXEBGiTz+ezoFssSCzKmb2YnFJP5PtwWTRKB6IIHZebQ"><link rel="preload" href="./tendy-quest-7394f045e5426e7e_bg.wasm" crossorigin="anonymous" integrity="sha384-D8bpTh+zW8R1vYAzwE4IzlBUR2UGGl7w7T87hUnC+eNFtXIWU6upkz6pn1BhGHK6" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-f9fe35da67db6e42.js" crossorigin="anonymous" integrity="sha384-ZvmbqaKc5s90bZ7lbUL7/Wtlntv8C0Pl1RSL3Vo/xzUASbSp+6P5CRduGGgAOvEI"><link rel="preload" href="./tendy-quest-f9fe35da67db6e42_bg.wasm" crossorigin="anonymous" integrity="sha384-HngNzt3GINnV1ZcTN1M2lPctPpN2aNFTk7v9FWAmeH18Sj26Zgt/DLm0S/lQTUUQ" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -369,6 +572,7 @@
       </div>
     </div>
     <div id="action-buttons">
+      <button id="btn-attack" class="touch-btn touch-ui" type="button">SABER</button>
       <button id="btn-dash" class="touch-btn touch-ui" type="button">DASH</button>
       <button id="btn-jump" class="touch-btn touch-ui" type="button">JUMP</button>
     </div>
@@ -386,6 +590,7 @@
       let zoomDelta = 0.0;
       let jumpQueued = false;
       let dashQueued = false;
+      let attackQueued = false;
       let actionTapQueued = false;
       let helpQueued = false;
 
@@ -405,6 +610,7 @@
       const joyKnob = document.getElementById("joystick-knob");
       const btnJump = document.getElementById("btn-jump");
       const btnDash = document.getElementById("btn-dash");
+      const btnAttack = document.getElementById("btn-attack");
       const btnHelp = document.getElementById("btn-help");
       const btnMute = document.getElementById("btn-mute");
 
@@ -536,6 +742,7 @@
 
       bindActionBtn(btnJump, () => { jumpQueued = true; });
       bindActionBtn(btnDash, () => { dashQueued = true; });
+      bindActionBtn(btnAttack, () => { attackQueued = true; });
       bindActionBtn(btnHelp, () => { helpQueued = true; });
       bindActionBtn(btnMute, () => { window.tendyAudio.toggleMute(); });
 
@@ -654,12 +861,28 @@
         zoomDelta += dy * 0.012;
       }, { passive: false });
 
+      let pendingInitMode = (() => {
+        const s = window.location.search;
+        if (s.includes("cutscene=1")) return 1;
+        if (s.includes("boss=1")) return 2;
+        return 0;
+      })();
+
       function setPlaying(active) {
         if (touchControls) {
           touchControls.classList.toggle("playing", !!active);
         }
         if (!active) {
           resetJoy();
+        }
+      }
+
+      function setBossMode(active) {
+        if (touchControls) {
+          touchControls.classList.toggle("boss-mode", !!active);
+        }
+        if (btnDash) {
+          btnDash.textContent = active ? "ROLL" : "DASH";
         }
       }
 
@@ -681,9 +904,12 @@
         takeZoomDelta() { const v = zoomDelta; zoomDelta = 0.0; return v; },
         takeJump() { const v = jumpQueued; jumpQueued = false; return v; },
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
+        takeAttack() { const v = attackQueued; attackQueued = false; return v; },
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
         setPlaying,
+        setBossMode,
+        initMode() { const m = pendingInitMode; pendingInitMode = 0; return m; },
       };
     })();
   </script>
@@ -701,8 +927,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-7394f045e5426e7e.js';
-const wasm = await init({ module_or_path: './tendy-quest-7394f045e5426e7e_bg.wasm' });
+import init, * as bindings from './tendy-quest-f9fe35da67db6e42.js';
+const wasm = await init({ module_or_path: './tendy-quest-f9fe35da67db6e42_bg.wasm' });
 
 
 window.wasmBindings = bindings;

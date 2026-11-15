@@ -7,6 +7,15 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playBgm)]
         fn js_play_bgm();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playCutsceneMusic)]
+        fn js_play_cutscene_music();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playBossMusic)]
+        fn js_play_boss_music();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = speakVoice)]
+        fn js_speak_voice(text: &str, role: &str);
+
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playSfx)]
         fn js_play_sfx(name: &str);
 
@@ -37,6 +46,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeDash)]
         fn js_take_dash() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeAttack)]
+        fn js_take_attack() -> bool;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeActionTap)]
         fn js_take_action_tap() -> bool;
 
@@ -45,10 +57,28 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setPlaying)]
         fn js_set_playing(active: bool);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setBossMode)]
+        fn js_set_boss_mode(active: bool);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = initMode)]
+        fn js_init_mode() -> u32;
     }
 
     pub fn play_bgm() {
         js_play_bgm();
+    }
+
+    pub fn play_cutscene_music() {
+        js_play_cutscene_music();
+    }
+
+    pub fn play_boss_music() {
+        js_play_boss_music();
+    }
+
+    pub fn speak_voice(text: &str, role: &str) {
+        js_speak_voice(text, role);
     }
 
     pub fn play_sfx(name: &str) {
@@ -91,6 +121,10 @@ mod imp {
         js_take_dash()
     }
 
+    pub fn take_touch_attack() -> bool {
+        js_take_attack()
+    }
+
     pub fn take_touch_action_tap() -> bool {
         js_take_action_tap()
     }
@@ -102,11 +136,25 @@ mod imp {
     pub fn set_touch_playing(active: bool) {
         js_set_playing(active);
     }
+
+    pub fn set_touch_boss_mode(active: bool) {
+        js_set_boss_mode(active);
+    }
+
+    pub fn init_test_mode() -> u32 {
+        js_init_mode()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
     pub fn play_bgm() {}
+
+    pub fn play_cutscene_music() {}
+
+    pub fn play_boss_music() {}
+
+    pub fn speak_voice(_text: &str, _role: &str) {}
 
     pub fn play_sfx(_name: &str) {}
 
@@ -146,6 +194,10 @@ mod imp {
         false
     }
 
+    pub fn take_touch_attack() -> bool {
+        false
+    }
+
     pub fn take_touch_action_tap() -> bool {
         false
     }
@@ -155,10 +207,17 @@ mod imp {
     }
 
     pub fn set_touch_playing(_active: bool) {}
+
+    pub fn set_touch_boss_mode(_active: bool) {}
+
+    pub fn init_test_mode() -> u32 {
+        0
+    }
 }
 
 pub use imp::{
-    is_muted, play_bgm, play_sfx, set_touch_playing, take_touch_action_tap, take_touch_dash,
-    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy,
-    take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
+    init_test_mode, is_muted, play_bgm, play_boss_music, play_cutscene_music, play_sfx,
+    set_touch_boss_mode, set_touch_playing, speak_voice, take_touch_action_tap,
+    take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump, take_touch_look_dx,
+    take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
 };

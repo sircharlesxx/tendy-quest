@@ -408,12 +408,29 @@ pub fn adapt_ui_to_viewport(
     }
 }
 
+pub fn check_url_test_mode(mut next_state: ResMut<NextState<GameState>>) {
+    match crate::audio::init_test_mode() {
+        1 => next_state.set(GameState::Cutscene),
+        2 => next_state.set(GameState::BossFight),
+        _ => {}
+    }
+}
+
 pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
+    stats: Res<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
 ) {
+    if keys.just_pressed(KeyCode::KeyK) {
+        next_state.set(GameState::Cutscene);
+        return;
+    }
+    if keys.just_pressed(KeyCode::KeyB) {
+        next_state.set(GameState::BossFight);
+        return;
+    }
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
     if clicked
         || keys.just_pressed(KeyCode::Space)
@@ -423,8 +440,12 @@ pub fn handle_tutorial_input(
         || crate::audio::take_touch_jump()
         || crate::audio::take_touch_help()
     {
-        crate::audio::play_bgm();
-        next_state.set(GameState::Playing);
+        if stats.boss_mode {
+            next_state.set(GameState::BossFight);
+        } else {
+            crate::audio::play_bgm();
+            next_state.set(GameState::Playing);
+        }
     }
 }
 
@@ -455,20 +476,33 @@ pub fn despawn_tutorial_overlay(
 }
 
 pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
-    spawn_end_card(
-        commands,
-        "FRIDGE OPENED — STAGE CLEAR!",
-        &format!(
-            "YOU GREW TO {}cm ({})!\nTENDIES COLLECTED: {} / {}\nFINAL SCORE: {:06} (+5000 FRIDGE BONUS)",
-            stats.height_cm(),
-            stats.size_tier(),
-            stats.tendies,
-            stats.total_tendies,
-            stats.score
-        ),
-        "PLAY AGAIN (R / TAP)",
-        Color::srgb(1.0, 0.84, 0.2),
-    );
+    if stats.boss_mode {
+        spawn_end_card(
+            commands,
+            "MOM DEFEATED — TENDY CHAMPION!",
+            &format!(
+                "STAN MASTERED THE CHRISTMAS VIKINGS ONESIE!\nDODGE & ROLL + LIGHTSABER SECURED THE TENDIES!\nFINAL SCORE: {:06}",
+                stats.score
+            ),
+            "PLAY AGAIN (R / TAP)",
+            Color::srgb(1.0, 0.84, 0.2),
+        );
+    } else {
+        spawn_end_card(
+            commands,
+            "FRIDGE OPENED — STAGE CLEAR!",
+            &format!(
+                "YOU GREW TO {}cm ({})!\nTENDIES COLLECTED: {} / {}\nFINAL SCORE: {:06} (+5000 FRIDGE BONUS)",
+                stats.height_cm(),
+                stats.size_tier(),
+                stats.tendies,
+                stats.total_tendies,
+                stats.score
+            ),
+            "PLAY AGAIN (R / TAP)",
+            Color::srgb(1.0, 0.84, 0.2),
+        );
+    }
 }
 
 pub fn spawn_game_over_overlay(commands: Commands, stats: Res<PlayerStats>) {
@@ -594,6 +628,12 @@ pub fn handle_restart_input(
     *stats = PlayerStats::default();
     stats.audio_muted = was_muted;
     *orbit = CameraOrbit::default();
+    crate::audio::set_touch_boss_mode(false);
+    commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(1.0, 0.96, 0.90),
+        brightness: 620.0,
+    });
     spawn_kitchen_level_inner(&mut commands, &asset_server, &mut meshes, &mut materials);
     spawn_player_inner(&mut commands, &asset_server);
     spawn_initial_enemies_inner(&mut commands, &asset_server);

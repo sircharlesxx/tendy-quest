@@ -5,6 +5,8 @@ pub enum GameState {
     #[default]
     Tutorial,
     Playing,
+    Cutscene,
+    BossFight,
     StageClear,
     GameOver,
 }
@@ -24,6 +26,12 @@ pub struct PlayerStats {
     pub player_scale: f32,
     pub fridge_open: f32,
     pub hint_text: String,
+    pub boss_mode: bool,
+    pub boss_hp: f32,
+    pub boss_max_hp: f32,
+    pub mom_quote: String,
+    pub cutscene_timer: f32,
+    pub cutscene_beat: u8,
 }
 
 impl Default for PlayerStats {
@@ -42,12 +50,21 @@ impl Default for PlayerStats {
             player_scale: 0.55,
             fridge_open: 0.0,
             hint_text: String::new(),
+            boss_mode: false,
+            boss_hp: 100.0,
+            boss_max_hp: 100.0,
+            mom_quote: String::new(),
+            cutscene_timer: 0.0,
+            cutscene_beat: 0,
         }
     }
 }
 
 impl PlayerStats {
     pub fn target_scale(&self) -> f32 {
+        if self.boss_mode {
+            return 3.2;
+        }
         match self.tendies {
             0..=4 => 0.55 + (self.tendies as f32) * 0.20,
             5..=8 => 1.35 + ((self.tendies - 4) as f32) * 0.4125,
@@ -62,6 +79,9 @@ impl PlayerStats {
     }
 
     pub fn size_tier(&self) -> &'static str {
+        if self.boss_mode {
+            return "VIKING ONESIE KNIGHT";
+        }
         match self.tendies {
             0..=3 => "Tiny Toy",
             4..=7 => "Counter Climber",
