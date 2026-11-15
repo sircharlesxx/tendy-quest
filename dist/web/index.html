@@ -223,6 +223,10 @@
     #touch-controls.active {
       display: block;
     }
+    #touch-controls:not(.playing) #joystick-zone,
+    #touch-controls:not(.playing) #action-buttons {
+      display: none;
+    }
     @media (pointer: coarse), (max-width: 960px) {
       #touch-controls {
         display: block;
@@ -300,8 +304,8 @@
     }
     #mobile-top-btns {
       position: fixed;
-      top: 76px;
-      right: max(14px, env(safe-area-inset-right));
+      top: 92px;
+      right: max(12px, env(safe-area-inset-right));
       display: flex;
       gap: 8px;
       pointer-events: none;
@@ -319,7 +323,7 @@
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-2f5a04c57c5fa2cd.js" crossorigin="anonymous" integrity="sha384-5MWIZq+aA3QvQLnO75+OTFlQdZMbaLxJ/S8KpSNmaGrCJx1G30qdS6zxHKuYhx2S"><link rel="preload" href="./tendy-quest-2f5a04c57c5fa2cd_bg.wasm" crossorigin="anonymous" integrity="sha384-fNdWVzhA/dBbAdkLQs2AUrwrsVxJWuov8n5BBSKiAAjwTnHkagT+QFJmhnAxNLdq" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-77d4e71770fce493.js" crossorigin="anonymous" integrity="sha384-qezK+w4XtFteVajBTGaMpCCR3FDP3N40X969DDtvcLR7bCJtMrasafeSMH0cM8mh"><link rel="preload" href="./tendy-quest-77d4e71770fce493_bg.wasm" crossorigin="anonymous" integrity="sha384-A6yESGvaZV5WuC1RYavQvS3V9Pu6UkBWeFOzEdP4J7F58MtesHqPpK9EGpbF5Xp5" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -488,6 +492,25 @@
       window.addEventListener("touchend", endTouch, { passive: false });
       window.addEventListener("touchcancel", endTouch, { passive: false });
 
+      function setPlaying(active) {
+        if (touchControls) {
+          touchControls.classList.toggle("playing", !!active);
+        }
+        if (!active) {
+          resetJoy();
+        }
+      }
+
+      if (window.location.search.includes("autotest=walk")) {
+        showTouchControls();
+        setTimeout(() => {
+          actionTapQueued = true;
+          joyX = 0.18;
+          joyY = 1.0;
+          joyKnob.style.transform = "translate(8px, -44px)";
+        }, 2500);
+      }
+
       return {
         moveX: () => joyX,
         moveY: () => joyY,
@@ -497,6 +520,7 @@
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
+        setPlaying,
       };
     })();
   </script>
@@ -514,8 +538,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-2f5a04c57c5fa2cd.js';
-const wasm = await init({ module_or_path: './tendy-quest-2f5a04c57c5fa2cd_bg.wasm' });
+import init, * as bindings from './tendy-quest-77d4e71770fce493.js';
+const wasm = await init({ module_or_path: './tendy-quest-77d4e71770fce493_bg.wasm' });
 
 
 window.wasmBindings = bindings;

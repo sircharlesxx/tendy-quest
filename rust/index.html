@@ -223,6 +223,10 @@
     #touch-controls.active {
       display: block;
     }
+    #touch-controls:not(.playing) #joystick-zone,
+    #touch-controls:not(.playing) #action-buttons {
+      display: none;
+    }
     @media (pointer: coarse), (max-width: 960px) {
       #touch-controls {
         display: block;
@@ -300,8 +304,8 @@
     }
     #mobile-top-btns {
       position: fixed;
-      top: 76px;
-      right: max(14px, env(safe-area-inset-right));
+      top: 92px;
+      right: max(12px, env(safe-area-inset-right));
       display: flex;
       gap: 8px;
       pointer-events: none;
@@ -488,6 +492,25 @@
       window.addEventListener("touchend", endTouch, { passive: false });
       window.addEventListener("touchcancel", endTouch, { passive: false });
 
+      function setPlaying(active) {
+        if (touchControls) {
+          touchControls.classList.toggle("playing", !!active);
+        }
+        if (!active) {
+          resetJoy();
+        }
+      }
+
+      if (window.location.search.includes("autotest=walk")) {
+        showTouchControls();
+        setTimeout(() => {
+          actionTapQueued = true;
+          joyX = 0.18;
+          joyY = 1.0;
+          joyKnob.style.transform = "translate(8px, -44px)";
+        }, 2500);
+      }
+
       return {
         moveX: () => joyX,
         moveY: () => joyY,
@@ -497,6 +520,7 @@
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
+        setPlaying,
       };
     })();
   </script>

@@ -65,7 +65,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         HeartsText,
                         Text::new("HEARTS: 5 / 5"),
                         TextFont {
-                            font_size: 17.0,
+                            font_size: 15.5,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.32, 0.36)),
@@ -73,7 +73,7 @@ pub fn spawn_hud(mut commands: Commands) {
                     // Dash bar
                     col.spawn((
                         Node {
-                            width: Val::Px(148.0),
+                            width: Val::Px(132.0),
                             height: Val::Px(12.0),
                             ..default()
                         },
@@ -96,7 +96,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         TendyText,
                         Text::new("TENDIES: 0 / 10"),
                         TextFont {
-                            font_size: 17.0,
+                            font_size: 15.5,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.82, 0.22)),
@@ -128,17 +128,17 @@ pub fn spawn_hud(mut commands: Commands) {
                 .with_children(|col| {
                     col.spawn((
                         ScoreText,
-                        Text::new("SCORE: 000000"),
+                        Text::new("SCORE: 000000\nWAVE 1/3"),
                         TextFont {
-                            font_size: 17.0,
+                            font_size: 15.5,
                             ..default()
                         },
                         TextColor(Color::WHITE),
                     ));
                     col.spawn((
-                        Text::new("[H] Controls  |  [M] Audio"),
+                        Text::new("[H] Help  |  [M] Audio"),
                         TextFont {
-                            font_size: 13.0,
+                            font_size: 12.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.9, 0.85, 0.7)),
@@ -170,7 +170,7 @@ pub fn update_hud(
         t.0 = format!("TENDIES: {} / {}", stats.tendies, stats.total_tendies);
     }
     if let Ok(mut t) = score_q.get_single_mut() {
-        t.0 = format!("SCORE: {:06}  |  WAVE {}/3", stats.score, stats.wave);
+        t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
     }
     if let Ok(mut t) = status_q.get_single_mut() {
         let mut tags = Vec::new();

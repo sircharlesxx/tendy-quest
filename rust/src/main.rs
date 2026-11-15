@@ -51,6 +51,7 @@ fn main() {
             (handle_tutorial_input, animate_player_limbs, update_camera)
                 .run_if(in_state(GameState::Tutorial)),
         )
+        .add_systems(OnEnter(GameState::Playing), player::lock_touch_playing)
         .add_systems(OnExit(GameState::Playing), unlock_cursor)
         .add_systems(
             Update,

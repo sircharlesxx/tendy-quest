@@ -87,10 +87,15 @@ pub fn camera_mouse_look(
 }
 
 pub fn unlock_cursor(mut window_q: Query<&mut Window, With<PrimaryWindow>>) {
+    crate::audio::set_touch_playing(false);
     if let Ok(mut window) = window_q.get_single_mut() {
         window.cursor_options.grab_mode = CursorGrabMode::None;
         window.cursor_options.visible = true;
     }
+}
+
+pub fn lock_touch_playing() {
+    crate::audio::set_touch_playing(true);
 }
 
 pub fn player_movement(
@@ -408,11 +413,11 @@ pub fn animate_player_limbs(
                 "HeroRightLeg" => tf.rotation = tf.rotation.slerp(right_leg_rot, blend),
                 "HeroLeftArm" => {
                     tf.rotation = tf.rotation.slerp(left_arm_rot, blend);
-                    tf.translation.y = 1.38 + bob_y * 0.8;
+                    tf.translation.y = 1.36 + bob_y * 0.8;
                 }
                 "HeroRightArm" => {
                     tf.rotation = tf.rotation.slerp(right_arm_rot, blend);
-                    tf.translation.y = 1.38 + bob_y * 0.8;
+                    tf.translation.y = 1.36 + bob_y * 0.8;
                 }
                 "HeroTorso" => {
                     tf.rotation = tf.rotation.slerp(torso_rot, blend);

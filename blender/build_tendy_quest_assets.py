@@ -669,7 +669,7 @@ def build_plaid_hero():
     # Stocky plaid torso + broad shoulders + folded plaid hoodie hood on upper back
     torso_parts = [
         add_sphere(0.41, (0, 0, 1.00), scale=(1.02, 0.84, 1.24), mat=plaid, uv_scale=1.6),
-        add_sphere(0.24, (0, 0.01, 1.36), scale=(1.58, 0.94, 0.56), mat=plaid, uv_scale=1.6),
+        add_sphere(0.25, (0, 0.01, 1.35), scale=(1.62, 0.96, 0.74), mat=plaid, uv_scale=1.6),
         add_torus(0.21, 0.065, (0, 0.02, 1.48), rotation=(0.12, 0, 0), mat=plaid, uv_scale=1.6),
         add_sphere(0.27, (0, -0.22, 1.38), scale=(1.12, 0.68, 0.72), rotation=(-0.35, 0, 0), mat=plaid, uv_scale=1.6),
         add_cube(0.045, (0, 0.34, 1.10), scale=(0.65, 0.4, 12.5), mat=zipper, smooth=True),
@@ -722,13 +722,13 @@ def build_plaid_hero():
     # Articulated arms & legs with joint pivots at shoulders and hips
     for sx, side_name in [(-1, "Left"), (1, "Right")]:
         arm_parts = [
-            add_sphere(0.118, (sx * 0.39, 0.02, 1.38), mat=plaid, uv_scale=1.8),
-            add_cylinder(0.112, 0.56, (sx * 0.50, 0.02, 1.21), rotation=(0.12, sx * -0.45, 0), mat=plaid, uv_scale=1.8),
-            add_sphere(0.112, (sx * 0.62, 0.04, 0.98), mat=plaid, uv_scale=1.8),
-            add_torus(0.095, 0.025, (sx * 0.64, 0.05, 0.95), rotation=(0.12, sx * -0.45, 0), mat=cuff),
-            add_sphere(0.095, (sx * 0.67, 0.07, 0.89), mat=skin),
+            add_sphere(0.145, (sx * 0.35, 0.02, 1.36), mat=plaid, uv_scale=1.8),
+            add_cylinder(0.115, 0.54, (sx * 0.44, 0.02, 1.19), rotation=(0.12, sx * -0.36, 0), mat=plaid, uv_scale=1.8),
+            add_sphere(0.112, (sx * 0.54, 0.04, 0.97), mat=plaid, uv_scale=1.8),
+            add_torus(0.095, 0.025, (sx * 0.56, 0.05, 0.94), rotation=(0.12, sx * -0.36, 0), mat=cuff),
+            add_sphere(0.095, (sx * 0.58, 0.07, 0.88), mat=skin),
         ]
-        join_with_pivot(arm_parts, f"Hero{side_name}Arm", (sx * 0.38, 0.02, 1.38))
+        join_with_pivot(arm_parts, f"Hero{side_name}Arm", (sx * 0.35, 0.02, 1.36))
 
         leg_parts = [
             add_cylinder(0.15, 0.56, (sx * 0.19, 0.0, 0.41), mat=plaid, uv_scale=1.8),

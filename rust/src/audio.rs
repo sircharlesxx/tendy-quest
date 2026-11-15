@@ -39,6 +39,9 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeHelp)]
         fn js_take_help() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setPlaying)]
+        fn js_set_playing(active: bool);
     }
 
     pub fn play_bgm() {
@@ -88,6 +91,10 @@ mod imp {
     pub fn take_touch_help() -> bool {
         js_take_help()
     }
+
+    pub fn set_touch_playing(active: bool) {
+        js_set_playing(active);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -135,10 +142,12 @@ mod imp {
     pub fn take_touch_help() -> bool {
         false
     }
+
+    pub fn set_touch_playing(_active: bool) {}
 }
 
 pub use imp::{
-    is_muted, play_bgm, play_sfx, take_touch_action_tap, take_touch_dash, take_touch_help,
-    take_touch_jump, take_touch_look_dx, take_touch_look_dy, toggle_mute, touch_move_x,
-    touch_move_y,
+    is_muted, play_bgm, play_sfx, set_touch_playing, take_touch_action_tap, take_touch_dash,
+    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy, toggle_mute,
+    touch_move_x, touch_move_y,
 };
