@@ -83,7 +83,9 @@ pub fn camera_mouse_look(
     }
 
     let zoom_delta = crate::audio::take_touch_zoom_delta();
-    if zoom_delta != 0.0 {
+    let joy_active = crate::audio::touch_move_x().abs() > 0.001
+        || crate::audio::touch_move_y().abs() > 0.001;
+    if zoom_delta != 0.0 && !joy_active {
         orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 25.0);
     } else if mouse_scroll.delta.y != 0.0 {
         let step = match mouse_scroll.unit {

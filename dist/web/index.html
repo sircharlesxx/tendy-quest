@@ -356,7 +356,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-1eaf7e4fe661ad46.js" crossorigin="anonymous" integrity="sha384-qAsUap9HOF7XqSUkLKo6lXEBGiTz+ezoFssSCzKmb2YnFJP5PtwWTRKB6IIHZebQ"><link rel="preload" href="./tendy-quest-1eaf7e4fe661ad46_bg.wasm" crossorigin="anonymous" integrity="sha384-WYFw7zfpxypJdFHupy9MJe4NKH+ClU9OoyKLtV15k6kiR5HWdVhtJ2cuVhbIjv3e" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-7394f045e5426e7e.js" crossorigin="anonymous" integrity="sha384-qAsUap9HOF7XqSUkLKo6lXEBGiTz+ezoFssSCzKmb2YnFJP5PtwWTRKB6IIHZebQ"><link rel="preload" href="./tendy-quest-7394f045e5426e7e_bg.wasm" crossorigin="anonymous" integrity="sha384-D8bpTh+zW8R1vYAzwE4IzlBUR2UGGl7w7T87hUnC+eNFtXIWU6upkz6pn1BhGHK6" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -443,14 +443,70 @@
         joyKnob.style.transform = "translate(0px, 0px)";
       }
 
+      function isInJoystickArea(clientX, clientY) {
+        if (!touchControls || !touchControls.classList.contains("playing") || !joyZone) {
+          return false;
+        }
+        const r = joyZone.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return false;
+        const pad = 34;
+        return (
+          clientX >= r.left - pad &&
+          clientX <= r.right + pad &&
+          clientY >= r.top - pad &&
+          clientY <= r.bottom + pad
+        );
+      }
+
+      function syncActiveTouches(e) {
+        const live = new Set();
+        if (e && e.touches) {
+          for (const t of e.touches) live.add(t.identifier);
+        }
+        if (joyTouchId !== null && !live.has(joyTouchId)) {
+          resetJoy();
+        }
+        for (const id of lookTouches.keys()) {
+          if (!live.has(id) || id === joyTouchId) {
+            lookTouches.delete(id);
+          }
+        }
+        if (lookTouches.size === 0) {
+          lookTouchId = null;
+          lastPinchDist = null;
+        } else if (lookTouches.size < 2) {
+          lastPinchDist = null;
+        }
+      }
+
+      function panWithPoint(id, pt) {
+        if (lookTouchId !== id) {
+          lookTouchId = id;
+          lookLastX = pt.x;
+          lookLastY = pt.y;
+          return;
+        }
+        const dx = pt.x - lookLastX;
+        const dy = pt.y - lookLastY;
+        lookDX += dx;
+        lookDY += dy;
+        lookMoved += Math.hypot(dx, dy);
+        lookLastX = pt.x;
+        lookLastY = pt.y;
+      }
+
       joyZone.addEventListener("touchstart", (e) => {
         showTouchControls();
         window.tendyAudio.touchUnlock();
         e.preventDefault();
         e.stopPropagation();
+        syncActiveTouches(e);
         if (joyTouchId === null && e.changedTouches.length > 0) {
           const t = e.changedTouches[0];
           joyTouchId = t.identifier;
+          lookTouches.delete(joyTouchId);
+          lastPinchDist = null;
+          zoomDelta = 0.0;
           updateJoyFromPoint(t.clientX, t.clientY);
         }
       }, { passive: false });
@@ -466,7 +522,6 @@
         }, { passive: false });
         el.addEventListener("touchend", (e) => {
           e.preventDefault();
-          e.stopPropagation();
           el.classList.remove("pressed");
         }, { passive: false });
         el.addEventListener("touchcancel", () => {
@@ -487,9 +542,19 @@
       window.addEventListener("touchstart", (e) => {
         showTouchControls();
         window.tendyAudio.touchUnlock();
+        syncActiveTouches(e);
         if (e.target && e.target.closest && e.target.closest(".touch-ui")) return;
         for (const t of e.changedTouches) {
           if (t.identifier === joyTouchId) continue;
+          if (joyTouchId === null && isInJoystickArea(t.clientX, t.clientY)) {
+            joyTouchId = t.identifier;
+            lookTouches.delete(t.identifier);
+            lastPinchDist = null;
+            zoomDelta = 0.0;
+            updateJoyFromPoint(t.clientX, t.clientY);
+            continue;
+          }
+          if (joyTouchId !== null && lookTouches.size >= 1) continue;
           lookTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
           if (lookTouches.size === 1) {
             lookTouchId = t.identifier;
@@ -499,7 +564,7 @@
             lastPinchDist = null;
           }
         }
-        if (lookTouches.size >= 2) {
+        if (joyTouchId === null && lookTouches.size >= 2) {
           e.preventDefault();
           const pts = Array.from(lookTouches.values());
           lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
@@ -510,6 +575,7 @@
       }, { passive: false });
 
       window.addEventListener("touchmove", (e) => {
+        syncActiveTouches(e);
         let updatedLook = false;
         for (const t of e.changedTouches) {
           if (t.identifier === joyTouchId) {
@@ -520,15 +586,26 @@
             updatedLook = true;
           }
         }
+        if (joyTouchId !== null) {
+          lastPinchDist = null;
+          zoomDelta = 0.0;
+        }
         if (!updatedLook) return;
         e.preventDefault();
-        if (lookTouches.size >= 2) {
+        if (joyTouchId !== null) {
+          if (lookTouches.size >= 1) {
+            const [id, pt] = lookTouches.entries().next().value;
+            panWithPoint(id, pt);
+          }
+        } else if (lookTouches.size >= 2) {
           const pts = Array.from(lookTouches.values());
           const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
           const midX = (pts[0].x + pts[1].x) * 0.5;
           const midY = (pts[0].y + pts[1].y) * 0.5;
           if (lastPinchDist !== null) {
-            zoomDelta -= (dist - lastPinchDist) * 0.04;
+            if (Math.abs(dist - lastPinchDist) > 1.2) {
+              zoomDelta -= (dist - lastPinchDist) * 0.04;
+            }
             lookDX += midX - lastPinchMidX;
             lookDY += midY - lastPinchMidY;
           }
@@ -537,14 +614,8 @@
           lastPinchMidY = midY;
           lookMoved = 999;
         } else if (lookTouches.size === 1) {
-          const pt = lookTouches.values().next().value;
-          const dx = pt.x - lookLastX;
-          const dy = pt.y - lookLastY;
-          lookDX += dx;
-          lookDY += dy;
-          lookMoved += Math.hypot(dx, dy);
-          lookLastX = pt.x;
-          lookLastY = pt.y;
+          const [id, pt] = lookTouches.entries().next().value;
+          panWithPoint(id, pt);
         }
       }, { passive: false });
 
@@ -563,9 +634,7 @@
             }
           }
         }
-        if (lookTouches.size < 2) {
-          lastPinchDist = null;
-        }
+        syncActiveTouches(e);
         if (lookTouches.size === 1) {
           const [id, pt] = lookTouches.entries().next().value;
           lookTouchId = id;
@@ -632,8 +701,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-1eaf7e4fe661ad46.js';
-const wasm = await init({ module_or_path: './tendy-quest-1eaf7e4fe661ad46_bg.wasm' });
+import init, * as bindings from './tendy-quest-7394f045e5426e7e.js';
+const wasm = await init({ module_or_path: './tendy-quest-7394f045e5426e7e_bg.wasm' });
 
 
 window.wasmBindings = bindings;
