@@ -393,8 +393,8 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(1.0, -6.28, 0.0),
-        Vec3::new(45.9, 0.44, 51.9),
+        Vec3::new(1.0, -6.28, 11.0),
+        Vec3::new(45.9, 0.44, 73.9),
         Color::srgb(0.58, 0.43, 0.28),
         0.48,
         0.0,
@@ -458,16 +458,16 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(-22.3, 5.0, 0.0),
-        Vec3::new(0.3, 11.0, 26.0),
+        Vec3::new(-22.3, 5.0, 11.0),
+        Vec3::new(0.3, 11.0, 37.0),
         Some((wall_col, 0.72, 0.0)),
     );
     spawn_solid_box(
         commands,
         meshes,
         materials,
-        Vec3::new(24.3, 5.0, 0.0),
-        Vec3::new(0.3, 11.0, 26.0),
+        Vec3::new(24.3, 5.0, 11.0),
+        Vec3::new(0.3, 11.0, 37.0),
         Some((wall_col, 0.72, 0.0)),
     );
     // Invisible south room boundary at Z = 25.5 so player cannot walk off the floor edge

@@ -90,9 +90,9 @@ impl Default for CameraOrbit {
     fn default() -> Self {
         Self {
             yaw: 0.0,
-            pitch: 0.42,
-            distance: 8.8,
-            current_dist: 8.8,
+            pitch: 0.45,
+            distance: 10.6,
+            current_dist: 10.6,
         }
     }
 }

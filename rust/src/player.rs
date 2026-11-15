@@ -84,13 +84,13 @@ pub fn camera_mouse_look(
 
     let zoom_delta = crate::audio::take_touch_zoom_delta();
     if zoom_delta != 0.0 {
-        orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 22.0);
+        orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 25.0);
     } else if mouse_scroll.delta.y != 0.0 {
         let step = match mouse_scroll.unit {
             bevy::input::mouse::MouseScrollUnit::Line => mouse_scroll.delta.y * 0.85,
             bevy::input::mouse::MouseScrollUnit::Pixel => mouse_scroll.delta.y * 0.012,
         };
-        orbit.distance = (orbit.distance - step).clamp(3.0, 22.0);
+        orbit.distance = (orbit.distance - step).clamp(3.0, 25.0);
     }
 }
 
@@ -348,6 +348,7 @@ pub fn update_camera(
     time: Res<Time>,
     mut orbit: ResMut<CameraOrbit>,
     stats: Res<PlayerStats>,
+    window_q: Query<&Window, With<PrimaryWindow>>,
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>, Without<PlatformBox>)>,
     platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<Camera3d>)>,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
@@ -357,12 +358,19 @@ pub fn update_camera(
     };
     let anchor_y = 0.55 + stats.player_scale * 0.92;
     let anchor = p_tf.translation + Vec3::Y * anchor_y;
-    let desired_dist = orbit.distance * (0.82 + stats.player_scale.sqrt() * 0.34);
+    let aspect_mul = if let Ok(win) = window_q.get_single() {
+        let aspect = win.width() / win.height().max(1.0);
+        1.0 + (1.0 - aspect).clamp(0.0, 0.55) * 0.35
+    } else {
+        1.0
+    };
+    let desired_dist = orbit.distance * (0.82 + stats.player_scale.sqrt() * 0.34) * aspect_mul;
     let min_cam_dist = (2.2 + stats.player_scale * 0.45).min(desired_dist);
+    let eff_pitch = (orbit.pitch + (orbit.distance - 10.6).max(0.0) * 0.008).clamp(0.15, 1.35);
     let dir = Vec3::new(
-        orbit.yaw.sin() * orbit.pitch.cos(),
-        orbit.pitch.sin(),
-        orbit.yaw.cos() * orbit.pitch.cos(),
+        orbit.yaw.sin() * eff_pitch.cos(),
+        eff_pitch.sin(),
+        orbit.yaw.cos() * eff_pitch.cos(),
     )
     .normalize();
 
@@ -397,7 +405,7 @@ pub fn update_camera(
 
     // Clamp boom along room walls/floor/ceiling (allowing open camera pull-back at south spawn)
     let room_min = Vec3::new(-21.4, -5.45, -21.8);
-    let room_max = Vec3::new(23.4, 13.5, 28.5);
+    let room_max = Vec3::new(23.4, 18.5, 48.0);
     for axis in 0..3 {
         if dir[axis] > 1e-4 {
             let t = ((room_max[axis] - anchor[axis]) / dir[axis]).max(min_cam_dist);
