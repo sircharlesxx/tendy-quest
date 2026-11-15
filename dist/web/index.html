@@ -80,10 +80,13 @@
       let droneGain = null;
       let bossTimer = null;
       let bossStep = 0;
+      let vikingTimer = null;
+      let vikingStep = 0;
 
       function stopSpecialAudio() {
         try {
           if (bossTimer) { clearInterval(bossTimer); bossTimer = null; }
+          if (vikingTimer) { clearInterval(vikingTimer); vikingTimer = null; }
           if (droneOsc1) { droneOsc1.stop(); droneOsc1.disconnect(); droneOsc1 = null; }
           if (droneOsc2) { droneOsc2.stop(); droneOsc2.disconnect(); droneOsc2 = null; }
           if (droneGain) { droneGain.disconnect(); droneGain = null; }
@@ -134,6 +137,16 @@
         if (name === "mom_yell") {
           mkOsc("sawtooth", 540, 380, 0.32, 0.26);
           mkOsc("square", 720, 460, 0.24, 0.14);
+          return true;
+        }
+        if (name === "garlic_throw") {
+          mkOsc("sawtooth", 210, 95, 0.28, 0.26);
+          mkOsc("triangle", 340, 150, 0.24, 0.18);
+          return true;
+        }
+        if (name === "car_horn") {
+          mkOsc("sawtooth", 392, 388, 0.22, 0.22);
+          mkOsc("square", 494, 490, 0.22, 0.16);
           return true;
         }
         return false;
@@ -290,6 +303,111 @@
             }, 100);
           } catch (_) {}
         },
+        playVikingChantMusic() {
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.14, ac.currentTime);
+            if (ambGain) ambGain.gain.setValueAtTime(0.08, ac.currentTime);
+            if (bgmSource) bgmSource.playbackRate.value = 1.05;
+            // Nordic low war drone + booming choir chant rhythm ("TENDY! WENDY! FENDY! BENDIES!")
+            droneGain = ac.createGain();
+            droneGain.gain.setValueAtTime(0.07, ac.currentTime);
+            droneGain.connect(masterGain);
+            droneOsc1 = ac.createOscillator();
+            droneOsc1.type = "sawtooth";
+            droneOsc1.frequency.value = 55.0; // Deep A1 Viking horn/choir root
+            droneOsc2 = ac.createOscillator();
+            droneOsc2.type = "triangle";
+            droneOsc2.frequency.value = 82.41; // E2 fifth
+            const lp = ac.createBiquadFilter();
+            lp.type = "lowpass";
+            lp.frequency.value = 260;
+            droneOsc1.connect(lp);
+            droneOsc2.connect(lp);
+            lp.connect(droneGain);
+            droneOsc1.start();
+            droneOsc2.start();
+
+            const chantNotes = [110.0, 98.0, 110.0, 130.81, 110.0, 98.0, 146.83, 130.81];
+            vikingStep = 0;
+            const self = this;
+            vikingTimer = setInterval(() => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const step = vikingStep % 32;
+              vikingStep += 1;
+
+              // Heavy Viking war drum on strong beats
+              if (step % 4 === 0 || step % 8 === 6) {
+                const ko = ac.createOscillator();
+                const kg = ac.createGain();
+                ko.type = "sine";
+                ko.frequency.setValueAtTime(step % 8 === 0 ? 115 : 88, now);
+                ko.frequency.exponentialRampToValueAtTime(34, now + 0.22);
+                kg.gain.setValueAtTime(step % 8 === 0 ? 0.36 : 0.24, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+                ko.connect(kg);
+                kg.connect(masterGain);
+                ko.start(now);
+                ko.stop(now + 0.25);
+              }
+
+              // Stomp-clap / shield-bang every 2nd beat
+              if (step % 4 === 2) {
+                const so = ac.createOscillator();
+                const sg = ac.createGain();
+                so.type = "square";
+                so.frequency.setValueAtTime(190, now);
+                so.frequency.exponentialRampToValueAtTime(75, now + 0.08);
+                sg.gain.setValueAtTime(0.11, now);
+                sg.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+                so.connect(sg);
+                sg.connect(masterGain);
+                so.start(now);
+                so.stop(now + 0.10);
+              }
+
+              // Baritone Viking choir syllables on "TEN-DY! WEN-DY! FEN-DY! BEN-DIES!"
+              if (step % 2 === 0) {
+                const freq = chantNotes[(step >> 1) % chantNotes.length];
+                const bpf = ac.createBiquadFilter();
+                bpf.type = "bandpass";
+                bpf.frequency.setValueAtTime(step % 4 === 0 ? 520 : 680, now);
+                bpf.Q.value = 3.2;
+                const cg = ac.createGain();
+                cg.gain.setValueAtTime(0.15, now);
+                cg.gain.exponentialRampToValueAtTime(0.001, now + 0.31);
+                bpf.connect(cg);
+                cg.connect(masterGain);
+                for (const det of [0.994, 1.0, 1.007]) {
+                  const vo = ac.createOscillator();
+                  vo.type = "sawtooth";
+                  vo.frequency.setValueAtTime(freq * det, now);
+                  vo.connect(bpf);
+                  vo.start(now);
+                  vo.stop(now + 0.32);
+                }
+              }
+
+              // Periodic spoken Viking chant over active gameplay (never overrides cutscene speech)
+              if (step === 0 && !self._voiceActive && window.speechSynthesis && !window.speechSynthesis.speaking) {
+                try {
+                  const cu = new SpeechSynthesisUtterance("Tendy! Wendy! Fendy! Bendies! SKOL!");
+                  cu.pitch = 0.55;
+                  cu.rate = 0.88;
+                  cu.volume = 0.72;
+                  window.speechSynthesis.speak(cu);
+                } catch (_) {}
+              }
+            }, 175);
+          } catch (_) {}
+        },
         _voiceToken: 0,
         _voiceActive: false,
         _voiceGraceUntilMs: 0,
@@ -307,6 +425,14 @@
             if (role === "mom") {
               u.pitch = 1.45;
               u.rate = 1.05;
+              u.volume = 1.0;
+            } else if (role === "lexie") {
+              u.pitch = 0.72;
+              u.rate = 0.94;
+              u.volume = 1.0;
+            } else if (role === "stan") {
+              u.pitch = 1.02;
+              u.rate = 0.95;
               u.volume = 1.0;
             } else if (role === "narrator") {
               u.pitch = 0.90;
@@ -639,7 +765,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-e4186ccd17fe7099.js" crossorigin="anonymous" integrity="sha384-76I3h2sIfA4nCREF7hnz03SxBYbE8AmiOWLUCM7rChLT9AUE2wlMY90GjyjZGhTA"><link rel="preload" href="./tendy-quest-e4186ccd17fe7099_bg.wasm" crossorigin="anonymous" integrity="sha384-pxAaC8DuztZ4V8mXK7/yEDpXQkC88b4jMJjdhAhItwtje+YjBkmTPZuLuM8ZB6G/" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-8ddb5b1459b2b9fa.js" crossorigin="anonymous" integrity="sha384-MEdMNDoWLySpZR1h/f8ybBV1X6giCiEOImSYk0OoXGIy2amN3GP8oUUzgwZ5vOHL"><link rel="preload" href="./tendy-quest-8ddb5b1459b2b9fa_bg.wasm" crossorigin="anonymous" integrity="sha384-Fp8YiA6vc3DrTudnupPaac9rgIOvvz2MyW80N0Uy9Lv3l5KBNhT+m3DahvFxrLpW" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -945,6 +1071,10 @@
         const s = window.location.search;
         if (s.includes("cutscene=1")) return 1;
         if (s.includes("boss=1")) return 2;
+        if (s.includes("anime=1")) return 3;
+        if (s.includes("city_intro=1")) return 4;
+        if (s.includes("city=1")) return 5;
+        if (s.includes("city_titan=1")) return 6;
         return 0;
       })();
       let pendingCutsceneTime = (() => {
@@ -1016,8 +1146,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-e4186ccd17fe7099.js';
-const wasm = await init({ module_or_path: './tendy-quest-e4186ccd17fe7099_bg.wasm' });
+import init, * as bindings from './tendy-quest-8ddb5b1459b2b9fa.js';
+const wasm = await init({ module_or_path: './tendy-quest-8ddb5b1459b2b9fa_bg.wasm' });
 
 
 window.wasmBindings = bindings;

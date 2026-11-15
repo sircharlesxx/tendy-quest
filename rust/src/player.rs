@@ -92,13 +92,13 @@ pub fn camera_mouse_look(
     let joy_active = crate::audio::touch_move_x().abs() > 0.001
         || crate::audio::touch_move_y().abs() > 0.001;
     if zoom_delta != 0.0 && !joy_active {
-        orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 25.0);
+        orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 42.0);
     } else if mouse_scroll.delta.y != 0.0 {
         let step = match mouse_scroll.unit {
             bevy::input::mouse::MouseScrollUnit::Line => mouse_scroll.delta.y * 0.85,
             bevy::input::mouse::MouseScrollUnit::Pixel => mouse_scroll.delta.y * 0.012,
         };
-        orbit.distance = (orbit.distance - step).clamp(3.0, 25.0);
+        orbit.distance = (orbit.distance - step).clamp(3.0, 42.0);
     }
 }
 
@@ -227,7 +227,7 @@ pub fn player_movement(
         } else {
             crate::audio::play_sfx("double_jump");
         }
-        player.velocity.y = 9.2 + (stats.player_scale - 0.55).max(0.0) * 1.55;
+        player.velocity.y = 9.2 + (stats.player_scale - 0.55).max(0.0) * if stats.in_city { 1.85 } else { 1.55 };
         player.grounded = false;
         player.jumps_used += 1;
     }
@@ -279,7 +279,11 @@ pub fn player_movement(
 
     // Platform AABB landing (top surfaces)
     player.grounded = false;
-    let land_r = (0.38 * stats.player_scale).clamp(0.38, 0.85);
+    let land_r = if stats.in_city {
+        (0.38 * stats.player_scale).clamp(0.55, 3.2)
+    } else {
+        (0.38 * stats.player_scale).clamp(0.38, 0.85)
+    };
     for (p_tf, p_box) in &platform_q {
         let min_x = p_tf.translation.x - p_box.half_extents.x - land_r;
         let max_x = p_tf.translation.x + p_box.half_extents.x + land_r;
@@ -303,7 +307,11 @@ pub fn player_movement(
     }
 
     // Solid side-wall pushout against all props, cabinets, walls, and obstacles (2 passes prevent corner-clipping)
-    let wall_r = (0.28 * stats.player_scale).clamp(0.28, 0.72);
+    let wall_r = if stats.in_city {
+        (0.28 * stats.player_scale).clamp(0.45, 2.8)
+    } else {
+        (0.28 * stats.player_scale).clamp(0.28, 0.72)
+    };
     let player_top_y = tf.translation.y + (0.45 * stats.player_scale).max(0.55);
     for _ in 0..2 {
         for (p_tf, p_box) in &platform_q {
@@ -351,12 +359,21 @@ pub fn player_movement(
         }
     }
 
-    // Keep within giant kitchen room walls or respawn on abyssal fall
-    tf.translation.x = tf.translation.x.clamp(-20.5, 22.5);
-    tf.translation.z = tf.translation.z.clamp(-24.0, 24.0);
-    if tf.translation.y < -12.0 {
-        tf.translation = Vec3::new(0.0, 0.5, 17.5);
-        player.velocity = Vec3::ZERO;
+    // Keep within level bounds or respawn on abyssal fall
+    if stats.in_city {
+        tf.translation.x = tf.translation.x.clamp(-126.0, 126.0);
+        tf.translation.z = tf.translation.z.clamp(-126.0, 126.0);
+        if tf.translation.y < -12.0 {
+            tf.translation = Vec3::new(0.0, 1.0, 82.0);
+            player.velocity = Vec3::ZERO;
+        }
+    } else {
+        tf.translation.x = tf.translation.x.clamp(-20.5, 22.5);
+        tf.translation.z = tf.translation.z.clamp(-24.0, 24.0);
+        if tf.translation.y < -12.0 {
+            tf.translation = Vec3::new(0.0, 0.5, 17.5);
+            player.velocity = Vec3::ZERO;
+        }
     }
 }
 
@@ -429,7 +446,7 @@ pub fn update_camera(
     let sweep_pad = Vec3::splat(0.22);
     let desired_cam_y = anchor.y + dir.y * desired_dist;
     for (p_tf_box, p_box) in &platform_q {
-        if p_tf_box.translation.z > 24.8 {
+        if !stats.in_city && p_tf_box.translation.z > 24.8 {
             continue;
         }
         let box_top = p_tf_box.translation.y + p_box.half_extents.y;
@@ -452,9 +469,18 @@ pub fn update_camera(
         }
     }
 
-    // Clamp boom along room walls/floor/ceiling (allowing open camera pull-back at south spawn)
-    let room_min = Vec3::new(-21.4, -5.45, -21.8);
-    let room_max = Vec3::new(23.4, 18.5, 48.0);
+    // Clamp boom along room/city bounds (allowing open camera pull-back at south spawn)
+    let (room_min, room_max) = if stats.in_city {
+        (
+            Vec3::new(-165.0, -2.0, -165.0),
+            Vec3::new(165.0, 195.0, 165.0),
+        )
+    } else {
+        (
+            Vec3::new(-21.4, -5.45, -21.8),
+            Vec3::new(23.4, 18.5, 48.0),
+        )
+    };
     for axis in 0..3 {
         if dir[axis] > 1e-4 {
             let t = ((room_max[axis] - anchor[axis]) / dir[axis]).max(min_cam_dist);
@@ -481,7 +507,7 @@ pub fn update_camera(
     let cam_margin = Vec3::splat(0.38);
     for _ in 0..2 {
         for (p_tf_box, p_box) in &platform_q {
-            if p_tf_box.translation.z > 24.8 {
+            if !stats.in_city && p_tf_box.translation.z > 24.8 {
                 continue;
             }
             let top_y = p_tf_box.translation.y + p_box.half_extents.y;
@@ -656,6 +682,7 @@ pub fn animate_and_collect_pickups(
 pub fn animate_player_limbs(
     time: Res<Time>,
     state: Res<State<GameState>>,
+    stats: Res<PlayerStats>,
     player_q: Query<(&Player, &Children)>,
     children_q: Query<&Children>,
     mut part_q: Query<(&Name, &mut Transform), Without<Player>>,
@@ -668,7 +695,24 @@ pub fn animate_player_limbs(
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
 
     let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
-        if *state.get() == GameState::StageClear {
+        if *state.get() == GameState::MomVictoryCutscene {
+            let bow = if stats.cutscene_timer >= 2.2 && stats.cutscene_timer < 12.2 {
+                1.0
+            } else if stats.cutscene_timer < 2.2 {
+                ((stats.cutscene_timer - 0.8) / 1.4).clamp(0.0, 1.0)
+            } else {
+                (1.0 - (stats.cutscene_timer - 12.2) / 1.8).clamp(0.0, 1.0)
+            };
+            (
+                Quat::from_rotation_x(-0.18 * bow),
+                Quat::from_rotation_x(-0.18 * bow),
+                Quat::from_rotation_x(-0.35 * bow) * Quat::from_rotation_z(0.14 * bow),
+                Quat::from_rotation_x(-0.35 * bow) * Quat::from_rotation_z(-0.14 * bow),
+                Quat::from_rotation_x(-0.88 * bow),
+                Quat::from_rotation_x(-0.38 * bow),
+                -0.08 * bow,
+            )
+        } else if *state.get() == GameState::StageClear {
             let swing = (t * 10.0).sin();
             (
                 Quat::from_rotation_x(swing * 0.55),

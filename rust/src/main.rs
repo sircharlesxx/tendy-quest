@@ -1,5 +1,6 @@
 mod audio;
 mod boss;
+mod city;
 mod enemies;
 mod level;
 mod player;
@@ -11,6 +12,13 @@ use bevy::prelude::*;
 use boss::{
     ensure_hero_eye_reflections, ensure_hero_vikings_gear, enter_boss_fight, enter_cutscene,
     exit_boss_fight, exit_cutscene, update_boss_fight, update_cutscene,
+};
+use city::{
+    animate_city_intro_lexie, enter_city_intro_cutscene, enter_city_play,
+    enter_mom_victory_cutscene, exit_city_intro_cutscene, exit_city_play,
+    exit_mom_victory_cutscene, update_city_intro_cutscene, update_city_intro_subtitles,
+    update_city_lexie, update_city_minimap, update_city_npcs, update_city_pickups,
+    update_city_traffic, update_mom_victory_cutscene, update_mom_victory_subtitles,
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
@@ -127,6 +135,52 @@ fn main() {
                 toggle_tutorial_hotkey,
             )
                 .run_if(in_state(GameState::BossFight)),
+        )
+        .add_systems(OnEnter(GameState::MomVictoryCutscene), enter_mom_victory_cutscene)
+        .add_systems(OnExit(GameState::MomVictoryCutscene), exit_mom_victory_cutscene)
+        .add_systems(
+            Update,
+            (
+                update_mom_victory_cutscene,
+                update_mom_victory_subtitles,
+                ensure_hero_vikings_gear,
+                animate_player_limbs,
+            )
+                .run_if(in_state(GameState::MomVictoryCutscene)),
+        )
+        .add_systems(OnEnter(GameState::CityIntroCutscene), enter_city_intro_cutscene)
+        .add_systems(OnExit(GameState::CityIntroCutscene), exit_city_intro_cutscene)
+        .add_systems(
+            Update,
+            (
+                update_city_intro_cutscene,
+                update_city_intro_subtitles,
+                animate_city_intro_lexie,
+                update_city_traffic,
+                update_city_npcs,
+                ensure_hero_vikings_gear,
+                animate_player_limbs,
+            )
+                .run_if(in_state(GameState::CityIntroCutscene)),
+        )
+        .add_systems(OnEnter(GameState::CityPlay), enter_city_play)
+        .add_systems(OnExit(GameState::CityPlay), (unlock_cursor, exit_city_play))
+        .add_systems(
+            Update,
+            (
+                ensure_hero_vikings_gear,
+                camera_mouse_look,
+                player_movement,
+                animate_player_limbs,
+                update_camera,
+                update_city_traffic,
+                update_city_npcs,
+                update_city_pickups,
+                update_city_lexie,
+                update_city_minimap,
+                toggle_tutorial_hotkey,
+            )
+                .run_if(in_state(GameState::CityPlay)),
         )
         .add_systems(OnEnter(GameState::StageClear), spawn_stage_clear_overlay)
         .add_systems(

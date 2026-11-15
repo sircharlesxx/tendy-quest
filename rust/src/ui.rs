@@ -192,7 +192,11 @@ pub fn update_hud(
         );
     }
     if let Ok(mut t) = score_q.get_single_mut() {
-        t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
+        if stats.in_city {
+            t.0 = format!("SCORE: {:06}\nNYC • {}/50", stats.score, stats.tendies);
+        } else {
+            t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
+        }
     }
     if let Ok(mut t) = status_q.get_single_mut() {
         let mut tags = Vec::new();
@@ -408,10 +412,31 @@ pub fn adapt_ui_to_viewport(
     }
 }
 
-pub fn check_url_test_mode(mut next_state: ResMut<NextState<GameState>>) {
+pub fn check_url_test_mode(
+    mut stats: ResMut<PlayerStats>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
     match crate::audio::init_test_mode() {
         1 => next_state.set(GameState::Cutscene),
         2 => next_state.set(GameState::BossFight),
+        3 => next_state.set(GameState::MomVictoryCutscene),
+        4 => next_state.set(GameState::CityIntroCutscene),
+        5 => {
+            stats.in_city = true;
+            stats.tendies = 0;
+            stats.total_tendies = 50;
+            stats.player_scale = 1.8;
+            stats.wave = 4;
+            next_state.set(GameState::CityPlay);
+        }
+        6 => {
+            stats.in_city = true;
+            stats.tendies = 50;
+            stats.total_tendies = 50;
+            stats.player_scale = 18.0;
+            stats.wave = 4;
+            next_state.set(GameState::CityPlay);
+        }
         _ => {}
     }
 }
@@ -476,7 +501,18 @@ pub fn despawn_tutorial_overlay(
 }
 
 pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
-    if stats.boss_mode {
+    if stats.lexie_defeated {
+        spawn_end_card(
+            commands,
+            "LEXIE DEFEATED — NEW YORK CITY SAVED!",
+            &format!(
+                "SKYSCRAPER KAIJU STAN MASTERED THE TENDY-VERSE!\n50 / 50 MANHATTAN TENDIES • LEXIE & PICKLED GARLIC BANISHED!\nFINAL SCORE: {:06}",
+                stats.score
+            ),
+            "PLAY AGAIN (R / TAP)",
+            Color::srgb(1.0, 0.84, 0.2),
+        );
+    } else if stats.boss_mode {
         spawn_end_card(
             commands,
             "MOM DEFEATED — TENDY CHAMPION!",

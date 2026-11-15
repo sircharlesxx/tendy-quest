@@ -91,8 +91,10 @@ pub fn ensure_hero_vikings_gear(
     existing_q: Query<Entity, With<HeroCosmetic>>,
     part_q: Query<(Entity, &Name), Without<HeroCosmetic>>,
 ) {
-    let should_wear =
-        *state.get() == GameState::BossFight || (*state.get() == GameState::Cutscene && stats.cutscene_beat >= 6);
+    let should_wear = matches!(
+        *state.get(),
+        GameState::BossFight | GameState::MomVictoryCutscene | GameState::CityIntroCutscene | GameState::CityPlay
+    ) || (*state.get() == GameState::Cutscene && stats.cutscene_beat >= 6);
     if !should_wear || !existing_q.is_empty() {
         return;
     }
@@ -1750,7 +1752,7 @@ pub fn exit_cutscene(
     }
 }
 
-fn spawn_mom_mesh_hierarchy(
+pub(crate) fn spawn_mom_mesh_hierarchy(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -2237,14 +2239,13 @@ pub fn update_boss_fight(
         }
     }
 
-    // Check Boss Victory
+    // Check Boss Victory -> transition into Japanese Anime thank-you cutscene before NYC
     if mom.hp <= 0.0 {
         stats.score += 10000;
-        stats.hint_text = "MOM DEFEATED! CHICKEN TENDIES SECURED!".to_string();
+        stats.hint_text = "MOM DEFEATED — ENTERING HONORABLE THANK-YOU SCENE...".to_string();
         crate::audio::play_sfx("win");
-        crate::audio::speak_voice("Okay Stan! You win! Eat all the chicken tendies you want!", "mom");
         commands.entity(mom_ent).despawn_recursive();
-        next_state.set(GameState::StageClear);
+        next_state.set(GameState::MomVictoryCutscene);
         return;
     }
 

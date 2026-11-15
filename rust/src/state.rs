@@ -7,6 +7,9 @@ pub enum GameState {
     Playing,
     Cutscene,
     BossFight,
+    MomVictoryCutscene,
+    CityIntroCutscene,
+    CityPlay,
     StageClear,
     GameOver,
 }
@@ -32,6 +35,8 @@ pub struct PlayerStats {
     pub mom_quote: String,
     pub cutscene_timer: f32,
     pub cutscene_beat: u8,
+    pub in_city: bool,
+    pub lexie_defeated: bool,
 }
 
 impl Default for PlayerStats {
@@ -56,12 +61,18 @@ impl Default for PlayerStats {
             mom_quote: String::new(),
             cutscene_timer: 0.0,
             cutscene_beat: 0,
+            in_city: false,
+            lexie_defeated: false,
         }
     }
 }
 
 impl PlayerStats {
     pub fn target_scale(&self) -> f32 {
+        if self.in_city {
+            let t = self.tendies.min(50) as f32 / 50.0;
+            return 1.8 + t.powf(1.08) * 16.2;
+        }
         if self.boss_mode {
             return 3.2;
         }
@@ -73,12 +84,26 @@ impl PlayerStats {
     }
 
     pub fn height_cm(&self) -> u32 {
+        if self.in_city {
+            return ((self.player_scale / 18.0) * 6500.0)
+                .round()
+                .clamp(180.0, 6500.0) as u32;
+        }
         ((self.player_scale / 6.0) * 180.0)
             .round()
             .clamp(15.0, 180.0) as u32
     }
 
     pub fn size_tier(&self) -> &'static str {
+        if self.in_city {
+            return match self.tendies {
+                0..=11 => "NYC Street Brawler",
+                12..=24 => "Subway Crusher",
+                25..=37 => "Midrise Mutant",
+                38..=49 => "Empire Titan",
+                _ => "SKYSCRAPER KAIJU — SMASH LEXIE!",
+            };
+        }
         if self.boss_mode {
             return "VIKING ONESIE KNIGHT";
         }
