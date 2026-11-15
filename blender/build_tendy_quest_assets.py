@@ -578,7 +578,9 @@ def displace_organic(obj, freq=6.0, amp=0.10, seed=1):
 
 
 def add_dinner_fork(x, y, z, rot_z=0.0, scale_s=1.0, mat=None, upright=False):
-    """Detailed 4-tine stainless steel fork."""
+    """Detailed 4-tine stainless steel fork. Returns list of created mesh objects."""
+    parts = []
+
     def pt(lx, ly, lz):
         ca, sa = math.cos(rot_z), math.sin(rot_z)
         rx = lx * ca - ly * sa
@@ -587,28 +589,61 @@ def add_dinner_fork(x, y, z, rot_z=0.0, scale_s=1.0, mat=None, upright=False):
 
     if upright:
         # Held vertically in carrot hand pointing forward/up (+Z / +Y)
-        add_cylinder(0.032 * scale_s, 0.65 * scale_s, (x, y, z + 0.30 * scale_s), mat=mat, vertices=16)
-        add_cube(0.06 * scale_s, (x, y, z + 0.64 * scale_s), scale=(2.8, 0.35, 0.6), mat=mat, smooth=True)
+        parts.append(add_cylinder(0.032 * scale_s, 0.65 * scale_s, (x, y, z + 0.30 * scale_s), mat=mat, vertices=16))
+        parts.append(add_cube(0.06 * scale_s, (x, y, z + 0.64 * scale_s), scale=(2.8, 0.35, 0.6), mat=mat, smooth=True))
         for tx in (-0.068, -0.023, 0.023, 0.068):
-            add_cylinder(0.012 * scale_s, 0.24 * scale_s, (x + tx * scale_s, y, z + 0.77 * scale_s), mat=mat, vertices=10)
+            parts.append(add_cylinder(0.012 * scale_s, 0.24 * scale_s, (x + tx * scale_s, y, z + 0.77 * scale_s), mat=mat, vertices=10))
     else:
         # Lying horizontally on the countertop next to plate
         rot_x = math.pi / 2
-        add_cylinder(0.035 * scale_s, 0.85 * scale_s, pt(0, -0.25, 0), rotation=(rot_x, 0, rot_z), mat=mat, vertices=16)
-        add_cylinder(0.024 * scale_s, 0.30 * scale_s, pt(0, 0.28, 0), rotation=(rot_x, 0, rot_z), mat=mat, vertices=14)
-        add_cube(0.08 * scale_s, pt(0, 0.45, 0), scale=(2.4, 0.8, 0.22), rotation=(0, 0, rot_z), mat=mat, smooth=True)
+        parts.append(add_cylinder(0.035 * scale_s, 0.85 * scale_s, pt(0, -0.25, 0), rotation=(rot_x, 0, rot_z), mat=mat, vertices=16))
+        parts.append(add_cylinder(0.024 * scale_s, 0.30 * scale_s, pt(0, 0.28, 0), rotation=(rot_x, 0, rot_z), mat=mat, vertices=14))
+        parts.append(add_cube(0.08 * scale_s, pt(0, 0.45, 0), scale=(2.4, 0.8, 0.22), rotation=(0, 0, rot_z), mat=mat, smooth=True))
         for tx in (-0.068, -0.023, 0.023, 0.068):
-            add_cylinder(0.012 * scale_s, 0.28 * scale_s, pt(tx, 0.60, 0), rotation=(rot_x, 0, rot_z), mat=mat, vertices=10)
+            parts.append(add_cylinder(0.012 * scale_s, 0.28 * scale_s, pt(tx, 0.60, 0), rotation=(rot_x, 0, rot_z), mat=mat, vertices=10))
+    return parts
 
 
-def export_glb(filepath):
+def join_with_pivot(objs, name, pivot_xyz):
+    """Apply world transforms on parts, join into one mesh, and place origin at pivot_xyz."""
+    if not objs:
+        return None
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    if len(objs) > 1:
+        bpy.ops.object.join()
+    joined = bpy.context.active_object
+    joined.name = name
+    px, py, pz = pivot_xyz
+    for v in joined.data.vertices:
+        v.co.x -= px
+        v.co.y -= py
+        v.co.z -= pz
+    joined.data.update()
+    joined.location = pivot_xyz
+    return joined
+
+
+def export_glb(filepath, preserve_pivots=False):
     bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.export_scene.gltf(
-        filepath=filepath,
-        export_format="GLB",
-        use_selection=True,
-        export_apply=True,
-    )
+    if preserve_pivots:
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+        bpy.ops.export_scene.gltf(
+            filepath=filepath,
+            export_format="GLB",
+            use_selection=True,
+            export_apply=False,
+        )
+    else:
+        bpy.ops.export_scene.gltf(
+            filepath=filepath,
+            export_format="GLB",
+            use_selection=True,
+            export_apply=True,
+        )
 
 
 # --- 13 Game Asset Builders ---
@@ -632,28 +667,30 @@ def build_plaid_hero():
     teeth = create_solid_material("HeroTeethMat", (0.98, 0.98, 0.95, 1.0), roughness=0.22)
 
     # Stocky plaid torso + broad shoulders + folded plaid hoodie hood on upper back
-    add_sphere(0.41, (0, 0, 1.00), scale=(1.02, 0.84, 1.24), mat=plaid, uv_scale=1.6)
-    add_sphere(0.24, (0, 0.01, 1.36), scale=(1.58, 0.94, 0.56), mat=plaid, uv_scale=1.6)
-    add_torus(0.21, 0.065, (0, 0.02, 1.48), rotation=(0.12, 0, 0), mat=plaid, uv_scale=1.6)
-    # Draped plaid hood resting neatly on the upper back (-Y)
-    add_sphere(0.27, (0, -0.22, 1.38), scale=(1.12, 0.68, 0.72), rotation=(-0.35, 0, 0), mat=plaid, uv_scale=1.6)
-    # Front zipper
-    add_cube(0.045, (0, 0.34, 1.10), scale=(0.65, 0.4, 12.5), mat=zipper, smooth=True)
-    # Iconic buttoned tan butt-flap on the lower back (-Y)
-    add_cube(0.30, (0, -0.33, 0.80), scale=(1.05, 0.20, 0.85), rotation=(0.14, 0, 0), mat=flap, smooth=True, bevel=0.03)
+    torso_parts = [
+        add_sphere(0.41, (0, 0, 1.00), scale=(1.02, 0.84, 1.24), mat=plaid, uv_scale=1.6),
+        add_sphere(0.24, (0, 0.01, 1.36), scale=(1.58, 0.94, 0.56), mat=plaid, uv_scale=1.6),
+        add_torus(0.21, 0.065, (0, 0.02, 1.48), rotation=(0.12, 0, 0), mat=plaid, uv_scale=1.6),
+        add_sphere(0.27, (0, -0.22, 1.38), scale=(1.12, 0.68, 0.72), rotation=(-0.35, 0, 0), mat=plaid, uv_scale=1.6),
+        add_cube(0.045, (0, 0.34, 1.10), scale=(0.65, 0.4, 12.5), mat=zipper, smooth=True),
+        add_cube(0.30, (0, -0.33, 0.80), scale=(1.05, 0.20, 0.85), rotation=(0.14, 0, 0), mat=flap, smooth=True, bevel=0.03),
+    ]
     for bx in (-0.10, 0.10):
-        add_cylinder(0.032, 0.025, (bx, -0.37, 0.90), rotation=(math.pi / 2, 0, 0), mat=btn)
+        torso_parts.append(add_cylinder(0.032, 0.025, (bx, -0.37, 0.90), rotation=(math.pi / 2, 0, 0), mat=btn))
+    join_with_pivot(torso_parts, "HeroTorso", (0.0, 0.0, 0.72))
 
     # Sculpted head shifted slightly forward so full brown hair cleanly covers back & crown
-    add_sphere(0.27, (0, 0.06, 1.78), scale=(0.95, 0.92, 1.02), mat=skin)
-    add_sphere(0.052, (0, 0.31, 1.78), scale=(0.88, 1.15, 0.82), mat=skin)
+    head_parts = [
+        add_sphere(0.27, (0, 0.06, 1.78), scale=(0.95, 0.92, 1.02), mat=skin),
+        add_sphere(0.052, (0, 0.31, 1.78), scale=(0.88, 1.15, 0.82), mat=skin),
+    ]
     for sx in (-1, 1):
-        add_sphere(0.062, (sx * 0.28, 0.01, 1.78), scale=(0.50, 0.82, 1.08), mat=skin)
-        add_sphere(0.055, (sx * 0.16, 0.24, 1.75), scale=(1.1, 0.65, 0.85), mat=cheek)
+        head_parts.append(add_sphere(0.062, (sx * 0.28, 0.01, 1.78), scale=(0.50, 0.82, 1.08), mat=skin))
+        head_parts.append(add_sphere(0.055, (sx * 0.16, 0.24, 1.75), scale=(1.1, 0.65, 0.85), mat=cheek))
 
     # Full brown hair skull cap enveloping back, sides, and crown
-    add_sphere(0.305, (0, -0.03, 1.83), scale=(1.04, 1.06, 1.04), mat=hair, uv_scale=2.0)
-    add_sphere(0.25, (0, -0.14, 1.69), scale=(1.06, 0.88, 0.82), mat=hair, uv_scale=2.0)
+    head_parts.append(add_sphere(0.305, (0, -0.03, 1.83), scale=(1.04, 1.06, 1.04), mat=hair, uv_scale=2.0))
+    head_parts.append(add_sphere(0.25, (0, -0.14, 1.69), scale=(1.06, 0.88, 0.82), mat=hair, uv_scale=2.0))
     hair_locks = [
         (0.0, -0.02, 2.04, 0.18, (1.2, 1.3, 0.55), (0.15, 0, 0)),
         (-0.14, 0.02, 2.00, 0.16, (1.1, 1.2, 0.55), (0.12, -0.25, 0.2)),
@@ -664,34 +701,45 @@ def build_plaid_hero():
         (0.18, -0.18, 1.82, 0.16, (0.95, 0.85, 0.85), (-0.15, 0.3, 0)),
     ]
     for hx, hy, hz, hr, hsc, hrot in hair_locks:
-        add_sphere(hr, (hx, hy, hz), scale=hsc, rotation=hrot, mat=hair, uv_scale=2.2)
+        head_parts.append(add_sphere(hr, (hx, hy, hz), scale=hsc, rotation=hrot, mat=hair, uv_scale=2.2))
 
     # Full warm beard, mustache, cheerful smile & detailed eyes
-    add_sphere(0.265, (0, 0.09, 1.68), scale=(0.94, 0.90, 0.64), mat=hair)
-    add_sphere(0.11, (0, 0.28, 1.72), scale=(1.25, 0.52, 0.34), mat=hair)
-    add_sphere(0.085, (0, 0.27, 1.66), scale=(1.3, 0.5, 0.65), mat=mouth_in)
-    add_cube(0.05, (0, 0.30, 1.68), scale=(2.0, 0.4, 0.32), mat=teeth, smooth=True)
+    head_parts.extend([
+        add_sphere(0.265, (0, 0.09, 1.68), scale=(0.94, 0.90, 0.64), mat=hair),
+        add_sphere(0.11, (0, 0.28, 1.72), scale=(1.25, 0.52, 0.34), mat=hair),
+        add_sphere(0.085, (0, 0.27, 1.66), scale=(1.3, 0.5, 0.65), mat=mouth_in),
+        add_cube(0.05, (0, 0.30, 1.68), scale=(2.0, 0.4, 0.32), mat=teeth, smooth=True),
+    ])
     for sx in (-1, 1):
-        add_sphere(0.056, (sx * 0.10, 0.27, 1.84), mat=eye_w)
-        add_sphere(0.034, (sx * 0.10, 0.30, 1.84), mat=eye_iris)
-        add_sphere(0.022, (sx * 0.10, 0.315, 1.84), mat=eye_b)
-        add_cube(0.038, (sx * 0.10, 0.29, 1.91), scale=(2.1, 0.55, 0.42), rotation=(0, sx * -0.10, 0), mat=hair, smooth=True)
+        head_parts.extend([
+            add_sphere(0.056, (sx * 0.10, 0.27, 1.84), mat=eye_w),
+            add_sphere(0.034, (sx * 0.10, 0.30, 1.84), mat=eye_iris),
+            add_sphere(0.022, (sx * 0.10, 0.315, 1.84), mat=eye_b),
+            add_cube(0.038, (sx * 0.10, 0.29, 1.91), scale=(2.1, 0.55, 0.42), rotation=(0, sx * -0.10, 0), mat=hair, smooth=True),
+        ])
+    join_with_pivot(head_parts, "HeroHead", (0.0, 0.02, 1.52))
 
-    # Arms, ribbed dark cuffs, hands, legs & rounded slip-on sneakers
-    for sx in (-1, 1):
-        add_cylinder(0.112, 0.56, (sx * 0.50, 0.02, 1.21), rotation=(0.12, sx * -0.45, 0), mat=plaid, uv_scale=1.8)
-        add_sphere(0.112, (sx * 0.62, 0.04, 0.98), mat=plaid, uv_scale=1.8)
-        add_torus(0.095, 0.025, (sx * 0.64, 0.05, 0.95), rotation=(0.12, sx * -0.45, 0), mat=cuff)
-        add_sphere(0.095, (sx * 0.67, 0.07, 0.89), mat=skin)
+    # Articulated arms & legs with joint pivots at shoulders and hips
+    for sx, side_name in [(-1, "Left"), (1, "Right")]:
+        arm_parts = [
+            add_sphere(0.118, (sx * 0.39, 0.02, 1.38), mat=plaid, uv_scale=1.8),
+            add_cylinder(0.112, 0.56, (sx * 0.50, 0.02, 1.21), rotation=(0.12, sx * -0.45, 0), mat=plaid, uv_scale=1.8),
+            add_sphere(0.112, (sx * 0.62, 0.04, 0.98), mat=plaid, uv_scale=1.8),
+            add_torus(0.095, 0.025, (sx * 0.64, 0.05, 0.95), rotation=(0.12, sx * -0.45, 0), mat=cuff),
+            add_sphere(0.095, (sx * 0.67, 0.07, 0.89), mat=skin),
+        ]
+        join_with_pivot(arm_parts, f"Hero{side_name}Arm", (sx * 0.38, 0.02, 1.38))
 
-        add_cylinder(0.15, 0.56, (sx * 0.19, 0.0, 0.41), mat=plaid, uv_scale=1.8)
-        add_sphere(0.15, (sx * 0.19, 0.0, 0.64), mat=plaid, uv_scale=1.8)
-        add_torus(0.13, 0.03, (sx * 0.19, 0.0, 0.16), mat=cuff)
+        leg_parts = [
+            add_cylinder(0.15, 0.56, (sx * 0.19, 0.0, 0.41), mat=plaid, uv_scale=1.8),
+            add_sphere(0.15, (sx * 0.19, 0.0, 0.64), mat=plaid, uv_scale=1.8),
+            add_torus(0.13, 0.03, (sx * 0.19, 0.0, 0.16), mat=cuff),
+            add_sphere(0.125, (sx * 0.19, 0.07, 0.10), scale=(0.86, 1.42, 0.54), mat=shoe),
+            add_cylinder(0.115, 0.038, (sx * 0.19, 0.07, 0.025), scale=(0.90, 1.46, 1.0), mat=sole),
+        ]
+        join_with_pivot(leg_parts, f"Hero{side_name}Leg", (sx * 0.19, 0.0, 0.66))
 
-        add_sphere(0.125, (sx * 0.19, 0.07, 0.10), scale=(0.86, 1.42, 0.54), mat=shoe)
-        add_cylinder(0.115, 0.038, (sx * 0.19, 0.07, 0.025), scale=(0.90, 1.46, 1.0), mat=sole)
-
-    export_glb(os.path.join(OUTPUT_DIR, "plaid_hero.glb"))
+    export_glb(os.path.join(OUTPUT_DIR, "plaid_hero.glb"), preserve_pivots=True)
 
 
 def build_golden_tendy():
@@ -735,22 +783,34 @@ def build_broccoli_brute():
     teeth = create_solid_material("TeethMat", (0.98, 0.98, 0.94, 1.0), roughness=0.22)
 
     # Muscular torso, defined pecs, 6-pack abs, leaf loincloth & broad delts
-    add_cylinder(0.45, 0.96, (0, 0, 0.94), scale=(1.22, 0.85, 1.0), mat=stalk, uv_scale=1.4)
-    add_sphere(0.46, (0, -0.02, 0.48), scale=(1.12, 0.92, 0.45), mat=shorts)
+    body_parts = [
+        add_cylinder(0.45, 0.96, (0, 0, 0.94), scale=(1.22, 0.85, 1.0), mat=stalk, uv_scale=1.4),
+        add_sphere(0.46, (0, -0.02, 0.48), scale=(1.12, 0.92, 0.45), mat=shorts),
+    ]
     for row in range(3):
         for sx in (-1, 1):
-            add_sphere(0.11, (sx * 0.13, 0.35, 0.90 - row * 0.14), scale=(1.1, 0.45, 0.7), mat=stalk)
+            body_parts.append(add_sphere(0.11, (sx * 0.13, 0.35, 0.90 - row * 0.14), scale=(1.1, 0.45, 0.7), mat=stalk))
 
     for sx in (-1, 1):
-        add_sphere(0.26, (sx * 0.22, 0.24, 1.12), scale=(1.05, 0.72, 0.84), mat=stalk)
-        add_sphere(0.25, (sx * 0.64, 0.02, 1.24), mat=stalk)  # deltoid
-        add_cylinder(0.18, 0.56, (sx * 0.78, 0.08, 0.96), rotation=(0.25, sx * -0.35, 0), mat=stalk)
+        body_parts.append(add_sphere(0.26, (sx * 0.22, 0.24, 1.12), scale=(1.05, 0.72, 0.84), mat=stalk))
+
+    for sx, side_name in [(-1, "Left"), (1, "Right")]:
+        arm_parts = [
+            add_sphere(0.25, (sx * 0.64, 0.02, 1.24), mat=stalk),  # deltoid
+            add_cylinder(0.18, 0.56, (sx * 0.78, 0.08, 0.96), rotation=(0.25, sx * -0.35, 0), mat=stalk),
+        ]
         # Leafy wrist spikes (just like the video!)
         for sp_a in (-0.4, 0.0, 0.4):
-            add_cone(0.06, 0.008, 0.24, (sx * 0.84, 0.14 + sp_a * 0.12, 0.80), rotation=(-0.4, sx * 0.7, sp_a), mat=crown, vertices=10)
-        add_sphere(0.23, (sx * 0.88, 0.22, 0.62), scale=(1.0, 1.15, 0.95), mat=stalk)  # clenched fist
-        add_cylinder(0.20, 0.46, (sx * 0.26, 0, 0.24), mat=stalk)  # thigh/leg
-        add_sphere(0.19, (sx * 0.26, 0.06, 0.08), scale=(0.95, 1.35, 0.52), mat=stalk)
+            arm_parts.append(add_cone(0.06, 0.008, 0.24, (sx * 0.84, 0.14 + sp_a * 0.12, 0.80), rotation=(-0.4, sx * 0.7, sp_a), mat=crown, vertices=10))
+        arm_parts.append(add_sphere(0.23, (sx * 0.88, 0.22, 0.62), scale=(1.0, 1.15, 0.95), mat=stalk))  # clenched fist
+        join_with_pivot(arm_parts, f"Brute{side_name}Arm", (sx * 0.64, 0.02, 1.24))
+
+        leg_parts = [
+            add_sphere(0.20, (sx * 0.26, 0, 0.45), mat=stalk),
+            add_cylinder(0.20, 0.46, (sx * 0.26, 0, 0.24), mat=stalk),  # thigh/leg
+            add_sphere(0.19, (sx * 0.26, 0.06, 0.08), scale=(0.95, 1.35, 0.52), mat=stalk),
+        ]
+        join_with_pivot(leg_parts, f"Brute{side_name}Leg", (sx * 0.26, 0.0, 0.46))
 
     # Rich 28-cluster floret afro crown with organic displacement
     rng = np.random.default_rng(7)
@@ -766,24 +826,29 @@ def build_broccoli_brute():
     for idx, (px, py, pz, pr) in enumerate(base_puffs):
         p = add_ico(pr, (px, py, pz), mat=crown, subdiv=2, uv_scale=2.2)
         displace_organic(p, freq=9.0, amp=0.14, seed=idx + 10)
+        body_parts.append(p)
     for idx in range(10):
         ang = rng.uniform(0, math.tau)
         rad = rng.uniform(0.35, 0.65)
         pz = rng.uniform(1.62, 2.08)
         p = add_ico(rng.uniform(0.20, 0.28), (math.cos(ang) * rad, math.sin(ang) * rad, pz), mat=crown, subdiv=2, uv_scale=2.2)
         displace_organic(p, freq=11.0, amp=0.15, seed=idx + 50)
+        body_parts.append(p)
 
     # Scowling furrowed V-brow, angry eyes & clenched toothy grimace (+Y)
     for sx in (-1, 1):
-        add_cube(0.16, (sx * 0.18, 0.42, 1.31), scale=(1.6, 0.65, 0.40), rotation=(0, sx * -0.22, 0), mat=brow, smooth=True)
-        add_sphere(0.082, (sx * 0.16, 0.41, 1.19), mat=eye_w)
-        add_sphere(0.042, (sx * 0.16, 0.48, 1.19), mat=eye_b)
-    add_cube(0.18, (0, 0.39, 0.94), scale=(2.3, 0.45, 0.62), mat=mouth_bg, smooth=True)
+        body_parts.extend([
+            add_cube(0.16, (sx * 0.18, 0.42, 1.31), scale=(1.6, 0.65, 0.40), rotation=(0, sx * -0.22, 0), mat=brow, smooth=True),
+            add_sphere(0.082, (sx * 0.16, 0.41, 1.19), mat=eye_w),
+            add_sphere(0.042, (sx * 0.16, 0.48, 1.19), mat=eye_b),
+        ])
+    body_parts.append(add_cube(0.18, (0, 0.39, 0.94), scale=(2.3, 0.45, 0.62), mat=mouth_bg, smooth=True))
     for tx in (-0.14, -0.05, 0.05, 0.14):
-        add_cone(0.032, 0.005, 0.068, (tx, 0.43, 0.90), mat=teeth, vertices=8)
-        add_cone(0.030, 0.005, 0.062, (tx, 0.43, 0.98), rotation=(math.pi, 0, 0), mat=teeth, vertices=8)
+        body_parts.append(add_cone(0.032, 0.005, 0.068, (tx, 0.43, 0.90), mat=teeth, vertices=8))
+        body_parts.append(add_cone(0.030, 0.005, 0.062, (tx, 0.43, 0.98), rotation=(math.pi, 0, 0), mat=teeth, vertices=8))
 
-    export_glb(os.path.join(OUTPUT_DIR, "broccoli_brute.glb"))
+    join_with_pivot(body_parts, "BruteBody", (0.0, 0.0, 0.48))
+    export_glb(os.path.join(OUTPUT_DIR, "broccoli_brute.glb"), preserve_pivots=True)
 
 
 def build_carrot_lancer():
@@ -800,35 +865,51 @@ def build_carrot_lancer():
     # Tapered organic carrot body + root rings
     body = add_cone(0.38, 0.08, 1.42, (0, 0, 0.98), rotation=(math.pi, 0, 0), mat=carrot, vertices=32, uv_scale=1.6)
     displace_organic(body, freq=8.0, amp=0.04, seed=21)
+    body_parts = [body]
     for rz, rr in [(0.74, 0.20), (1.02, 0.27), (1.30, 0.33)]:
-        add_torus(rr, 0.018, (0, 0, rz), mat=ridge)
+        body_parts.append(add_torus(rr, 0.018, (0, 0, rz), mat=ridge))
 
     # Lush 8-frond leafy carrot crown
     for i in range(8):
         ang = i * (math.tau / 8.0)
-        add_cone(
+        body_parts.append(add_cone(
             0.10, 0.012, 0.58,
             (math.cos(ang) * 0.11, math.sin(ang) * 0.11, 1.88),
             rotation=(math.sin(ang) * 0.42, -math.cos(ang) * 0.42, 0),
             mat=leaf, vertices=12,
-        )
+        ))
 
-    # Angry brow, eyes, grimacing teeth, springy carrot arms & legs
+    # Angry brow, eyes, grimacing teeth
     for sx in (-1, 1):
-        add_sphere(0.085, (sx * 0.13, 0.28, 1.32), mat=eye_w)
-        add_sphere(0.042, (sx * 0.13, 0.35, 1.32), mat=eye_b)
-        add_cube(0.038, (sx * 0.13, 0.33, 1.42), scale=(2.8, 0.6, 0.42), rotation=(0, sx * -0.25, 0), mat=eye_b, smooth=True)
-        add_cylinder(0.060, 0.38, (sx * 0.16, 0, 0.19), mat=carrot)
-        add_cylinder(0.048, 0.48, (sx * 0.37, 0.14, 0.94), rotation=(0.95, 0, sx * -0.22), mat=carrot)
+        body_parts.extend([
+            add_sphere(0.085, (sx * 0.13, 0.28, 1.32), mat=eye_w),
+            add_sphere(0.042, (sx * 0.13, 0.35, 1.32), mat=eye_b),
+            add_cube(0.038, (sx * 0.13, 0.33, 1.42), scale=(2.8, 0.6, 0.42), rotation=(0, sx * -0.25, 0), mat=eye_b, smooth=True),
+        ])
 
-    add_cube(0.11, (0, 0.31, 1.12), scale=(2.0, 0.5, 0.7), mat=mouth_bg, smooth=True)
+    body_parts.append(add_cube(0.11, (0, 0.31, 1.12), scale=(2.0, 0.5, 0.7), mat=mouth_bg, smooth=True))
     for tx in (-0.07, -0.02, 0.03, 0.08):
-        add_cone(0.022, 0.004, 0.045, (tx, 0.34, 1.09), mat=teeth, vertices=8)
+        body_parts.append(add_cone(0.022, 0.004, 0.045, (tx, 0.34, 1.09), mat=teeth, vertices=8))
+    join_with_pivot(body_parts, "CarrotBody", (0.0, 0.0, 0.38))
 
-    # Gleaming 4-pronged silver dinner fork held in right hand!
-    add_dinner_fork(0.44, 0.36, 0.68, rot_z=0.0, scale_s=1.25, mat=silver, upright=True)
+    # Springy carrot legs & arms (right arm holds gleaming 4-pronged silver dinner fork)
+    for sx, side_name in [(-1, "Left"), (1, "Right")]:
+        leg_parts = [
+            add_sphere(0.060, (sx * 0.16, 0, 0.37), mat=carrot),
+            add_cylinder(0.060, 0.38, (sx * 0.16, 0, 0.19), mat=carrot),
+            add_sphere(0.066, (sx * 0.16, 0.03, 0.05), scale=(1.0, 1.35, 0.65), mat=carrot),
+        ]
+        join_with_pivot(leg_parts, f"Carrot{side_name}Leg", (sx * 0.16, 0.0, 0.38))
 
-    export_glb(os.path.join(OUTPUT_DIR, "carrot_lancer.glb"))
+        arm_parts = [
+            add_sphere(0.055, (sx * 0.30, 0.06, 1.04), mat=carrot),
+            add_cylinder(0.048, 0.48, (sx * 0.37, 0.14, 0.94), rotation=(0.95, 0, sx * -0.22), mat=carrot),
+        ]
+        if sx == 1:
+            arm_parts.extend(add_dinner_fork(0.44, 0.36, 0.68, rot_z=0.0, scale_s=1.25, mat=silver, upright=True))
+        join_with_pivot(arm_parts, f"Carrot{side_name}Arm", (sx * 0.30, 0.06, 1.05))
+
+    export_glb(os.path.join(OUTPUT_DIR, "carrot_lancer.glb"), preserve_pivots=True)
 
 
 def build_kale_slime():

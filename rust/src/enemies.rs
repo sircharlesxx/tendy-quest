@@ -27,6 +27,7 @@ pub struct Enemy {
     pub lunge_dir: Vec3,
     pub trail_timer: f32,
     pub knockback: Vec3,
+    pub walk_phase: f32,
 }
 
 #[derive(Component)]
@@ -76,6 +77,7 @@ fn spawn_enemy(commands: &mut Commands, asset_server: &AssetServer, kind: EnemyK
             lunge_dir: Vec3::NEG_Z,
             trail_timer: 0.0,
             knockback: Vec3::ZERO,
+            walk_phase: pos.z * 0.5,
         },
     ));
 }
@@ -161,6 +163,7 @@ pub fn update_enemies(
                     if enemy.state_timer <= 0.0 {
                         enemy.carrot_state = CarrotState::Lunge;
                         enemy.state_timer = 0.6;
+                        crate::audio::play_sfx("lunge");
                     }
                 }
                 CarrotState::Lunge => {
@@ -208,6 +211,9 @@ pub fn update_enemies(
             }
         }
 
+        let move_speed = move_vec.length();
+        enemy.walk_phase += move_speed * dt * 2.4;
+
         e_tf.translation += move_vec * dt;
         e_tf.translation.x = e_tf.translation.x.clamp(-6.5, 6.5);
         e_tf.translation.z = e_tf.translation.z.clamp(-20.5, 20.5);
@@ -223,13 +229,16 @@ pub fn update_enemies(
                 stats.has_ranch_shield = false;
                 player.invuln_timer = 0.8;
                 enemy.knockback = -flat_to_player.normalize_or_zero() * 12.0;
+                crate::audio::play_sfx("shield");
             } else {
                 stats.hearts -= 1;
                 player.invuln_timer = 1.2;
                 let push = flat_to_player.normalize_or_zero() * 8.0;
                 p_tf.translation += push * 0.25;
                 player.velocity.y = 5.0;
+                crate::audio::play_sfx("hit");
                 if stats.hearts <= 0 {
+                    crate::audio::play_sfx("lose");
                     next_state.set(GameState::GameOver);
                 }
             }
@@ -245,6 +254,130 @@ pub fn update_enemies(
         }
         if (p_tf.translation - pud_tf.translation).length() < 1.0 && p_tf.translation.y < 0.4 {
             player.slow_timer = 0.4;
+        }
+    }
+}
+
+pub fn animate_enemies(
+    time: Res<Time>,
+    mut enemy_q: Query<(&Enemy, &mut Transform, Option<&Children>)>,
+    children_q: Query<&Children>,
+    mut part_q: Query<(&Name, &mut Transform), Without<Enemy>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    let blend = (dt * 14.0).min(1.0);
+
+    for (enemy, mut e_tf, maybe_children) in &mut enemy_q {
+        if enemy.kind == EnemyKind::KaleSlime {
+            let pulse = (t * 4.5 + enemy.angle).sin();
+            e_tf.scale = Vec3::new(1.0 + pulse * 0.14, 1.0 - pulse * 0.16, 1.0 + pulse * 0.14);
+            continue;
+        }
+
+        let Some(root_children) = maybe_children else {
+            continue;
+        };
+        let mut stack: Vec<Entity> = root_children.iter().copied().collect();
+        while let Some(entity) = stack.pop() {
+            if let Ok(kids) = children_q.get(entity) {
+                stack.extend(kids.iter().copied());
+            }
+            let Ok((name, mut tf)) = part_q.get_mut(entity) else {
+                continue;
+            };
+
+            match enemy.kind {
+                EnemyKind::BroccoliBrute => {
+                    let s = enemy.walk_phase.sin();
+                    let waddle = enemy.walk_phase.cos() * 0.08;
+                    let bounce = (enemy.walk_phase * 2.0).sin().abs() * 0.05;
+                    match name.as_str() {
+                        "BruteLeftLeg" => tf.rotation = tf.rotation.slerp(Quat::from_rotation_x(s * 0.65), blend),
+                        "BruteRightLeg" => tf.rotation = tf.rotation.slerp(Quat::from_rotation_x(-s * 0.65), blend),
+                        "BruteLeftArm" => {
+                            let rot = Quat::from_rotation_x(-s * 0.55) * Quat::from_rotation_z(-0.15);
+                            tf.rotation = tf.rotation.slerp(rot, blend);
+                            tf.translation.y = 1.24 + bounce;
+                        }
+                        "BruteRightArm" => {
+                            let rot = Quat::from_rotation_x(s * 0.55) * Quat::from_rotation_z(0.15);
+                            tf.rotation = tf.rotation.slerp(rot, blend);
+                            tf.translation.y = 1.24 + bounce;
+                        }
+                        "BruteBody" => {
+                            let rot = Quat::from_rotation_z(waddle) * Quat::from_rotation_x(-0.08);
+                            tf.rotation = tf.rotation.slerp(rot, blend);
+                            tf.translation.y = 0.48 + bounce;
+                        }
+                        _ => {}
+                    }
+                }
+                EnemyKind::CarrotLancer => {
+                    let s = enemy.walk_phase.sin();
+                    let (ll, rl, la, ra, body_rot, body_y) = match enemy.carrot_state {
+                        CarrotState::Patrol => (
+                            Quat::from_rotation_x(s * 0.70),
+                            Quat::from_rotation_x(-s * 0.70),
+                            Quat::from_rotation_x(-s * 0.55),
+                            Quat::from_rotation_x(-0.18 + s * 0.25),
+                            Quat::from_rotation_z(enemy.walk_phase.cos() * 0.06),
+                            0.38 + (enemy.walk_phase * 2.0).sin().abs() * 0.04,
+                        ),
+                        CarrotState::Telegraph => {
+                            let jitter = (t * 28.0).sin() * 0.08;
+                            (
+                                Quat::from_rotation_x(0.35),
+                                Quat::from_rotation_x(-0.35),
+                                Quat::from_rotation_x(0.45),
+                                Quat::from_rotation_x(0.55 + jitter),
+                                Quat::from_rotation_x(0.22),
+                                0.35,
+                            )
+                        }
+                        CarrotState::Lunge => {
+                            let sprint = (t * 18.0).sin();
+                            (
+                                Quat::from_rotation_x(sprint * 0.85),
+                                Quat::from_rotation_x(-sprint * 0.85),
+                                Quat::from_rotation_x(-0.80),
+                                Quat::from_rotation_x(-1.25),
+                                Quat::from_rotation_x(-0.28),
+                                0.38,
+                            )
+                        }
+                        CarrotState::Stunned => {
+                            let wobble = (t * 9.0).sin() * 0.22;
+                            (
+                                Quat::IDENTITY,
+                                Quat::IDENTITY,
+                                Quat::from_rotation_z(-0.45),
+                                Quat::from_rotation_z(0.45),
+                                Quat::from_rotation_z(wobble) * Quat::from_rotation_x(0.15),
+                                0.38,
+                            )
+                        }
+                    };
+                    match name.as_str() {
+                        "CarrotLeftLeg" => tf.rotation = tf.rotation.slerp(ll, blend),
+                        "CarrotRightLeg" => tf.rotation = tf.rotation.slerp(rl, blend),
+                        "CarrotLeftArm" => {
+                            tf.rotation = tf.rotation.slerp(la, blend);
+                            tf.translation.y = 1.05 + (body_y - 0.38);
+                        }
+                        "CarrotRightArm" => {
+                            tf.rotation = tf.rotation.slerp(ra, blend);
+                            tf.translation.y = 1.05 + (body_y - 0.38);
+                        }
+                        "CarrotBody" => {
+                            tf.rotation = tf.rotation.slerp(body_rot, blend);
+                            tf.translation.y = body_y;
+                        }
+                        _ => {}
+                    }
+                }
+                EnemyKind::KaleSlime => {}
+            }
         }
     }
 }

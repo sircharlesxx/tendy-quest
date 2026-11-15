@@ -2,9 +2,175 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Tendy Quest — Giant Kitchen</title>
   
+  
+  <script>
+    window.tendyAudio = (() => {
+      const SFX_NAMES = [
+        "jump", "double_jump", "dash", "tendy", "powerup",
+        "hit", "shield", "step", "lunge", "win", "lose"
+      ];
+      let ctx = null;
+      let masterGain = null;
+      let bgmGain = null;
+      let ambGain = null;
+      let bgmSource = null;
+      let ambSource = null;
+      let bgmRequested = false;
+      let bgmStarted = false;
+      let ambStarted = false;
+      let muted = false;
+      const buffers = {};
+      const loading = {};
+
+      function ensureCtx() {
+        if (!ctx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          ctx = new AC();
+          masterGain = ctx.createGain();
+          masterGain.gain.value = muted ? 0.0 : 1.0;
+          masterGain.connect(ctx.destination);
+
+          bgmGain = ctx.createGain();
+          bgmGain.gain.value = 0.42;
+          bgmGain.connect(masterGain);
+
+          ambGain = ctx.createGain();
+          ambGain.gain.value = 0.14;
+          ambGain.connect(masterGain);
+        }
+        return ctx;
+      }
+
+      async function loadBuffer(key, url) {
+        if (buffers[key]) return buffers[key];
+        if (loading[key]) return loading[key];
+        const ac = ensureCtx();
+        if (!ac) return null;
+        loading[key] = fetch(url)
+          .then((res) => (res.ok ? res.arrayBuffer() : null))
+          .then((arr) => (arr ? ac.decodeAudioData(arr) : null))
+          .then((buf) => {
+            if (buf) buffers[key] = buf;
+            return buf;
+          })
+          .catch(() => null);
+        return loading[key];
+      }
+
+      function preloadAll() {
+        try {
+          loadBuffer("bgm", "assets/audio/tendies_from_the_sun.mp3").then(() => {
+            if (bgmRequested) startLoops();
+          });
+          loadBuffer("ambience", "assets/audio/kitchen_ambience.mp3").then(() => {
+            if (bgmRequested) startLoops();
+          });
+          for (const name of SFX_NAMES) {
+            loadBuffer(name, `assets/audio/${name}.wav`);
+          }
+        } catch (_) {}
+      }
+
+      function startLoops() {
+        const ac = ensureCtx();
+        if (!ac || ac.state !== "running") return;
+        if (!bgmStarted && buffers["bgm"]) {
+          bgmStarted = true;
+          bgmSource = ac.createBufferSource();
+          bgmSource.buffer = buffers["bgm"];
+          bgmSource.loop = true;
+          bgmSource.connect(bgmGain);
+          bgmSource.start(0);
+        }
+        if (!ambStarted && buffers["ambience"]) {
+          ambStarted = true;
+          ambSource = ac.createBufferSource();
+          ambSource.buffer = buffers["ambience"];
+          ambSource.loop = true;
+          ambSource.connect(ambGain);
+          ambSource.start(0);
+        }
+      }
+
+      function unlockAndMaybeStart() {
+        try {
+          const ac = ensureCtx();
+          if (!ac) return;
+          if (ac.state === "suspended") {
+            ac.resume().then(() => {
+              if (bgmRequested) startLoops();
+            }).catch(() => {});
+          } else if (bgmRequested) {
+            startLoops();
+          }
+        } catch (_) {}
+      }
+
+      window.addEventListener("pointerdown", () => {
+        preloadAll();
+        unlockAndMaybeStart();
+      });
+      window.addEventListener("keydown", () => {
+        preloadAll();
+        unlockAndMaybeStart();
+      });
+      window.addEventListener("load", preloadAll);
+
+      return {
+        playBgm() {
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+        },
+        playSfx(name) {
+          try {
+            if (muted) return;
+            const ac = ensureCtx();
+            if (!ac) return;
+            if (ac.state === "suspended") {
+              ac.resume().catch(() => {});
+            }
+            const buf = buffers[name];
+            if (!buf) {
+              loadBuffer(name, `assets/audio/${name}.wav`);
+              return;
+            }
+            const src = ac.createBufferSource();
+            src.buffer = buf;
+            const g = ac.createGain();
+            g.gain.value = name === "step" ? 0.35 : 0.72;
+            src.connect(g);
+            g.connect(masterGain);
+            src.start(0);
+          } catch (_) {}
+        },
+        toggleMute() {
+          muted = !muted;
+          try {
+            const ac = ensureCtx();
+            if (masterGain && ac) {
+              masterGain.gain.setValueAtTime(muted ? 0.0 : 1.0, ac.currentTime);
+            }
+          } catch (_) {}
+          const btn = document.getElementById("btn-mute");
+          if (btn) btn.textContent = muted ? "MUTED" : "SOUND";
+          return muted;
+        },
+        isMuted() {
+          return muted;
+        },
+        touchUnlock() {
+          preloadAll();
+          unlockAndMaybeStart();
+        },
+      };
+    })();
+  </script>
   <style>
     html, body {
       margin: 0;
@@ -14,12 +180,17 @@
       overflow: hidden;
       background: #1a120b;
       font-family: system-ui, -apple-system, sans-serif;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
     canvas {
       display: block;
       width: 100vw !important;
       height: 100vh !important;
       outline: none;
+      touch-action: none;
     }
     #loading {
       position: fixed;
@@ -30,7 +201,7 @@
       justify-content: center;
       background: radial-gradient(circle at center, #3b2614, #1a120b);
       color: #fde68a;
-      z-index: 10;
+      z-index: 30;
       transition: opacity 0.4s ease;
     }
     #loading h1 {
@@ -42,13 +213,293 @@
       color: #fef3c7;
       opacity: 0.85;
     }
+    #touch-controls {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+      display: none;
+    }
+    #touch-controls.active {
+      display: block;
+    }
+    @media (pointer: coarse), (max-width: 960px) {
+      #touch-controls {
+        display: block;
+      }
+    }
+    #joystick-zone {
+      position: fixed;
+      left: max(18px, env(safe-area-inset-left));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      width: 136px;
+      height: 136px;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    #joystick-base {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: rgba(20, 14, 9, 0.45);
+      border: 2px solid rgba(253, 230, 138, 0.55);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #joystick-knob {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #fef08a, #d97706);
+      border: 2px solid rgba(255, 255, 255, 0.75);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+      transform: translate(0px, 0px);
+      pointer-events: none;
+    }
+    #action-buttons {
+      position: fixed;
+      right: max(18px, env(safe-area-inset-right));
+      bottom: max(18px, env(safe-area-inset-bottom));
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+      pointer-events: none;
+    }
+    .touch-btn {
+      pointer-events: auto;
+      touch-action: none;
+      border-radius: 50%;
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+      border: 2px solid rgba(255, 255, 255, 0.65);
+      transition: transform 0.06s ease;
+    }
+    .touch-btn:active, .touch-btn.pressed {
+      transform: scale(0.92);
+    }
+    #btn-jump {
+      width: 82px;
+      height: 82px;
+      font-size: 0.95rem;
+      background: radial-gradient(circle at 30% 30%, rgba(245, 158, 11, 0.92), rgba(180, 83, 9, 0.92));
+    }
+    #btn-dash {
+      width: 68px;
+      height: 68px;
+      font-size: 0.82rem;
+      margin-bottom: 10px;
+      background: radial-gradient(circle at 30% 30%, rgba(56, 189, 248, 0.90), rgba(3, 105, 161, 0.90));
+    }
+    #mobile-top-btns {
+      position: fixed;
+      top: 76px;
+      right: max(14px, env(safe-area-inset-right));
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .touch-pill {
+      pointer-events: auto;
+      touch-action: none;
+      padding: 6px 11px;
+      border-radius: 999px;
+      background: rgba(20, 14, 9, 0.72);
+      border: 1.5px solid rgba(253, 230, 138, 0.55);
+      color: #fde68a;
+      font-size: 0.74rem;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
   </style>
-<link rel="modulepreload" href="./tendy-quest-819ab09dbbc2caea.js" crossorigin="anonymous" integrity="sha384-JcGVu66FK2Pf+lCWrV7FpBjzLrF/J8e4LN9ebrU61D1i8MHeoVyuyS3l9mpJKBtz"><link rel="preload" href="./tendy-quest-819ab09dbbc2caea_bg.wasm" crossorigin="anonymous" integrity="sha384-js617WNOOq6c7+7y/FQhG93BLXELZzxr4p2soDj9WROIC+kGRAbbv1pzUwERGRpC" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-2f5a04c57c5fa2cd.js" crossorigin="anonymous" integrity="sha384-5MWIZq+aA3QvQLnO75+OTFlQdZMbaLxJ/S8KpSNmaGrCJx1G30qdS6zxHKuYhx2S"><link rel="preload" href="./tendy-quest-2f5a04c57c5fa2cd_bg.wasm" crossorigin="anonymous" integrity="sha384-fNdWVzhA/dBbAdkLQs2AUrwrsVxJWuov8n5BBSKiAAjwTnHkagT+QFJmhnAxNLdq" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
     <p>Loading Giant Kitchen (Rust + WebAssembly)...</p>
   </div>
+  <div id="touch-controls">
+    <div id="joystick-zone" class="touch-ui">
+      <div id="joystick-base">
+        <div id="joystick-knob"></div>
+      </div>
+    </div>
+    <div id="action-buttons">
+      <button id="btn-dash" class="touch-btn touch-ui" type="button">DASH</button>
+      <button id="btn-jump" class="touch-btn touch-ui" type="button">JUMP</button>
+    </div>
+    <div id="mobile-top-btns">
+      <button id="btn-help" class="touch-pill touch-ui" type="button">HELP</button>
+      <button id="btn-mute" class="touch-pill touch-ui" type="button">SOUND</button>
+    </div>
+  </div>
+  <script>
+    window.tendyInput = (() => {
+      let joyX = 0.0;
+      let joyY = 0.0;
+      let lookDX = 0.0;
+      let lookDY = 0.0;
+      let jumpQueued = false;
+      let dashQueued = false;
+      let actionTapQueued = false;
+      let helpQueued = false;
+
+      let joyTouchId = null;
+      let lookTouchId = null;
+      let lookLastX = 0;
+      let lookLastY = 0;
+      let lookMoved = 0;
+      const maxR = 46;
+
+      const touchControls = document.getElementById("touch-controls");
+      const joyZone = document.getElementById("joystick-zone");
+      const joyKnob = document.getElementById("joystick-knob");
+      const btnJump = document.getElementById("btn-jump");
+      const btnDash = document.getElementById("btn-dash");
+      const btnHelp = document.getElementById("btn-help");
+      const btnMute = document.getElementById("btn-mute");
+
+      function showTouchControls() {
+        if (touchControls) touchControls.classList.add("active");
+      }
+
+      function updateJoyFromPoint(clientX, clientY) {
+        const rect = joyZone.getBoundingClientRect();
+        const cx = rect.left + rect.width * 0.5;
+        const cy = rect.top + rect.height * 0.5;
+        let dx = clientX - cx;
+        let dy = clientY - cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxR) {
+          dx = (dx / dist) * maxR;
+          dy = (dy / dist) * maxR;
+        }
+        joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+        const nx = dx / maxR;
+        const ny = -dy / maxR;
+        const mag = Math.hypot(nx, ny);
+        if (mag < 0.12) {
+          joyX = 0.0;
+          joyY = 0.0;
+        } else {
+          joyX = nx;
+          joyY = ny;
+        }
+      }
+
+      function resetJoy() {
+        joyTouchId = null;
+        joyX = 0.0;
+        joyY = 0.0;
+        joyKnob.style.transform = "translate(0px, 0px)";
+      }
+
+      joyZone.addEventListener("touchstart", (e) => {
+        showTouchControls();
+        window.tendyAudio.touchUnlock();
+        e.preventDefault();
+        e.stopPropagation();
+        if (joyTouchId === null && e.changedTouches.length > 0) {
+          const t = e.changedTouches[0];
+          joyTouchId = t.identifier;
+          updateJoyFromPoint(t.clientX, t.clientY);
+        }
+      }, { passive: false });
+
+      function bindActionBtn(el, cb) {
+        el.addEventListener("touchstart", (e) => {
+          showTouchControls();
+          window.tendyAudio.touchUnlock();
+          e.preventDefault();
+          e.stopPropagation();
+          el.classList.add("pressed");
+          cb();
+        }, { passive: false });
+        el.addEventListener("touchend", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          el.classList.remove("pressed");
+        }, { passive: false });
+        el.addEventListener("touchcancel", () => {
+          el.classList.remove("pressed");
+        });
+        el.addEventListener("click", (e) => {
+          window.tendyAudio.touchUnlock();
+          e.stopPropagation();
+          if (e.detail > 0) cb();
+        });
+      }
+
+      bindActionBtn(btnJump, () => { jumpQueued = true; });
+      bindActionBtn(btnDash, () => { dashQueued = true; });
+      bindActionBtn(btnHelp, () => { helpQueued = true; });
+      bindActionBtn(btnMute, () => { window.tendyAudio.toggleMute(); });
+
+      window.addEventListener("touchstart", (e) => {
+        showTouchControls();
+        window.tendyAudio.touchUnlock();
+        if (e.target && e.target.closest && e.target.closest(".touch-ui")) return;
+        if (lookTouchId === null && e.changedTouches.length > 0) {
+          const t = e.changedTouches[0];
+          lookTouchId = t.identifier;
+          lookLastX = t.clientX;
+          lookLastY = t.clientY;
+          lookMoved = 0;
+        }
+      }, { passive: false });
+
+      window.addEventListener("touchmove", (e) => {
+        for (const t of e.changedTouches) {
+          if (t.identifier === joyTouchId) {
+            e.preventDefault();
+            updateJoyFromPoint(t.clientX, t.clientY);
+          } else if (t.identifier === lookTouchId) {
+            e.preventDefault();
+            const dx = t.clientX - lookLastX;
+            const dy = t.clientY - lookLastY;
+            lookDX += dx;
+            lookDY += dy;
+            lookMoved += Math.hypot(dx, dy);
+            lookLastX = t.clientX;
+            lookLastY = t.clientY;
+          }
+        }
+      }, { passive: false });
+
+      function endTouch(e) {
+        for (const t of e.changedTouches) {
+          if (t.identifier === joyTouchId) {
+            resetJoy();
+          } else if (t.identifier === lookTouchId) {
+            if (lookMoved < 14) {
+              actionTapQueued = true;
+            }
+            lookTouchId = null;
+          }
+        }
+      }
+      window.addEventListener("touchend", endTouch, { passive: false });
+      window.addEventListener("touchcancel", endTouch, { passive: false });
+
+      return {
+        moveX: () => joyX,
+        moveY: () => joyY,
+        takeLookDX() { const v = lookDX; lookDX = 0.0; return v; },
+        takeLookDY() { const v = lookDY; lookDY = 0.0; return v; },
+        takeJump() { const v = jumpQueued; jumpQueued = false; return v; },
+        takeDash() { const v = dashQueued; dashQueued = false; return v; },
+        takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
+        takeHelp() { const v = helpQueued; helpQueued = false; return v; },
+      };
+    })();
+  </script>
   <script>
     // Hide loading overlay once Bevy starts rendering frames
     const observer = new MutationObserver(() => {
@@ -63,8 +514,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-819ab09dbbc2caea.js';
-const wasm = await init({ module_or_path: './tendy-quest-819ab09dbbc2caea_bg.wasm' });
+import init, * as bindings from './tendy-quest-2f5a04c57c5fa2cd.js';
+const wasm = await init({ module_or_path: './tendy-quest-2f5a04c57c5fa2cd_bg.wasm' });
 
 
 window.wasmBindings = bindings;

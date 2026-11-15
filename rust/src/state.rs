@@ -20,6 +20,7 @@ pub struct PlayerStats {
     pub speed_boost_timer: f32,
     pub has_ranch_shield: bool,
     pub wave: u32,
+    pub audio_muted: bool,
 }
 
 impl Default for PlayerStats {
@@ -34,6 +35,7 @@ impl Default for PlayerStats {
             speed_boost_timer: 0.0,
             has_ranch_shield: false,
             wave: 1,
+            audio_muted: false,
         }
     }
 }

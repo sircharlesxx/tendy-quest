@@ -15,6 +15,8 @@ pub struct Player {
     pub invuln_timer: f32,
     pub slow_timer: f32,
     pub facing_yaw: f32,
+    pub walk_cycle: f32,
+    pub last_step_half: i32,
 }
 
 impl Default for Player {
@@ -27,6 +29,8 @@ impl Default for Player {
             invuln_timer: 0.0,
             slow_timer: 0.0,
             facing_yaw: 0.0,
+            walk_cycle: 0.0,
+            last_step_half: 0,
         }
     }
 }
@@ -50,11 +54,12 @@ pub fn camera_mouse_look(
     mouse_scroll: Res<AccumulatedMouseScroll>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     if let Ok(mut window) = window_q.get_single_mut() {
-        if mouse_buttons.just_pressed(MouseButton::Left) {
+        if mouse_buttons.just_pressed(MouseButton::Left) && touches.iter().next().is_none() {
             window.cursor_options.grab_mode = CursorGrabMode::Locked;
             window.cursor_options.visible = false;
         }
@@ -67,6 +72,13 @@ pub fn camera_mouse_look(
     if mouse_motion.delta != Vec2::ZERO {
         orbit.yaw -= mouse_motion.delta.x * 0.0045;
         orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.06, 1.15);
+    }
+
+    let t_dx = crate::audio::take_touch_look_dx();
+    let t_dy = crate::audio::take_touch_look_dy();
+    if t_dx != 0.0 || t_dy != 0.0 {
+        orbit.yaw -= t_dx * 0.0065;
+        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(0.06, 1.15);
     }
 
     if mouse_scroll.delta.y != 0.0 {
@@ -108,7 +120,10 @@ pub fn player_movement(
     }
     stats.dash_energy = (stats.dash_energy + 24.0 * dt).min(100.0);
 
-    // Camera-relative movement input
+    // Drain screen-tap state so overlay transitions don't pick up stale taps
+    let _ = crate::audio::take_touch_action_tap();
+
+    // Camera-relative movement input (keyboard + mobile virtual stick)
     let mut forward_in = 0.0_f32;
     let mut right_in = 0.0_f32;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
@@ -123,22 +138,35 @@ pub fn player_movement(
     if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
         right_in += 1.0;
     }
+    forward_in += crate::audio::touch_move_y();
+    right_in += crate::audio::touch_move_x();
 
     let forward = Vec3::new(-orbit.yaw.sin(), 0.0, -orbit.yaw.cos());
     let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
-    let dir = (forward * forward_in + right * right_in).normalize_or_zero();
+    let raw_move = forward * forward_in + right * right_in;
+    let move_mag = raw_move.length().min(1.0);
+    let dir = raw_move.normalize_or_zero();
 
-    // Dash (Shift)
-    let shift_pressed =
-        keys.just_pressed(KeyCode::ShiftLeft) || keys.just_pressed(KeyCode::ShiftRight);
+    // Dash (Shift or Touch DASH)
+    let shift_pressed = keys.just_pressed(KeyCode::ShiftLeft)
+        || keys.just_pressed(KeyCode::ShiftRight)
+        || crate::audio::take_touch_dash();
     if shift_pressed && player.dash_timer <= 0.0 && stats.dash_energy >= 35.0 {
         stats.dash_energy -= 35.0;
         player.dash_timer = 0.22;
         player.invuln_timer = 0.35;
+        crate::audio::play_sfx("dash");
     }
 
-    // Jump & Double-Jump (Space)
-    if keys.just_pressed(KeyCode::Space) && (player.grounded || player.jumps_used < 2) {
+    // Jump & Double-Jump (Space or Touch JUMP)
+    if (keys.just_pressed(KeyCode::Space) || crate::audio::take_touch_jump())
+        && (player.grounded || player.jumps_used < 2)
+    {
+        if player.jumps_used == 0 {
+            crate::audio::play_sfx("jump");
+        } else {
+            crate::audio::play_sfx("double_jump");
+        }
         player.velocity.y = 9.2;
         player.grounded = false;
         player.jumps_used += 1;
@@ -153,8 +181,13 @@ pub fn player_movement(
         speed *= 0.6;
     }
 
-    player.velocity.x = dir.x * speed;
-    player.velocity.z = dir.z * speed;
+    player.velocity.x = dir.x * speed * move_mag;
+    player.velocity.z = dir.z * speed * move_mag;
+
+    let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
+    if horiz_speed > 0.25 {
+        player.walk_cycle += horiz_speed * dt * 2.2;
+    }
 
     if dir.length_squared() > 0.01 {
         let target_yaw = (-dir.x).atan2(-dir.z);
@@ -192,6 +225,14 @@ pub fn player_movement(
             player.velocity.y = 0.0;
             player.grounded = true;
             player.jumps_used = 0;
+        }
+    }
+
+    if player.grounded && horiz_speed > 0.25 {
+        let half = (player.walk_cycle / std::f32::consts::PI).floor() as i32;
+        if half != player.last_step_half {
+            player.last_step_half = half;
+            crate::audio::play_sfx("step");
         }
     }
 
@@ -250,8 +291,10 @@ pub fn animate_and_collect_pickups(
                 commands.entity(entity).despawn_recursive();
                 stats.tendies += 1;
                 stats.score += 100;
+                crate::audio::play_sfx("tendy");
                 if tendy.is_final_goal || stats.tendies >= stats.total_tendies {
                     stats.score += 5000;
+                    crate::audio::play_sfx("win");
                     next_state.set(GameState::StageClear);
                 }
             }
@@ -265,10 +308,121 @@ pub fn animate_and_collect_pickups(
         if let Some(p_pos) = player_pos {
             if (p_pos + Vec3::Y * 0.8).distance(tf.translation) < 1.35 {
                 commands.entity(entity).despawn_recursive();
+                crate::audio::play_sfx("powerup");
                 match power.kind {
                     PowerupKind::HoneyMustard => stats.speed_boost_timer = 10.0,
                     PowerupKind::RanchShield => stats.has_ranch_shield = true,
                 }
+            }
+        }
+    }
+}
+
+pub fn animate_player_limbs(
+    time: Res<Time>,
+    state: Res<State<GameState>>,
+    player_q: Query<(&Player, &Children)>,
+    children_q: Query<&Children>,
+    mut part_q: Query<(&Name, &mut Transform), Without<Player>>,
+) {
+    let Ok((player, root_children)) = player_q.get_single() else {
+        return;
+    };
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
+
+    let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
+        if *state.get() == GameState::StageClear {
+            let swing = (t * 10.0).sin();
+            (
+                Quat::from_rotation_x(swing * 0.55),
+                Quat::from_rotation_x(-swing * 0.55),
+                Quat::from_rotation_z(-2.0 + (t * 8.0).sin() * 0.35)
+                    * Quat::from_rotation_x(0.35),
+                Quat::from_rotation_z(2.0 - (t * 8.0).sin() * 0.35)
+                    * Quat::from_rotation_x(0.35),
+                Quat::from_rotation_z((t * 5.0).sin() * 0.12)
+                    * Quat::from_rotation_x((t * 10.0).cos() * 0.08),
+                Quat::from_rotation_y((t * 5.0).sin() * 0.25)
+                    * Quat::from_rotation_x(-0.10 + swing * 0.08),
+                swing.abs() * 0.05,
+            )
+        } else if player.dash_timer > 0.0 {
+            (
+                Quat::from_rotation_x(-0.65),
+                Quat::from_rotation_x(-0.35),
+                Quat::from_rotation_x(-0.85) * Quat::from_rotation_z(-0.25),
+                Quat::from_rotation_x(-0.85) * Quat::from_rotation_z(0.25),
+                Quat::from_rotation_x(-0.50),
+                Quat::from_rotation_x(0.28),
+                -0.06,
+            )
+        } else if !player.grounded {
+            let air_t = (player.velocity.y / 9.5).clamp(-1.0, 1.0);
+            (
+                Quat::from_rotation_x(0.65),
+                Quat::from_rotation_x(-0.45),
+                Quat::from_rotation_z(-0.95 - air_t * 0.35) * Quat::from_rotation_x(0.45),
+                Quat::from_rotation_z(0.95 + air_t * 0.35) * Quat::from_rotation_x(-0.25),
+                Quat::from_rotation_x(-0.12 * air_t),
+                Quat::from_rotation_x(0.10 * air_t),
+                0.0,
+            )
+        } else if horiz_speed > 0.25 {
+            let amp = (horiz_speed / 8.0).clamp(0.45, 1.15);
+            let s = player.walk_cycle.sin();
+            let bounce = (player.walk_cycle * 2.0).sin().abs();
+            (
+                Quat::from_rotation_x(s * 0.78 * amp),
+                Quat::from_rotation_x(-s * 0.78 * amp),
+                Quat::from_rotation_x(-s * 0.68 * amp) * Quat::from_rotation_z(-0.12),
+                Quat::from_rotation_x(s * 0.68 * amp) * Quat::from_rotation_z(0.12),
+                Quat::from_rotation_x(-0.12 * amp) * Quat::from_rotation_y(-s * 0.12 * amp),
+                Quat::from_rotation_x(0.08 * amp) * Quat::from_rotation_y(s * 0.06 * amp),
+                bounce * 0.06 * amp,
+            )
+        } else {
+            let breath = (t * 2.6).sin();
+            (
+                Quat::IDENTITY,
+                Quat::IDENTITY,
+                Quat::from_rotation_z(-0.06 - breath * 0.03),
+                Quat::from_rotation_z(0.06 + breath * 0.03),
+                Quat::from_rotation_x(breath * 0.03),
+                Quat::from_rotation_x(-breath * 0.03)
+                    * Quat::from_rotation_y((t * 1.1).sin() * 0.08),
+                breath * 0.015,
+            )
+        };
+
+    let blend = (dt * 16.0).min(1.0);
+    let mut stack: Vec<Entity> = root_children.iter().copied().collect();
+    while let Some(entity) = stack.pop() {
+        if let Ok(kids) = children_q.get(entity) {
+            stack.extend(kids.iter().copied());
+        }
+        if let Ok((name, mut tf)) = part_q.get_mut(entity) {
+            match name.as_str() {
+                "HeroLeftLeg" => tf.rotation = tf.rotation.slerp(left_leg_rot, blend),
+                "HeroRightLeg" => tf.rotation = tf.rotation.slerp(right_leg_rot, blend),
+                "HeroLeftArm" => {
+                    tf.rotation = tf.rotation.slerp(left_arm_rot, blend);
+                    tf.translation.y = 1.38 + bob_y * 0.8;
+                }
+                "HeroRightArm" => {
+                    tf.rotation = tf.rotation.slerp(right_arm_rot, blend);
+                    tf.translation.y = 1.38 + bob_y * 0.8;
+                }
+                "HeroTorso" => {
+                    tf.rotation = tf.rotation.slerp(torso_rot, blend);
+                    tf.translation.y = 0.72 + bob_y;
+                }
+                "HeroHead" => {
+                    tf.rotation = tf.rotation.slerp(head_rot, blend);
+                    tf.translation.y = 1.52 + bob_y;
+                }
+                _ => {}
             }
         }
     }

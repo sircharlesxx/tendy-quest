@@ -43,7 +43,7 @@ pub fn spawn_hud(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::FlexStart,
-                padding: UiRect::all(Val::Px(18.0)),
+                padding: UiRect::all(Val::Px(12.0)),
                 ..default()
             },
         ))
@@ -53,8 +53,8 @@ pub fn spawn_hud(mut commands: Commands) {
                 .spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
-                        padding: UiRect::all(Val::Px(12.0)),
+                        row_gap: Val::Px(4.0),
+                        padding: UiRect::all(Val::Px(9.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.08, 0.05, 0.03, 0.72)),
@@ -65,7 +65,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         HeartsText,
                         Text::new("HEARTS: 5 / 5"),
                         TextFont {
-                            font_size: 22.0,
+                            font_size: 17.0,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.32, 0.36)),
@@ -73,8 +73,8 @@ pub fn spawn_hud(mut commands: Commands) {
                     // Dash bar
                     col.spawn((
                         Node {
-                            width: Val::Px(190.0),
-                            height: Val::Px(14.0),
+                            width: Val::Px(148.0),
+                            height: Val::Px(12.0),
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.18, 0.18, 0.22)),
@@ -96,7 +96,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         TendyText,
                         Text::new("TENDIES: 0 / 10"),
                         TextFont {
-                            font_size: 22.0,
+                            font_size: 17.0,
                             ..default()
                         },
                         TextColor(Color::srgb(1.0, 0.82, 0.22)),
@@ -105,7 +105,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         StatusText,
                         Text::new(""),
                         TextFont {
-                            font_size: 16.0,
+                            font_size: 14.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.75, 1.0, 0.78)),
@@ -118,8 +118,8 @@ pub fn spawn_hud(mut commands: Commands) {
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::FlexEnd,
-                        row_gap: Val::Px(4.0),
-                        padding: UiRect::all(Val::Px(12.0)),
+                        row_gap: Val::Px(3.0),
+                        padding: UiRect::all(Val::Px(9.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.08, 0.05, 0.03, 0.72)),
@@ -130,15 +130,15 @@ pub fn spawn_hud(mut commands: Commands) {
                         ScoreText,
                         Text::new("SCORE: 000000"),
                         TextFont {
-                            font_size: 24.0,
+                            font_size: 17.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
                     ));
                     col.spawn((
-                        Text::new("[H] Show Controls"),
+                        Text::new("[H] Controls  |  [M] Audio"),
                         TextFont {
-                            font_size: 15.0,
+                            font_size: 13.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.9, 0.85, 0.7)),
@@ -180,6 +180,9 @@ pub fn update_hud(
         if stats.has_ranch_shield {
             tags.push("RANCH SHIELD".to_string());
         }
+        if stats.audio_muted {
+            tags.push("AUDIO MUTED".to_string());
+        }
         t.0 = tags.join("  |  ");
     }
     if let Ok(mut node) = dash_q.get_single_mut() {
@@ -196,7 +199,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect::bottom(Val::Px(22.0)),
+                padding: UiRect::bottom(Val::Px(16.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.16)),
@@ -206,19 +209,20 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(6.0),
-                    padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
+                    row_gap: Val::Px(5.0),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                    width: Val::Percent(92.0),
                     max_width: Val::Px(740.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.74)),
+                BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.78)),
                 BorderRadius::all(Val::Px(14.0)),
             ))
             .with_children(|card| {
                 card.spawn((
                     Text::new("TENDY QUEST: GIANT KITCHEN"),
                     TextFont {
-                        font_size: 24.0,
+                        font_size: 22.0,
                         ..default()
                     },
                     TextColor(Color::srgb(1.0, 0.82, 0.22)),
@@ -226,7 +230,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new("Collect all 10 Golden Tendies along the countertop and reach the Pancake Stack!\nDodge Broccoli Brutes, lunging Carrot Lancers, and Kale Slime trails."),
                     TextFont {
-                        font_size: 14.0,
+                        font_size: 13.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.95, 0.92, 0.86)),
@@ -234,14 +238,13 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new(
                         "CONTROLS:\n\
-                         - [Mouse Move] : Look around in 3D space ([Scroll] Zoom, [Click] Lock Cursor, [ESC] Unlock)\n\
-                         - [W A S D] or [Arrow Keys] : Run (relative to camera look)\n\
-                         - [SPACE] : Jump & Double-Jump (hop onto Sponges & Pancakes!)\n\
-                         - [SHIFT] : Belly Dash (brief invulnerability)\n\
-                         - [H] : Toggle this Controls Guide anytime",
+                         - [Mouse Move] : Look around in 3D ([Scroll] Zoom, [Click] Lock, [ESC] Unlock)\n\
+                         - [WASD / Arrows] + [SPACE] Jump / Double-Jump + [SHIFT] Belly Dash\n\
+                         - [Touch Screen] : Left Stick to Run, Drag Screen to Look, Tap JUMP / DASH\n\
+                         - [H / HELP] : Controls  |  [M / SOUND] : Mute / Unmute Audio",
                     ),
                     TextFont {
-                        font_size: 14.5,
+                        font_size: 13.5,
                         ..default()
                     },
                     TextColor(Color::srgb(0.85, 0.95, 1.0)),
@@ -250,8 +253,8 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     StartButton,
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(22.0), Val::Px(8.0)),
-                        margin: UiRect::top(Val::Px(4.0)),
+                        padding: UiRect::axes(Val::Px(20.0), Val::Px(8.0)),
+                        margin: UiRect::top(Val::Px(3.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
@@ -259,9 +262,9 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 ))
                 .with_children(|btn| {
                     btn.spawn((
-                        Text::new("START QUEST (SPACE / CLICK)"),
+                        Text::new("START QUEST (SPACE / TAP)"),
                         TextFont {
-                            font_size: 16.0,
+                            font_size: 15.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -273,12 +276,29 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
 
 pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
     mut next_state: ResMut<NextState<GameState>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
 ) {
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
-    if clicked || keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) {
+    if clicked
+        || keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::Enter)
+        || touches.any_just_pressed()
+        || crate::audio::take_touch_action_tap()
+        || crate::audio::take_touch_jump()
+        || crate::audio::take_touch_help()
+    {
+        crate::audio::play_bgm();
         next_state.set(GameState::Playing);
+    }
+}
+
+pub fn toggle_audio_hotkey(keys: Res<ButtonInput<KeyCode>>, mut stats: ResMut<PlayerStats>) {
+    if keys.just_pressed(KeyCode::KeyM) {
+        stats.audio_muted = crate::audio::toggle_mute();
+    } else {
+        stats.audio_muted = crate::audio::is_muted();
     }
 }
 
@@ -286,7 +306,7 @@ pub fn toggle_tutorial_hotkey(
     keys: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyH) {
+    if keys.just_pressed(KeyCode::KeyH) || crate::audio::take_touch_help() {
         next_state.set(GameState::Tutorial);
     }
 }
@@ -350,8 +370,10 @@ fn spawn_end_card(
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(14.0),
-                    padding: UiRect::all(Val::Px(28.0)),
+                    row_gap: Val::Px(12.0),
+                    padding: UiRect::all(Val::Px(22.0)),
+                    width: Val::Percent(92.0),
+                    max_width: Val::Px(540.0),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.14, 0.09, 0.05, 0.95)),
@@ -402,6 +424,7 @@ fn spawn_end_card(
 pub fn handle_restart_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    touches: Res<Touches>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -413,7 +436,13 @@ pub fn handle_restart_input(
     end_q: Query<Entity, With<EndOverlay>>,
 ) {
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
-    if !(clicked || keys.just_pressed(KeyCode::KeyR)) {
+    if !(clicked
+        || keys.just_pressed(KeyCode::KeyR)
+        || keys.just_pressed(KeyCode::Space)
+        || touches.any_just_pressed()
+        || crate::audio::take_touch_action_tap()
+        || crate::audio::take_touch_jump())
+    {
         return;
     }
 
@@ -423,10 +452,13 @@ pub fn handle_restart_input(
     for e in &level_q {
         commands.entity(e).despawn_recursive();
     }
+    let was_muted = stats.audio_muted;
     *stats = PlayerStats::default();
+    stats.audio_muted = was_muted;
     *orbit = CameraOrbit::default();
     spawn_kitchen_level_inner(&mut commands, &asset_server, &mut meshes, &mut materials);
     spawn_player_inner(&mut commands, &asset_server);
     spawn_initial_enemies_inner(&mut commands, &asset_server);
+    crate::audio::play_bgm();
     next_state.set(GameState::Playing);
 }
