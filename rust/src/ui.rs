@@ -196,22 +196,22 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect::bottom(Val::Px(28.0)),
+                padding: UiRect::bottom(Val::Px(18.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.25)),
+            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.16)),
         ))
         .with_children(|root| {
             root.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(10.0),
-                    padding: UiRect::all(Val::Px(20.0)),
-                    max_width: Val::Px(640.0),
+                    row_gap: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(14.0)),
+                    max_width: Val::Px(600.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.14, 0.09, 0.05, 0.92)),
+                BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.74)),
                 BorderRadius::all(Val::Px(14.0)),
             ))
             .with_children(|card| {
