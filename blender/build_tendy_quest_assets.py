@@ -162,7 +162,7 @@ def create_solid_material(name, color, roughness=0.45, metallic=0.0, emission_st
 # --- High-Resolution NumPy PBR Texture Materials ---
 
 def mat_butcher_block():
-    s = 1024
+    s = 512
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n_coarse = fbm_noise(s, freqs=(6, 12, 24), weights=(0.5, 0.3, 0.2), seed=101)
     n_fine = fbm_noise(s, freqs=(24, 64, 128), weights=(0.4, 0.35, 0.25), seed=202)
@@ -170,7 +170,7 @@ def mat_butcher_block():
     strips = 8
     strip_w = s / strips
     strip_id = np.floor(x / strip_w).astype(np.int32)
-    stagger = ((strip_id * 373) % s).astype(np.float32)
+    stagger = ((strip_id * 187) % s).astype(np.float32)
     planks_y = 3
     plank_h = s / planks_y
     y_staggered = (y + stagger) % s
@@ -211,7 +211,7 @@ def mat_butcher_block():
 
 
 def mat_sage_tile():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 16, 48), weights=(0.5, 0.3, 0.2), seed=11)
     tiles = 4
@@ -219,7 +219,7 @@ def mat_sage_tile():
     fx = (x % tw) / tw
     fy = (y % tw) / tw
     edge_dist = np.minimum(np.minimum(fx, 1.0 - fx), np.minimum(fy, 1.0 - fy)) * tw
-    grout = 1.0 / (1.0 + np.exp((edge_dist - 3.2) * 1.6))
+    grout = 1.0 / (1.0 + np.exp((edge_dist - 1.8) * 2.2))
 
     tile_idx = np.floor(x / tw).astype(np.int32) + np.floor(y / tw).astype(np.int32) * tiles
     rng = np.random.default_rng(19)
@@ -234,7 +234,7 @@ def mat_sage_tile():
 
 
 def mat_gingham():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     checks = 8
     cw = s / checks
@@ -258,13 +258,13 @@ def mat_gingham():
 
 
 def mat_plaid_onesie():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(16, 48), weights=(0.55, 0.45), seed=5)
     sq = s / 4.0
     ix = (np.floor(x / sq).astype(np.int32) % 2) == 0
     iy = (np.floor(y / sq).astype(np.int32) % 2) == 0
-    twill = ((np.floor((x + y) / 3.0).astype(np.int32)) % 2) == 0
+    twill = ((np.floor((x + y) / 2.0).astype(np.int32)) % 2) == 0
 
     rgb = np.empty((s, s, 3), dtype=np.float32)
     rgb[ix & iy] = [0.76, 0.07, 0.10]
@@ -278,9 +278,9 @@ def mat_plaid_onesie():
 
 
 def mat_golden_tendy():
-    s = 512
-    n1 = fbm_noise(s, freqs=(8, 16, 32, 64, 128), weights=(0.15, 0.25, 0.28, 0.20, 0.12), seed=42)
-    n2 = fbm_noise(s, freqs=(24, 48, 96, 160), weights=(0.30, 0.30, 0.25, 0.15), seed=99)
+    s = 256
+    n1 = fbm_noise(s, freqs=(8, 16, 32, 64), weights=(0.18, 0.27, 0.30, 0.25), seed=42)
+    n2 = fbm_noise(s, freqs=(24, 48, 96), weights=(0.35, 0.35, 0.30), seed=99)
     crisp = np.clip((n1 * 0.55 + n2 * 0.45), 0.0, 1.0)
     dark_spots = np.clip((crisp - 0.58) * 2.4, 0.0, 1.0)
     light_flakes = np.clip((0.35 - crisp) * 2.2, 0.0, 1.0)
@@ -295,9 +295,9 @@ def mat_golden_tendy():
 
 
 def mat_broccoli_crown():
-    s = 512
+    s = 256
     n1 = fbm_noise(s, freqs=(12, 24, 48, 96), weights=(0.25, 0.30, 0.28, 0.17), seed=303)
-    n2 = fbm_noise(s, freqs=(32, 64, 128), weights=(0.35, 0.40, 0.25), seed=404)
+    n2 = fbm_noise(s, freqs=(32, 64, 96), weights=(0.35, 0.40, 0.25), seed=404)
     buds = np.clip(np.sin(n2 * 18.0) * 0.5 + 0.5, 0.0, 1.0)
     h = np.clip(n1 * 0.55 + buds * 0.45, 0.0, 1.0)
     rgb = np.stack(
@@ -312,7 +312,7 @@ def mat_broccoli_crown():
 
 
 def mat_broccoli_stalk():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 24, 64), weights=(0.45, 0.35, 0.20), seed=55)
     fibers = 0.5 + 0.5 * np.sin((x / s) * 90.0 + n * 5.0)
@@ -329,7 +329,7 @@ def mat_broccoli_stalk():
 
 
 def mat_carrot_skin():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(8, 20, 48), weights=(0.45, 0.35, 0.20), seed=88)
     rings = np.sin((y / s) * 34.0 + n * 3.0)
@@ -347,7 +347,7 @@ def mat_carrot_skin():
 
 
 def mat_kale_slime():
-    s = 512
+    s = 256
     n1 = fbm_noise(s, freqs=(6, 14, 32, 64), weights=(0.35, 0.30, 0.22, 0.13), seed=61)
     bubbles = np.clip(n1 - 0.62, 0.0, 1.0) * 2.5
     rgb = np.stack(
@@ -363,15 +363,15 @@ def mat_kale_slime():
 
 
 def mat_sponge_yellow():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
-    n = fbm_noise(s, freqs=(12, 32, 72), weights=(0.4, 0.35, 0.25), seed=77)
+    n = fbm_noise(s, freqs=(12, 32, 64), weights=(0.4, 0.35, 0.25), seed=77)
     pores = np.zeros((s, s), dtype=np.float32)
     rng = np.random.default_rng(77)
-    for _ in range(170):
+    for _ in range(150):
         px = rng.uniform(0, s)
         py = rng.uniform(0, s)
-        pr = rng.uniform(3.5, 13.0)
+        pr = rng.uniform(2.0, 7.0)
         dx = np.minimum(np.abs(x - px), s - np.abs(x - px))
         dy = np.minimum(np.abs(y - py), s - np.abs(y - py))
         d2 = (dx * dx + dy * dy) / (pr * pr)
@@ -390,8 +390,8 @@ def mat_sponge_yellow():
 
 
 def mat_sponge_green():
-    s = 512
-    n = fbm_noise(s, freqs=(20, 48, 96, 160), weights=(0.2, 0.3, 0.3, 0.2), seed=89)
+    s = 256
+    n = fbm_noise(s, freqs=(16, 40, 80), weights=(0.3, 0.4, 0.3), seed=89)
     rgb = np.stack(
         [
             0.09 + n * 0.09,
@@ -404,8 +404,8 @@ def mat_sponge_green():
 
 
 def mat_pancake():
-    s = 512
-    n = fbm_noise(s, freqs=(8, 20, 48, 96), weights=(0.35, 0.28, 0.22, 0.15), seed=51)
+    s = 256
+    n = fbm_noise(s, freqs=(8, 20, 48, 80), weights=(0.35, 0.28, 0.22, 0.15), seed=51)
     brown = np.clip((n - 0.42) * 1.9, 0.0, 1.0)
     rgb = np.stack(
         [
@@ -419,7 +419,7 @@ def mat_pancake():
 
 
 def mat_cutting_board():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     n = fbm_noise(s, freqs=(6, 18, 48), weights=(0.5, 0.3, 0.2), seed=14)
     grain = 0.5 + 0.5 * np.sin((x / s) * 45.0 + n * 6.0)
@@ -435,7 +435,7 @@ def mat_cutting_board():
 
 
 def mat_syrup_label():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     v = y / s
     # Warm cream parchment label with dark-red top/bottom trim borders & golden-orange center band
@@ -449,8 +449,18 @@ def mat_syrup_label():
     return make_numpy_pbr_material("SyrupLabelMat", rgb, n, roughness=0.65, normal_strength=1.5)
 
 
+def mat_hair():
+    s = 256
+    y, x = np.mgrid[0:s, 0:s].astype(np.float32)
+    n = fbm_noise(s, freqs=(8, 24, 64), weights=(0.45, 0.35, 0.20), seed=73)
+    strands = 0.5 + 0.5 * np.sin((x / s) * 110.0 + n * 4.0)
+    h = strands * 0.6 + n * 0.4
+    rgb = np.stack([0.22 + h * 0.14, 0.12 + h * 0.08, 0.06 + h * 0.05], axis=-1)
+    return make_numpy_pbr_material("HairMat", rgb, h, roughness=0.58, normal_strength=3.0)
+
+
 def mat_window_view():
-    s = 512
+    s = 256
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
     u, v = x / s, y / s
     n = fbm_noise(s, freqs=(4, 8, 16, 32), weights=(0.45, 0.30, 0.15, 0.10), seed=19)
@@ -608,8 +618,7 @@ def build_plaid_hero():
     plaid = mat_plaid_onesie()
     skin = create_solid_material("SkinMat", (0.91, 0.71, 0.56, 1.0), roughness=0.48)
     cheek = create_solid_material("CheekMat", (0.94, 0.56, 0.48, 1.0), roughness=0.52)
-    hair = create_solid_material("HairMat", (0.26, 0.14, 0.08, 1.0), roughness=0.68)
-    hair_hi = create_solid_material("HairHiMat", (0.34, 0.19, 0.11, 1.0), roughness=0.62)
+    hair = mat_hair()
     cuff = create_solid_material("CuffMat", (0.09, 0.09, 0.10, 1.0), roughness=0.80)
     shoe = create_solid_material("ShoeMat", (0.10, 0.10, 0.12, 1.0), roughness=0.52)
     sole = create_solid_material("SoleMat", (0.48, 0.48, 0.50, 1.0), roughness=0.60)
@@ -635,26 +644,27 @@ def build_plaid_hero():
     for bx in (-0.10, 0.10):
         add_cylinder(0.032, 0.025, (bx, -0.37, 0.90), rotation=(math.pi / 2, 0, 0), mat=btn)
 
-    # Sculpted head, nose, rosy cheeks, ears
-    add_sphere(0.29, (0, 0.03, 1.79), scale=(0.96, 0.96, 1.06), mat=skin)
+    # Sculpted head shifted slightly forward so full brown hair cleanly covers back & crown
+    add_sphere(0.27, (0, 0.06, 1.78), scale=(0.95, 0.92, 1.02), mat=skin)
     add_sphere(0.052, (0, 0.31, 1.78), scale=(0.88, 1.15, 0.82), mat=skin)
     for sx in (-1, 1):
         add_sphere(0.062, (sx * 0.28, 0.01, 1.78), scale=(0.50, 0.82, 1.08), mat=skin)
         add_sphere(0.055, (sx * 0.16, 0.24, 1.75), scale=(1.1, 0.65, 0.85), mat=cheek)
 
-    # Full neatly groomed short brown hair cap + layered crown volume + nape taper (NO pointy cones!)
-    add_sphere(0.305, (0, -0.02, 1.88), scale=(1.01, 1.04, 0.84), mat=hair)
-    add_sphere(0.255, (0, 0.02, 1.98), scale=(1.06, 1.08, 0.56), rotation=(0.18, 0, 0), mat=hair_hi)
-    add_sphere(0.22, (0, -0.14, 1.75), scale=(1.12, 0.72, 0.86), mat=hair)  # clean nape
-    hair_waves = [
-        (-0.12, 0.08, 2.02, (0.28, 0.22, 0.32), (0.1, 0, 0.3), hair),
-        (0.0, 0.12, 2.03, (0.30, 0.24, 0.30), (0.12, 0, 0.0), hair_hi),
-        (0.12, 0.07, 2.01, (0.26, 0.22, 0.30), (0.1, 0, -0.3), hair),
-        (-0.22, -0.02, 1.90, (0.16, 0.25, 0.28), (0, 0.2, 0), hair),
-        (0.22, -0.02, 1.90, (0.16, 0.25, 0.28), (0, -0.2, 0), hair),
+    # Full brown hair skull cap enveloping back, sides, and crown
+    add_sphere(0.305, (0, -0.03, 1.83), scale=(1.04, 1.06, 1.04), mat=hair, uv_scale=2.0)
+    add_sphere(0.25, (0, -0.14, 1.69), scale=(1.06, 0.88, 0.82), mat=hair, uv_scale=2.0)
+    hair_locks = [
+        (0.0, -0.02, 2.04, 0.18, (1.2, 1.3, 0.55), (0.15, 0, 0)),
+        (-0.14, 0.02, 2.00, 0.16, (1.1, 1.2, 0.55), (0.12, -0.25, 0.2)),
+        (0.14, 0.02, 2.00, 0.16, (1.1, 1.2, 0.55), (0.12, 0.25, -0.2)),
+        (0.0, 0.12, 1.99, 0.15, (1.3, 0.9, 0.50), (0.35, 0, 0)),
+        (0.0, -0.24, 1.84, 0.18, (1.25, 0.75, 0.85), (-0.2, 0, 0)),
+        (-0.18, -0.18, 1.82, 0.16, (0.95, 0.85, 0.85), (-0.15, -0.3, 0)),
+        (0.18, -0.18, 1.82, 0.16, (0.95, 0.85, 0.85), (-0.15, 0.3, 0)),
     ]
-    for hx, hy, hz, hsc, hrot, hm in hair_waves:
-        add_sphere(0.42, (hx, hy, hz), scale=hsc, rotation=hrot, mat=hm)
+    for hx, hy, hz, hr, hsc, hrot in hair_locks:
+        add_sphere(hr, (hx, hy, hz), scale=hsc, rotation=hrot, mat=hair, uv_scale=2.2)
 
     # Full warm beard, mustache, cheerful smile & detailed eyes
     add_sphere(0.265, (0, 0.09, 1.68), scale=(0.94, 0.90, 0.64), mat=hair)
@@ -754,7 +764,7 @@ def build_broccoli_brute():
         (0, 0.28, 1.62, 0.30), (0.0, 0.0, 2.22, 0.32),
     ]
     for idx, (px, py, pz, pr) in enumerate(base_puffs):
-        p = add_ico(pr, (px, py, pz), mat=crown, subdiv=3, uv_scale=2.2)
+        p = add_ico(pr, (px, py, pz), mat=crown, subdiv=2, uv_scale=2.2)
         displace_organic(p, freq=9.0, amp=0.14, seed=idx + 10)
     for idx in range(10):
         ang = rng.uniform(0, math.tau)
@@ -993,13 +1003,8 @@ def build_kitchen_environment():
     for cz in (6.1, 11.1):
         add_cube(1.0, (-3.95, 3.5, cz), scale=(0.15, 34.0, 0.24), mat=cab_trim)
 
-    # 3. Warm Sage Back Wall & Low Right-Side Kitchen Wing (unblocked ceiling/sky for sunlit countertop)
+    # 3. Warm Sage Back Wall (open sunlit room matching the reference video)
     add_cube(1.0, (2.0, 22.8, 5.2), scale=(30.0, 0.6, 17.5), mat=wall)
-
-    # Right kitchen low wainscoting wall + lower stone counter wing at X = +11.6 (top at Z=4.45 so sun streams over)
-    add_cube(1.0, (13.6, -1.0, 1.2), scale=(0.8, 50.0, 6.5), mat=wall)
-    add_cube(1.0, (11.6, -1.0, -0.6), scale=(3.6, 46.0, 0.8), mat=stone)
-    add_cube(1.0, (11.6, -1.0, -2.75), scale=(3.4, 45.5, 3.5), mat=cab)
 
     # 4. Sunny Kitchen Window (Back-Right: X = +5.0, Y = 22.3) + Garden Foliage Texture + Potted Plant + Gingham Curtains
     add_cube(1.0, (5.0, 22.35, 6.2), scale=(7.6, 0.2, 5.6), mat=sky, uv_scale=0.16)

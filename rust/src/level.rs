@@ -5,42 +5,31 @@ pub fn setup_lighting_and_camera(mut commands: Commands) {
     commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
     commands.insert_resource(AmbientLight {
         color: Color::srgb(1.0, 0.96, 0.90),
-        brightness: 480.0,
+        brightness: 550.0,
     });
 
-    // Warm sunny kitchen key light from the window
+    // Single warm sunny kitchen directional light (WebGL2 limit = 1 directional light)
     commands.spawn((
         DirectionalLight {
-            illuminance: 20000.0,
+            illuminance: 19000.0,
             shadows_enabled: true,
             color: Color::srgb(1.0, 0.96, 0.86),
             ..default()
         },
-        Transform::from_xyz(5.0, 22.0, 12.0).looking_at(Vec3::new(0.0, 0.0, -4.0), Vec3::Y),
+        Transform::from_xyz(4.0, 22.0, 13.0).looking_at(Vec3::new(0.0, 0.0, -4.0), Vec3::Y),
     ));
 
-    // Soft warm fill light so faces and front details stay crisp
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 5500.0,
-            shadows_enabled: false,
-            color: Color::srgb(1.0, 0.93, 0.84),
-            ..default()
-        },
-        Transform::from_xyz(-6.0, 14.0, 16.0).looking_at(Vec3::new(0.0, 1.0, -2.0), Vec3::Y),
-    ));
-
-    // Warm overhead kitchen lights for specular highlights across wood, ceramics, glass & syrup
-    for z in [8.0_f32, -8.0_f32] {
+    // Warm overhead kitchen fill & specular highlights across wood, ceramics, glass & syrup
+    for (x, z) in [(-3.5_f32, 12.0_f32), (3.5_f32, 0.0_f32), (0.0_f32, -12.0_f32)] {
         commands.spawn((
             PointLight {
                 color: Color::srgb(1.0, 0.94, 0.84),
-                intensity: 45000.0,
-                range: 28.0,
+                intensity: 90000.0,
+                range: 32.0,
                 shadows_enabled: false,
                 ..default()
             },
-            Transform::from_xyz(0.0, 6.5, z),
+            Transform::from_xyz(x, 7.0, z),
         ));
     }
 
