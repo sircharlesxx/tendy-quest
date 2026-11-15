@@ -30,6 +30,31 @@ pub struct HeroCosmetic;
 pub struct HeroSaberBlade;
 
 #[derive(Component)]
+pub struct HeroRageAuraRoot;
+
+#[derive(Component)]
+pub struct HeroRageShell;
+
+#[derive(Component)]
+pub struct HeroRageRing(pub f32);
+
+#[derive(Component)]
+pub struct HeroRageSpark {
+    pub angle: f32,
+    pub height: f32,
+    pub speed: f32,
+}
+
+#[derive(Component)]
+pub struct HeroRageVein;
+
+#[derive(Component)]
+pub struct HeroRageMaterial {
+    pub orig_color: Color,
+    pub orig_emissive: LinearRgba,
+}
+
+#[derive(Component)]
 pub struct CutsceneOverlay;
 
 #[derive(Component)]
@@ -1965,12 +1990,17 @@ pub fn enter_headphone_cutscene(
     stats.cutscene_timer = if start_t > 0.0 { start_t } else { 0.0 };
     stats.cutscene_beat = 0;
     stats.headphones_vow_taken = true;
+    stats.enraged = true;
+    stats.rage_level = stats.rage_level.saturating_add(1);
+    stats.rage_swell_timer = 0.0;
+    stats.rage_swell_ticks = stats.rage_swell_ticks.saturating_add(1);
+    stats.rage_pulse_flash = 1.0;
     stats.hint_text.clear();
 
     crate::audio::set_touch_playing(false);
     crate::audio::play_sfx("headphone_crunch");
     crate::audio::play_sfx("thunder");
-    crate::audio::play_cutscene_music();
+    crate::audio::play_headphone_music();
 
     // Moody dramatic memory void atmosphere
     commands.insert_resource(ClearColor(Color::srgb(0.02, 0.015, 0.05)));
@@ -2140,7 +2170,8 @@ pub fn update_headphone_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
-    mut cam_q: Query<&mut Transform, With<Camera3d>>,
+    mut player_q: Query<&mut Transform, (With<Player>, Without<Camera3d>)>,
+    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>)>,
     mut badge_q: Query<&mut Text, With<HeadphoneSceneBadgeText>>,
     mut spk_q: Query<&mut Text, (With<HeadphoneSpeakerText>, Without<HeadphoneSceneBadgeText>)>,
     mut sub_q: Query<
@@ -2205,6 +2236,29 @@ pub fn update_headphone_cutscene(
         crate::audio::speak_voice(voice, role);
     }
 
+    if stats.cutscene_beat >= 3 {
+        stats.rage_pulse_flash = (stats.rage_pulse_flash - dt * 2.2).max(0.0);
+        stats.rage_swell_timer += dt;
+        while stats.rage_swell_timer >= 0.5 {
+            stats.rage_swell_timer -= 0.5;
+            stats.rage_swell_ticks = stats.rage_swell_ticks.saturating_add(1);
+            stats.rage_pulse_flash = 1.0;
+            crate::audio::play_sfx("rage_swell");
+        }
+        if let Ok(mut p_tf) = player_q.get_single_mut() {
+            let swell_s = 1.45
+                + ((stats.rage_swell_ticks.saturating_sub(1)).min(6) as f32) * 0.14
+                + stats.rage_pulse_flash * 0.16;
+            p_tf.scale = Vec3::new(
+                swell_s * (1.0 + stats.rage_pulse_flash * 0.08),
+                swell_s * (1.0 + stats.rage_pulse_flash * 0.12),
+                swell_s * (1.0 + stats.rage_pulse_flash * 0.08),
+            );
+        }
+    } else if let Ok(mut p_tf) = player_q.get_single_mut() {
+        p_tf.scale = Vec3::splat(1.45);
+    }
+
     let base_y = 120.0_f32;
     if let Ok(mut c_tf) = cam_q.get_single_mut() {
         let (cam_pos, look_at) = match stats.cutscene_beat {
@@ -2264,10 +2318,12 @@ pub fn exit_headphone_cutscene(
         node.display = Display::Flex;
     }
 
+    let next_s = stats.saved_apartment_scale.max(stats.target_scale());
+    stats.player_scale = next_s;
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
         p_tf.translation = stats.saved_apartment_pos;
         p_tf.rotation = Quat::from_rotation_y(stats.saved_apartment_yaw);
-        p_tf.scale = Vec3::splat(stats.saved_apartment_scale);
+        p_tf.scale = Vec3::splat(next_s);
         player.velocity = Vec3::ZERO;
         player.facing_yaw = stats.saved_apartment_yaw;
         player.invuln_timer = 1.5;
@@ -2283,7 +2339,305 @@ pub fn exit_headphone_cutscene(
         });
         crate::audio::play_bgm();
         crate::audio::set_touch_playing(true);
-        stats.hint_text = "SACRED VOW SWORN! Never step on another pair of Headphones or iPad again!".to_string();
+        stats.hint_text = format!(
+            "HEADPHONE RAGE (x{})! Stan is emanating anger & swelling bright red every 0.5s!",
+            stats.rage_level.max(1)
+        );
+    }
+}
+
+/// Emanating Crimson Rage Aura, rising anger sparks, shockwave rings & bright-red pulsing Stan materials.
+pub fn update_enraged_visuals(
+    mut commands: Commands,
+    time: Res<Time>,
+    state: Res<State<GameState>>,
+    stats: Res<PlayerStats>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    player_q: Query<(Entity, &Children), With<Player>>,
+    children_q: Query<&Children>,
+    name_q: Query<&Name>,
+    saber_q: Query<(), With<HeroSaberBlade>>,
+    mut aura_root_q: Query<&mut Visibility, With<HeroRageAuraRoot>>,
+    mut vein_q: Query<
+        (&mut Visibility, &mut Transform),
+        (
+            With<HeroRageVein>,
+            Without<HeroRageAuraRoot>,
+            Without<HeroRageShell>,
+            Without<HeroRageRing>,
+            Without<HeroRageSpark>,
+        ),
+    >,
+    mut shell_q: Query<
+        (&mut Transform, &MeshMaterial3d<StandardMaterial>),
+        (
+            With<HeroRageShell>,
+            Without<HeroRageVein>,
+            Without<HeroRageRing>,
+            Without<HeroRageSpark>,
+        ),
+    >,
+    mut ring_q: Query<
+        (&HeroRageRing, &mut Transform, &MeshMaterial3d<StandardMaterial>),
+        (
+            Without<HeroRageVein>,
+            Without<HeroRageShell>,
+            Without<HeroRageSpark>,
+        ),
+    >,
+    mut spark_q: Query<
+        (&HeroRageSpark, &mut Transform, &MeshMaterial3d<StandardMaterial>),
+        (
+            Without<HeroRageVein>,
+            Without<HeroRageShell>,
+            Without<HeroRageRing>,
+        ),
+    >,
+    mut mat_q: Query<
+        (Entity, &mut MeshMaterial3d<StandardMaterial>, Option<&HeroRageMaterial>),
+        (
+            Without<HeroRageAuraRoot>,
+            Without<HeroRageShell>,
+            Without<HeroRageRing>,
+            Without<HeroRageSpark>,
+            Without<HeroRageVein>,
+        ),
+    >,
+) {
+    let Ok((player_ent, root_children)) = player_q.get_single() else {
+        return;
+    };
+
+    let active = (stats.enraged && matches!(*state.get(), GameState::Playing | GameState::BossFight))
+        || (*state.get() == GameState::HeadphoneCutscene && stats.cutscene_beat >= 3);
+
+    if active && aura_root_q.is_empty() {
+        let shell_mat = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.08, 0.04, 0.28),
+            emissive: LinearRgba::new(3.2, 0.22, 0.05, 1.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        let ring_mat = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.14, 0.04, 0.85),
+            emissive: LinearRgba::new(4.8, 0.45, 0.08, 1.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        let spark_mat = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.28, 0.05, 0.92),
+            emissive: LinearRgba::new(5.5, 0.90, 0.10, 1.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        let vein_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.06, 0.06),
+            emissive: LinearRgba::new(5.2, 0.20, 0.15, 1.0),
+            unlit: true,
+            ..default()
+        });
+
+        commands.entity(player_ent).with_children(|p| {
+            p.spawn((
+                LevelEntity,
+                HeroRageAuraRoot,
+                Visibility::Inherited,
+                Transform::IDENTITY,
+            ))
+            .with_children(|aura| {
+                aura.spawn((
+                    PointLight {
+                        color: Color::srgb(1.0, 0.10, 0.06),
+                        intensity: 120000.0,
+                        range: 18.0,
+                        shadows_enabled: false,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 1.35, 0.0),
+                ));
+                aura.spawn((
+                    HeroRageShell,
+                    Mesh3d(meshes.add(Sphere::new(0.58))),
+                    MeshMaterial3d(shell_mat),
+                    Transform::from_xyz(0.0, 0.95, 0.0).with_scale(Vec3::new(1.05, 1.35, 1.05)),
+                ));
+                for phase in [0.0_f32, 0.5_f32] {
+                    aura.spawn((
+                        HeroRageRing(phase),
+                        Mesh3d(meshes.add(Torus::new(0.65, 0.78))),
+                        MeshMaterial3d(ring_mat.clone()),
+                        Transform::from_xyz(0.0, 0.25, 0.0).with_scale(Vec3::new(1.0, 0.35, 1.0)),
+                    ));
+                }
+                for i in 0..8 {
+                    let angle = (i as f32) * (std::f32::consts::TAU / 8.0);
+                    let height = 0.25 + ((i % 3) as f32) * 0.45;
+                    let speed = 2.6 + (i as f32) * 0.35;
+                    aura.spawn((
+                        HeroRageSpark {
+                            angle,
+                            height,
+                            speed,
+                        },
+                        Mesh3d(meshes.add(Cone::new(0.08, 0.32))),
+                        MeshMaterial3d(spark_mat.clone()),
+                        Transform::from_xyz(angle.cos() * 0.65, height, angle.sin() * 0.65),
+                    ));
+                }
+            });
+        });
+
+        // Attach crimson anime cross-vein popup on HeroHead forehead so fury is unmistakable!
+        let mut head_ent = None;
+        let mut stack: Vec<Entity> = root_children.iter().copied().collect();
+        while let Some(e) = stack.pop() {
+            if let Ok(name) = name_q.get(e) {
+                if name.as_str() == "HeroHead" {
+                    head_ent = Some(e);
+                    break;
+                }
+            }
+            if let Ok(kids) = children_q.get(e) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+        if let Some(h_ent) = head_ent {
+            commands.entity(h_ent).with_children(|head| {
+                head.spawn((
+                    LevelEntity,
+                    HeroRageVein,
+                    Visibility::Inherited,
+                    Transform::from_xyz(0.14, 0.43, -0.34),
+                ))
+                .with_children(|v| {
+                    for (vx, vy, rot_z) in [
+                        (-0.045_f32, 0.025_f32, 0.55_f32),
+                        (0.045, 0.025, -0.55),
+                        (-0.045, -0.025, -0.55),
+                        (0.045, -0.025, 0.55),
+                    ] {
+                        v.spawn((
+                            Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.065, 0.018, 0.018)))),
+                            MeshMaterial3d(vein_mat.clone()),
+                            Transform::from_xyz(vx, vy, 0.0)
+                                .with_rotation(Quat::from_rotation_z(rot_z)),
+                        ));
+                    }
+                });
+            });
+        }
+    }
+
+    for mut vis in &mut aura_root_q {
+        *vis = if active {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    let t = time.elapsed_secs();
+    let flash = stats.rage_pulse_flash.clamp(0.0, 1.0);
+    for (mut vis, mut v_tf) in &mut vein_q {
+        *vis = if active {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        let s = 1.0 + flash * 0.45 + (t * 16.0).sin().abs() * 0.18;
+        v_tf.scale = Vec3::splat(s);
+    }
+
+    if active {
+        for (mut s_tf, s_mat) in &mut shell_q {
+            let pulse = 1.0 + flash * 0.28 + (t * 10.0).sin().abs() * 0.08;
+            s_tf.scale = Vec3::new(1.05 * pulse, 1.35 * pulse, 1.05 * pulse);
+            if let Some(m) = materials.get_mut(&s_mat.0) {
+                m.base_color = Color::srgba(1.0, 0.06, 0.03, 0.22 + flash * 0.26);
+                m.emissive = LinearRgba::new(2.8 + flash * 4.5, 0.18, 0.04, 1.0);
+            }
+        }
+        for (ring, mut r_tf, r_mat) in &mut ring_q {
+            let u = (t * 1.45 + ring.0).fract();
+            let rad = 0.65 + u * 1.85;
+            r_tf.translation.y = 0.12 + u * 0.85;
+            r_tf.scale = Vec3::new(rad, 0.35, rad);
+            if let Some(m) = materials.get_mut(&r_mat.0) {
+                let alpha = (1.0 - u).clamp(0.0, 1.0) * (0.65 + flash * 0.35);
+                m.base_color = Color::srgba(1.0, 0.12, 0.04, alpha);
+                m.emissive = LinearRgba::new(4.2 + flash * 4.0, 0.35, 0.05, 1.0);
+            }
+        }
+        for (sp, mut sp_tf, sp_mat) in &mut spark_q {
+            let cycle = (t * sp.speed * 0.42 + sp.height).fract();
+            let ang = sp.angle + t * sp.speed;
+            let rad = 0.56 + (1.0 - cycle) * 0.34 + flash * 0.18;
+            sp_tf.translation = Vec3::new(ang.cos() * rad, 0.18 + cycle * 1.85, ang.sin() * rad);
+            sp_tf.rotation = Quat::from_rotation_y(-ang) * Quat::from_rotation_z((t * 12.0).sin() * 0.2);
+            sp_tf.scale = Vec3::splat((0.75 + (1.0 - cycle) * 0.65) * (1.0 + flash * 0.4));
+            if let Some(m) = materials.get_mut(&sp_mat.0) {
+                m.emissive = LinearRgba::new(4.8 + flash * 4.0, 0.75, 0.08, 1.0);
+            }
+        }
+    }
+
+    // Clone player mesh materials on first activation so cached glTF handles never stay tinted on restart
+    let mut clone_jobs: Vec<(Entity, StandardMaterial)> = Vec::new();
+    let mut stack: Vec<Entity> = root_children.iter().copied().collect();
+    while let Some(ent) = stack.pop() {
+        if saber_q.contains(ent) {
+            continue;
+        }
+        if let Ok(kids) = children_q.get(ent) {
+            stack.extend(kids.iter().copied());
+        }
+        if let Ok((m_ent, mesh_mat, maybe_orig)) = mat_q.get_mut(ent) {
+            if let Some(orig) = maybe_orig {
+                if let Some(mat) = materials.get_mut(&mesh_mat.0) {
+                    if active {
+                        let beat_wave = ((t * 12.566).sin() * 0.5 + 0.5).max(flash);
+                        mat.base_color = Color::srgb(
+                            1.0,
+                            0.06 + (1.0 - beat_wave) * 0.12,
+                            0.04 + (1.0 - beat_wave) * 0.08,
+                        );
+                        mat.emissive = LinearRgba::new(
+                            1.8 + beat_wave * 4.2,
+                            0.05 + beat_wave * 0.22,
+                            0.02,
+                            1.0,
+                        );
+                    } else {
+                        mat.base_color = orig.orig_color;
+                        mat.emissive = orig.orig_emissive;
+                    }
+                }
+            } else if active {
+                if let Some(src) = materials.get(&mesh_mat.0) {
+                    clone_jobs.push((m_ent, src.clone()));
+                }
+            }
+        }
+    }
+
+    for (m_ent, cloned_src) in clone_jobs {
+        let orig_color = cloned_src.base_color;
+        let orig_emissive = cloned_src.emissive;
+        let mut tinted = cloned_src;
+        tinted.base_color = Color::srgb(1.0, 0.08, 0.05);
+        tinted.emissive = LinearRgba::new(3.2, 0.10, 0.03, 1.0);
+        let new_handle = materials.add(tinted);
+        if let Ok((_, mut mesh_mat, _)) = mat_q.get_mut(m_ent) {
+            mesh_mat.0 = new_handle;
+        }
+        commands.entity(m_ent).insert(HeroRageMaterial {
+            orig_color,
+            orig_emissive,
+        });
     }
 }
 
@@ -2548,7 +2902,11 @@ pub fn enter_boss_fight(
     stats.boss_mode = true;
     stats.hearts = stats.max_hearts;
     stats.tendies = stats.total_tendies;
-    stats.player_scale = 3.2;
+    stats.player_scale = if stats.enraged {
+        stats.target_scale()
+    } else {
+        3.2
+    };
     stats.boss_max_hp = 100.0;
     stats.boss_hp = init_hp;
     stats.mom_quote = MOM_QUOTES[0].to_string();
@@ -2566,7 +2924,7 @@ pub fn enter_boss_fight(
             Vec3::new(0.0, -6.0, 6.0)
         };
         p_tf.rotation = Quat::IDENTITY;
-        p_tf.scale = Vec3::splat(3.2);
+        p_tf.scale = Vec3::splat(stats.player_scale);
         player.velocity = Vec3::ZERO;
         player.grounded = true;
         player.invuln_timer = 2.5;

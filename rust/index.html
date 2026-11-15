@@ -82,11 +82,14 @@
       let bossStep = 0;
       let vikingTimer = null;
       let vikingStep = 0;
+      let headphoneTimer = null;
+      let headphoneStep = 0;
 
       function stopSpecialAudio() {
         try {
           if (bossTimer) { clearInterval(bossTimer); bossTimer = null; }
           if (vikingTimer) { clearInterval(vikingTimer); vikingTimer = null; }
+          if (headphoneTimer) { clearInterval(headphoneTimer); headphoneTimer = null; }
           if (droneOsc1) { droneOsc1.stop(); droneOsc1.disconnect(); droneOsc1 = null; }
           if (droneOsc2) { droneOsc2.stop(); droneOsc2.disconnect(); droneOsc2 = null; }
           if (droneGain) { droneGain.disconnect(); droneGain = null; }
@@ -153,6 +156,11 @@
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);
           mkOsc("triangle", 290, 48, 0.42, 0.30);
+          return true;
+        }
+        if (name === "rage_swell") {
+          mkOsc("sawtooth", 85, 175, 0.22, 0.22);
+          mkOsc("sine", 55, 115, 0.24, 0.26);
           return true;
         }
         return false;
@@ -245,6 +253,96 @@
             droneOsc2.connect(filter);
             droneOsc1.start();
             droneOsc2.start();
+          } catch (_) {}
+        },
+        playHeadphoneMusic() {
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
+            if (ambGain) ambGain.gain.setValueAtTime(0.03, ac.currentTime);
+            // Ominous D1 + G#1 tritone sub-drone for the shattered headset/iPad flashback
+            const filter = ac.createBiquadFilter();
+            filter.type = "lowpass";
+            filter.frequency.value = 190;
+            droneGain = ac.createGain();
+            droneGain.gain.value = 0.16;
+            filter.connect(droneGain);
+            droneGain.connect(masterGain);
+            droneOsc1 = ac.createOscillator();
+            droneOsc1.type = "triangle";
+            droneOsc1.frequency.value = 36.71;
+            droneOsc2 = ac.createOscillator();
+            droneOsc2.type = "sawtooth";
+            droneOsc2.frequency.value = 51.91;
+            droneOsc1.connect(filter);
+            droneOsc2.connect(filter);
+            droneOsc1.start();
+            droneOsc2.start();
+
+            const glassBells = [587.33, 554.37, 466.16, 440.0, 392.0, 349.23, 329.63, 277.18];
+            headphoneStep = 0;
+            headphoneTimer = setInterval(() => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const step = headphoneStep % 8;
+              headphoneStep += 1;
+
+              // Double-heartbeat sub-thump on beats 0 and 2
+              if (step === 0 || step === 2) {
+                const thump = ac.createOscillator();
+                const tg = ac.createGain();
+                thump.type = "sine";
+                thump.frequency.setValueAtTime(96, now);
+                thump.frequency.exponentialRampToValueAtTime(28, now + 0.18);
+                tg.gain.setValueAtTime(0.28, now);
+                tg.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+                thump.connect(tg);
+                tg.connect(masterGain);
+                thump.start(now);
+                thump.stop(now + 0.20);
+              }
+
+              // Haunting descending diminished shattered-glass bell arpeggio
+              const freq = glassBells[step];
+              const bell = ac.createOscillator();
+              const shimmer = ac.createOscillator();
+              const bg = ac.createGain();
+              bell.type = "sine";
+              shimmer.type = "triangle";
+              bell.frequency.setValueAtTime(freq, now);
+              shimmer.frequency.setValueAtTime(freq * 1.007, now);
+              bg.gain.setValueAtTime(0.001, now);
+              bg.gain.linearRampToValueAtTime(0.085, now + 0.015);
+              bg.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
+              bell.connect(bg);
+              shimmer.connect(bg);
+              bg.connect(masterGain);
+              bell.start(now);
+              shimmer.start(now);
+              bell.stop(now + 0.40);
+              shimmer.stop(now + 0.40);
+
+              // High metallic glass-crack tick on beat 4
+              if (step === 4) {
+                const tick = ac.createOscillator();
+                const tk = ac.createGain();
+                tick.type = "square";
+                tick.frequency.setValueAtTime(1661.22, now);
+                tick.frequency.exponentialRampToValueAtTime(622.25, now + 0.09);
+                tk.gain.setValueAtTime(0.045, now);
+                tk.gain.exponentialRampToValueAtTime(0.0008, now + 0.10);
+                tick.connect(tk);
+                tk.connect(masterGain);
+                tick.start(now);
+                tick.stop(now + 0.11);
+              }
+            }, 220);
           } catch (_) {}
         },
         playBossMusic() {

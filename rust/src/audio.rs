@@ -10,6 +10,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playCutsceneMusic)]
         fn js_play_cutscene_music();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playHeadphoneMusic)]
+        fn js_play_headphone_music();
+
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playBossMusic)]
         fn js_play_boss_music();
 
@@ -80,6 +83,10 @@ mod imp {
 
     pub fn play_cutscene_music() {
         js_play_cutscene_music();
+    }
+
+    pub fn play_headphone_music() {
+        js_play_headphone_music();
     }
 
     pub fn play_boss_music() {
@@ -173,6 +180,8 @@ mod imp {
 
     pub fn play_cutscene_music() {}
 
+    pub fn play_headphone_music() {}
+
     pub fn play_boss_music() {}
 
     pub fn play_viking_chant_music() {}
@@ -248,8 +257,8 @@ mod imp {
 
 pub use imp::{
     init_test_mode, is_muted, is_voice_speaking, play_bgm, play_boss_music, play_cutscene_music,
-    play_sfx, play_viking_chant_music, set_touch_boss_mode, set_touch_playing, speak_voice,
-    take_cutscene_start_time, take_touch_action_tap, take_touch_attack, take_touch_dash,
-    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy,
-    take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
+    play_headphone_music, play_sfx, play_viking_chant_music, set_touch_boss_mode,
+    set_touch_playing, speak_voice, take_cutscene_start_time, take_touch_action_tap,
+    take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump, take_touch_look_dx,
+    take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
 };

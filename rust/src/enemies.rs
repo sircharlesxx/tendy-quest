@@ -276,7 +276,7 @@ pub fn update_enemies(
             && player.roll_timer <= 0.0
             && !(stats.boss_mode && player.attack_timer > 0.0)
         {
-            if !stats.boss_mode && stats.player_scale >= 2.2 {
+            if !stats.boss_mode && (stats.enraged || stats.player_scale >= 2.2) {
                 enemy.knockback =
                     -flat_to_player.normalize_or_zero() * (14.0 + stats.player_scale * 1.5);
                 player.invuln_timer = 0.25;
@@ -317,6 +317,7 @@ pub fn update_enemies(
         .length();
         if xz_d < 1.0
             && (p_tf.translation.y - pud_tf.translation.y).abs() < 0.55
+            && !stats.enraged
             && stats.player_scale < 2.2
         {
             player.slow_timer = 0.4;

@@ -128,14 +128,35 @@ pub fn player_movement(
     };
     let dt = time.delta_secs().min(0.05);
 
-    // Smoothly grow the hero toward their Katamari target scale
+    // Smoothly grow the hero toward their Katamari target scale (with 0.5s enraged swelling pulses)
+    if stats.enraged && !stats.in_city {
+        stats.rage_pulse_flash = (stats.rage_pulse_flash - dt * 2.2).max(0.0);
+        stats.rage_swell_timer += dt;
+        while stats.rage_swell_timer >= 0.5 {
+            stats.rage_swell_timer -= 0.5;
+            stats.rage_swell_ticks = stats.rage_swell_ticks.saturating_add(1);
+            stats.rage_pulse_flash = 1.0;
+            if stats.rage_swell_ticks <= 6 || stats.rage_swell_ticks % 2 == 0 {
+                crate::audio::play_sfx("rage_swell");
+            }
+        }
+    }
     let target_s = stats.target_scale();
     if (stats.player_scale - target_s).abs() > 0.001 {
         stats.player_scale += (target_s - stats.player_scale) * (dt * 6.0).min(1.0);
     } else {
         stats.player_scale = target_s;
     }
-    tf.scale = Vec3::splat(stats.player_scale);
+    if stats.enraged && !stats.in_city {
+        let throb = 1.0 + stats.rage_pulse_flash * 0.16;
+        tf.scale = Vec3::new(
+            stats.player_scale * throb,
+            stats.player_scale * (1.0 + stats.rage_pulse_flash * 0.22),
+            stats.player_scale * throb,
+        );
+    } else {
+        tf.scale = Vec3::splat(stats.player_scale);
+    }
     let size_ratio = (stats.player_scale / 0.55).max(1.0);
 
     if player.dash_timer > 0.0 {
@@ -159,7 +180,12 @@ pub fn player_movement(
     if stats.speed_boost_timer > 0.0 {
         stats.speed_boost_timer = (stats.speed_boost_timer - dt).max(0.0);
     }
-    stats.dash_energy = (stats.dash_energy + 24.0 * dt).min(100.0);
+    let dash_regen = if stats.enraged && !stats.in_city {
+        60.0
+    } else {
+        24.0
+    };
+    stats.dash_energy = (stats.dash_energy + dash_regen * dt).min(100.0);
 
     // Drain screen-tap state so overlay transitions don't pick up stale taps
     let _ = crate::audio::take_touch_action_tap();
@@ -227,7 +253,9 @@ pub fn player_movement(
         } else {
             crate::audio::play_sfx("double_jump");
         }
-        player.velocity.y = 9.2 + (stats.player_scale - 0.55).max(0.0) * if stats.in_city { 1.85 } else { 1.55 };
+        player.velocity.y = 9.2
+            + (stats.player_scale - 0.55).max(0.0) * if stats.in_city { 1.85 } else { 1.55 }
+            + if stats.enraged && !stats.in_city { 2.2 } else { 0.0 };
         player.grounded = false;
         player.jumps_used += 1;
     }
@@ -249,6 +277,9 @@ pub fn player_movement(
     let mut speed = base_speed * size_ratio.powf(0.38);
     if stats.speed_boost_timer > 0.0 {
         speed *= 1.75;
+    }
+    if stats.enraged && !stats.in_city {
+        speed *= 1.38 + 0.10 * (stats.rage_level.min(4) as f32);
     }
     if player.slow_timer > 0.0 {
         speed *= 0.6;
@@ -708,7 +739,7 @@ pub fn animate_and_collect_pickups(
         let horiz_d = Vec2::new(p_pos.x - f_tf.translation.x, p_pos.z - f_tf.translation.z).length();
         let dy = (p_pos.y - f_tf.translation.y).abs();
         if horiz_d < 4.5 && dy < 3.0 {
-            if stats.tendies >= stats.total_tendies {
+            if stats.tendies >= stats.total_tendies || stats.player_scale >= 5.95 {
                 if stats.fridge_open <= 0.0 {
                     stats.fridge_open = 0.02;
                     stats.score += 5000;
@@ -756,27 +787,29 @@ pub fn animate_player_limbs(
 
     let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
         if *state.get() == GameState::HeadphoneCutscene {
+            let rage_shake = (t * 36.0).sin() * 0.09;
             if stats.cutscene_beat >= 4 {
-                // Solemn Sacred Vow: right arm raised high above head to swear never to step on headphones/iPads again!
+                // Enraged Sacred Vow: swelling fury with shaking right fist raised high above head!
+                let flex = stats.rage_pulse_flash * 0.25;
                 (
-                    Quat::IDENTITY,
-                    Quat::IDENTITY,
-                    Quat::from_rotation_z(-0.22),
-                    Quat::from_rotation_z(2.35) * Quat::from_rotation_x(0.55),
-                    Quat::from_rotation_x(0.06),
-                    Quat::from_rotation_x(-0.14),
-                    0.02,
+                    Quat::from_rotation_x(0.08),
+                    Quat::from_rotation_x(-0.08),
+                    Quat::from_rotation_z(-0.42 - flex + rage_shake),
+                    Quat::from_rotation_z(2.35 + rage_shake * 0.6) * Quat::from_rotation_x(0.55),
+                    Quat::from_rotation_x(0.08 + flex * 0.2) * Quat::from_rotation_z(rage_shake * 0.3),
+                    Quat::from_rotation_x(-0.14) * Quat::from_rotation_y(rage_shake * 0.6),
+                    0.02 + stats.rage_pulse_flash * 0.05,
                 )
             } else if stats.cutscene_beat == 3 {
-                // Remorseful despair: hands up near bowed head
+                // Boiling fury / remorse over fallen devices
                 (
                     Quat::from_rotation_x(-0.10),
                     Quat::from_rotation_x(0.10),
-                    Quat::from_rotation_x(-1.85) * Quat::from_rotation_z(0.55),
-                    Quat::from_rotation_x(-1.85) * Quat::from_rotation_z(-0.55),
-                    Quat::from_rotation_x(-0.35),
-                    Quat::from_rotation_x(-0.42),
-                    -0.03,
+                    Quat::from_rotation_x(-1.85) * Quat::from_rotation_z(0.55 + rage_shake),
+                    Quat::from_rotation_x(-1.85) * Quat::from_rotation_z(-0.55 - rage_shake),
+                    Quat::from_rotation_x(-0.35) * Quat::from_rotation_z(rage_shake * 0.35),
+                    Quat::from_rotation_x(-0.42) * Quat::from_rotation_y(rage_shake * 0.7),
+                    -0.02 + stats.rage_pulse_flash * 0.04,
                 )
             } else {
                 // Shocked freeze staring down at crushed headphones
@@ -892,6 +925,37 @@ pub fn animate_player_limbs(
                 Quat::from_rotation_x(-breath * 0.03)
                     * Quat::from_rotation_y((t * 1.1).sin() * 0.08),
                 breath * 0.015,
+            )
+        };
+
+    // Emanating anger trembling & berserker flex layered during active enraged gameplay
+    let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
+        if stats.enraged
+            && !stats.in_city
+            && matches!(*state.get(), GameState::Playing | GameState::BossFight)
+            && player.roll_timer <= 0.0
+            && player.attack_timer <= 0.0
+        {
+            let shake = (t * 36.0).sin() * 0.09;
+            let flare = stats.rage_pulse_flash * 0.55;
+            (
+                left_leg_rot * Quat::from_rotation_x(shake * 0.4),
+                right_leg_rot * Quat::from_rotation_x(-shake * 0.4),
+                left_arm_rot * Quat::from_rotation_z(-0.48 - flare + shake) * Quat::from_rotation_x(-0.32),
+                right_arm_rot * Quat::from_rotation_z(0.48 + flare - shake) * Quat::from_rotation_x(-0.32),
+                torso_rot * Quat::from_rotation_x(-0.18 - flare * 0.15) * Quat::from_rotation_z(shake * 0.35),
+                head_rot * Quat::from_rotation_y(shake * 0.7) * Quat::from_rotation_x(0.10),
+                bob_y + (t * 28.0).sin().abs() * 0.035 + stats.rage_pulse_flash * 0.05,
+            )
+        } else {
+            (
+                left_leg_rot,
+                right_leg_rot,
+                left_arm_rot,
+                right_arm_rot,
+                torso_rot,
+                head_rot,
+                bob_y,
             )
         };
 

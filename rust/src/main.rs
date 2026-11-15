@@ -12,7 +12,7 @@ use bevy::prelude::*;
 use boss::{
     ensure_hero_eye_reflections, ensure_hero_vikings_gear, enter_boss_fight, enter_cutscene,
     enter_headphone_cutscene, exit_boss_fight, exit_cutscene, exit_headphone_cutscene,
-    update_boss_fight, update_cutscene, update_headphone_cutscene,
+    update_boss_fight, update_cutscene, update_enraged_visuals, update_headphone_cutscene,
 };
 use city::{
     animate_city_intro_lexie, enter_city_intro_cutscene, enter_city_play,
@@ -70,6 +70,7 @@ fn main() {
             (
                 retry_failed_scenes,
                 toggle_audio_hotkey,
+                update_enraged_visuals,
                 update_hud,
                 adapt_ui_to_viewport,
             ),

@@ -43,6 +43,11 @@ pub struct PlayerStats {
     pub saved_apartment_yaw: f32,
     pub headphone_return_boss: bool,
     pub headphones_vow_taken: bool,
+    pub enraged: bool,
+    pub rage_level: u32,
+    pub rage_swell_timer: f32,
+    pub rage_swell_ticks: u32,
+    pub rage_pulse_flash: f32,
 }
 
 impl Default for PlayerStats {
@@ -74,6 +79,11 @@ impl Default for PlayerStats {
             saved_apartment_yaw: 0.0,
             headphone_return_boss: false,
             headphones_vow_taken: false,
+            enraged: false,
+            rage_level: 0,
+            rage_swell_timer: 0.0,
+            rage_swell_ticks: 0,
+            rage_pulse_flash: 0.0,
         }
     }
 }
@@ -84,14 +94,22 @@ impl PlayerStats {
             let t = self.tendies.min(50) as f32 / 50.0;
             return 1.8 + t.powf(1.08) * 16.2;
         }
-        if self.boss_mode {
-            return 3.2;
+        let base = if self.boss_mode {
+            3.2
+        } else {
+            match self.tendies {
+                0..=4 => 0.55 + (self.tendies as f32) * 0.20,
+                5..=8 => 1.35 + ((self.tendies - 4) as f32) * 0.4125,
+                _ => 3.00 + ((self.tendies.min(12) - 8) as f32) * 0.75,
+            }
+        };
+        if self.enraged {
+            let max_cap = if self.boss_mode { 5.6 } else { 6.8 };
+            let rage_bonus =
+                (self.rage_swell_ticks as f32) * 0.22 * (self.rage_level.max(1) as f32);
+            return (base + rage_bonus).min(max_cap);
         }
-        match self.tendies {
-            0..=4 => 0.55 + (self.tendies as f32) * 0.20,
-            5..=8 => 1.35 + ((self.tendies - 4) as f32) * 0.4125,
-            _ => 3.00 + ((self.tendies.min(12) - 8) as f32) * 0.75,
-        }
+        base
     }
 
     pub fn height_cm(&self) -> u32 {
@@ -113,6 +131,13 @@ impl PlayerStats {
                 25..=37 => "Midrise Mutant",
                 38..=49 => "Empire Titan",
                 _ => "SKYSCRAPER KAIJU - SMASH LEXIE!",
+            };
+        }
+        if self.enraged {
+            return if !self.boss_mode && self.player_scale >= 5.95 {
+                "ENRAGED TITAN - OPEN FRIDGE!"
+            } else {
+                "ENRAGED! SWELLING RED FURY!"
             };
         }
         if self.boss_mode {
