@@ -130,16 +130,25 @@ pub fn player_movement(
     };
     let dt = time.delta_secs().min(0.05);
 
-    // Smoothly grow the hero toward their Katamari target scale (with 0.5s enraged swelling pulses)
+    // Smoothly grow the hero toward their Katamari target scale (with 0.5s enraged swelling pulses for 10s)
     if stats.enraged && !stats.in_city {
-        stats.rage_pulse_flash = (stats.rage_pulse_flash - dt * 2.2).max(0.0);
-        stats.rage_swell_timer += dt;
-        while stats.rage_swell_timer >= 0.5 {
-            stats.rage_swell_timer -= 0.5;
-            stats.rage_swell_ticks = stats.rage_swell_ticks.saturating_add(1);
-            stats.rage_pulse_flash = 1.0;
-            if stats.rage_swell_ticks <= 6 || stats.rage_swell_ticks % 2 == 0 {
-                crate::audio::play_sfx("rage_swell");
+        stats.rage_cooldown_timer = (stats.rage_cooldown_timer - dt).max(0.0);
+        if stats.rage_cooldown_timer <= 0.0 {
+            stats.enraged = false;
+            stats.rage_swell_timer = 0.0;
+            stats.rage_swell_ticks = 0;
+            stats.rage_pulse_flash = 0.0;
+            stats.hint_text = "Stan cooled down! Watch out for headphones!".to_string();
+        } else {
+            stats.rage_pulse_flash = (stats.rage_pulse_flash - dt * 2.2).max(0.0);
+            stats.rage_swell_timer += dt;
+            while stats.rage_swell_timer >= 0.5 {
+                stats.rage_swell_timer -= 0.5;
+                stats.rage_swell_ticks = stats.rage_swell_ticks.saturating_add(1);
+                stats.rage_pulse_flash = 1.0;
+                if stats.rage_swell_ticks <= 6 || stats.rage_swell_ticks % 2 == 0 {
+                    crate::audio::play_sfx("rage_swell");
+                }
             }
         }
     }

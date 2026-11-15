@@ -201,7 +201,11 @@ pub fn update_hud(
     if let Ok(mut t) = status_q.get_single_mut() {
         let mut tags = Vec::new();
         if stats.enraged {
-            tags.push(format!("ENRAGED x{}", stats.rage_level.max(1)));
+            tags.push(format!(
+                "ENRAGED x{} ({:.0}s)",
+                stats.rage_level.max(1),
+                stats.rage_cooldown_timer.ceil().max(1.0)
+            ));
         }
         if stats.speed_boost_timer > 0.0 {
             tags.push(format!("MUSTARD {:.0}s", stats.speed_boost_timer));

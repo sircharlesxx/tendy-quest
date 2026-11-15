@@ -2065,6 +2065,7 @@ pub fn enter_headphone_cutscene(
     stats.rage_swell_timer = 0.0;
     stats.rage_swell_ticks = stats.rage_swell_ticks.saturating_add(1);
     stats.rage_pulse_flash = 1.0;
+    stats.rage_cooldown_timer = 10.0;
     stats.hint_text.clear();
 
     let uzumaki = stats.rage_level >= 2;
@@ -2551,6 +2552,7 @@ pub fn exit_headphone_cutscene(
 
     let next_s = stats.saved_apartment_scale.max(stats.target_scale());
     stats.player_scale = next_s;
+    stats.rage_cooldown_timer = 10.0;
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
         p_tf.translation = stats.saved_apartment_pos;
         p_tf.rotation = Quat::from_rotation_y(stats.saved_apartment_yaw);
@@ -2571,7 +2573,7 @@ pub fn exit_headphone_cutscene(
         crate::audio::play_bgm();
         crate::audio::set_touch_playing(true);
         stats.hint_text = format!(
-            "HEADPHONE RAGE (x{})! Stan is emanating anger & swelling bright red every 0.5s!",
+            "HEADPHONE RAGE (x{}, 10s)! Stan is emanating anger & swelling bright red every 0.5s!",
             stats.rage_level.max(1)
         );
     }

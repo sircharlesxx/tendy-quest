@@ -48,6 +48,7 @@ pub struct PlayerStats {
     pub rage_swell_timer: f32,
     pub rage_swell_ticks: u32,
     pub rage_pulse_flash: f32,
+    pub rage_cooldown_timer: f32,
 }
 
 impl Default for PlayerStats {
@@ -84,6 +85,7 @@ impl Default for PlayerStats {
             rage_swell_timer: 0.0,
             rage_swell_ticks: 0,
             rage_pulse_flash: 0.0,
+            rage_cooldown_timer: 0.0,
         }
     }
 }
