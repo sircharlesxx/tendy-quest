@@ -593,7 +593,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-47abe63b08aebd1b.js" crossorigin="anonymous" integrity="sha384-ZvmbqaKc5s90bZ7lbUL7/Wtlntv8C0Pl1RSL3Vo/xzUASbSp+6P5CRduGGgAOvEI"><link rel="preload" href="./tendy-quest-47abe63b08aebd1b_bg.wasm" crossorigin="anonymous" integrity="sha384-jwDA8i4VOVTpN1IjoyK+0sv2C0FeET1dRtuDYMHM27duIdkrMdCPF3cXQHBCCA6E" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-455b64600cd54f5d.js" crossorigin="anonymous" integrity="sha384-ZvmbqaKc5s90bZ7lbUL7/Wtlntv8C0Pl1RSL3Vo/xzUASbSp+6P5CRduGGgAOvEI"><link rel="preload" href="./tendy-quest-455b64600cd54f5d_bg.wasm" crossorigin="anonymous" integrity="sha384-OK4H3c+gJYo/J7odYCoqgST1fRT6kl3XU7Cqg5YCQgy6h7qshLf/i3nMvDeWXZda" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -689,7 +689,7 @@
         }
         const r = joyZone.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) return false;
-        const pad = 34;
+        const pad = 42;
         return (
           clientX >= r.left - pad &&
           clientX <= r.right + pad &&
@@ -961,8 +961,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-47abe63b08aebd1b.js';
-const wasm = await init({ module_or_path: './tendy-quest-47abe63b08aebd1b_bg.wasm' });
+import init, * as bindings from './tendy-quest-455b64600cd54f5d.js';
+const wasm = await init({ module_or_path: './tendy-quest-455b64600cd54f5d_bg.wasm' });
 
 
 window.wasmBindings = bindings;

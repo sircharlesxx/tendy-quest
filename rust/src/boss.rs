@@ -835,7 +835,7 @@ pub fn update_cutscene(
                 p_tf.translation = Vec3::new(-1.3, base_y, 0.4);
                 p_tf.rotation = Quat::from_rotation_y(-PI * 0.5);
                 player.roll_timer = 0.0;
-                player.attack_timer = 0.2;
+                player.attack_timer = 0.0;
             }
         }
     }
@@ -1058,7 +1058,7 @@ fn spawn_mom_mesh_hierarchy(
             mom.spawn((
                 MomPart("RightArm"),
                 Transform::from_xyz(0.42, 1.42, 0.0)
-                    .with_rotation(Quat::from_rotation_x(-0.85) * Quat::from_rotation_z(-0.18)),
+                    .with_rotation(Quat::from_rotation_x(0.95) * Quat::from_rotation_z(0.25)),
             ))
             .with_children(|arm| {
                 arm.spawn((
@@ -1071,10 +1071,10 @@ fn spawn_mom_mesh_hierarchy(
                     MeshMaterial3d(skin),
                     Transform::from_xyz(0.0, -0.55, 0.0),
                 ));
-                // Crimson Lightsaber
+                // Crimson Lightsaber angled upward and forward away from torso
                 arm.spawn(
                     Transform::from_xyz(0.02, -0.56, -0.05)
-                        .with_rotation(Quat::from_rotation_x(-0.45)),
+                        .with_rotation(Quat::from_rotation_x(-1.55)),
                 )
                 .with_children(|saber| {
                     saber.spawn((
@@ -1117,6 +1117,9 @@ pub fn enter_boss_fight(
     mom_q: Query<Entity, With<MomBoss>>,
     hud_q: Query<Entity, With<BossHudNode>>,
 ) {
+    for e in &enemy_q {
+        commands.entity(e).despawn_recursive();
+    }
     for e in &mom_q {
         commands.entity(e).despawn_recursive();
     }
@@ -1158,6 +1161,7 @@ pub fn enter_boss_fight(
         p_tf.scale = Vec3::splat(3.2);
         player.velocity = Vec3::ZERO;
         player.grounded = true;
+        player.invuln_timer = 2.5;
         player.roll_timer = 0.0;
         player.attack_timer = 0.0;
         player.attack_cooldown = 0.0;
@@ -1175,7 +1179,7 @@ pub fn enter_boss_fight(
         hp: 100.0,
         max_hp: 100.0,
         state: MomState::Staggered,
-        timer: 1.5,
+        timer: 2.2,
         voice_timer: 5.5,
         summon_timer: 10.0,
         quote_idx: 0,
@@ -1185,17 +1189,15 @@ pub fn enter_boss_fight(
         dealt_slash_hit: false,
     });
 
-    // Ensure a fierce wave of hardened veggie minions is in the arena
-    if enemy_q.iter().count() < 5 {
-        for (kind, pos) in [
-            (EnemyKind::BroccoliBrute, Vec3::new(-4.2, 0.0, 2.0)),
-            (EnemyKind::CarrotLancer, Vec3::new(4.2, 0.0, 1.0)),
-            (EnemyKind::BroccoliBrute, Vec3::new(-2.8, 0.0, -7.5)),
-            (EnemyKind::CarrotLancer, Vec3::new(2.8, 0.0, -9.5)),
-            (EnemyKind::KaleSlime, Vec3::new(0.0, 0.0, -1.5)),
-        ] {
-            spawn_enemy_at(&mut commands, &asset_server, kind, pos);
-        }
+    // Spawn a fresh wave of hardened veggie minions across mid & far counter away from Stan
+    for (kind, pos) in [
+        (EnemyKind::BroccoliBrute, Vec3::new(-4.2, 0.0, -2.5)),
+        (EnemyKind::CarrotLancer, Vec3::new(4.2, 0.0, -3.5)),
+        (EnemyKind::BroccoliBrute, Vec3::new(-2.8, 0.0, -8.5)),
+        (EnemyKind::CarrotLancer, Vec3::new(2.8, 0.0, -10.5)),
+        (EnemyKind::KaleSlime, Vec3::new(0.0, 0.0, -6.0)),
+    ] {
+        spawn_enemy_at(&mut commands, &asset_server, kind, pos);
     }
 
     // Top-center Boss Health Bar + Mom Quote Banner
@@ -1451,7 +1453,7 @@ pub fn update_boss_fight(
             }
             if mom.timer <= 0.0 {
                 mom.state = MomState::Staggered;
-                mom.timer = 1.35;
+                mom.timer = 1.8;
             }
             10.5
         }
@@ -1493,14 +1495,14 @@ pub fn update_boss_fight(
             Quat::from_rotation_x(s * 0.72),
             Quat::from_rotation_x(-s * 0.72),
             Quat::from_rotation_x(-s * 0.55) * Quat::from_rotation_z(-0.18),
-            Quat::from_rotation_x(-0.85 + s * 0.25) * Quat::from_rotation_z(-0.15),
+            Quat::from_rotation_x(0.85 + s * 0.25) * Quat::from_rotation_z(0.22),
             Quat::from_rotation_x(-0.08),
         ),
         MomState::SaberWindup => (
             Quat::from_rotation_x(0.35),
             Quat::from_rotation_x(-0.35),
             Quat::from_rotation_z(-0.5),
-            Quat::from_rotation_x(2.2) * Quat::from_rotation_z(0.3),
+            Quat::from_rotation_x(2.05) * Quat::from_rotation_z(0.30),
             Quat::from_rotation_x(0.22),
         ),
         MomState::SaberSlash => {
@@ -1509,16 +1511,16 @@ pub fn update_boss_fight(
                 Quat::from_rotation_x(-0.45),
                 Quat::from_rotation_x(0.45),
                 Quat::from_rotation_x(-0.5),
-                Quat::from_rotation_x(-0.65) * Quat::from_rotation_y(sweep),
+                Quat::from_rotation_x(0.45) * Quat::from_rotation_y(sweep),
                 Quat::from_rotation_x(-0.28),
             )
         }
         MomState::Staggered => (
             Quat::IDENTITY,
             Quat::IDENTITY,
-            Quat::from_rotation_z(-0.65),
-            Quat::from_rotation_z(0.65),
-            Quat::from_rotation_x(0.25),
+            Quat::from_rotation_z(-0.35),
+            Quat::from_rotation_x(0.75) * Quat::from_rotation_z(0.35),
+            Quat::from_rotation_x(0.15),
         ),
     };
     let mut stack: Vec<Entity> = mom_children.iter().copied().collect();

@@ -241,7 +241,7 @@ pub fn update_enemies(
             }
         }
 
-        let rage_mul = if stats.boss_mode { 1.45 } else { 1.0 };
+        let rage_mul = if stats.boss_mode { 1.25 } else { 1.0 };
         let move_speed = move_vec.length() * rage_mul;
         enemy.walk_phase += move_speed * dt * 2.4;
 
@@ -289,6 +289,7 @@ pub fn update_enemies(
                 player.invuln_timer = 1.2;
                 let push = flat_to_player.normalize_or_zero() * 8.0;
                 p_tf.translation += push * 0.25;
+                enemy.knockback = -flat_to_player.normalize_or_zero() * 14.0;
                 player.velocity.y = 5.0;
                 crate::audio::play_sfx("hit");
                 if stats.hearts <= 0 {
