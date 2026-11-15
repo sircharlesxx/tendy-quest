@@ -356,7 +356,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-7704b253ca6012d3.js" crossorigin="anonymous" integrity="sha384-YsCIffvMuhSUc0aZQxzl7+PY2TFH1hosC0GMZKRydIOsG2ob0UWk4w6UsC11fZqW"><link rel="preload" href="./tendy-quest-7704b253ca6012d3_bg.wasm" crossorigin="anonymous" integrity="sha384-0bCV7lzbjXIutuzDtYp9ijxnp3RIGCHUNYXDSZUTF1an4/W7LlMXUt9wzipctP32" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-80d2e9557ec28168.js" crossorigin="anonymous" integrity="sha384-qAsUap9HOF7XqSUkLKo6lXEBGiTz+ezoFssSCzKmb2YnFJP5PtwWTRKB6IIHZebQ"><link rel="preload" href="./tendy-quest-80d2e9557ec28168_bg.wasm" crossorigin="anonymous" integrity="sha384-jDnTNOEJA6dnKuNeYi7OAnZmppj8xmSGx4kXWZLpgv70YgIdApztellcz7ozEtVL" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -383,6 +383,7 @@
       let joyY = 0.0;
       let lookDX = 0.0;
       let lookDY = 0.0;
+      let zoomDelta = 0.0;
       let jumpQueued = false;
       let dashQueued = false;
       let actionTapQueued = false;
@@ -390,6 +391,10 @@
 
       let joyTouchId = null;
       let lookTouchId = null;
+      const lookTouches = new Map();
+      let lastPinchDist = null;
+      let lastPinchMidX = 0;
+      let lastPinchMidY = 0;
       let lookLastX = 0;
       let lookLastY = 0;
       let lookMoved = 0;
@@ -483,30 +488,63 @@
         showTouchControls();
         window.tendyAudio.touchUnlock();
         if (e.target && e.target.closest && e.target.closest(".touch-ui")) return;
-        if (lookTouchId === null && e.changedTouches.length > 0) {
-          const t = e.changedTouches[0];
-          lookTouchId = t.identifier;
-          lookLastX = t.clientX;
-          lookLastY = t.clientY;
-          lookMoved = 0;
+        for (const t of e.changedTouches) {
+          if (t.identifier === joyTouchId) continue;
+          lookTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+          if (lookTouches.size === 1) {
+            lookTouchId = t.identifier;
+            lookLastX = t.clientX;
+            lookLastY = t.clientY;
+            lookMoved = 0;
+            lastPinchDist = null;
+          }
+        }
+        if (lookTouches.size >= 2) {
+          e.preventDefault();
+          const pts = Array.from(lookTouches.values());
+          lastPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+          lastPinchMidX = (pts[0].x + pts[1].x) * 0.5;
+          lastPinchMidY = (pts[0].y + pts[1].y) * 0.5;
+          lookMoved = 999;
         }
       }, { passive: false });
 
       window.addEventListener("touchmove", (e) => {
+        let updatedLook = false;
         for (const t of e.changedTouches) {
           if (t.identifier === joyTouchId) {
             e.preventDefault();
             updateJoyFromPoint(t.clientX, t.clientY);
-          } else if (t.identifier === lookTouchId) {
-            e.preventDefault();
-            const dx = t.clientX - lookLastX;
-            const dy = t.clientY - lookLastY;
-            lookDX += dx;
-            lookDY += dy;
-            lookMoved += Math.hypot(dx, dy);
-            lookLastX = t.clientX;
-            lookLastY = t.clientY;
+          } else if (lookTouches.has(t.identifier)) {
+            lookTouches.set(t.identifier, { x: t.clientX, y: t.clientY });
+            updatedLook = true;
           }
+        }
+        if (!updatedLook) return;
+        e.preventDefault();
+        if (lookTouches.size >= 2) {
+          const pts = Array.from(lookTouches.values());
+          const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+          const midX = (pts[0].x + pts[1].x) * 0.5;
+          const midY = (pts[0].y + pts[1].y) * 0.5;
+          if (lastPinchDist !== null) {
+            zoomDelta -= (dist - lastPinchDist) * 0.04;
+            lookDX += midX - lastPinchMidX;
+            lookDY += midY - lastPinchMidY;
+          }
+          lastPinchDist = dist;
+          lastPinchMidX = midX;
+          lastPinchMidY = midY;
+          lookMoved = 999;
+        } else if (lookTouches.size === 1) {
+          const pt = lookTouches.values().next().value;
+          const dx = pt.x - lookLastX;
+          const dy = pt.y - lookLastY;
+          lookDX += dx;
+          lookDY += dy;
+          lookMoved += Math.hypot(dx, dy);
+          lookLastX = pt.x;
+          lookLastY = pt.y;
         }
       }, { passive: false });
 
@@ -514,16 +552,38 @@
         for (const t of e.changedTouches) {
           if (t.identifier === joyTouchId) {
             resetJoy();
-          } else if (t.identifier === lookTouchId) {
-            if (lookMoved < 14) {
-              actionTapQueued = true;
+          } else if (lookTouches.has(t.identifier)) {
+            lookTouches.delete(t.identifier);
+            if (lookTouches.size === 0) {
+              if (lookMoved < 14) {
+                actionTapQueued = true;
+              }
+              lookTouchId = null;
+              lastPinchDist = null;
             }
-            lookTouchId = null;
           }
+        }
+        if (lookTouches.size < 2) {
+          lastPinchDist = null;
+        }
+        if (lookTouches.size === 1) {
+          const [id, pt] = lookTouches.entries().next().value;
+          lookTouchId = id;
+          lookLastX = pt.x;
+          lookLastY = pt.y;
+          lookMoved = 999;
         }
       }
       window.addEventListener("touchend", endTouch, { passive: false });
       window.addEventListener("touchcancel", endTouch, { passive: false });
+
+      window.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        let dy = e.deltaY;
+        if (e.deltaMode === 1) dy *= 32.0;
+        else if (e.deltaMode === 2) dy *= 300.0;
+        zoomDelta += dy * 0.012;
+      }, { passive: false });
 
       function setPlaying(active) {
         if (touchControls) {
@@ -549,6 +609,7 @@
         moveY: () => joyY,
         takeLookDX() { const v = lookDX; lookDX = 0.0; return v; },
         takeLookDY() { const v = lookDY; lookDY = 0.0; return v; },
+        takeZoomDelta() { const v = zoomDelta; zoomDelta = 0.0; return v; },
         takeJump() { const v = jumpQueued; jumpQueued = false; return v; },
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
@@ -571,8 +632,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-7704b253ca6012d3.js';
-const wasm = await init({ module_or_path: './tendy-quest-7704b253ca6012d3_bg.wasm' });
+import init, * as bindings from './tendy-quest-80d2e9557ec28168.js';
+const wasm = await init({ module_or_path: './tendy-quest-80d2e9557ec28168_bg.wasm' });
 
 
 window.wasmBindings = bindings;

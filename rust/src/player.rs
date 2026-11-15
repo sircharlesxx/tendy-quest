@@ -72,18 +72,25 @@ pub fn camera_mouse_look(
 
     if mouse_motion.delta != Vec2::ZERO {
         orbit.yaw -= mouse_motion.delta.x * 0.0045;
-        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.20, 1.25);
+        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.15, 1.32);
     }
 
     let t_dx = crate::audio::take_touch_look_dx();
     let t_dy = crate::audio::take_touch_look_dy();
     if t_dx != 0.0 || t_dy != 0.0 {
         orbit.yaw -= t_dx * 0.0065;
-        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(0.20, 1.25);
+        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(0.15, 1.32);
     }
 
-    if mouse_scroll.delta.y != 0.0 {
-        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 0.5).clamp(2.6, 10.5);
+    let zoom_delta = crate::audio::take_touch_zoom_delta();
+    if zoom_delta != 0.0 {
+        orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 22.0);
+    } else if mouse_scroll.delta.y != 0.0 {
+        let step = match mouse_scroll.unit {
+            bevy::input::mouse::MouseScrollUnit::Line => mouse_scroll.delta.y * 0.85,
+            bevy::input::mouse::MouseScrollUnit::Pixel => mouse_scroll.delta.y * 0.012,
+        };
+        orbit.distance = (orbit.distance - step).clamp(3.0, 22.0);
     }
 }
 
@@ -350,8 +357,8 @@ pub fn update_camera(
     };
     let anchor_y = 0.55 + stats.player_scale * 0.92;
     let anchor = p_tf.translation + Vec3::Y * anchor_y;
-    let desired_dist = orbit.distance * (0.68 + stats.player_scale.sqrt() * 0.28);
-    let min_cam_dist = (0.55 + stats.player_scale * 0.22).min(desired_dist);
+    let desired_dist = orbit.distance * (0.82 + stats.player_scale.sqrt() * 0.34);
+    let min_cam_dist = (2.2 + stats.player_scale * 0.45).min(desired_dist);
     let dir = Vec3::new(
         orbit.yaw.sin() * orbit.pitch.cos(),
         orbit.pitch.sin(),
@@ -359,10 +366,22 @@ pub fn update_camera(
     )
     .normalize();
 
-    // Spring-arm ray-AABB sweep against all solid level obstacles
+    // Spring-arm ray-AABB sweep against tall structural wall/fridge occluders only
+    // (small props & low ledges never yank the camera close to the character)
     let mut safe_dist = desired_dist;
     let sweep_pad = Vec3::splat(0.22);
+    let desired_cam_y = anchor.y + dir.y * desired_dist;
     for (p_tf_box, p_box) in &platform_q {
+        if p_tf_box.translation.z > 24.8 {
+            continue;
+        }
+        let box_top = p_tf_box.translation.y + p_box.half_extents.y;
+        let is_tall_wall = p_box.half_extents.y >= 2.1
+            && (p_box.half_extents.x >= 2.5 || p_box.half_extents.z >= 2.5)
+            && box_top > desired_cam_y + 0.2;
+        if !is_tall_wall {
+            continue;
+        }
         let bmin = p_tf_box.translation - p_box.half_extents - sweep_pad;
         let bmax = p_tf_box.translation + p_box.half_extents + sweep_pad;
         if let Some((t_min, t_max)) = ray_aabb_t(anchor, dir, bmin, bmax) {
@@ -376,9 +395,9 @@ pub fn update_camera(
         }
     }
 
-    // Clamp boom along room walls/floor/ceiling
+    // Clamp boom along room walls/floor/ceiling (allowing open camera pull-back at south spawn)
     let room_min = Vec3::new(-21.4, -5.45, -21.8);
-    let room_max = Vec3::new(23.4, 13.5, 24.4);
+    let room_max = Vec3::new(23.4, 13.5, 28.5);
     for axis in 0..3 {
         if dir[axis] > 1e-4 {
             let t = ((room_max[axis] - anchor[axis]) / dir[axis]).max(min_cam_dist);
@@ -401,10 +420,13 @@ pub fn update_camera(
 
     let mut cam_pos = anchor + dir * orbit.current_dist;
 
-    // 2-pass 3D camera sphere pushout to guarantee the near clip plane never intersects geometry
-    let cam_margin = Vec3::splat(0.36);
+    // 2-pass 3D camera sphere pushout around any solid geometry touched by the camera sphere
+    let cam_margin = Vec3::splat(0.38);
     for _ in 0..2 {
         for (p_tf_box, p_box) in &platform_q {
+            if p_tf_box.translation.z > 24.8 {
+                continue;
+            }
             let top_y = p_tf_box.translation.y + p_box.half_extents.y;
             let bmin = p_tf_box.translation - p_box.half_extents - cam_margin;
             let bmax = p_tf_box.translation + p_box.half_extents + cam_margin;

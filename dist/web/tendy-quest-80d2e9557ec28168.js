@@ -1406,6 +1406,10 @@ function __wbg_get_imports() {
             const ret = window.tendyInput.takeLookDY();
             return ret;
         },
+        __wbg_takeZoomDelta_1e925dcfcd6a5d56: function() {
+            const ret = window.tendyInput.takeZoomDelta();
+            return ret;
+        },
         __wbg_texImage2D_20b5002326193fe6: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) {
             arg0.texImage2D(arg1 >>> 0, arg2, arg3, arg4, arg5, arg6, arg7 >>> 0, arg8 >>> 0, arg9);
         }, arguments); },

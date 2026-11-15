@@ -28,6 +28,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeLookDY)]
         fn js_take_look_dy() -> f32;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeZoomDelta)]
+        fn js_take_zoom_delta() -> f32;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeJump)]
         fn js_take_jump() -> bool;
 
@@ -74,6 +77,10 @@ mod imp {
 
     pub fn take_touch_look_dy() -> f32 {
         js_take_look_dy()
+    }
+
+    pub fn take_touch_zoom_delta() -> f32 {
+        js_take_zoom_delta()
     }
 
     pub fn take_touch_jump() -> bool {
@@ -127,6 +134,10 @@ mod imp {
         0.0
     }
 
+    pub fn take_touch_zoom_delta() -> f32 {
+        0.0
+    }
+
     pub fn take_touch_jump() -> bool {
         false
     }
@@ -148,6 +159,6 @@ mod imp {
 
 pub use imp::{
     is_muted, play_bgm, play_sfx, set_touch_playing, take_touch_action_tap, take_touch_dash,
-    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy, toggle_mute,
-    touch_move_x, touch_move_y,
+    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy,
+    take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
 };

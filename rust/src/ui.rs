@@ -279,7 +279,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     Text::new(
                         "- Move: WASD / Arrows or Left Touch Stick\n\
                          - Jump / Double-Jump: SPACE or JUMP (Dash: SHIFT / DASH)\n\
-                         - Look: Mouse Move / Scroll (Mobile: Drag Screen)\n\
+                         - Look / Zoom: Mouse + Scroll Wheel (Mobile: Drag + Pinch Zoom)\n\
                          - Help / Audio: H / M",
                     ),
                     TextFont {
