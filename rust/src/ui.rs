@@ -233,10 +233,10 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new(
                         "CONTROLS:\n\
-                         • [W A S D] or [Arrow Keys]  —  Run\n\
-                         • [SPACE]  —  Jump & Double-Jump (hop onto Sponges & Pancakes!)\n\
-                         • [SHIFT]  —  Belly Dash (brief invulnerability)\n\
-                         • [H]  —  Toggle this Controls Guide anytime",
+                         - [W A S D] or [Arrow Keys] : Run\n\
+                         - [SPACE] : Jump & Double-Jump (hop onto Sponges & Pancakes!)\n\
+                         - [SHIFT] : Belly Dash (brief invulnerability)\n\
+                         - [H] : Toggle this Controls Guide anytime",
                     ),
                     TextFont {
                         font_size: 18.0,

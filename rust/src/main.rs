@@ -44,7 +44,7 @@ fn main() {
         .add_systems(OnExit(GameState::Tutorial), despawn_tutorial_overlay)
         .add_systems(
             Update,
-            handle_tutorial_input.run_if(in_state(GameState::Tutorial)),
+            (handle_tutorial_input, update_camera).run_if(in_state(GameState::Tutorial)),
         )
         .add_systems(
             Update,
