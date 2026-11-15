@@ -97,7 +97,7 @@ pub fn spawn_kitchen_level_inner(
     }
 
     // Jumpable Kitchen Sponge platforms (from kitchen_sponge.glb)
-    let sponge_scene: Handle<Scene> = asset_server.load("assets/models/kitchen_sponge.glb#Scene0");
+    let sponge_scene: Handle<Scene> = asset_server.load("models/kitchen_sponge.glb#Scene0");
     for (x, z) in [(0.0_f32, 8.0_f32), (-2.5_f32, -5.0_f32)] {
         commands.spawn((
             LevelEntity,
@@ -110,7 +110,7 @@ pub fn spawn_kitchen_level_inner(
     }
 
     // Final Goal: Giant Pancake Stack at Z = -17.5 (top at Y ~ 1.9)
-    let pancake_scene: Handle<Scene> = asset_server.load("assets/models/pancake_stack.glb#Scene0");
+    let pancake_scene: Handle<Scene> = asset_server.load("models/pancake_stack.glb#Scene0");
     commands.spawn((
         LevelEntity,
         SceneRoot(pancake_scene),
@@ -121,7 +121,7 @@ pub fn spawn_kitchen_level_inner(
     ));
 
     // Decorative Kitchen Props (matching the video!)
-    let plate_egg: Handle<Scene> = asset_server.load("assets/models/plate_with_egg.glb#Scene0");
+    let plate_egg: Handle<Scene> = asset_server.load("models/plate_with_egg.glb#Scene0");
     for (x, z) in [(4.6_f32, 14.0_f32), (-4.8_f32, 2.0_f32)] {
         commands.spawn((
             LevelEntity,
@@ -130,7 +130,7 @@ pub fn spawn_kitchen_level_inner(
         ));
     }
 
-    let syrup: Handle<Scene> = asset_server.load("assets/models/syrup_bottle.glb#Scene0");
+    let syrup: Handle<Scene> = asset_server.load("models/syrup_bottle.glb#Scene0");
     for (x, z) in [(-5.4_f32, 12.0_f32), (5.2_f32, -8.0_f32), (-5.2_f32, -14.0_f32)] {
         commands.spawn((
             LevelEntity,
@@ -139,7 +139,7 @@ pub fn spawn_kitchen_level_inner(
         ));
     }
 
-    let salt: Handle<Scene> = asset_server.load("assets/models/salt_shaker.glb#Scene0");
+    let salt: Handle<Scene> = asset_server.load("models/salt_shaker.glb#Scene0");
     for (x, z) in [(-5.2_f32, 15.0_f32), (5.0_f32, 4.0_f32), (5.0_f32, -15.0_f32)] {
         commands.spawn((
             LevelEntity,
@@ -149,7 +149,7 @@ pub fn spawn_kitchen_level_inner(
     }
 
     // 10 Golden Chicken Tendies leading down the countertop to the Pancake Stack!
-    let tendy_scene: Handle<Scene> = asset_server.load("assets/models/golden_tendy.glb#Scene0");
+    let tendy_scene: Handle<Scene> = asset_server.load("models/golden_tendy.glb#Scene0");
     let tendy_spots = [
         (0.0_f32, 0.4_f32, 13.0_f32, false),
         (-2.5, 0.4, 10.5, false),
@@ -176,7 +176,7 @@ pub fn spawn_kitchen_level_inner(
     }
 
     // Power-ups: Honey Mustard (speed) & Ranch Shield (absorbs 1 hit)
-    let mustard_scene: Handle<Scene> = asset_server.load("assets/models/honey_mustard_cup.glb#Scene0");
+    let mustard_scene: Handle<Scene> = asset_server.load("models/honey_mustard_cup.glb#Scene0");
     commands.spawn((
         LevelEntity,
         SceneRoot(mustard_scene),
@@ -188,7 +188,7 @@ pub fn spawn_kitchen_level_inner(
         },
     ));
 
-    let ranch_scene: Handle<Scene> = asset_server.load("assets/models/ranch_shield.glb#Scene0");
+    let ranch_scene: Handle<Scene> = asset_server.load("models/ranch_shield.glb#Scene0");
     commands.spawn((
         LevelEntity,
         SceneRoot(ranch_scene),

@@ -58,9 +58,9 @@ pub fn spawn_initial_enemies_inner(commands: &mut Commands, asset_server: &Asset
 
 fn spawn_enemy(commands: &mut Commands, asset_server: &AssetServer, kind: EnemyKind, pos: Vec3) {
     let path = match kind {
-        EnemyKind::BroccoliBrute => "assets/models/broccoli_brute.glb#Scene0",
-        EnemyKind::CarrotLancer => "assets/models/carrot_lancer.glb#Scene0",
-        EnemyKind::KaleSlime => "assets/models/kale_slime.glb#Scene0",
+        EnemyKind::BroccoliBrute => "models/broccoli_brute.glb#Scene0",
+        EnemyKind::CarrotLancer => "models/carrot_lancer.glb#Scene0",
+        EnemyKind::KaleSlime => "models/kale_slime.glb#Scene0",
     };
     let scene: Handle<Scene> = asset_server.load(path);
     commands.spawn((

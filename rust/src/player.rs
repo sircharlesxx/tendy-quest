@@ -33,7 +33,7 @@ pub fn spawn_player(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 pub fn spawn_player_inner(commands: &mut Commands, asset_server: &AssetServer) {
-    let hero_scene: Handle<Scene> = asset_server.load("assets/models/plaid_hero.glb#Scene0");
+    let hero_scene: Handle<Scene> = asset_server.load("models/plaid_hero.glb#Scene0");
     commands.spawn((
         LevelEntity,
         Player::default(),
