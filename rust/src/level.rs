@@ -142,7 +142,6 @@ pub fn spawn_kitchen_level_inner(
     let table_col = Color::srgb(0.64, 0.42, 0.24);
     let wall_col = Color::srgb(0.79, 0.83, 0.76);
     let tile_col = Color::srgb(0.50, 0.61, 0.50);
-    let steel_col = Color::srgb(0.78, 0.80, 0.83);
 
     // Zone 1: Prep Countertop: X in [-7, 7], Z in [-22, 22], top at Y = 0.0 (down to -6.0 floor)
     spawn_solid_box(
@@ -228,7 +227,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(-5.2, 0.925, -14.5),
         Vec3::new(1.5, 0.925, 1.2),
-        Some((steel_col, 0.25, 0.8)),
+        None,
     );
 
     // Upper Kitchen Shelf collider (above Giant Toaster, top at Y = 2.85)
@@ -294,7 +293,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(13.5, 0.55, -6.5),
         Vec3::new(2.2, 0.55, 1.8),
-        Some((Color::srgb(0.28, 0.29, 0.31), 0.35, 0.65)),
+        None,
     );
 
     // Zone 3: Upper & Lower Giant Stepping Stools (solid down to -6.0 floor) + Dining Table & Chair + Floor + Walls
@@ -480,7 +479,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(5.0, 0.9, -20.8),
         Vec3::new(2.7, 0.9, 1.2),
-        Some((steel_col, 0.2, 0.85)),
+        None,
     );
     spawn_solid_box(
         commands,
@@ -488,7 +487,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(-6.55, 2.05, 12.0),
         Vec3::new(0.35, 2.05, 1.25),
-        Some((wood_col, 0.45, 0.0)),
+        None,
     );
     spawn_solid_box(
         commands,
@@ -496,7 +495,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(-5.9, 1.4, 10.0),
         Vec3::new(0.52, 1.4, 0.52),
-        Some((Color::srgb(0.68, 0.46, 0.23), 0.36, 0.0)),
+        None,
     );
     spawn_solid_box(
         commands,
@@ -504,7 +503,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(-6.0, 1.5, 6.8),
         Vec3::new(0.75, 1.5, 0.75),
-        Some((Color::srgb(0.95, 0.95, 0.93), 0.2, 0.0)),
+        None,
     );
     spawn_solid_box(
         commands,
@@ -512,7 +511,7 @@ pub fn spawn_kitchen_level_inner(
         materials,
         Vec3::new(-5.85, 0.68, 3.8),
         Vec3::new(1.05, 0.68, 1.05),
-        Some((Color::srgb(0.80, 0.14, 0.12), 0.2, 0.0)),
+        None,
     );
 
     // Decorative Kitchen Props (all solid PlatformBoxes!)
