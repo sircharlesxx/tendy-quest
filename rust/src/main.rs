@@ -11,7 +11,8 @@ use bevy::asset::{AssetMetaCheck, AssetPlugin};
 use bevy::prelude::*;
 use boss::{
     ensure_hero_eye_reflections, ensure_hero_vikings_gear, enter_boss_fight, enter_cutscene,
-    exit_boss_fight, exit_cutscene, update_boss_fight, update_cutscene,
+    enter_headphone_cutscene, exit_boss_fight, exit_cutscene, exit_headphone_cutscene,
+    update_boss_fight, update_cutscene, update_headphone_cutscene,
 };
 use city::{
     animate_city_intro_lexie, enter_city_intro_cutscene, enter_city_play,
@@ -100,6 +101,17 @@ fn main() {
                 toggle_tutorial_hotkey,
             )
                 .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(OnEnter(GameState::HeadphoneCutscene), enter_headphone_cutscene)
+        .add_systems(OnExit(GameState::HeadphoneCutscene), exit_headphone_cutscene)
+        .add_systems(
+            Update,
+            (
+                update_headphone_cutscene,
+                ensure_hero_vikings_gear,
+                animate_player_limbs,
+            )
+                .run_if(in_state(GameState::HeadphoneCutscene)),
         )
         .add_systems(OnEnter(GameState::Cutscene), enter_cutscene)
         .add_systems(OnExit(GameState::Cutscene), exit_cutscene)

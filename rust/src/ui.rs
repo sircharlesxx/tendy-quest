@@ -260,7 +260,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
             .with_children(|card| {
                 card.spawn((
                     TutorialTitleText,
-                    Text::new("TENDY QUEST: GIANT KITCHEN"),
+                    Text::new("TENDY QUEST: 1,200 SQ FT APARTMENT"),
                     TextFont {
                         font_size: 24.0,
                         ..default()
@@ -270,7 +270,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     TutorialBodyText,
                     Text::new(
-                        "Eat all 12 Golden Tendies to grow from 15cm Toy to 180cm Adult!\nClimb to higher zones & open the Giant Fridge on the floor.",
+                        "Eat all 12 Golden Tendies to grow from 17cm Toy to 180cm Adult!\nExplore the 1,200 sq ft apartment, dodge Cheese Cups & Controllers, DON'T step on Headphones, and open the Giant Fridge!",
                     ),
                     TextFont {
                         font_size: 13.5,
@@ -454,6 +454,7 @@ pub fn check_url_test_mode(
             stats.wave = 4;
             next_state.set(GameState::CityPlay);
         }
+        7 => next_state.set(GameState::HeadphoneCutscene),
         _ => {}
     }
 }

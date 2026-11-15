@@ -48,13 +48,16 @@ pub fn spawn_initial_enemies_inner(commands: &mut Commands, asset_server: &Asset
     commands.insert_resource(WaveTimer(Timer::from_seconds(16.0, TimerMode::Repeating)));
 
     let spots = [
-        (EnemyKind::BroccoliBrute, Vec3::new(0.0, 0.0, 10.0)),
-        (EnemyKind::CarrotLancer, Vec3::new(-3.2, 0.0, 3.0)),
-        (EnemyKind::KaleSlime, Vec3::new(2.8, 0.0, -3.5)),
-        (EnemyKind::BroccoliBrute, Vec3::new(-1.8, 0.0, -11.0)),
-        (EnemyKind::CarrotLancer, Vec3::new(2.6, 0.0, -13.5)),
-        (EnemyKind::BroccoliBrute, Vec3::new(15.0, 0.0, 4.0)),
-        (EnemyKind::CarrotLancer, Vec3::new(9.0, -6.0, -8.0)),
+        // South Starter Breakfast Island
+        (EnemyKind::BroccoliBrute, Vec3::new(-4.5, 0.0, 26.5)),
+        (EnemyKind::CarrotLancer, Vec3::new(4.8, 0.0, 24.5)),
+        // 1,200 Sq Ft Apartment Floor (West, Central, Living, Dining, North)
+        (EnemyKind::KaleSlime, Vec3::new(-18.0, -6.0, 2.0)),
+        (EnemyKind::BroccoliBrute, Vec3::new(16.0, -6.0, -8.0)),
+        (EnemyKind::CarrotLancer, Vec3::new(-28.0, -6.0, -14.0)),
+        (EnemyKind::BroccoliBrute, Vec3::new(26.0, -6.0, -24.0)),
+        // North Kitchen Countertop
+        (EnemyKind::CarrotLancer, Vec3::new(-16.0, 0.0, -40.5)),
     ];
     for (kind, pos) in spots {
         spawn_enemy(commands, asset_server, kind, pos);
@@ -111,13 +114,13 @@ pub fn update_enemies(
         return;
     };
 
-    // Wave reinforcements (up to Wave 3) across countertop, island & floor
+    // Wave reinforcements (up to Wave 3) across Starter Island & 1,200 Sq Ft Apartment Floor
     if wave_timer.0.tick(time.delta()).just_finished() && stats.wave < 3 {
         stats.wave += 1;
         let spawns = [
-            (EnemyKind::BroccoliBrute, Vec3::new(-4.0, 0.0, 4.0)),
-            (EnemyKind::CarrotLancer, Vec3::new(15.0, 0.0, -3.5)),
-            (EnemyKind::KaleSlime, Vec3::new(9.0, -6.0, 3.0)),
+            (EnemyKind::BroccoliBrute, Vec3::new(-10.0, 0.0, 27.0)),
+            (EnemyKind::CarrotLancer, Vec3::new(-22.0, -6.0, 6.0)),
+            (EnemyKind::KaleSlime, Vec3::new(20.0, -6.0, -16.0)),
         ];
         for (kind, pos) in spawns {
             spawn_enemy(&mut commands, &asset_server, kind, pos);
@@ -129,11 +132,11 @@ pub fn update_enemies(
             enemy.hit_cooldown = (enemy.hit_cooldown - dt).max(0.0);
         }
         let (min_x, max_x, min_z, max_z) = if enemy.origin.y < -1.0 {
-            (7.5_f32, 10.5_f32, -15.2_f32, 9.5_f32)
-        } else if enemy.origin.x > 10.5 {
-            (11.5_f32, 18.5_f32, -9.5_f32, 9.5_f32)
+            (-48.0_f32, 48.0_f32, -36.0_f32, 14.0_f32)
+        } else if enemy.origin.z < -30.0 {
+            (-40.0_f32, 10.0_f32, -45.0_f32, -36.0_f32)
         } else {
-            (-6.5_f32, 6.5_f32, -20.5_f32, 20.5_f32)
+            (-14.5_f32, 14.5_f32, 21.0_f32, 34.5_f32)
         };
 
         if enemy.knockback.length_squared() > 0.05 {

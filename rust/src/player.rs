@@ -52,7 +52,7 @@ pub fn spawn_player_inner(commands: &mut Commands, asset_server: &AssetServer) {
         Player::default(),
         SceneRoot(hero_scene),
         crate::state::SceneRetryPath::new("models/plaid_hero.glb#Scene0"),
-        Transform::from_xyz(0.0, 0.0, 17.5).with_scale(Vec3::splat(0.55)),
+        Transform::from_xyz(0.0, 0.0, 29.0).with_scale(Vec3::splat(0.55)),
     ));
 }
 
@@ -368,10 +368,10 @@ pub fn player_movement(
             player.velocity = Vec3::ZERO;
         }
     } else {
-        tf.translation.x = tf.translation.x.clamp(-20.5, 22.5);
-        tf.translation.z = tf.translation.z.clamp(-24.0, 24.0);
+        tf.translation.x = tf.translation.x.clamp(-54.0, 54.0);
+        tf.translation.z = tf.translation.z.clamp(-46.0, 46.0);
         if tf.translation.y < -12.0 {
-            tf.translation = Vec3::new(0.0, 0.5, 17.5);
+            tf.translation = Vec3::new(0.0, 0.5, 29.0);
             player.velocity = Vec3::ZERO;
         }
     }
@@ -456,7 +456,7 @@ pub fn update_camera(
     let desired_cam_y = anchor.y + dir.y * desired_dist;
     if !(stats.in_city && stats.player_scale >= 8.0) {
         for (p_tf_box, p_box) in &platform_q {
-            if !stats.in_city && p_tf_box.translation.z > 24.8 {
+            if !stats.in_city && p_tf_box.translation.z > 46.5 {
                 continue;
             }
             let box_top = p_tf_box.translation.y + p_box.half_extents.y;
@@ -488,8 +488,8 @@ pub fn update_camera(
         )
     } else {
         (
-            Vec3::new(-21.4, -5.45, -21.8),
-            Vec3::new(23.4, 18.5, 48.0),
+            Vec3::new(-55.2, -5.55, -47.2),
+            Vec3::new(55.2, 24.0, 68.0),
         )
     };
     for axis in 0..3 {
@@ -518,7 +518,7 @@ pub fn update_camera(
     let cam_margin = Vec3::splat(0.38);
     for _ in 0..2 {
         for (p_tf_box, p_box) in &platform_q {
-            if !stats.in_city && p_tf_box.translation.z > 24.8 {
+            if !stats.in_city && p_tf_box.translation.z > 46.5 {
                 continue;
             }
             let top_y = p_tf_box.translation.y + p_box.half_extents.y;
@@ -575,11 +575,27 @@ pub fn animate_and_collect_pickups(
     mut commands: Commands,
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    state: Res<State<GameState>>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
-    player_q: Query<&Transform, With<Player>>,
-    mut tendy_q: Query<(Entity, &mut Transform, &TendyPickup), Without<Player>>,
-    mut power_q: Query<(Entity, &mut Transform, &PowerupPickup), (Without<Player>, Without<TendyPickup>)>,
+    player_q: Query<(&Transform, &Player)>,
+    mut tendy_q: Query<
+        (Entity, &mut Transform, &TendyPickup),
+        (Without<Player>, Without<crate::state::HeadphoneHazard>),
+    >,
+    mut power_q: Query<
+        (Entity, &mut Transform, &PowerupPickup),
+        (Without<Player>, Without<TendyPickup>, Without<crate::state::HeadphoneHazard>),
+    >,
+    headphone_q: Query<
+        (Entity, &Transform, &crate::state::HeadphoneHazard),
+        (
+            Without<Player>,
+            Without<TendyPickup>,
+            Without<PowerupPickup>,
+            Without<crate::state::FridgeGoal>,
+        ),
+    >,
     fridge_q: Query<
         &Transform,
         (
@@ -587,6 +603,7 @@ pub fn animate_and_collect_pickups(
             Without<Player>,
             Without<TendyPickup>,
             Without<PowerupPickup>,
+            Without<crate::state::HeadphoneHazard>,
         ),
     >,
     mut door_q: Query<
@@ -596,6 +613,7 @@ pub fn animate_and_collect_pickups(
             Without<TendyPickup>,
             Without<PowerupPickup>,
             Without<crate::state::FridgeGoal>,
+            Without<crate::state::HeadphoneHazard>,
         ),
     >,
 ) {
@@ -607,11 +625,42 @@ pub fn animate_and_collect_pickups(
         next_state.set(GameState::BossFight);
         return;
     }
+    if keys.just_pressed(KeyCode::KeyP) {
+        if let Ok((p_tf, player)) = player_q.get_single() {
+            stats.saved_apartment_pos = p_tf.translation;
+            stats.saved_apartment_scale = stats.player_scale;
+            stats.saved_apartment_yaw = player.facing_yaw;
+        }
+        stats.headphone_return_boss = *state.get() == GameState::BossFight;
+        next_state.set(GameState::HeadphoneCutscene);
+        return;
+    }
     let t = time.elapsed_secs();
     let dt = time.delta_secs();
-    let player_pos = player_q.get_single().map(|p| p.translation).ok();
+    let player_info = player_q
+        .get_single()
+        .map(|(tf, pl)| (tf.translation, pl.facing_yaw))
+        .ok();
+    let player_pos = player_info.map(|(p, _)| p);
     let pickup_r = 1.15 + stats.player_scale * 0.45;
     let player_mid_y = (0.55 * stats.player_scale).max(0.55);
+
+    if let Some((p_pos, p_yaw)) = player_info {
+        for (h_ent, h_tf, hazard) in &headphone_q {
+            let flat_d = Vec2::new(p_pos.x - h_tf.translation.x, p_pos.z - h_tf.translation.z).length();
+            if flat_d < hazard.radius + stats.player_scale * 0.28
+                && (p_pos.y - h_tf.translation.y).abs() < 1.8
+            {
+                commands.entity(h_ent).despawn_recursive();
+                stats.saved_apartment_pos = p_pos;
+                stats.saved_apartment_scale = stats.player_scale;
+                stats.saved_apartment_yaw = p_yaw;
+                stats.headphone_return_boss = *state.get() == GameState::BossFight;
+                next_state.set(GameState::HeadphoneCutscene);
+                return;
+            }
+        }
+    }
 
     for (entity, mut tf, tendy) in &mut tendy_q {
         tf.rotate_y(2.4 * dt);
@@ -706,7 +755,42 @@ pub fn animate_player_limbs(
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
 
     let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
-        if *state.get() == GameState::MomVictoryCutscene {
+        if *state.get() == GameState::HeadphoneCutscene {
+            if stats.cutscene_beat >= 4 {
+                // Solemn Sacred Vow: right arm raised high to swear never to step on headphones/iPads again!
+                (
+                    Quat::IDENTITY,
+                    Quat::IDENTITY,
+                    Quat::from_rotation_z(-0.22),
+                    Quat::from_rotation_x(-2.45) * Quat::from_rotation_z(0.18),
+                    Quat::from_rotation_x(0.06),
+                    Quat::from_rotation_x(-0.18),
+                    0.02,
+                )
+            } else if stats.cutscene_beat == 3 {
+                // Remorseful despair: hands up near bowed head
+                (
+                    Quat::from_rotation_x(-0.10),
+                    Quat::from_rotation_x(0.10),
+                    Quat::from_rotation_x(-1.85) * Quat::from_rotation_z(0.55),
+                    Quat::from_rotation_x(-1.85) * Quat::from_rotation_z(-0.55),
+                    Quat::from_rotation_x(-0.35),
+                    Quat::from_rotation_x(-0.42),
+                    -0.03,
+                )
+            } else {
+                // Shocked freeze staring down at crushed headphones
+                (
+                    Quat::from_rotation_x(0.14),
+                    Quat::from_rotation_x(-0.26),
+                    Quat::from_rotation_z(-0.48),
+                    Quat::from_rotation_z(0.48),
+                    Quat::from_rotation_x(-0.14),
+                    Quat::from_rotation_x(-0.28),
+                    0.0,
+                )
+            }
+        } else if *state.get() == GameState::MomVictoryCutscene {
             let bow = if stats.cutscene_timer >= 2.2 && stats.cutscene_timer < 12.2 {
                 1.0
             } else if stats.cutscene_timer < 2.2 {
@@ -862,14 +946,14 @@ pub fn victory_dance(
     let t = time.elapsed_secs();
     if stats.boss_mode {
         tf.scale = Vec3::splat(3.4);
-        tf.translation.x = 13.0;
-        tf.translation.z = -12.6;
+        tf.translation.x = 24.0;
+        tf.translation.z = -34.5;
         tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
         tf.translation.y = -6.0 + (t * 8.0).sin().abs() * 0.9;
     } else {
         tf.scale = Vec3::splat(6.0);
-        tf.translation.x = 13.0;
-        tf.translation.z = -12.6;
+        tf.translation.x = 24.0;
+        tf.translation.z = -34.5;
         tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
         tf.translation.y = -6.0 + (t * 8.0).sin().abs() * 1.1;
     }

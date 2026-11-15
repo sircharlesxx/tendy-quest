@@ -149,6 +149,12 @@
           mkOsc("square", 494, 490, 0.22, 0.16);
           return true;
         }
+        if (name === "headphone_crunch") {
+          mkOsc("sawtooth", 620, 75, 0.34, 0.34);
+          mkOsc("square", 1180, 140, 0.26, 0.28);
+          mkOsc("triangle", 290, 48, 0.42, 0.30);
+          return true;
+        }
         return false;
       }
 
@@ -765,7 +771,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-d1b701eb3eddf31e.js" crossorigin="anonymous" integrity="sha384-P5B/NwY2893hM9rppQUs2hyJNCU76vGRVUtRrxqV9iL2CDOJIp4dqPLwqOA5d4vn"><link rel="preload" href="./tendy-quest-d1b701eb3eddf31e_bg.wasm" crossorigin="anonymous" integrity="sha384-mnMetFpsCCN8nA1a/ZmtLYWlttMYilYBY+8QyQk/l6G5pqZYb2r1dZe+n7B0SjtV" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-3f07ec2fb57587b6.js" crossorigin="anonymous" integrity="sha384-XAnO14XL3OCveb9DqJeMp8tzjbWkEYbddN1alnZFq4mLRqyJlyQR+X15WIf7fozj"><link rel="preload" href="./tendy-quest-3f07ec2fb57587b6_bg.wasm" crossorigin="anonymous" integrity="sha384-BEEypmaltNNfewEO5/yzS1wny/0Vj/yJTMnGF1YWeUXid+ZXqYgkznKEA0vdjNpJ" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1075,6 +1081,7 @@
         if (s.includes("city_intro=1")) return 4;
         if (s.includes("city=1")) return 5;
         if (s.includes("city_titan=1")) return 6;
+        if (s.includes("headphones=1")) return 7;
         return 0;
       })();
       let pendingCutsceneTime = (() => {
@@ -1146,8 +1153,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-d1b701eb3eddf31e.js';
-const wasm = await init({ module_or_path: './tendy-quest-d1b701eb3eddf31e_bg.wasm' });
+import init, * as bindings from './tendy-quest-3f07ec2fb57587b6.js';
+const wasm = await init({ module_or_path: './tendy-quest-3f07ec2fb57587b6_bg.wasm' });
 
 
 window.wasmBindings = bindings;

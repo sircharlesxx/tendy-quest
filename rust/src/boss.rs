@@ -94,7 +94,8 @@ pub fn ensure_hero_vikings_gear(
     let should_wear = matches!(
         *state.get(),
         GameState::BossFight | GameState::MomVictoryCutscene | GameState::CityIntroCutscene | GameState::CityPlay
-    ) || (*state.get() == GameState::Cutscene && stats.cutscene_beat >= 6);
+    ) || (*state.get() == GameState::Cutscene && stats.cutscene_beat >= 6)
+        || (*state.get() == GameState::HeadphoneCutscene && stats.boss_mode);
     if !should_wear || !existing_q.is_empty() {
         return;
     }
@@ -1752,6 +1753,540 @@ pub fn exit_cutscene(
     }
 }
 
+#[derive(Component)]
+pub struct HeadphoneCutsceneEntity;
+
+#[derive(Component)]
+pub struct HeadphoneCutsceneOverlay;
+
+#[derive(Component)]
+pub struct HeadphoneSceneBadgeText;
+
+#[derive(Component)]
+pub struct HeadphoneSpeakerText;
+
+#[derive(Component)]
+pub struct HeadphoneSubtitleText;
+
+fn spawn_cracked_ipad(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+    rot: Quat,
+    scale: f32,
+) {
+    let bezel_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.55, 0.57, 0.62),
+        metallic: 0.72,
+        perceptual_roughness: 0.28,
+        ..default()
+    });
+    let screen_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.16, 0.30),
+        emissive: LinearRgba::new(0.18, 0.42, 0.85, 1.0),
+        perceptual_roughness: 0.15,
+        ..default()
+    });
+    let crack_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::new(1.8, 2.2, 2.8, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let boot_scuff = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.10, 0.06, 0.04, 0.85),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            HeadphoneCutsceneEntity,
+            LevelEntity,
+            Transform::from_translation(pos)
+                .with_rotation(rot)
+                .with_scale(Vec3::splat(scale)),
+        ))
+        .with_children(|pad| {
+            // Pedestal glow base
+            pad.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.85, 0.16))),
+                MeshMaterial3d(bezel_mat.clone()),
+                Transform::from_xyz(0.0, -0.92, 0.0),
+            ));
+            // Aluminum body + Home button + Glowing cracked screen
+            pad.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(1.38, 1.82, 0.09)))),
+                MeshMaterial3d(bezel_mat),
+            ));
+            pad.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(1.18, 1.50, 0.03)))),
+                MeshMaterial3d(screen_mat),
+                Transform::from_xyz(0.0, 0.04, 0.045),
+            ));
+            pad.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.055, 0.02))),
+                MeshMaterial3d(crack_mat.clone()),
+                Transform::from_xyz(0.0, -0.78, 0.055)
+                    .with_rotation(Quat::from_rotation_x(PI * 0.5)),
+            ));
+            // Boot print impact mark
+            pad.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.32, 0.54, 0.02)))),
+                MeshMaterial3d(boot_scuff),
+                Transform::from_xyz(-0.04, 0.05, 0.062)
+                    .with_rotation(Quat::from_rotation_z(-0.22)),
+            ));
+            // Spiderweb crack fractures across screen
+            for (cx, cy, len, angle) in [
+                (0.0_f32, 0.08_f32, 1.35_f32, 0.68_f32),
+                (0.02, 0.06, 1.25, -0.82),
+                (-0.18, 0.30, 0.72, 1.28),
+                (0.24, -0.22, 0.78, 0.18),
+                (-0.14, -0.34, 0.66, -0.25),
+            ] {
+                pad.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(len, 0.024, 0.025)))),
+                    MeshMaterial3d(crack_mat.clone()),
+                    Transform::from_xyz(cx, cy, 0.068)
+                        .with_rotation(Quat::from_rotation_z(angle)),
+                ));
+            }
+        });
+}
+
+fn spawn_cutscene_headphones(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+    yaw: f32,
+    snapped: bool,
+) {
+    let frame_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.11, 0.15),
+        perceptual_roughness: 0.35,
+        metallic: 0.35,
+        ..default()
+    });
+    let pad_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.25, 0.28),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let spark_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.52, 0.15),
+        emissive: LinearRgba::new(2.4, 0.75, 0.15, 1.0),
+        unlit: true,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            HeadphoneCutsceneEntity,
+            LevelEntity,
+            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
+        ))
+        .with_children(|hp| {
+            let split = if snapped { 0.35 } else { 0.0 };
+            for sx in [-1.0_f32, 1.0_f32] {
+                hp.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.32, 0.22))),
+                    MeshMaterial3d(pad_mat.clone()),
+                    Transform::from_xyz(sx * (0.48 + split), 0.12, sx * 0.12 * split)
+                        .with_rotation(Quat::from_rotation_z(if snapped { sx * 1.15 } else { PI * 0.5 })),
+                ));
+                hp.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.42, 0.12, 0.12)))),
+                    MeshMaterial3d(frame_mat.clone()),
+                    Transform::from_xyz(sx * (0.28 + split * 0.6), 0.16, -0.35)
+                        .with_rotation(Quat::from_rotation_y(sx * (0.45 + split))),
+                ));
+            }
+            if snapped {
+                for off in [Vec3::new(0.0, 0.24, -0.22), Vec3::new(-0.26, 0.18, 0.14), Vec3::new(0.32, 0.20, -0.05)] {
+                    hp.spawn((
+                        Mesh3d(meshes.add(Sphere::new(0.055))),
+                        MeshMaterial3d(spark_mat.clone()),
+                        Transform::from_translation(off),
+                    ));
+                }
+            }
+        });
+}
+
+fn headphone_cutscene_script(beat: u8) -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+    match beat {
+        1 => (
+            "HEADPHONE FLASHBACK | SCENE 1/4",
+            "NARRATOR",
+            "\"CRUNCH! Time freezes! Beneath Stan's foot lies a crushed pair of headphones... awakening his darkest memories!\"",
+            "Crunch! Time freezes! Beneath Stan's foot lies a crushed pair of headphones, awakening his darkest memories.",
+            "narrator",
+        ),
+        2 => (
+            "HEADPHONE FLASHBACK | SCENE 2/4",
+            "NARRATOR",
+            "\"Every cracked iPad screen and snapped headset from his past rises before his eyes! So many fallen devices!\"",
+            "Every cracked iPad screen and snapped headset from his past rises before his eyes. So many fallen devices!",
+            "narrator",
+        ),
+        3 => (
+            "HEADPHONE FLASHBACK | SCENE 3/4",
+            "STAN (HEARTBROKEN)",
+            "\"No, not again! First my iPads, now another pair of headphones! Why must my feet destroy everything I love?!\"",
+            "No, not again! First my iPads, now another pair of headphones! Why must my feet destroy everything I love?",
+            "stan",
+        ),
+        _ => (
+            "HEADPHONE FLASHBACK | SCENE 4/4",
+            "STAN - SACRED VOW",
+            "\"Hear my sacred vow! From this day forth, I will NEVER step on another iPad or pair of headphones again!\"",
+            "Hear my sacred vow! From this day forth, I will never step on another iPad or pair of headphones again!",
+            "stan",
+        ),
+    }
+}
+
+pub fn enter_headphone_cutscene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut stats: ResMut<PlayerStats>,
+    mut player_q: Query<(&mut Transform, &mut Player)>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
+) {
+    for mut node in &mut hud_q {
+        node.display = Display::None;
+    }
+
+    let start_t = crate::audio::take_cutscene_start_time();
+    stats.cutscene_timer = if start_t > 0.0 { start_t } else { 0.0 };
+    stats.cutscene_beat = 0;
+    stats.headphones_vow_taken = true;
+    stats.hint_text.clear();
+
+    crate::audio::set_touch_playing(false);
+    crate::audio::play_sfx("headphone_crunch");
+    crate::audio::play_sfx("thunder");
+    crate::audio::play_cutscene_music();
+
+    // Moody dramatic memory void atmosphere
+    commands.insert_resource(ClearColor(Color::srgb(0.02, 0.015, 0.05)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.36, 0.28, 0.56),
+        brightness: 90.0,
+    });
+
+    let base_y = 120.0_f32;
+    if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
+        p_tf.translation = Vec3::new(0.0, base_y, 0.0);
+        // Face +Z toward the camera so the viewer sees Stan's remorseful expression & Sacred Vow salute
+        p_tf.rotation = Quat::from_rotation_y(PI);
+        p_tf.scale = Vec3::splat(1.45);
+        player.velocity = Vec3::ZERO;
+        player.grounded = true;
+        player.roll_timer = 0.0;
+        player.attack_timer = 0.0;
+    }
+
+    // Dark memory floor & crimson/cyan dramatic spotlights
+    commands.spawn((
+        HeadphoneCutsceneEntity,
+        LevelEntity,
+        Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(26.0, 0.3, 22.0)))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.04, 0.04, 0.08),
+            perceptual_roughness: 0.25,
+            metallic: 0.35,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, base_y - 0.15, 0.0),
+    ));
+    for (lx, ly, lz, col, intensity) in [
+        (0.0_f32, base_y + 4.5, 3.2_f32, Color::srgb(0.45, 0.78, 1.0), 140000.0),
+        (-3.2, base_y + 3.6, -1.8, Color::srgb(1.0, 0.28, 0.35), 110000.0),
+        (3.2, base_y + 3.6, -1.8, Color::srgb(1.0, 0.82, 0.25), 110000.0),
+    ] {
+        commands.spawn((
+            HeadphoneCutsceneEntity,
+            LevelEntity,
+            PointLight {
+                color: col,
+                intensity,
+                range: 24.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(lx, ly, lz),
+        ));
+    }
+
+    // Crushed headphones directly beneath Stan's right foot
+    spawn_cutscene_headphones(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(0.28, base_y + 0.02, 0.42),
+        0.2,
+        true,
+    );
+
+    // Graveyard of 5 Cracked iPads & 4 Snapped Past Headsets behind Stan (Z in [-3.4, -1.5])
+    for (x, y, z, yaw, sc) in [
+        (-4.0_f32, base_y + 1.05, -2.5_f32, 0.35_f32, 1.05_f32),
+        (-2.0, base_y + 1.25, -3.1, 0.16, 1.18),
+        (0.0, base_y + 1.45, -3.4, 0.0, 1.25),
+        (2.0, base_y + 1.25, -3.1, -0.16, 1.18),
+        (4.0, base_y + 1.05, -2.5, -0.35, 1.05),
+    ] {
+        spawn_cracked_ipad(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(x, y, z),
+            Quat::from_rotation_y(yaw),
+            sc,
+        );
+    }
+    for (x, z, yaw) in [
+        (-3.0_f32, -1.6_f32, 0.6_f32),
+        (-1.1, -1.9, -0.4),
+        (1.2, -1.9, 0.8),
+        (3.1, -1.6, -0.5),
+    ] {
+        spawn_cutscene_headphones(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(x, base_y + 0.02, z),
+            yaw,
+            true,
+        );
+    }
+
+    // Bottom cinematic flashback dialogue box
+    let (badge, speaker, sub, _, _) = headphone_cutscene_script(1);
+    commands
+        .spawn((
+            HeadphoneCutsceneOverlay,
+            LevelEntity,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::FlexEnd,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::bottom(Val::Px(22.0)),
+                ..default()
+            },
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    width: Val::Percent(92.0),
+                    max_width: Val::Px(780.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(6.0),
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.04, 0.03, 0.09, 0.90)),
+                BorderColor(Color::srgb(0.45, 0.82, 1.0)),
+                BorderRadius::all(Val::Px(12.0)),
+            ))
+            .with_children(|card| {
+                card.spawn(Node {
+                    justify_content: JustifyContent::SpaceBetween,
+                    width: Val::Percent(100.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        HeadphoneSpeakerText,
+                        Text::new(speaker),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.45, 0.88, 1.0)),
+                    ));
+                    row.spawn((
+                        HeadphoneSceneBadgeText,
+                        Text::new(badge),
+                        TextFont {
+                            font_size: 13.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(1.0, 0.72, 0.35)),
+                    ));
+                });
+                card.spawn((
+                    HeadphoneSubtitleText,
+                    Text::new(sub),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
+}
+
+pub fn update_headphone_cutscene(
+    time: Res<Time>,
+    mut stats: ResMut<PlayerStats>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut cam_q: Query<&mut Transform, With<Camera3d>>,
+    mut badge_q: Query<&mut Text, With<HeadphoneSceneBadgeText>>,
+    mut spk_q: Query<&mut Text, (With<HeadphoneSpeakerText>, Without<HeadphoneSceneBadgeText>)>,
+    mut sub_q: Query<
+        &mut Text,
+        (
+            With<HeadphoneSubtitleText>,
+            Without<HeadphoneSceneBadgeText>,
+            Without<HeadphoneSpeakerText>,
+        ),
+    >,
+) {
+    const BEAT_ENDS: [f32; 4] = [6.2, 12.8, 19.4, 26.0];
+    let dt = time.delta_secs().min(0.05);
+    let mut t = stats.cutscene_timer + dt;
+
+    let mut target_beat: u8 = 5;
+    for (idx, &end_t) in BEAT_ENDS.iter().enumerate() {
+        if t < end_t {
+            target_beat = (idx as u8) + 1;
+            break;
+        }
+    }
+
+    if stats.cutscene_beat > 0 && target_beat > stats.cutscene_beat {
+        if crate::audio::is_voice_speaking() {
+            let hold_idx = (stats.cutscene_beat.saturating_sub(1) as usize).min(3);
+            t = BEAT_ENDS[hold_idx] - 0.01;
+            target_beat = stats.cutscene_beat;
+        } else if target_beat == 5 {
+            stats.cutscene_timer = t;
+            next_state.set(if stats.headphone_return_boss {
+                GameState::BossFight
+            } else {
+                GameState::Playing
+            });
+            return;
+        }
+    } else if target_beat == 5 && !crate::audio::is_voice_speaking() {
+        stats.cutscene_timer = t;
+        next_state.set(if stats.headphone_return_boss {
+            GameState::BossFight
+        } else {
+            GameState::Playing
+        });
+        return;
+    }
+
+    stats.cutscene_timer = t;
+
+    if target_beat != stats.cutscene_beat && target_beat <= 4 {
+        stats.cutscene_beat = target_beat;
+        let (badge, speaker, sub, voice, role) = headphone_cutscene_script(target_beat);
+        if let Ok(mut b) = badge_q.get_single_mut() {
+            b.0 = badge.to_string();
+        }
+        if let Ok(mut sp) = spk_q.get_single_mut() {
+            sp.0 = speaker.to_string();
+        }
+        if let Ok(mut sb) = sub_q.get_single_mut() {
+            sb.0 = sub.to_string();
+        }
+        crate::audio::speak_voice(voice, role);
+    }
+
+    let base_y = 120.0_f32;
+    if let Ok(mut c_tf) = cam_q.get_single_mut() {
+        let (cam_pos, look_at) = match stats.cutscene_beat {
+            1 => {
+                // Close-up on Stan's foot crushing the headphones
+                let u = (t / 6.2).clamp(0.0, 1.0);
+                (
+                    Vec3::new(1.35 + u * 0.50, base_y + 0.65 + u * 0.30, 2.15 + u * 0.70),
+                    Vec3::new(0.20, base_y + 0.25, 0.35),
+                )
+            }
+            2 => {
+                // Wide sweep across the Graveyard of Cracked iPads & Snapped Headsets
+                let u = ((t - 6.2) / 6.6).clamp(0.0, 1.0);
+                (
+                    Vec3::new(-3.6 + u * 7.2, base_y + 1.85, 3.2),
+                    Vec3::new(0.0, base_y + 1.25, -2.4),
+                )
+            }
+            3 => {
+                // Remorseful push-in on Stan's face with cracked iPads rising behind him
+                let u = ((t - 12.8) / 6.6).clamp(0.0, 1.0);
+                (
+                    Vec3::new(-1.25 + u * 0.60, base_y + 2.15, 2.55 - u * 0.35),
+                    Vec3::new(0.0, base_y + 1.85, -0.4),
+                )
+            }
+            _ => {
+                // Heroic low-angle crane orbit as Stan swears his Sacred Vow
+                let u = ((t - 19.4) / 6.6).clamp(0.0, 1.0);
+                (
+                    Vec3::new(2.2 - u * 1.2, base_y + 1.45 + u * 0.85, 3.5 - u * 0.4),
+                    Vec3::new(0.0, base_y + 1.75, -0.6),
+                )
+            }
+        };
+        c_tf.translation = cam_pos;
+        c_tf.look_at(look_at, Vec3::Y);
+    }
+}
+
+pub fn exit_headphone_cutscene(
+    mut commands: Commands,
+    mut stats: ResMut<PlayerStats>,
+    ent_q: Query<Entity, With<HeadphoneCutsceneEntity>>,
+    ui_q: Query<Entity, With<HeadphoneCutsceneOverlay>>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
+    mut player_q: Query<(&mut Transform, &mut Player)>,
+) {
+    for e in &ent_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &ui_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for mut node in &mut hud_q {
+        node.display = Display::Flex;
+    }
+
+    if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
+        p_tf.translation = stats.saved_apartment_pos;
+        p_tf.rotation = Quat::from_rotation_y(stats.saved_apartment_yaw);
+        p_tf.scale = Vec3::splat(stats.saved_apartment_scale);
+        player.velocity = Vec3::ZERO;
+        player.facing_yaw = stats.saved_apartment_yaw;
+        player.invuln_timer = 1.5;
+        player.roll_timer = 0.0;
+        player.attack_timer = 0.0;
+    }
+
+    if !stats.headphone_return_boss {
+        commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
+        commands.insert_resource(AmbientLight {
+            color: Color::srgb(1.0, 0.96, 0.90),
+            brightness: 620.0,
+        });
+        crate::audio::play_bgm();
+        crate::audio::set_touch_playing(true);
+        stats.hint_text = "SACRED VOW SWORN! Never step on another pair of Headphones or iPad again!".to_string();
+    }
+}
+
 pub(crate) fn spawn_mom_mesh_hierarchy(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -2002,22 +2537,34 @@ pub fn enter_boss_fight(
     crate::audio::play_sfx("mom_yell");
     crate::audio::speak_voice("Stan! You must eat your veggies! Final warning!", "mom");
 
+    let resuming_from_headphone = stats.boss_mode && stats.headphone_return_boss;
+    stats.headphone_return_boss = false;
+    let init_hp = if resuming_from_headphone {
+        stats.boss_hp.max(12.5)
+    } else {
+        100.0
+    };
+
     stats.boss_mode = true;
     stats.hearts = stats.max_hearts;
     stats.tendies = stats.total_tendies;
     stats.player_scale = 3.2;
     stats.boss_max_hp = 100.0;
-    stats.boss_hp = 100.0;
+    stats.boss_hp = init_hp;
     stats.mom_quote = MOM_QUOTES[0].to_string();
     stats.hint_text = "ROLL: Dodge & Roll | SABER: Lightsaber Slash!".to_string();
 
     orbit.yaw = 0.0;
-    orbit.pitch = 0.45;
-    orbit.distance = 11.2;
-    orbit.current_dist = 11.2;
+    orbit.pitch = 0.42;
+    orbit.distance = 12.0;
+    orbit.current_dist = 12.0;
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
-        p_tf.translation = Vec3::new(0.0, 0.0, 12.5);
+        p_tf.translation = if resuming_from_headphone {
+            stats.saved_apartment_pos
+        } else {
+            Vec3::new(0.0, -6.0, 6.0)
+        };
         p_tf.rotation = Quat::IDENTITY;
         p_tf.scale = Vec3::splat(3.2);
         player.velocity = Vec3::ZERO;
@@ -2028,16 +2575,16 @@ pub fn enter_boss_fight(
         player.attack_cooldown = 0.0;
     }
 
-    // Spawn Stan's Mom on the main countertop wielding her Crimson Lightsaber
+    // Spawn Stan's Mom on the wide 1,200 Sq Ft Apartment Floor wielding her Crimson Lightsaber
     let mom_ent = spawn_mom_mesh_hierarchy(
         &mut commands,
         &mut meshes,
         &mut materials,
-        Vec3::new(0.0, 0.0, -3.5),
+        Vec3::new(0.0, -6.0, -14.0),
         2.65,
     );
     commands.entity(mom_ent).insert(MomBoss {
-        hp: 100.0,
+        hp: init_hp,
         max_hp: 100.0,
         state: MomState::Staggered,
         timer: 2.2,
@@ -2050,13 +2597,13 @@ pub fn enter_boss_fight(
         dealt_slash_hit: false,
     });
 
-    // Spawn a fresh wave of hardened veggie minions across mid & far counter away from Stan
+    // Spawn hardened veggie minions across the open 1,200 Sq Ft Apartment Floor
     for (kind, pos) in [
-        (EnemyKind::BroccoliBrute, Vec3::new(-4.2, 0.0, -2.5)),
-        (EnemyKind::CarrotLancer, Vec3::new(4.2, 0.0, -3.5)),
-        (EnemyKind::BroccoliBrute, Vec3::new(-2.8, 0.0, -8.5)),
-        (EnemyKind::CarrotLancer, Vec3::new(2.8, 0.0, -10.5)),
-        (EnemyKind::KaleSlime, Vec3::new(0.0, 0.0, -6.0)),
+        (EnemyKind::BroccoliBrute, Vec3::new(-12.0, -6.0, -6.0)),
+        (EnemyKind::CarrotLancer, Vec3::new(12.0, -6.0, -8.0)),
+        (EnemyKind::BroccoliBrute, Vec3::new(-18.0, -6.0, -20.0)),
+        (EnemyKind::CarrotLancer, Vec3::new(18.0, -6.0, -22.0)),
+        (EnemyKind::KaleSlime, Vec3::new(0.0, -6.0, -24.0)),
     ] {
         spawn_enemy_at(&mut commands, &asset_server, kind, pos);
     }
@@ -2181,9 +2728,9 @@ pub fn update_boss_fight(
         mom.summon_timer = 11.0;
         let angle = t * 1.3;
         let spawn_pos = Vec3::new(
-            (mom_tf.translation.x + angle.cos() * 3.5).clamp(-5.5, 5.5),
+            (mom_tf.translation.x + angle.cos() * 5.5).clamp(-42.0, 42.0),
             mom_tf.translation.y,
-            (mom_tf.translation.z + angle.sin() * 3.5).clamp(-18.0, 18.0),
+            (mom_tf.translation.z + angle.sin() * 5.5).clamp(-34.0, 20.0),
         );
         spawn_enemy_at(&mut commands, &asset_server, EnemyKind::BroccoliBrute, spawn_pos);
     }
@@ -2343,8 +2890,8 @@ pub fn update_boss_fight(
         mom_tf.translation.z -= push_back.z;
     }
 
-    mom_tf.translation.x = mom_tf.translation.x.clamp(-18.5, 20.5);
-    mom_tf.translation.z = mom_tf.translation.z.clamp(-20.0, 20.0);
+    mom_tf.translation.x = mom_tf.translation.x.clamp(-46.0, 46.0);
+    mom_tf.translation.z = mom_tf.translation.z.clamp(-36.0, 36.0);
     mom.walk_phase += move_speed * dt * 1.4;
 
     // Animate Mom limbs & Crimson Lightsaber

@@ -5,6 +5,7 @@ pub enum GameState {
     #[default]
     Tutorial,
     Playing,
+    HeadphoneCutscene,
     Cutscene,
     BossFight,
     MomVictoryCutscene,
@@ -37,6 +38,11 @@ pub struct PlayerStats {
     pub cutscene_beat: u8,
     pub in_city: bool,
     pub lexie_defeated: bool,
+    pub saved_apartment_pos: Vec3,
+    pub saved_apartment_scale: f32,
+    pub saved_apartment_yaw: f32,
+    pub headphone_return_boss: bool,
+    pub headphones_vow_taken: bool,
 }
 
 impl Default for PlayerStats {
@@ -63,6 +69,11 @@ impl Default for PlayerStats {
             cutscene_beat: 0,
             in_city: false,
             lexie_defeated: false,
+            saved_apartment_pos: Vec3::new(0.0, -6.0, 5.5),
+            saved_apartment_scale: 1.35,
+            saved_apartment_yaw: 0.0,
+            headphone_return_boss: false,
+            headphones_vow_taken: false,
         }
     }
 }
@@ -118,6 +129,11 @@ impl PlayerStats {
 
 #[derive(Component)]
 pub struct FridgeGoal;
+
+#[derive(Component)]
+pub struct HeadphoneHazard {
+    pub radius: f32,
+}
 
 #[allow(dead_code)]
 #[derive(Component)]
