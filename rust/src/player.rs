@@ -430,8 +430,17 @@ pub fn update_camera(
     } else {
         1.0
     };
-    let desired_dist = orbit.distance * (0.82 + stats.player_scale.sqrt() * 0.34) * aspect_mul;
-    let min_cam_dist = (2.2 + stats.player_scale * 0.45).min(desired_dist);
+    let cam_scale_mul = if stats.in_city {
+        0.72 + stats.player_scale * 0.24
+    } else {
+        0.82 + stats.player_scale.sqrt() * 0.34
+    };
+    let desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
+    let min_cam_dist = if stats.in_city {
+        (2.2 + stats.player_scale * 1.8).min(desired_dist)
+    } else {
+        (2.2 + stats.player_scale * 0.45).min(desired_dist)
+    };
     let eff_pitch = (orbit.pitch + (orbit.distance - 10.6).max(0.0) * 0.008).clamp(0.15, 1.35);
     let dir = Vec3::new(
         orbit.yaw.sin() * eff_pitch.cos(),
@@ -441,29 +450,31 @@ pub fn update_camera(
     .normalize();
 
     // Spring-arm ray-AABB sweep against tall structural wall/fridge occluders only
-    // (small props & low ledges never yank the camera close to the character)
+    // (small props & low ledges never yank the camera close to the character; skipped for NYC Skyscraper Titan)
     let mut safe_dist = desired_dist;
     let sweep_pad = Vec3::splat(0.22);
     let desired_cam_y = anchor.y + dir.y * desired_dist;
-    for (p_tf_box, p_box) in &platform_q {
-        if !stats.in_city && p_tf_box.translation.z > 24.8 {
-            continue;
-        }
-        let box_top = p_tf_box.translation.y + p_box.half_extents.y;
-        let is_tall_wall = p_box.half_extents.y >= 2.1
-            && (p_box.half_extents.x >= 2.5 || p_box.half_extents.z >= 2.5)
-            && box_top > desired_cam_y + 0.2;
-        if !is_tall_wall {
-            continue;
-        }
-        let bmin = p_tf_box.translation - p_box.half_extents - sweep_pad;
-        let bmax = p_tf_box.translation + p_box.half_extents + sweep_pad;
-        if let Some((t_min, t_max)) = ray_aabb_t(anchor, dir, bmin, bmax) {
-            if t_max > 0.0 && t_min < safe_dist {
-                if t_min > 0.0 {
-                    safe_dist = safe_dist.min((t_min - 0.14).max(min_cam_dist));
-                } else if (p_tf_box.translation - anchor).dot(dir) > 0.0 {
-                    safe_dist = min_cam_dist;
+    if !(stats.in_city && stats.player_scale >= 8.0) {
+        for (p_tf_box, p_box) in &platform_q {
+            if !stats.in_city && p_tf_box.translation.z > 24.8 {
+                continue;
+            }
+            let box_top = p_tf_box.translation.y + p_box.half_extents.y;
+            let is_tall_wall = p_box.half_extents.y >= 2.1
+                && (p_box.half_extents.x >= 2.5 || p_box.half_extents.z >= 2.5)
+                && box_top > desired_cam_y + 0.2;
+            if !is_tall_wall {
+                continue;
+            }
+            let bmin = p_tf_box.translation - p_box.half_extents - sweep_pad;
+            let bmax = p_tf_box.translation + p_box.half_extents + sweep_pad;
+            if let Some((t_min, t_max)) = ray_aabb_t(anchor, dir, bmin, bmax) {
+                if t_max > 0.0 && t_min < safe_dist {
+                    if t_min > 0.0 {
+                        safe_dist = safe_dist.min((t_min - 0.14).max(min_cam_dist));
+                    } else if (p_tf_box.translation - anchor).dot(dir) > 0.0 {
+                        safe_dist = min_cam_dist;
+                    }
                 }
             }
         }
@@ -473,7 +484,7 @@ pub fn update_camera(
     let (room_min, room_max) = if stats.in_city {
         (
             Vec3::new(-165.0, -2.0, -165.0),
-            Vec3::new(165.0, 195.0, 165.0),
+            Vec3::new(165.0, 260.0, 165.0),
         )
     } else {
         (

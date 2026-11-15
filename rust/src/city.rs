@@ -498,8 +498,8 @@ pub fn update_mom_victory_cutscene(
                 // Heroic anime three-quarter shot framing bowing Stan & proud Mom beneath Torii & Rising Sun
                 let u = ((t - 5.0) / 5.5).clamp(0.0, 1.0);
                 (
-                    Vec3::new(6.8 - u * 1.4, 3.1 - u * 0.25, 1.4 - u * 1.2),
-                    Vec3::new(0.0, 2.8, -0.4),
+                    Vec3::new(9.2 - u * 1.4, 3.8, 2.6 - u * 1.0),
+                    Vec3::new(0.0, 2.8, -0.8),
                 )
             }
             2 => (
@@ -1013,7 +1013,7 @@ fn spawn_lexie_boss(
                 hp: 300.0,
                 max_hp: 300.0,
                 on_tower: true,
-                throw_cooldown: 2.2,
+                throw_cooldown: 4.8,
                 chew_timer: 0.0,
                 debris_timer: 0.3,
                 hit_flash: 0.0,
@@ -1696,10 +1696,9 @@ pub fn update_city_intro_cutscene(
             0 => {
                 // High aerial sweep orbiting the huge 270m skyline!
                 let u = (t / 5.6).clamp(0.0, 1.0);
-                let ang = -0.60 + u * 1.10;
                 (
-                    Vec3::new(ang.sin() * 98.0, 66.0 - u * 16.0, ang.cos() * 92.0),
-                    Vec3::new(0.0, 18.0, -24.0),
+                    Vec3::new(42.0 + u * 26.0, 74.0 - u * 14.0, 96.0 - u * 18.0),
+                    Vec3::new(0.0, 20.0, -32.0),
                 )
             }
             1 => {
@@ -1848,16 +1847,20 @@ pub fn enter_city_play(
     }
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
-        p_tf.translation = Vec3::new(0.0, 0.0, if is_titan_preview { -24.0 } else { 82.0 });
+        p_tf.translation = Vec3::new(
+            if is_titan_preview { 4.2 } else { 0.0 },
+            0.0,
+            if is_titan_preview { -18.0 } else { 82.0 },
+        );
         p_tf.scale = Vec3::splat(stats.player_scale);
         player.velocity = Vec3::ZERO;
         player.facing_yaw = 0.0;
         p_tf.rotation = Quat::from_rotation_y(0.0);
     }
 
-    orbit.yaw = 0.0;
-    orbit.pitch = 0.36;
-    orbit.distance = if is_titan_preview { 14.5 } else { 11.2 };
+    orbit.yaw = if is_titan_preview { -0.24 } else { 0.0 };
+    orbit.pitch = if is_titan_preview { 0.42 } else { 0.36 };
+    orbit.distance = if is_titan_preview { 15.5 } else { 11.2 };
     orbit.current_dist = orbit.distance;
 
     set_touch_playing(true);
@@ -2351,7 +2354,7 @@ pub fn update_city_lexie(
 
         // Throw Pickled Garlic Clove volley toward Stan!
         if lexie.throw_cooldown <= 0.0 {
-            lexie.throw_cooldown = if lexie.on_tower { 3.1 } else { 2.15 };
+            lexie.throw_cooldown = if lexie.on_tower { 3.6 } else { 2.8 };
             lexie.chew_timer = 0.85;
             play_sfx("garlic_throw");
             let hand_world = lx_tf.translation + Vec3::new(0.0, 20.0, 4.0);
@@ -2468,7 +2471,7 @@ pub fn update_city_lexie(
             let impact_pos = Vec3::new(g_tf.translation.x, 0.35, g_tf.translation.z);
             commands.entity(g_ent).despawn_recursive();
             let fume_mat = materials.add(StandardMaterial {
-                base_color: Color::srgba(0.68, 0.88, 0.16, 0.42),
+                base_color: Color::srgba(0.68, 0.88, 0.16, 0.26),
                 emissive: LinearRgba::rgb(0.42, 0.64, 0.06),
                 alpha_mode: AlphaMode::Blend,
                 unlit: true,
@@ -2480,8 +2483,8 @@ pub fn update_city_lexie(
                 GarlicStenchCloud {
                     lifetime: 4.8,
                     max_lifetime: 4.8,
-                    radius: 7.5,
-                    damage_tick: 0.0,
+                    radius: 5.8,
+                    damage_tick: 0.65,
                 },
                 Mesh3d(meshes.add(Sphere::new(1.0))),
                 MeshMaterial3d(fume_mat),
@@ -2520,7 +2523,7 @@ pub fn update_city_lexie(
             && player.invuln_timer <= 0.0
             && cloud.damage_tick <= 0.0
         {
-            cloud.damage_tick = 1.05;
+            cloud.damage_tick = 1.45;
             player.invuln_timer = 0.85;
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
