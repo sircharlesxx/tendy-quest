@@ -2910,7 +2910,9 @@ pub fn enter_boss_fight(
     stats.boss_max_hp = 100.0;
     stats.boss_hp = init_hp;
     stats.mom_quote = MOM_QUOTES[0].to_string();
-    stats.hint_text = "ROLL: Dodge & Roll | SABER: Lightsaber Slash!".to_string();
+    stats.hint_text =
+        "DODGE & ROLL (SHIFT / Right-Click / ROLL) to evade Mom & break her saber guard!"
+            .to_string();
 
     orbit.yaw = 0.0;
     orbit.pitch = 0.42;
@@ -2927,8 +2929,9 @@ pub fn enter_boss_fight(
         p_tf.scale = Vec3::splat(stats.player_scale);
         player.velocity = Vec3::ZERO;
         player.grounded = true;
-        player.invuln_timer = 2.5;
+        player.invuln_timer = 1.0;
         player.roll_timer = 0.0;
+        player.dodge_counter_timer = 0.0;
         player.attack_timer = 0.0;
         player.attack_cooldown = 0.0;
     }
@@ -2944,10 +2947,10 @@ pub fn enter_boss_fight(
     commands.entity(mom_ent).insert(MomBoss {
         hp: init_hp,
         max_hp: 100.0,
-        state: MomState::Staggered,
-        timer: 2.2,
+        state: MomState::Pursue,
+        timer: 0.0,
         voice_timer: 5.5,
-        summon_timer: 10.0,
+        summon_timer: 8.5,
         quote_idx: 0,
         walk_phase: 0.0,
         lunge_dir: Vec3::Z,
@@ -3082,8 +3085,8 @@ pub fn update_boss_fight(
 
     // Periodically reinforce angry veggie minions while Mom still fights
     mom.summon_timer -= dt;
-    if mom.summon_timer <= 0.0 && mom.hp < 75.0 && enemy_q.iter().count() < 5 {
-        mom.summon_timer = 11.0;
+    if mom.summon_timer <= 0.0 && mom.hp < 85.0 && enemy_q.iter().count() < 5 {
+        mom.summon_timer = 8.5;
         let angle = t * 1.3;
         let spawn_pos = Vec3::new(
             (mom_tf.translation.x + angle.cos() * 5.5).clamp(-42.0, 42.0),
@@ -3093,7 +3096,7 @@ pub fn update_boss_fight(
         spawn_enemy_at(&mut commands, &asset_server, EnemyKind::BroccoliBrute, spawn_pos);
     }
 
-    // Stan's Lightsaber attack hits Mom AND Veggie Minions
+    // Stan's Lightsaber attack hits Mom (requires Dodge & Roll opening!) AND Veggie Minions
     if player.attack_timer > 0.0 {
         let p_forward = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
         let slash_center = p_tf.translation + p_forward * 2.2;
@@ -3106,17 +3109,37 @@ pub fn update_boss_fight(
         .length();
         let dy_mom = (p_tf.translation.y - mom_tf.translation.y).abs();
         if dist_mom < 5.6 && dy_mom < 4.5 && mom.hit_cooldown <= 0.0 {
-            mom.hp = (mom.hp - 12.5).max(0.0);
-            stats.boss_hp = mom.hp;
-            stats.score += 1000;
-            mom.hit_cooldown = 0.36;
-            mom.state = MomState::Staggered;
-            mom.timer = 0.45;
-            let kb = mom_tf.translation - p_tf.translation;
-            let flat_kb = Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero();
-            mom_tf.translation += flat_kb * 1.6;
-            crate::audio::play_sfx("saber_hit");
-            stats.hint_text = format!("SABER HIT! Mom HP: {:.0}/{:.0}", mom.hp, mom.max_hp);
+            let dodge_opening = player.roll_timer > 0.0
+                || player.dodge_counter_timer > 0.0
+                || matches!(mom.state, MomState::Staggered);
+            mom.hit_cooldown = 0.34;
+            if !dodge_opening {
+                let push = Vec3::new(
+                    p_tf.translation.x - mom_tf.translation.x,
+                    0.0,
+                    p_tf.translation.z - mom_tf.translation.z,
+                )
+                .normalize_or_zero();
+                p_tf.translation += push * 1.4;
+                crate::audio::play_sfx("shield");
+                stats.hint_text =
+                    "MOM PARRIED! Use DODGE & ROLL (SHIFT / ROLL) to evade & break her guard!"
+                        .to_string();
+            } else {
+                let dmg = if stats.enraged { 16.0 } else { 12.5 };
+                mom.hp = (mom.hp - dmg).max(0.0);
+                stats.boss_hp = mom.hp;
+                stats.score += 1000;
+                player.dodge_counter_timer = 0.0;
+                mom.state = MomState::Staggered;
+                mom.timer = 0.55;
+                let kb = mom_tf.translation - p_tf.translation;
+                let flat_kb = Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero();
+                mom_tf.translation += flat_kb * 1.6;
+                crate::audio::play_sfx("saber_hit");
+                stats.hint_text =
+                    format!("DODGE COUNTER HIT! Mom HP: {:.0}/{:.0}", mom.hp, mom.max_hp);
+            }
         }
 
         // Check Minion hits
@@ -3154,10 +3177,11 @@ pub fn update_boss_fight(
         return;
     }
 
-    // Mom AI State Machine
+    // Mom AI State Machine (Harder Phase 1 & 2 requiring Dodge & Roll counterplay)
     let to_player = p_tf.translation - mom_tf.translation;
     let flat = Vec3::new(to_player.x, 0.0, to_player.z);
     let dist = flat.length();
+    let chase_speed = if mom.hp < 50.0 { 8.8 } else { 7.8 };
     let move_speed = match mom.state {
         MomState::Pursue => {
             if dist > 0.2 {
@@ -3166,17 +3190,18 @@ pub fn update_boss_fight(
             }
             // Match player elevation smoothly so Mom follows Stan between counter & floor
             let dy = p_tf.translation.y - mom_tf.translation.y;
-            mom_tf.translation.y += dy * (dt * 2.8).min(1.0);
-            if dist < 5.8 {
+            mom_tf.translation.y += dy * (dt * 3.4).min(1.0);
+            if dist < 6.4 {
                 mom.state = MomState::SaberWindup;
-                mom.timer = 0.65;
+                mom.timer = if mom.hp < 50.0 { 0.40 } else { 0.48 };
                 mom.dealt_slash_hit = false;
                 mom.lunge_dir = flat.normalize_or_zero();
+                stats.hint_text = "MOM WINDING UP — DODGE ROLL NOW (SHIFT / ROLL)!".to_string();
                 0.0
             } else {
                 let dir = flat.normalize_or_zero();
-                mom_tf.translation += dir * 5.4 * dt;
-                5.4
+                mom_tf.translation += dir * chase_speed * dt;
+                chase_speed
             }
         }
         MomState::SaberWindup => {
@@ -3194,20 +3219,28 @@ pub fn update_boss_fight(
         }
         MomState::SaberSlash => {
             mom.timer -= dt;
-            if dist > 4.0 {
-                mom_tf.translation += mom.lunge_dir * 10.5 * dt;
+            if dist > 3.6 {
+                mom_tf.translation += mom.lunge_dir * 15.5 * dt;
             }
-            if !mom.dealt_slash_hit && dist < 5.0 && (p_tf.translation.y - mom_tf.translation.y).abs() < 3.4 {
+            if !mom.dealt_slash_hit && dist < 5.8 && (p_tf.translation.y - mom_tf.translation.y).abs() < 3.6 {
                 mom.dealt_slash_hit = true;
-                if player.roll_timer > 0.0 || player.invuln_timer > 0.0 {
-                    stats.score += 300;
-                    stats.hint_text = "EVADED MOM'S SABER! (+300)".to_string();
+                if player.roll_timer > 0.0 {
+                    player.dodge_counter_timer = 3.2;
+                    stats.score += 350;
+                    stats.hint_text =
+                        "PERFECT DODGE ROLL! Counter-attack Mom NOW (E / Click / SABER)!"
+                            .to_string();
                     crate::audio::play_sfx("shield");
-                } else {
-                    stats.hearts -= 1;
-                    player.invuln_timer = 1.1;
-                    p_tf.translation += mom.lunge_dir * 2.5;
-                    player.velocity.y = 5.5;
+                    mom.state = MomState::Staggered;
+                    mom.timer = 1.65;
+                } else if player.invuln_timer <= 0.0 {
+                    let dmg_hearts = if mom.hp < 50.0 && stats.hearts > 2 { 2 } else { 1 };
+                    stats.hearts -= dmg_hearts;
+                    player.invuln_timer = 0.9;
+                    p_tf.translation += mom.lunge_dir * 3.6;
+                    player.velocity.y = 6.2;
+                    stats.hint_text =
+                        "SLASHED BY MOM! Press SHIFT / ROLL right as she swings!".to_string();
                     crate::audio::play_sfx("hit");
                     if stats.hearts <= 0 {
                         crate::audio::play_sfx("lose");
@@ -3218,9 +3251,9 @@ pub fn update_boss_fight(
             }
             if mom.timer <= 0.0 {
                 mom.state = MomState::Staggered;
-                mom.timer = 1.8;
+                mom.timer = 1.15;
             }
-            10.5
+            15.5
         }
         MomState::Staggered => {
             mom.timer -= dt;

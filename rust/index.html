@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Tendy Quest — Giant Kitchen</title>
   <link data-trunk rel="copy-dir" href="../assets/models" data-target-path="assets/models" />
   <link data-trunk rel="copy-dir" href="../assets/audio" data-target-path="assets/audio" />
@@ -797,6 +800,71 @@
       font-weight: 700;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
     }
+    .touch-pill.highlight {
+      border-color: #fde047;
+      background: rgba(180, 83, 9, 0.85);
+      color: #fffbeb;
+    }
+    #fullscreen-prompt {
+      position: fixed;
+      left: 50%;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      width: min(92vw, 410px);
+      z-index: 26;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(20, 13, 8, 0.94);
+      border: 1.5px solid rgba(253, 224, 71, 0.78);
+      color: #fef3c7;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.65);
+      pointer-events: auto;
+      font-size: 0.78rem;
+      line-height: 1.25;
+    }
+    #fullscreen-prompt.visible {
+      display: flex;
+    }
+    .fs-prompt-copy {
+      flex: 1;
+      min-width: 0;
+    }
+    .fs-prompt-copy strong {
+      display: block;
+      color: #fde047;
+      font-size: 0.82rem;
+      margin-bottom: 2px;
+    }
+    .fs-prompt-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    #btn-fullscreen-prompt {
+      border: 1.5px solid #fde047;
+      background: linear-gradient(135deg, #f59e0b, #b45309);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.74rem;
+      padding: 7px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #btn-fullscreen-dismiss {
+      border: 1px solid rgba(254, 243, 199, 0.35);
+      background: rgba(255, 255, 255, 0.08);
+      color: #fef3c7;
+      font-weight: 700;
+      font-size: 0.78rem;
+      padding: 6px 9px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
     @media (max-height: 500px) {
       #joystick-zone {
         width: 106px;
@@ -887,8 +955,19 @@
       <button id="btn-jump" class="touch-btn touch-ui" type="button">JUMP</button>
     </div>
     <div id="mobile-top-btns">
+      <button id="btn-fullscreen" class="touch-pill touch-ui highlight" type="button">FULL</button>
       <button id="btn-help" class="touch-pill touch-ui" type="button">HELP</button>
       <button id="btn-mute" class="touch-pill touch-ui" type="button">SOUND</button>
+    </div>
+  </div>
+  <div id="fullscreen-prompt" class="touch-ui" role="dialog" aria-label="Fullscreen recommendation">
+    <div class="fs-prompt-copy">
+      <strong>Enter Fullscreen Mode</strong>
+      <span>Recommended on mobile for the optimal player experience (hides the browser URL bar).</span>
+    </div>
+    <div class="fs-prompt-actions">
+      <button id="btn-fullscreen-prompt" type="button">FULLSCREEN</button>
+      <button id="btn-fullscreen-dismiss" type="button" aria-label="Dismiss fullscreen prompt">✕</button>
     </div>
   </div>
   <script>
@@ -923,9 +1002,146 @@
       const btnAttack = document.getElementById("btn-attack");
       const btnHelp = document.getElementById("btn-help");
       const btnMute = document.getElementById("btn-mute");
+      const btnFullscreen = document.getElementById("btn-fullscreen");
+      const fsPrompt = document.getElementById("fullscreen-prompt");
+      const btnFsPrompt = document.getElementById("btn-fullscreen-prompt");
+      const btnFsDismiss = document.getElementById("btn-fullscreen-dismiss");
+      let fsDismissed = false;
+      let autoFsAttempted = false;
+      let isPlayingState = false;
+
+      const isMobileViewport = () =>
+        (window.matchMedia &&
+          (window.matchMedia("(pointer: coarse)").matches ||
+            window.matchMedia("(max-width: 960px)").matches)) ||
+        "ontouchstart" in window ||
+        navigator.maxTouchPoints > 0;
+
+      const isFullscreen = () =>
+        Boolean(
+          document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            document.mozFullScreenElement ||
+            document.msFullscreenElement
+        );
+
+      async function requestOptimalFullscreen() {
+        if (isFullscreen()) {
+          syncFullscreenUI();
+          return true;
+        }
+        const el = document.documentElement;
+        const req =
+          el.requestFullscreen ||
+          el.webkitRequestFullscreen ||
+          el.mozRequestFullScreen ||
+          el.msRequestFullscreen;
+        if (!req) {
+          try { window.scrollTo(0, 1); } catch (_) {}
+          syncFullscreenUI();
+          return false;
+        }
+        try {
+          if (el.requestFullscreen) {
+            try {
+              await el.requestFullscreen({ navigationUI: "hide" });
+            } catch (_) {
+              await el.requestFullscreen();
+            }
+          } else {
+            await Promise.resolve(req.call(el));
+          }
+          syncFullscreenUI();
+          return true;
+        } catch (_) {
+          syncFullscreenUI();
+          return false;
+        }
+      }
+
+      async function toggleFullscreen() {
+        try {
+          if (isFullscreen()) {
+            const exit =
+              document.exitFullscreen ||
+              document.webkitExitFullscreen ||
+              document.mozCancelFullScreen ||
+              document.msExitFullscreen;
+            if (exit) await Promise.resolve(exit.call(document));
+          } else {
+            await requestOptimalFullscreen();
+          }
+        } catch (_) {}
+        syncFullscreenUI();
+      }
+
+      function syncFullscreenUI() {
+        const fs = isFullscreen();
+        if (btnFullscreen) {
+          btnFullscreen.textContent = fs ? "EXIT" : "FULL";
+          btnFullscreen.classList.toggle("highlight", !fs);
+        }
+        const inCutsceneInit = /cutscene=1|anime=1|city_intro=1|headphones=1/.test(
+          window.location.search
+        );
+        if (fsPrompt) {
+          const shouldShow =
+            isMobileViewport() && !fs && !fsDismissed && !isPlayingState && !inCutsceneInit;
+          fsPrompt.classList.toggle("visible", shouldShow);
+        }
+      }
+
+      document.addEventListener("fullscreenchange", syncFullscreenUI);
+      document.addEventListener("webkitfullscreenchange", syncFullscreenUI);
+      window.addEventListener("resize", syncFullscreenUI);
+
+      if (btnFsPrompt) {
+        let lastFsTap = 0;
+        const onFsTap = (e) => {
+          const now = Date.now();
+          if (now - lastFsTap < 250) return;
+          lastFsTap = now;
+          e.preventDefault();
+          e.stopPropagation();
+          window.tendyAudio.touchUnlock();
+          autoFsAttempted = true;
+          requestOptimalFullscreen().then((ok) => {
+            if (ok && fsPrompt) fsPrompt.classList.remove("visible");
+          });
+        };
+        btnFsPrompt.addEventListener("touchend", onFsTap, { passive: false });
+        btnFsPrompt.addEventListener("click", onFsTap);
+      }
+
+      if (btnFsDismiss) {
+        const onDismiss = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          fsDismissed = true;
+          syncFullscreenUI();
+        };
+        btnFsDismiss.addEventListener("touchend", onDismiss, { passive: false });
+        btnFsDismiss.addEventListener("click", onDismiss);
+      }
+
+      if (btnFullscreen) {
+        let lastToggle = 0;
+        const onToggle = (e) => {
+          const now = Date.now();
+          if (now - lastToggle < 250) return;
+          lastToggle = now;
+          e.preventDefault();
+          e.stopPropagation();
+          window.tendyAudio.touchUnlock();
+          toggleFullscreen();
+        };
+        btnFullscreen.addEventListener("touchend", onToggle, { passive: false });
+        btnFullscreen.addEventListener("click", onToggle);
+      }
 
       function showTouchControls() {
         if (touchControls) touchControls.classList.add("active");
+        syncFullscreenUI();
       }
 
       function updateJoyFromPoint(clientX, clientY) {
@@ -1137,6 +1353,7 @@
       }, { passive: false });
 
       function endTouch(e) {
+        let triggeredTap = false;
         for (const t of e.changedTouches) {
           if (t.identifier === joyTouchId) {
             resetJoy();
@@ -1145,6 +1362,7 @@
             if (lookTouches.size === 0) {
               if (lookMoved < 14) {
                 actionTapQueued = true;
+                triggeredTap = true;
               }
               lookTouchId = null;
               lastPinchDist = null;
@@ -1158,6 +1376,17 @@
           lookLastX = pt.x;
           lookLastY = pt.y;
           lookMoved = 999;
+        }
+        if (
+          triggeredTap &&
+          !isPlayingState &&
+          !fsDismissed &&
+          !autoFsAttempted &&
+          isMobileViewport() &&
+          !(e.target && e.target.closest && e.target.closest(".touch-ui"))
+        ) {
+          autoFsAttempted = true;
+          requestOptimalFullscreen();
         }
       }
       window.addEventListener("touchend", endTouch, { passive: false });
@@ -1192,12 +1421,14 @@
       })();
 
       function setPlaying(active) {
+        isPlayingState = !!active;
         if (touchControls) {
-          touchControls.classList.toggle("playing", !!active);
+          touchControls.classList.toggle("playing", isPlayingState);
         }
         if (!active) {
           resetJoy();
         }
+        syncFullscreenUI();
       }
 
       function setBossMode(active) {
@@ -1208,6 +1439,14 @@
           btnDash.textContent = active ? "ROLL" : "DASH";
         }
       }
+
+      window.tendyFullscreen = {
+        request: requestOptimalFullscreen,
+        toggle: toggleFullscreen,
+        isFullscreen,
+        syncUI: syncFullscreenUI,
+      };
+      syncFullscreenUI();
 
       if (window.location.search.includes("autotest=walk")) {
         showTouchControls();

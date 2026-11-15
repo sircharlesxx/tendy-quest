@@ -18,6 +18,7 @@ pub struct Player {
     pub walk_cycle: f32,
     pub last_step_half: i32,
     pub roll_timer: f32,
+    pub dodge_counter_timer: f32,
     pub attack_timer: f32,
     pub attack_cooldown: f32,
 }
@@ -35,6 +36,7 @@ impl Default for Player {
             walk_cycle: 0.0,
             last_step_half: 0,
             roll_timer: 0.0,
+            dodge_counter_timer: 0.0,
             attack_timer: 0.0,
             attack_cooldown: 0.0,
         }
@@ -165,6 +167,9 @@ pub fn player_movement(
     if player.roll_timer > 0.0 {
         player.roll_timer = (player.roll_timer - dt).max(0.0);
     }
+    if player.dodge_counter_timer > 0.0 {
+        player.dodge_counter_timer = (player.dodge_counter_timer - dt).max(0.0);
+    }
     if player.attack_timer > 0.0 {
         player.attack_timer = (player.attack_timer - dt).max(0.0);
     }
@@ -182,6 +187,8 @@ pub fn player_movement(
     }
     let dash_regen = if stats.enraged && !stats.in_city {
         60.0
+    } else if stats.boss_mode {
+        34.0
     } else {
         24.0
     };
@@ -221,10 +228,11 @@ pub fn player_movement(
         || (stats.boss_mode && mouse_buttons.just_pressed(MouseButton::Right));
     let touch_atk = crate::audio::take_touch_attack();
     if stats.boss_mode {
-        if shift_pressed && player.roll_timer <= 0.0 && stats.dash_energy >= 25.0 {
-            stats.dash_energy -= 25.0;
-            player.roll_timer = 0.42;
-            player.invuln_timer = 0.55;
+        if shift_pressed && player.roll_timer <= 0.0 && stats.dash_energy >= 20.0 {
+            stats.dash_energy -= 20.0;
+            player.roll_timer = 0.45;
+            player.invuln_timer = 0.60;
+            player.dodge_counter_timer = 2.8;
             crate::audio::play_sfx("dodge_roll");
         }
         if (mouse_buttons.just_pressed(MouseButton::Left)

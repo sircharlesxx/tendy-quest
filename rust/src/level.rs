@@ -1126,24 +1126,89 @@ pub fn spawn_kitchen_level_inner(
         );
     }
 
-    // 7. 12 Golden Chicken Tendies guiding Stan across the 1,200 Sq Ft Apartment (17cm -> 180cm Adult!)
+    // 7. 12 Randomized Golden Chicken Tendies guiding Stan across the 1,200 Sq Ft Apartment (17cm -> 180cm Adult!)
     let tendy_path = "models/golden_tendy.glb#Scene0";
     let tendy_scene: Handle<Scene> = asset_server.load(tendy_path);
-    let tendy_spots = [
-        (0.0_f32, 0.4_f32, 25.0_f32, 1.0_f32),
-        (-6.5, 1.35, 26.5, 1.0),
-        (6.5, 1.35, 25.0, 1.0),
-        (0.0, 2.35, 22.8, 1.05),
-        (0.0, -1.2, 18.0, 1.1),
-        (-12.0, -5.2, 6.0, 1.15),
-        (-32.0, -3.1, -5.0, 1.22),
-        (-44.0, -2.9, -5.0, 1.3),
-        (38.0, -0.5, -4.0, 1.38),
-        (-32.0, 2.35, -40.5, 1.48),
-        (-4.0, 1.6, -40.5, 1.6),
-        (26.0, -5.2, -33.5, 1.80),
+
+    // Zone A: South Breakfast Island & Tiered Platforms (pick 4 randomized spots)
+    let mut zone_a_spots: Vec<(f32, f32, f32)> = Vec::with_capacity(4);
+    let starter_island_pool = [
+        (0.0_f32, 0.4_f32, 25.5_f32, 2.0_f32, 1.0_f32),
+        (-4.0, 0.4, 30.2, 1.6, 1.1),
+        (4.0, 0.4, 30.2, 1.6, 1.1),
     ];
-    for (i, (x, y, z, scale)) in tendy_spots.into_iter().enumerate() {
+    let pick_start = rng.usize_range(0, starter_island_pool.len() - 1);
+    let (sx, sy, sz, jx, jz) = starter_island_pool[pick_start];
+    zone_a_spots.push((
+        sx + rng.range(-jx, jx),
+        sy,
+        sz + rng.range(-jz, jz),
+    ));
+
+    let island_extras_pool = [
+        (-6.5_f32, 1.35_f32, 26.5_f32, 0.45_f32, 0.35_f32),
+        (6.5, 1.35, 25.0, 0.45, 0.35),
+        (0.0, 2.35, 22.8, 0.55, 0.55),
+        (-11.0, 0.75, 30.0, 0.55, 0.55),
+        (11.0, 0.75, 29.5, 0.55, 0.55),
+        (0.0, -1.2, 18.0, 1.2, 0.5),
+        (-18.5, -1.2, 25.0, 0.8, 0.5),
+        (18.5, -1.2, 25.0, 0.8, 0.5),
+    ];
+    for idx in rng.shuffle_indices(island_extras_pool.len()).into_iter().take(3) {
+        let (bx, by, bz, rjx, rjz) = island_extras_pool[idx];
+        zone_a_spots.push((bx + rng.range(-rjx, rjx), by, bz + rng.range(-rjz, rjz)));
+    }
+
+    // Zone B: Open 1,200 Sq Ft Apartment Floor, West Living Room & East Dining (pick 5 randomized spots)
+    let zone_b_pool = [
+        (-14.0_f32, -5.2_f32, 6.0_f32, 2.4_f32, 2.2_f32),
+        (14.5, -5.2, 4.5, 2.4, 2.2),
+        (0.0, -5.2, -5.0, 3.0, 3.0),
+        (-19.0, -5.2, -16.0, 2.6, 2.6),
+        (19.0, -5.2, -15.0, 2.6, 2.6),
+        (24.0, -5.2, 12.0, 2.4, 2.2),
+        (-24.0, -5.2, 12.0, 2.4, 2.2),
+        (0.0, -5.2, -22.5, 3.0, 2.2),
+        (-32.0, -3.1, -5.0, 1.5, 3.2),
+        (-44.0, -2.9, -5.0, 1.5, 4.0),
+        (38.0, -0.5, -4.0, 2.2, 4.0),
+        (38.0, -2.5, -14.2, 0.7, 0.5),
+    ];
+    let mut zone_b_spots: Vec<(f32, f32, f32)> = Vec::with_capacity(5);
+    for idx in rng.shuffle_indices(zone_b_pool.len()).into_iter().take(5) {
+        let (bx, by, bz, rjx, rjz) = zone_b_pool[idx];
+        zone_b_spots.push((bx + rng.range(-rjx, rjx), by, bz + rng.range(-rjz, rjz)));
+    }
+
+    // Zone C: North Kitchen Countertop & Fridge Guard (pick 2 counter spots + 1 randomized fridge-zone tendy)
+    let zone_c_pool = [
+        (-32.0_f32, 2.45_f32, -40.5_f32, 0.45_f32, 0.35_f32),
+        (-32.0, 3.3, -45.2, 1.5, 0.35),
+        (-21.0, 0.45, -40.0, 2.5, 2.0),
+        (-14.0, -1.15, -33.2, 1.1, 0.5),
+        (-4.0, 1.75, -40.5, 0.8, 0.45),
+        (6.5, 0.45, -40.0, 2.5, 2.0),
+        (10.0, 0.45, -37.2, 1.4, 1.0),
+    ];
+    let mut zone_c_spots: Vec<(f32, f32, f32)> = Vec::with_capacity(3);
+    for idx in rng.shuffle_indices(zone_c_pool.len()).into_iter().take(2) {
+        let (bx, by, bz, rjx, rjz) = zone_c_pool[idx];
+        zone_c_spots.push((bx + rng.range(-rjx, rjx), by, bz + rng.range(-rjz, rjz)));
+    }
+    zone_c_spots.push((
+        26.0 + rng.range(-5.5, 5.5),
+        -5.2,
+        -32.5 + rng.range(-2.5, 3.0),
+    ));
+
+    let scales = [1.0_f32, 1.02, 1.05, 1.08, 1.14, 1.20, 1.26, 1.32, 1.38, 1.48, 1.60, 1.80];
+    let all_tendy_spots = zone_a_spots
+        .into_iter()
+        .chain(zone_b_spots)
+        .chain(zone_c_spots);
+    for (i, (x, y, z)) in all_tendy_spots.enumerate() {
+        let scale = scales[i.min(scales.len() - 1)];
         commands.spawn((
             LevelEntity,
             SceneRoot(tendy_scene.clone()),
