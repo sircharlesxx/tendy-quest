@@ -258,7 +258,7 @@
             droneOsc2.start();
           } catch (_) {}
         },
-        playHeadphoneMusic() {
+        playHeadphoneMusic(level = 1) {
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -267,28 +267,32 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
+            const lv = Math.max(1, level | 0);
+            const uzumaki = lv >= 2;
             if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
             if (ambGain) ambGain.gain.setValueAtTime(0.03, ac.currentTime);
-            // Ominous D1 + G#1 tritone sub-drone for the shattered headset/iPad flashback
+            // Ominous D1 + G#1 tritone sub-drone (deepens & warps in Uzumaki 2nd+ trigger)
             const filter = ac.createBiquadFilter();
             filter.type = "lowpass";
-            filter.frequency.value = 190;
+            filter.frequency.value = uzumaki ? 280 : 190;
             droneGain = ac.createGain();
-            droneGain.gain.value = 0.16;
+            droneGain.gain.value = uzumaki ? 0.21 : 0.16;
             filter.connect(droneGain);
             droneGain.connect(masterGain);
             droneOsc1 = ac.createOscillator();
             droneOsc1.type = "triangle";
-            droneOsc1.frequency.value = 36.71;
+            droneOsc1.frequency.value = uzumaki ? 32.7 : 36.71;
             droneOsc2 = ac.createOscillator();
             droneOsc2.type = "sawtooth";
-            droneOsc2.frequency.value = 51.91;
+            droneOsc2.frequency.value = uzumaki ? 48.99 : 51.91;
             droneOsc1.connect(filter);
             droneOsc2.connect(filter);
             droneOsc1.start();
             droneOsc2.start();
 
-            const glassBells = [587.33, 554.37, 466.16, 440.0, 392.0, 349.23, 329.63, 277.18];
+            const glassBells = uzumaki
+              ? [622.25, 587.33, 554.37, 466.16, 415.30, 392.0, 311.13, 277.18]
+              : [587.33, 554.37, 466.16, 440.0, 392.0, 349.23, 329.63, 277.18];
             headphoneStep = 0;
             headphoneTimer = setInterval(() => {
               if (muted || ac.state !== "running") return;
@@ -297,13 +301,13 @@
               headphoneStep += 1;
 
               // Double-heartbeat sub-thump on beats 0 and 2
-              if (step === 0 || step === 2) {
+              if (step === 0 || step === 2 || (uzumaki && step === 5)) {
                 const thump = ac.createOscillator();
                 const tg = ac.createGain();
                 thump.type = "sine";
-                thump.frequency.setValueAtTime(96, now);
-                thump.frequency.exponentialRampToValueAtTime(28, now + 0.18);
-                tg.gain.setValueAtTime(0.28, now);
+                thump.frequency.setValueAtTime(uzumaki ? 112 : 96, now);
+                thump.frequency.exponentialRampToValueAtTime(26, now + 0.18);
+                tg.gain.setValueAtTime(uzumaki ? 0.34 : 0.28, now);
                 tg.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
                 thump.connect(tg);
                 tg.connect(masterGain);
@@ -317,11 +321,11 @@
               const shimmer = ac.createOscillator();
               const bg = ac.createGain();
               bell.type = "sine";
-              shimmer.type = "triangle";
+              shimmer.type = uzumaki ? "sawtooth" : "triangle";
               bell.frequency.setValueAtTime(freq, now);
-              shimmer.frequency.setValueAtTime(freq * 1.007, now);
+              shimmer.frequency.setValueAtTime(freq * (uzumaki ? 1.028 : 1.007), now);
               bg.gain.setValueAtTime(0.001, now);
-              bg.gain.linearRampToValueAtTime(0.085, now + 0.015);
+              bg.gain.linearRampToValueAtTime(uzumaki ? 0.095 : 0.085, now + 0.015);
               bg.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
               bell.connect(bg);
               shimmer.connect(bg);
@@ -330,6 +334,24 @@
               shimmer.start(now);
               bell.stop(now + 0.40);
               shimmer.stop(now + 0.40);
+
+              // Uzumaki spiral frequency glissando sweep on 2nd+ trigger
+              if (uzumaki) {
+                const spiralOsc = ac.createOscillator();
+                const sg = ac.createGain();
+                const f0 = step % 2 === 0 ? 190 : 410;
+                const f1 = step % 2 === 0 ? 430 : 165;
+                spiralOsc.type = "sine";
+                spiralOsc.frequency.setValueAtTime(f0, now);
+                spiralOsc.frequency.exponentialRampToValueAtTime(f1, now + 0.16);
+                sg.gain.setValueAtTime(0.001, now);
+                sg.gain.linearRampToValueAtTime(0.055, now + 0.02);
+                sg.gain.exponentialRampToValueAtTime(0.0008, now + 0.17);
+                spiralOsc.connect(sg);
+                sg.connect(masterGain);
+                spiralOsc.start(now);
+                spiralOsc.stop(now + 0.18);
+              }
 
               // High metallic glass-crack tick on beat 4
               if (step === 4) {
@@ -345,7 +367,7 @@
                 tick.start(now);
                 tick.stop(now + 0.11);
               }
-            }, 220);
+            }, uzumaki ? 165 : 220);
           } catch (_) {}
         },
         playBossMusic() {
@@ -541,6 +563,30 @@
               u.pitch = 1.02;
               u.rate = 0.95;
               u.volume = 1.0;
+            } else if (role === "stan_vow_1") {
+              u.pitch = 0.86;
+              u.rate = 0.88;
+              u.volume = 1.0;
+            } else if (role === "narrator_uzumaki") {
+              u.pitch = 0.60;
+              u.rate = 0.98;
+              u.volume = 1.0;
+            } else if (role === "stan_uzumaki") {
+              u.pitch = 1.28;
+              u.rate = 1.10;
+              u.volume = 1.0;
+            } else if (role === "stan_vow_2") {
+              u.pitch = 0.72;
+              u.rate = 1.06;
+              u.volume = 1.0;
+            } else if (role === "narrator_cosmic") {
+              u.pitch = 0.54;
+              u.rate = 1.06;
+              u.volume = 1.0;
+            } else if (role === "stan_cosmic" || role === "stan_vow_3") {
+              u.pitch = role === "stan_vow_3" ? 0.56 : 1.38;
+              u.rate = 1.15;
+              u.volume = 1.0;
             } else if (role === "narrator") {
               u.pitch = 0.90;
               u.rate = 0.92;
@@ -549,6 +595,26 @@
               u.pitch = 0.65;
               u.rate = 0.90;
               u.volume = 0.95;
+            }
+            if (role && (role.includes("uzumaki") || role.includes("cosmic") || role.startsWith("stan_vow"))) {
+              try {
+                const ac = ensureCtx();
+                if (ac && masterGain) {
+                  const nowAc = ac.currentTime;
+                  const o = ac.createOscillator();
+                  const g = ac.createGain();
+                  o.type = role.includes("vow") ? "sawtooth" : "triangle";
+                  o.frequency.setValueAtTime(role.includes("vow") ? 130 : 210, nowAc);
+                  o.frequency.exponentialRampToValueAtTime(role.includes("cosmic") ? 520 : 340, nowAc + 0.45);
+                  g.gain.setValueAtTime(0.001, nowAc);
+                  g.gain.linearRampToValueAtTime(0.09, nowAc + 0.04);
+                  g.gain.exponentialRampToValueAtTime(0.0008, nowAc + 0.48);
+                  o.connect(g);
+                  g.connect(masterGain);
+                  o.start(nowAc);
+                  o.stop(nowAc + 0.50);
+                }
+              } catch (_) {}
             }
             const clearVoice = () => {
               if (this._voiceToken === token) {
@@ -945,12 +1011,84 @@
         font-size: 0.68rem;
       }
     }
+    body.uzumaki-mode canvas {
+      filter: grayscale(100%) contrast(235%) brightness(1.06);
+    }
+    #uzumaki-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 15;
+      pointer-events: none;
+      display: none;
+      overflow: hidden;
+    }
+    body.uzumaki-mode #uzumaki-overlay {
+      display: block;
+    }
+    #uzumaki-speedlines {
+      position: absolute;
+      inset: -12%;
+      background:
+        repeating-conic-gradient(
+          from 0deg at 50% 42%,
+          rgba(255, 255, 255, 0.22) 0deg 1.1deg,
+          rgba(0, 0, 0, 0.72) 1.1deg 2.8deg,
+          transparent 2.8deg 6.2deg
+        );
+      -webkit-mask-image: radial-gradient(circle at 50% 42%, transparent 22%, rgba(0, 0, 0, 0.85) 68%, black 100%);
+      mask-image: radial-gradient(circle at 50% 42%, transparent 22%, rgba(0, 0, 0, 0.85) 68%, black 100%);
+      animation: uzumakiSpinReverse 9s linear infinite;
+    }
+    #uzumaki-spiral-svg {
+      position: absolute;
+      left: 50%;
+      top: 40%;
+      width: 118vmax;
+      height: 118vmax;
+      transform: translate(-50%, -50%);
+      opacity: 0.28;
+      animation: uzumakiSpin 7.5s linear infinite;
+    }
+    .uzumaki-sfx {
+      position: absolute;
+      font-weight: 900;
+      color: #fff;
+      text-shadow: -3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000, 3px 3px 0 #000, 0 0 12px #000;
+      letter-spacing: 0.12em;
+      user-select: none;
+      animation: uzumakiShake 0.16s infinite alternate ease-in-out;
+    }
+    .uzumaki-sfx.sfx-1 { top: 8%; left: 4%; font-size: clamp(1.3rem, 3.4vw, 2.5rem); transform: rotate(-11deg); }
+    .uzumaki-sfx.sfx-2 { top: 10%; right: 4%; font-size: clamp(1.4rem, 3.6vw, 2.7rem); transform: rotate(9deg); }
+    .uzumaki-sfx.sfx-3 { top: 27%; left: 3%; font-size: clamp(1.1rem, 2.7vw, 2.0rem); transform: rotate(-6deg); }
+    @keyframes uzumakiSpin {
+      from { transform: translate(-50%, -50%) rotate(0deg); }
+      to { transform: translate(-50%, -50%) rotate(360deg); }
+    }
+    @keyframes uzumakiSpinReverse {
+      from { transform: rotate(0deg) scale(1.0); }
+      to { transform: rotate(-360deg) scale(1.04); }
+    }
+    @keyframes uzumakiShake {
+      from { margin-left: -2px; margin-top: -1px; }
+      to { margin-left: 2px; margin-top: 2px; }
+    }
   </style>
-<link rel="modulepreload" href="./tendy-quest-387279b67071d959.js" crossorigin="anonymous" integrity="sha384-2oG3tw0S0nQzTHvbPtJQmbAaQwd7lHBf6Sx0hgVv2/dh1Lywgl0NA3scIbmch8tw"><link rel="preload" href="./tendy-quest-387279b67071d959_bg.wasm" crossorigin="anonymous" integrity="sha384-ExNhu+U96wcDmgrGV70CDypFE7FZzID5dCc5csjSsgn7ZoAOoh3TWeCmLGdHuYo5" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-e4227100e51ef377.js" crossorigin="anonymous" integrity="sha384-/ttY/nCfE22su3HUa1jntrj2JT/u4YghQnEqWxdjxzLYr3WLmxeLcxAk1yPMRnvA"><link rel="preload" href="./tendy-quest-e4227100e51ef377_bg.wasm" crossorigin="anonymous" integrity="sha384-GEoswA8qAXyFgafbOiz/bIxwxdY+LoeTNIFYvLnAxe2mF19emI53d5JTmqpNXJW/" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
     <p>Loading Giant Kitchen (Rust + WebAssembly)...</p>
+  </div>
+  <div id="uzumaki-overlay" aria-hidden="true">
+    <div id="uzumaki-speedlines"></div>
+    <svg id="uzumaki-spiral-svg" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M200 200 C200 194,207 194,207 201 C207 210,192 211,191 199 C190 185,214 183,216 202 C218 223,182 225,180 198 C178 169,226 167,228 202 C230 238,169 240,167 197 C165 153,240 151,242 203 C244 254,154 256,152 196 C150 136,256 134,258 204 C260 272,138 274,136 195 C134 118,274 116,276 205 C278 292,120 294,118 194 C116 98,294 96,296 206 C298 314,100 316,98 193 C96 76,316 74,318 207 C320 338,78 340,76 192 C74 52,340 50,342 208 C344 364,54 366,52 191 C50 26,366 24,368 209" stroke="#ffffff" stroke-width="5.5" stroke-linecap="round" />
+      <path d="M200 200 C200 197,204 197,204 201 C204 206,195 206,195 200 C195 191,210 191,210 201 C210 214,187 215,187 199 C187 180,220 179,220 202 C220 229,176 230,175 198 C174 163,233 162,234 202 C235 245,162 246,160 197 C158 147,248 145,249 203 C250 263,146 264,144 196 C142 128,264 126,266 204 C268 282,129 283,127 195 C125 108,283 106,285 205 C287 302,110 303,108 194 C106 87,304 85,306 206 C308 325,89 326,87 193 C85 65,327 63,329 207" stroke="#000000" stroke-width="3" stroke-linecap="round" />
+    </svg>
+    <div class="uzumaki-sfx sfx-1">ゴゴゴゴ</div>
+    <div class="uzumaki-sfx sfx-2">渦巻!</div>
+    <div class="uzumaki-sfx sfx-3">パキッ!!</div>
   </div>
   <div id="touch-controls">
     <div id="joystick-zone" class="touch-ui">
@@ -1090,7 +1228,7 @@
           btnFullscreen.textContent = fs ? "EXIT" : "FULL";
           btnFullscreen.classList.toggle("highlight", !fs);
         }
-        const inCutsceneInit = /cutscene=1|anime=1|city_intro=1|headphones=1/.test(
+        const inCutsceneInit = /cutscene=1|anime=1|city_intro=1|headphones=1|headphones=2|uzumaki=1/.test(
           window.location.search
         );
         if (fsPrompt) {
@@ -1417,6 +1555,7 @@
         if (s.includes("city_intro=1")) return 4;
         if (s.includes("city=1")) return 5;
         if (s.includes("city_titan=1")) return 6;
+        if (s.includes("headphones=2") || s.includes("uzumaki=1")) return 8;
         if (s.includes("headphones=1")) return 7;
         return 0;
       })();
@@ -1447,6 +1586,11 @@
         if (btnDash) {
           btnDash.textContent = active ? "ROLL" : "DASH";
         }
+      }
+
+      function setUzumakiMode(level) {
+        const on = (level | 0) > 0;
+        document.body.classList.toggle("uzumaki-mode", on);
       }
 
       window.tendyFullscreen = {
@@ -1480,6 +1624,7 @@
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
         setPlaying,
         setBossMode,
+        setUzumakiMode,
         initMode() { const m = pendingInitMode; pendingInitMode = 0; return m; },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
       };
@@ -1499,8 +1644,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-387279b67071d959.js';
-const wasm = await init({ module_or_path: './tendy-quest-387279b67071d959_bg.wasm' });
+import init, * as bindings from './tendy-quest-e4227100e51ef377.js';
+const wasm = await init({ module_or_path: './tendy-quest-e4227100e51ef377_bg.wasm' });
 
 
 window.wasmBindings = bindings;

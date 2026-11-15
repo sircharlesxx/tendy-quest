@@ -11,7 +11,7 @@ mod imp {
         fn js_play_cutscene_music();
 
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playHeadphoneMusic)]
-        fn js_play_headphone_music();
+        fn js_play_headphone_music(level: u8);
 
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playBossMusic)]
         fn js_play_boss_music();
@@ -70,6 +70,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setBossMode)]
         fn js_set_boss_mode(active: bool);
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setUzumakiMode)]
+        fn js_set_uzumaki_mode(level: u8);
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = initMode)]
         fn js_init_mode() -> u32;
 
@@ -85,8 +88,8 @@ mod imp {
         js_play_cutscene_music();
     }
 
-    pub fn play_headphone_music() {
-        js_play_headphone_music();
+    pub fn play_headphone_music(level: u8) {
+        js_play_headphone_music(level);
     }
 
     pub fn play_boss_music() {
@@ -165,6 +168,10 @@ mod imp {
         js_set_boss_mode(active);
     }
 
+    pub fn set_uzumaki_mode(level: u8) {
+        js_set_uzumaki_mode(level);
+    }
+
     pub fn init_test_mode() -> u32 {
         js_init_mode()
     }
@@ -180,7 +187,7 @@ mod imp {
 
     pub fn play_cutscene_music() {}
 
-    pub fn play_headphone_music() {}
+    pub fn play_headphone_music(_level: u8) {}
 
     pub fn play_boss_music() {}
 
@@ -246,6 +253,8 @@ mod imp {
 
     pub fn set_touch_boss_mode(_active: bool) {}
 
+    pub fn set_uzumaki_mode(_level: u8) {}
+
     pub fn init_test_mode() -> u32 {
         0
     }
@@ -258,7 +267,8 @@ mod imp {
 pub use imp::{
     init_test_mode, is_muted, is_voice_speaking, play_bgm, play_boss_music, play_cutscene_music,
     play_headphone_music, play_sfx, play_viking_chant_music, set_touch_boss_mode,
-    set_touch_playing, speak_voice, take_cutscene_start_time, take_touch_action_tap,
-    take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump, take_touch_look_dx,
-    take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
+    set_touch_playing, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
+    take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
+    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x,
+    touch_move_y,
 };

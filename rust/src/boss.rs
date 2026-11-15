@@ -1793,6 +1793,9 @@ pub struct HeadphoneSpeakerText;
 #[derive(Component)]
 pub struct HeadphoneSubtitleText;
 
+#[derive(Component)]
+pub struct HeadphoneUzumakiVortex(pub f32);
+
 fn spawn_cracked_ipad(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -1941,36 +1944,103 @@ fn spawn_cutscene_headphones(
         });
 }
 
-fn headphone_cutscene_script(beat: u8) -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
-    match beat {
-        1 => (
-            "HEADPHONE FLASHBACK | SCENE 1/4",
-            "NARRATOR",
-            "\"CRUNCH! Time freezes! Beneath Stan's foot lies a crushed pair of headphones... awakening his darkest memories!\"",
-            "Crunch! Time freezes! Beneath Stan's foot lies a crushed pair of headphones, awakening his darkest memories.",
-            "narrator",
-        ),
-        2 => (
-            "HEADPHONE FLASHBACK | SCENE 2/4",
-            "NARRATOR",
-            "\"Every cracked iPad screen and snapped headset from his past rises before his eyes! So many fallen devices!\"",
-            "Every cracked iPad screen and snapped headset from his past rises before his eyes. So many fallen devices!",
-            "narrator",
-        ),
-        3 => (
-            "HEADPHONE FLASHBACK | SCENE 3/4",
-            "STAN (HEARTBROKEN)",
-            "\"No, not again! First my iPads, now another pair of headphones! Why must my feet destroy everything I love?!\"",
-            "No, not again! First my iPads, now another pair of headphones! Why must my feet destroy everything I love?",
-            "stan",
-        ),
-        _ => (
-            "HEADPHONE FLASHBACK | SCENE 4/4",
-            "STAN - SACRED VOW",
-            "\"Hear my sacred vow! From this day forth, I will NEVER step on another iPad or pair of headphones again!\"",
-            "Hear my sacred vow! From this day forth, I will never step on another iPad or pair of headphones again!",
-            "stan",
-        ),
+fn headphone_cutscene_script(
+    beat: u8,
+    rage_level: u8,
+) -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+    if rage_level >= 3 {
+        match beat {
+            1 => (
+                "UZUMAKI ABYSS #3+ | SCENE 1/4",
+                "UNHINGED NARRATOR",
+                "\"CRUNCH!! AGAIN?! THE SPIRAL ABYSS SWALLOWS STAN AS ANOTHER INNOCENT HEADSET EXPLODES UNDERFOOT!\"",
+                "Crunch! Again?! The spiral abyss swallows Stan as another innocent headset explodes underfoot!",
+                "narrator_cosmic",
+            ),
+            2 => (
+                "UZUMAKI ABYSS #3+ | SCENE 2/4",
+                "STAN (BEYOND SAVING)",
+                "\"AM I LIVING IN AN ELECTRONIC LANDFILL?! WHY IS NINETY PERCENT OF MY FLOOR MADE OF IPADS AND HEADPHONES?!\"",
+                "Am I living in an electronic landfill?! Why is ninety percent of my floor made of iPads and headphones?!",
+                "stan_cosmic",
+            ),
+            3 => (
+                "UZUMAKI ABYSS #3+ | SCENE 3/4",
+                "STAN (SPIRAL DELIRIUM)",
+                "\"I DO NOT EVEN HAVE SIX EARS! WHY DO I KEEP BUYING THEM AND DROPPING EVERY IPAD LIKE FLOOR TILE?!\"",
+                "I do not even have six ears! Why do I keep buying them and dropping every iPad like floor tile?!",
+                "stan_cosmic",
+            ),
+            _ => (
+                "UZUMAKI ABYSS #3+ | SCENE 4/4",
+                "STAN - COSMIC SPIRAL VOW",
+                "\"NO MORE SPIRALS! NO MORE CRUSHED TECH! ON MY SWELLED RED SOUL, NOT ONE MORE HEADPHONE SHALL DIE!!\"",
+                "No more spirals! No more crushed tech! On my swelled red soul, not one more headphone shall die!!",
+                "stan_vow_3",
+            ),
+        }
+    } else if rage_level == 2 {
+        match beat {
+            1 => (
+                "UZUMAKI SPIRAL CRISIS | SCENE 1/4",
+                "NARRATOR (SPIRAL DREAD)",
+                "\"GASHUNK!! THE SPIRAL CURSE RETURNS! Stan has crushed YET ANOTHER pair of headphones into the floor!\"",
+                "Gashunk!! The spiral curse returns! Stan has crushed yet another pair of headphones into the floor!",
+                "narrator_uzumaki",
+            ),
+            2 => (
+                "UZUMAKI SPIRAL CRISIS | SCENE 2/4",
+                "STAN (EXISTENTIAL CRISIS)",
+                "\"MY MIND IS SPIRALING! WHY DO I EVEN HAVE TWENTY PAIRS OF HEADPHONES?! WHO NEEDS THIS MANY HEADSETS?!\"",
+                "My mind is spiraling! Why do I even have twenty pairs of headphones?! Who needs this many headsets?!",
+                "stan_uzumaki",
+            ),
+            3 => (
+                "UZUMAKI SPIRAL CRISIS | SCENE 3/4",
+                "STAN (SPIRALING MADNESS)",
+                "\"AND WHY DO I ACTUALLY LEAVE BOTH HEADPHONES AND IPADS ALL OVER THE FLOOR ALL THE TIME?! TABLES EXIST! DESKS EXIST!\"",
+                "And why do I actually leave both headphones and iPads all over the floor all the time?! Tables exist! Desks exist!",
+                "stan_uzumaki",
+            ),
+            _ => (
+                "UZUMAKI SPIRAL CRISIS | SCENE 4/4",
+                "STAN - UZUMAKI VOW",
+                "\"BY THE TWISTING SPIRAL OF MADNESS — HEAR MY UNHINGED VOW! NEVER AGAIN SHALL AN IPAD OR HEADSET TOUCH THIS FLOOR!\"",
+                "By the twisting spiral of madness, hear my unhinged vow! Never again shall an iPad or headset touch this floor!",
+                "stan_vow_2",
+            ),
+        }
+    } else {
+        match beat {
+            1 => (
+                "HEADPHONE FLASHBACK | SCENE 1/4",
+                "NARRATOR",
+                "\"CRUNCH! Time freezes! Beneath Stan's foot lies a crushed pair of headphones... awakening his darkest memories!\"",
+                "Crunch! Time freezes! Beneath Stan's foot lies a crushed pair of headphones, awakening his darkest memories.",
+                "narrator",
+            ),
+            2 => (
+                "HEADPHONE FLASHBACK | SCENE 2/4",
+                "NARRATOR",
+                "\"Every cracked iPad screen and snapped headset from his past rises before his eyes! So many fallen devices!\"",
+                "Every cracked iPad screen and snapped headset from his past rises before his eyes. So many fallen devices!",
+                "narrator",
+            ),
+            3 => (
+                "HEADPHONE FLASHBACK | SCENE 3/4",
+                "STAN (HEARTBROKEN)",
+                "\"No, not again! Wait... why do I even own this many headphones, and why do I leave them on the floor?!\"",
+                "No, not again! Wait, why do I even own this many headphones, and why do I leave them on the floor?",
+                "stan",
+            ),
+            _ => (
+                "HEADPHONE FLASHBACK | SCENE 4/4",
+                "STAN - SACRED VOW",
+                "\"Hear my sacred vow! From this day forth, I will NEVER step on another iPad or pair of headphones again!\"",
+                "Hear my sacred vow! From this day forth, I will never step on another iPad or pair of headphones again!",
+                "stan_vow_1",
+            ),
+        }
     }
 }
 
@@ -1997,16 +2067,27 @@ pub fn enter_headphone_cutscene(
     stats.rage_pulse_flash = 1.0;
     stats.hint_text.clear();
 
+    let uzumaki = stats.rage_level >= 2;
+    let rage_u8 = stats.rage_level.min(255) as u8;
     crate::audio::set_touch_playing(false);
     crate::audio::play_sfx("headphone_crunch");
     crate::audio::play_sfx("thunder");
-    crate::audio::play_headphone_music();
+    crate::audio::play_headphone_music(rage_u8);
+    crate::audio::set_uzumaki_mode(if uzumaki { rage_u8.saturating_sub(1) } else { 0 });
 
-    // Moody dramatic memory void atmosphere
-    commands.insert_resource(ClearColor(Color::srgb(0.02, 0.015, 0.05)));
+    // Moody dramatic memory void atmosphere (stark manga void in 2nd+ Uzumaki mode)
+    commands.insert_resource(ClearColor(if uzumaki {
+        Color::srgb(0.01, 0.01, 0.01)
+    } else {
+        Color::srgb(0.02, 0.015, 0.05)
+    }));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.36, 0.28, 0.56),
-        brightness: 90.0,
+        color: if uzumaki {
+            Color::WHITE
+        } else {
+            Color::srgb(0.36, 0.28, 0.56)
+        },
+        brightness: if uzumaki { 160.0 } else { 90.0 },
     });
 
     let base_y = 120.0_f32;
@@ -2021,31 +2102,44 @@ pub fn enter_headphone_cutscene(
         player.attack_timer = 0.0;
     }
 
-    // Dark memory floor & crimson/cyan dramatic spotlights
+    // Dark memory floor & dramatic spotlights
     commands.spawn((
         HeadphoneCutsceneEntity,
         LevelEntity,
         Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(26.0, 0.3, 22.0)))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.04, 0.04, 0.08),
+            base_color: if uzumaki {
+                Color::srgb(0.02, 0.02, 0.02)
+            } else {
+                Color::srgb(0.04, 0.04, 0.08)
+            },
             perceptual_roughness: 0.25,
             metallic: 0.35,
             ..default()
         })),
         Transform::from_xyz(0.0, base_y - 0.15, 0.0),
     ));
-    for (lx, ly, lz, col, intensity) in [
-        (0.0_f32, base_y + 4.5, 3.2_f32, Color::srgb(0.45, 0.78, 1.0), 140000.0),
-        (-3.2, base_y + 3.6, -1.8, Color::srgb(1.0, 0.28, 0.35), 110000.0),
-        (3.2, base_y + 3.6, -1.8, Color::srgb(1.0, 0.82, 0.25), 110000.0),
-    ] {
+    let lights = if uzumaki {
+        [
+            (0.0_f32, base_y + 4.8, 3.6_f32, Color::WHITE, 210000.0),
+            (-3.4, base_y + 3.6, -1.6, Color::srgb(0.92, 0.92, 0.92), 140000.0),
+            (3.4, base_y + 3.6, -1.6, Color::srgb(0.92, 0.92, 0.92), 140000.0),
+        ]
+    } else {
+        [
+            (0.0_f32, base_y + 4.5, 3.2_f32, Color::srgb(0.45, 0.78, 1.0), 140000.0),
+            (-3.2, base_y + 3.6, -1.8, Color::srgb(1.0, 0.28, 0.35), 110000.0),
+            (3.2, base_y + 3.6, -1.8, Color::srgb(1.0, 0.82, 0.25), 110000.0),
+        ]
+    };
+    for (lx, ly, lz, col, intensity) in lights {
         commands.spawn((
             HeadphoneCutsceneEntity,
             LevelEntity,
             PointLight {
                 color: col,
                 intensity,
-                range: 24.0,
+                range: 26.0,
                 shadows_enabled: false,
                 ..default()
             },
@@ -2096,8 +2190,103 @@ pub fn enter_headphone_cutscene(
         );
     }
 
+    // 2nd+ trigger: Towering Junji Ito Uzumaki Spiral Vortex & orbiting tech graveyard behind Stan!
+    if uzumaki {
+        let ink_white = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            emissive: LinearRgba::new(2.8, 2.8, 2.8, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let ink_black = materials.add(StandardMaterial {
+            base_color: Color::BLACK,
+            emissive: LinearRgba::BLACK,
+            unlit: true,
+            ..default()
+        });
+        commands
+            .spawn((
+                HeadphoneCutsceneEntity,
+                HeadphoneUzumakiVortex(2.2),
+                LevelEntity,
+                Transform::from_xyz(0.0, base_y + 2.35, -4.6),
+            ))
+            .with_children(|v| {
+                for r in 0..10 {
+                    let inner = 0.55 + (r as f32) * 0.55;
+                    let outer = inner + 0.28;
+                    let mat = if r % 2 == 0 {
+                        ink_white.clone()
+                    } else {
+                        ink_black.clone()
+                    };
+                    v.spawn((
+                        Mesh3d(meshes.add(Torus::new(inner, outer))),
+                        MeshMaterial3d(mat),
+                        Transform::from_xyz(0.0, 0.0, (r as f32) * 0.02)
+                            .with_rotation(Quat::from_rotation_x(PI * 0.5)),
+                    ));
+                }
+                for a in 0..16 {
+                    let ang = (a as f32) * (std::f32::consts::TAU / 16.0);
+                    v.spawn((
+                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.14, 12.2, 0.06)))),
+                        MeshMaterial3d(if a % 2 == 0 {
+                            ink_white.clone()
+                        } else {
+                            ink_black.clone()
+                        }),
+                        Transform::from_xyz(ang.cos() * 0.25, ang.sin() * 0.25, -0.05)
+                            .with_rotation(Quat::from_rotation_z(ang + 0.28)),
+                    ));
+                }
+            });
+
+        // Counter-rotating swirling spiral crossbars + orbiting cracked iPads & headsets
+        commands
+            .spawn((
+                HeadphoneCutsceneEntity,
+                HeadphoneUzumakiVortex(-3.2),
+                LevelEntity,
+                Transform::from_xyz(0.0, base_y + 2.35, -4.25),
+            ))
+            .with_children(|v| {
+                for i in 0..8 {
+                    let ang = (i as f32) * (std::f32::consts::TAU / 8.0);
+                    let r = 1.6 + (i as f32) * 0.42;
+                    v.spawn((
+                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.24, 1.35, 0.08)))),
+                        MeshMaterial3d(ink_white.clone()),
+                        Transform::from_xyz(ang.cos() * r, ang.sin() * r, 0.0)
+                            .with_rotation(Quat::from_rotation_z(ang - 0.55)),
+                    ));
+                }
+            });
+
+        for i in 0..6 {
+            let ang = (i as f32) * (std::f32::consts::TAU / 6.0) + 0.3;
+            let rad = 2.6 + (i as f32) * 0.45;
+            spawn_cracked_ipad(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                Vec3::new(ang.cos() * rad, base_y + 2.4 + ang.sin() * 1.4, -3.7),
+                Quat::from_rotation_z(ang) * Quat::from_rotation_y(ang * 0.4),
+                0.78,
+            );
+            spawn_cutscene_headphones(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                Vec3::new((ang + 0.5).cos() * 3.4, base_y + 1.8 + (ang + 0.5).sin() * 1.2, -3.2),
+                ang,
+                true,
+            );
+        }
+    }
+
     // Bottom cinematic flashback dialogue box
-    let (badge, speaker, sub, _, _) = headphone_cutscene_script(1);
+    let (badge, speaker, sub, _, _) = headphone_cutscene_script(1, stats.rage_level.min(255) as u8);
     commands
         .spawn((
             HeadphoneCutsceneOverlay,
@@ -2120,12 +2309,20 @@ pub fn enter_headphone_cutscene(
                     flex_direction: FlexDirection::Column,
                     row_gap: Val::Px(6.0),
                     padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
-                    border: UiRect::all(Val::Px(2.0)),
+                    border: UiRect::all(Val::Px(if uzumaki { 3.0 } else { 2.0 })),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.04, 0.03, 0.09, 0.90)),
-                BorderColor(Color::srgb(0.45, 0.82, 1.0)),
-                BorderRadius::all(Val::Px(12.0)),
+                BackgroundColor(if uzumaki {
+                    Color::srgba(0.02, 0.02, 0.02, 0.96)
+                } else {
+                    Color::srgba(0.04, 0.03, 0.09, 0.90)
+                }),
+                BorderColor(if uzumaki {
+                    Color::WHITE
+                } else {
+                    Color::srgb(0.45, 0.82, 1.0)
+                }),
+                BorderRadius::all(Val::Px(if uzumaki { 4.0 } else { 12.0 })),
             ))
             .with_children(|card| {
                 card.spawn(Node {
@@ -2141,7 +2338,11 @@ pub fn enter_headphone_cutscene(
                             font_size: 14.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.45, 0.88, 1.0)),
+                        TextColor(if uzumaki {
+                            Color::WHITE
+                        } else {
+                            Color::srgb(0.45, 0.88, 1.0)
+                        }),
                     ));
                     row.spawn((
                         HeadphoneSceneBadgeText,
@@ -2150,7 +2351,11 @@ pub fn enter_headphone_cutscene(
                             font_size: 13.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(1.0, 0.72, 0.35)),
+                        TextColor(if uzumaki {
+                            Color::srgb(0.88, 0.88, 0.88)
+                        } else {
+                            Color::srgb(1.0, 0.72, 0.35)
+                        }),
                     ));
                 });
                 card.spawn((
@@ -2170,8 +2375,18 @@ pub fn update_headphone_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
-    mut player_q: Query<&mut Transform, (With<Player>, Without<Camera3d>)>,
-    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>)>,
+    mut player_q: Query<
+        &mut Transform,
+        (With<Player>, Without<Camera3d>, Without<HeadphoneUzumakiVortex>),
+    >,
+    mut cam_q: Query<
+        &mut Transform,
+        (With<Camera3d>, Without<Player>, Without<HeadphoneUzumakiVortex>),
+    >,
+    mut vortex_q: Query<
+        (&HeadphoneUzumakiVortex, &mut Transform),
+        (Without<Camera3d>, Without<Player>),
+    >,
     mut badge_q: Query<&mut Text, With<HeadphoneSceneBadgeText>>,
     mut spk_q: Query<&mut Text, (With<HeadphoneSpeakerText>, Without<HeadphoneSceneBadgeText>)>,
     mut sub_q: Query<
@@ -2223,7 +2438,8 @@ pub fn update_headphone_cutscene(
 
     if target_beat != stats.cutscene_beat && target_beat <= 4 {
         stats.cutscene_beat = target_beat;
-        let (badge, speaker, sub, voice, role) = headphone_cutscene_script(target_beat);
+        let (badge, speaker, sub, voice, role) =
+            headphone_cutscene_script(target_beat, stats.rage_level.min(255) as u8);
         if let Ok(mut b) = badge_q.get_single_mut() {
             b.0 = badge.to_string();
         }
@@ -2236,7 +2452,12 @@ pub fn update_headphone_cutscene(
         crate::audio::speak_voice(voice, role);
     }
 
-    if stats.cutscene_beat >= 3 {
+    let uzumaki = stats.rage_level >= 2;
+    for (v, mut v_tf) in &mut vortex_q {
+        v_tf.rotate_z(dt * v.0);
+    }
+
+    if stats.cutscene_beat >= 3 || uzumaki {
         stats.rage_pulse_flash = (stats.rage_pulse_flash - dt * 2.2).max(0.0);
         stats.rage_swell_timer += dt;
         while stats.rage_swell_timer >= 0.5 {
@@ -2249,11 +2470,17 @@ pub fn update_headphone_cutscene(
             let swell_s = 1.45
                 + ((stats.rage_swell_ticks.saturating_sub(1)).min(6) as f32) * 0.14
                 + stats.rage_pulse_flash * 0.16;
+            let shake = if uzumaki {
+                (t * 24.0).sin() * 0.08
+            } else {
+                0.0
+            };
             p_tf.scale = Vec3::new(
                 swell_s * (1.0 + stats.rage_pulse_flash * 0.08),
                 swell_s * (1.0 + stats.rage_pulse_flash * 0.12),
                 swell_s * (1.0 + stats.rage_pulse_flash * 0.08),
             );
+            p_tf.rotation = Quat::from_rotation_y(PI + shake);
         }
     } else if let Ok(mut p_tf) = player_q.get_single_mut() {
         p_tf.scale = Vec3::splat(1.45);
@@ -2271,32 +2498,35 @@ pub fn update_headphone_cutscene(
                 )
             }
             2 => {
-                // Elevated sweeping pan across all 5 Cracked iPads & Snapped Headsets
+                // Elevated sweeping pan across all 5 Cracked iPads & Uzumaki Spiral
                 let u = ((t - 6.2) / 6.6).clamp(0.0, 1.0);
                 (
                     Vec3::new(-4.0 + u * 8.0, base_y + 2.85, 3.8),
-                    Vec3::new(-0.8 + u * 1.6, base_y + 1.25, -2.8),
+                    Vec3::new(-0.8 + u * 1.6, base_y + 1.55, -3.4),
                 )
             }
             3 => {
-                // Remorseful push-in on Stan's face with cracked iPads rising behind him
+                // Existential-crisis push-in on Stan's face with spiral & cracked iPads behind him
                 let u = ((t - 12.8) / 6.6).clamp(0.0, 1.0);
                 (
                     Vec3::new(-1.35 + u * 0.65, base_y + 2.15, 2.75 - u * 0.35),
-                    Vec3::new(0.0, base_y + 1.85, -0.4),
+                    Vec3::new(0.0, base_y + 1.95, -0.8),
                 )
             }
             _ => {
-                // Heroic low-angle crane orbit as Stan swears his Sacred Vow above subtitle bar
+                // Heroic / unhinged low-angle crane orbit as Stan swears his Sacred Vow
                 let u = ((t - 19.4) / 6.6).clamp(0.0, 1.0);
                 (
                     Vec3::new(2.3 - u * 1.3, base_y + 1.65 + u * 0.75, 4.1 - u * 0.3),
-                    Vec3::new(0.0, base_y + 1.45, -0.6),
+                    Vec3::new(0.0, base_y + 1.65, -0.9),
                 )
             }
         };
         c_tf.translation = cam_pos;
         c_tf.look_at(look_at, Vec3::Y);
+        if uzumaki {
+            c_tf.rotate_local_z((t * 1.8).sin() * 0.16);
+        }
     }
 }
 
@@ -2308,6 +2538,7 @@ pub fn exit_headphone_cutscene(
     mut hud_q: Query<&mut Node, With<HudOverlay>>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
 ) {
+    crate::audio::set_uzumaki_mode(0);
     for e in &ent_q {
         commands.entity(e).despawn_recursive();
     }

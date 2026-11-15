@@ -458,6 +458,10 @@ pub fn check_url_test_mode(
             next_state.set(GameState::CityPlay);
         }
         7 => next_state.set(GameState::HeadphoneCutscene),
+        8 => {
+            stats.rage_level = 1;
+            next_state.set(GameState::HeadphoneCutscene);
+        }
         _ => {}
     }
 }
@@ -686,6 +690,7 @@ pub fn handle_restart_input(
     stats.audio_muted = was_muted;
     *orbit = CameraOrbit::default();
     crate::audio::set_touch_boss_mode(false);
+    crate::audio::set_uzumaki_mode(0);
     commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
     commands.insert_resource(AmbientLight {
         color: Color::srgb(1.0, 0.96, 0.90),
