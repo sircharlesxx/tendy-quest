@@ -72,18 +72,18 @@ pub fn camera_mouse_look(
 
     if mouse_motion.delta != Vec2::ZERO {
         orbit.yaw -= mouse_motion.delta.x * 0.0045;
-        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.06, 1.15);
+        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.20, 1.25);
     }
 
     let t_dx = crate::audio::take_touch_look_dx();
     let t_dy = crate::audio::take_touch_look_dy();
     if t_dx != 0.0 || t_dy != 0.0 {
         orbit.yaw -= t_dx * 0.0065;
-        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(0.06, 1.15);
+        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(0.20, 1.25);
     }
 
     if mouse_scroll.delta.y != 0.0 {
-        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 0.5).clamp(3.5, 18.0);
+        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 0.5).clamp(2.6, 10.5);
     }
 }
 
@@ -304,30 +304,154 @@ pub fn player_movement(
     }
 }
 
+fn ray_aabb_t(origin: Vec3, dir: Vec3, box_min: Vec3, box_max: Vec3) -> Option<(f32, f32)> {
+    let mut t_min = -f32::INFINITY;
+    let mut t_max = f32::INFINITY;
+    for axis in 0..3 {
+        let o = origin[axis];
+        let d = dir[axis];
+        let mn = box_min[axis];
+        let mx = box_max[axis];
+        if d.abs() < 1e-6 {
+            if o < mn || o > mx {
+                return None;
+            }
+        } else {
+            let inv = 1.0 / d;
+            let mut t1 = (mn - o) * inv;
+            let mut t2 = (mx - o) * inv;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+            }
+            t_min = t_min.max(t1);
+            t_max = t_max.min(t2);
+            if t_min > t_max {
+                return None;
+            }
+        }
+    }
+    if t_max > 0.0 {
+        Some((t_min, t_max))
+    } else {
+        None
+    }
+}
+
 pub fn update_camera(
     time: Res<Time>,
-    orbit: Res<CameraOrbit>,
+    mut orbit: ResMut<CameraOrbit>,
     stats: Res<PlayerStats>,
-    player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
-    mut cam_q: Query<&mut Transform, With<Camera3d>>,
+    player_q: Query<&Transform, (With<Player>, Without<Camera3d>, Without<PlatformBox>)>,
+    platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<Camera3d>)>,
+    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
     let (Ok(p_tf), Ok(mut c_tf)) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
-    let cam_dist = orbit.distance * (0.72 + stats.player_scale * 0.35);
-    let anchor_y = 0.45 + stats.player_scale * 0.95;
-    let anchor = p_tf.translation + Vec3::new(0.0, anchor_y, 0.0);
-    let offset = Vec3::new(
+    let anchor_y = 0.55 + stats.player_scale * 0.92;
+    let anchor = p_tf.translation + Vec3::Y * anchor_y;
+    let desired_dist = orbit.distance * (0.68 + stats.player_scale.sqrt() * 0.28);
+    let min_cam_dist = (0.55 + stats.player_scale * 0.22).min(desired_dist);
+    let dir = Vec3::new(
         orbit.yaw.sin() * orbit.pitch.cos(),
         orbit.pitch.sin(),
         orbit.yaw.cos() * orbit.pitch.cos(),
-    ) * cam_dist;
-    let target_pos = anchor + offset;
-    let dt = (time.delta_secs() * 12.0).min(1.0);
-    c_tf.translation = c_tf.translation.lerp(target_pos, dt);
-    let look_fwd = 1.2 * (0.5 + stats.player_scale * 0.25);
-    let look_target = p_tf.translation + Vec3::new(0.0, anchor_y * 0.92, 0.0)
+    )
+    .normalize();
+
+    // Spring-arm ray-AABB sweep against all solid level obstacles
+    let mut safe_dist = desired_dist;
+    let sweep_pad = Vec3::splat(0.22);
+    for (p_tf_box, p_box) in &platform_q {
+        let bmin = p_tf_box.translation - p_box.half_extents - sweep_pad;
+        let bmax = p_tf_box.translation + p_box.half_extents + sweep_pad;
+        if let Some((t_min, t_max)) = ray_aabb_t(anchor, dir, bmin, bmax) {
+            if t_max > 0.0 && t_min < safe_dist {
+                if t_min > 0.0 {
+                    safe_dist = safe_dist.min((t_min - 0.14).max(min_cam_dist));
+                } else if (p_tf_box.translation - anchor).dot(dir) > 0.0 {
+                    safe_dist = min_cam_dist;
+                }
+            }
+        }
+    }
+
+    // Clamp boom along room walls/floor/ceiling
+    let room_min = Vec3::new(-21.4, -5.45, -21.8);
+    let room_max = Vec3::new(23.4, 13.5, 24.4);
+    for axis in 0..3 {
+        if dir[axis] > 1e-4 {
+            let t = ((room_max[axis] - anchor[axis]) / dir[axis]).max(min_cam_dist);
+            safe_dist = safe_dist.min(t);
+        } else if dir[axis] < -1e-4 {
+            let t = ((room_min[axis] - anchor[axis]) / dir[axis]).max(min_cam_dist);
+            safe_dist = safe_dist.min(t);
+        }
+    }
+
+    // Asymmetric distance smoothing along spherical arm (prevents chord corner clipping)
+    let dt = time.delta_secs().min(0.05);
+    let rate = if safe_dist < orbit.current_dist {
+        30.0
+    } else {
+        7.0
+    };
+    orbit.current_dist += (safe_dist - orbit.current_dist) * (dt * rate).min(1.0);
+    orbit.current_dist = orbit.current_dist.clamp(min_cam_dist, desired_dist);
+
+    let mut cam_pos = anchor + dir * orbit.current_dist;
+
+    // 2-pass 3D camera sphere pushout to guarantee the near clip plane never intersects geometry
+    let cam_margin = Vec3::splat(0.36);
+    for _ in 0..2 {
+        for (p_tf_box, p_box) in &platform_q {
+            let top_y = p_tf_box.translation.y + p_box.half_extents.y;
+            let bmin = p_tf_box.translation - p_box.half_extents - cam_margin;
+            let bmax = p_tf_box.translation + p_box.half_extents + cam_margin;
+            if cam_pos.x > bmin.x
+                && cam_pos.x < bmax.x
+                && cam_pos.y > bmin.y
+                && cam_pos.y < bmax.y
+                && cam_pos.z > bmin.z
+                && cam_pos.z < bmax.z
+            {
+                let dx_l = cam_pos.x - bmin.x;
+                let dx_r = bmax.x - cam_pos.x;
+                let dy_b = cam_pos.y - bmin.y;
+                let dy_t = bmax.y - cam_pos.y;
+                let dz_b = cam_pos.z - bmin.z;
+                let dz_f = bmax.z - cam_pos.z;
+                let mut m = dx_l.min(dx_r).min(dy_t).min(dz_b).min(dz_f);
+                if anchor.y < top_y {
+                    m = m.min(dy_b);
+                }
+                if anchor.y >= top_y && dy_t <= m + 0.45 {
+                    cam_pos.y = bmax.y;
+                } else if (m - dy_t).abs() < 0.001 {
+                    cam_pos.y = bmax.y;
+                } else if (m - dy_b).abs() < 0.001 && anchor.y < top_y {
+                    cam_pos.y = bmin.y;
+                } else if (m - dx_l).abs() < 0.001 {
+                    cam_pos.x = bmin.x;
+                } else if (m - dx_r).abs() < 0.001 {
+                    cam_pos.x = bmax.x;
+                } else if (m - dz_b).abs() < 0.001 {
+                    cam_pos.z = bmin.z;
+                } else {
+                    cam_pos.z = bmax.z;
+                }
+            }
+        }
+    }
+
+    cam_pos = cam_pos.clamp(room_min, room_max);
+
+    let zoom_ratio = (orbit.current_dist / desired_dist.max(0.01)).clamp(0.15, 1.0);
+    let look_fwd = 1.0 * (0.45 + stats.player_scale.sqrt() * 0.22) * zoom_ratio;
+    let look_target = p_tf.translation
+        + Vec3::new(0.0, anchor_y * 0.88, 0.0)
         - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * look_fwd;
+    c_tf.translation = cam_pos;
     c_tf.look_at(look_target, Vec3::Y);
 }
 

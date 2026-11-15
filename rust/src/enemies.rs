@@ -51,8 +51,8 @@ pub fn spawn_initial_enemies_inner(commands: &mut Commands, asset_server: &Asset
         (EnemyKind::KaleSlime, Vec3::new(2.8, 0.0, -3.5)),
         (EnemyKind::BroccoliBrute, Vec3::new(-1.8, 0.0, -11.0)),
         (EnemyKind::CarrotLancer, Vec3::new(2.6, 0.0, -13.5)),
-        (EnemyKind::BroccoliBrute, Vec3::new(13.5, 0.0, 4.0)),
-        (EnemyKind::CarrotLancer, Vec3::new(8.0, -6.0, -8.0)),
+        (EnemyKind::BroccoliBrute, Vec3::new(15.0, 0.0, 4.0)),
+        (EnemyKind::CarrotLancer, Vec3::new(9.0, -6.0, -8.0)),
     ];
     for (kind, pos) in spots {
         spawn_enemy(commands, asset_server, kind, pos);
@@ -108,8 +108,8 @@ pub fn update_enemies(
         stats.wave += 1;
         let spawns = [
             (EnemyKind::BroccoliBrute, Vec3::new(-4.0, 0.0, 4.0)),
-            (EnemyKind::CarrotLancer, Vec3::new(13.5, 0.0, -3.5)),
-            (EnemyKind::KaleSlime, Vec3::new(12.5, -6.0, 3.0)),
+            (EnemyKind::CarrotLancer, Vec3::new(15.0, 0.0, -3.5)),
+            (EnemyKind::KaleSlime, Vec3::new(9.0, -6.0, 3.0)),
         ];
         for (kind, pos) in spawns {
             spawn_enemy(&mut commands, &asset_server, kind, pos);
@@ -118,9 +118,9 @@ pub fn update_enemies(
 
     for (mut e_tf, mut enemy) in &mut enemy_q {
         let (min_x, max_x, min_z, max_z) = if enemy.origin.y < -1.0 {
-            (7.4_f32, 20.8_f32, -15.2_f32, 22.5_f32)
-        } else if enemy.origin.x > 9.0 {
-            (10.0_f32, 17.0_f32, -9.5_f32, 9.5_f32)
+            (7.5_f32, 10.5_f32, -15.2_f32, 9.5_f32)
+        } else if enemy.origin.x > 10.5 {
+            (11.5_f32, 18.5_f32, -9.5_f32, 9.5_f32)
         } else {
             (-6.5_f32, 6.5_f32, -20.5_f32, 20.5_f32)
         };

@@ -1176,26 +1176,26 @@ def build_kitchen_environment():
 
     # Full-Room Kitchen & Dining Floor (X in [-22, 24], Y_blender in [-26, 26], top at Z = -6.0)
     add_cube(1.0, (1.0, 0.0, -6.25), scale=(46.0, 52.0, 0.5), mat=floor)
-    # Cozy Kitchen Runner Rug along main floor aisle
-    add_cube(1.0, (6.5, 4.0, -5.96), scale=(7.0, 26.0, 0.08), mat=rug)
-    add_cube(1.0, (6.5, 4.0, -5.955), scale=(6.2, 25.0, 0.07), mat=rug_trim)
-    add_cube(1.0, (6.5, 4.0, -5.95), scale=(5.4, 24.0, 0.07), mat=rug)
+    # Cozy Kitchen Runner Rug centered along widened main floor aisle (X=9.0)
+    add_cube(1.0, (9.0, 4.0, -5.96), scale=(7.0, 26.0, 0.08), mat=rug)
+    add_cube(1.0, (9.0, 4.0, -5.955), scale=(6.2, 25.0, 0.07), mat=rug_trim)
+    add_cube(1.0, (9.0, 4.0, -5.95), scale=(5.4, 24.0, 0.07), mat=rug)
 
     # Zone 2: Cutting-Board Bridge & Center Kitchen Island (top at Z=0.0, base down to -6.0 floor)
-    add_cube(1.0, (8.2, -2.0, 0.06), scale=(3.8, 3.2, 0.14), mat=board_mat, uv_scale=0.35, smooth=True, bevel=0.03)
-    add_cube(1.0, (13.5, 0.0, -0.4), scale=(8.0, 20.0, 0.8), mat=wood, uv_scale=(0.14, 0.04))
-    add_cube(1.0, (13.5, 0.0, -3.4), scale=(7.6, 19.4, 5.2), mat=cab)
+    add_cube(1.0, (9.0, -2.0, 0.06), scale=(4.4, 3.2, 0.14), mat=board_mat, uv_scale=0.35, smooth=True, bevel=0.03)
+    add_cube(1.0, (15.0, 0.0, -0.4), scale=(8.0, 20.0, 0.8), mat=wood, uv_scale=(0.14, 0.04))
+    add_cube(1.0, (15.0, 0.0, -3.4), scale=(7.6, 19.4, 5.2), mat=cab)
 
     # Zone 3: 2 Giant Stepping Stools connecting Island/Counter to the -6.0 Floor
-    # Upper Stool at (8.5, -12.5, -2.0 -> Bevy Z = +12.5, top Y = -1.85)
-    add_cube(1.0, (8.5, -12.5, -2.0), scale=(3.2, 3.2, 0.30), mat=table_top, smooth=True, bevel=0.04)
+    # Upper Stool at (8.8, -12.5, -2.0 -> Bevy Z = +12.5, top Y = -1.85)
+    add_cube(1.0, (8.8, -12.5, -2.0), scale=(3.2, 3.2, 0.30), mat=table_top, smooth=True, bevel=0.04)
     for lx, ly in [(-1.25, -1.25), (1.25, -1.25), (-1.25, 1.25), (1.25, 1.25)]:
-        add_cylinder(0.14, 3.85, (8.5 + lx, -12.5 + ly, -4.075), mat=stool_leg, vertices=16)
+        add_cylinder(0.14, 3.85, (8.8 + lx, -12.5 + ly, -4.075), mat=stool_leg, vertices=16)
 
-    # Lower Stool at (5.5, -16.5, -4.0 -> Bevy Z = +16.5, top Y = -3.85)
-    add_cube(1.0, (5.5, -16.5, -4.0), scale=(3.2, 3.2, 0.30), mat=table_top, smooth=True, bevel=0.04)
+    # Lower Stool at (8.8, -16.5, -4.0 -> Bevy Z = +16.5, top Y = -3.85)
+    add_cube(1.0, (8.8, -16.5, -4.0), scale=(3.2, 3.2, 0.30), mat=table_top, smooth=True, bevel=0.04)
     for lx, ly in [(-1.25, -1.25), (1.25, -1.25), (-1.25, 1.25), (1.25, 1.25)]:
-        add_cylinder(0.14, 1.85, (5.5 + lx, -16.5 + ly, -5.075), mat=stool_leg, vertices=16)
+        add_cylinder(0.14, 1.85, (8.8 + lx, -16.5 + ly, -5.075), mat=stool_leg, vertices=16)
 
     # Dining Table (Y_bl = +9.0 -> Bevy Z = -9.0, top Y = -1.2) & Chair (Y_bl = +3.2 -> Bevy Z = -3.2, top Y = -3.2)
     add_cube(1.0, (-13.0, 9.0, -1.35), scale=(6.6, 10.0, 0.30), mat=table_top, smooth=True, bevel=0.04)
@@ -1211,10 +1211,10 @@ def build_kitchen_environment():
     # Far outer walls enclosing the full room cleanly down to Floor (-6.0)
     add_cube(1.0, (-22.3, 0.0, 5.0), scale=(0.6, 52.0, 22.0), mat=wall)
     add_cube(1.0, (24.3, 0.0, 5.0), scale=(0.6, 52.0, 22.0), mat=wall)
-    # Left overhanging wooden upper kitchen cabinets along the tiled backsplash
-    add_cube(1.0, (-5.7, -8.0, 8.6), scale=(3.4, 20.0, 5.2), mat=cab)
-    for cz in (6.1, 11.1):
-        add_cube(1.0, (-3.95, -8.0, cz), scale=(0.15, 20.0, 0.24), mat=cab_trim)
+    # Left overhanging wooden upper kitchen cabinets raised & recessed out of camera orbit
+    add_cube(1.0, (-6.2, -8.0, 11.0), scale=(2.3, 20.0, 4.4), mat=cab)
+    for cz in (8.9, 13.1):
+        add_cube(1.0, (-5.0, -8.0, cz), scale=(0.15, 20.0, 0.24), mat=cab_trim)
 
     # 3. Wide Warm Sage Back Wall across entire room down to Floor (-6.0)
     add_cube(1.0, (1.0, 22.8, 5.0), scale=(48.0, 0.8, 22.0), mat=wall)
@@ -1245,15 +1245,15 @@ def build_kitchen_environment():
     add_cylinder(0.16, 2.1, (5.0, 21.75, 1.05), mat=steel)
     add_torus(0.60, 0.13, (5.0, 21.15, 2.05), rotation=(0, math.pi / 2, 0), mat=steel)
 
-    # 6. Open Wooden Back-Left Shelves: climbable lower shelf at (-2.6, 20.2, 2.7) + upper shelf at Z=6.8
+    # 6. Open Wooden Back-Left Shelves: climbable lower shelf at (-2.6, 20.2, 2.7) + raised upper shelf at Z=8.2
     add_cube(1.0, (-2.6, 20.2, 2.7), scale=(6.6, 2.4, 0.24), mat=board_mat, uv_scale=0.4)
-    add_cube(1.0, (-2.6, 21.7, 6.8), scale=(6.6, 1.4, 0.24), mat=board_mat, uv_scale=0.4)
+    add_cube(1.0, (-2.6, 21.7, 8.2), scale=(6.6, 1.4, 0.24), mat=board_mat, uv_scale=0.4)
     # Props tucked on sides of climbable lower shelf (top at Z=2.82)
     add_sphere(0.45, (-5.1, 20.8, 3.12), scale=(1.0, 1.0, 0.62), mat=blue_cer)
     add_cylinder(0.32, 0.65, (-0.3, 20.8, 3.16), mat=white_cer)
-    # Props on upper shelf (z ~ 7.0)
-    add_cylinder(0.75, 0.34, (-3.6, 21.65, 7.12), mat=plant_g)
-    add_cylinder(0.44, 0.95, (-1.6, 21.65, 7.42), mat=white_cer)
+    # Props on upper shelf (z ~ 8.5)
+    add_cylinder(0.75, 0.34, (-3.6, 21.65, 8.52), mat=plant_g)
+    add_cylinder(0.44, 0.95, (-1.6, 21.65, 8.82), mat=white_cer)
 
     # 7. Left-Side Foreground Kitchen Props
     add_cube(1.0, (-6.55, -12.0, 2.05), scale=(0.24, 2.35, 3.9), rotation=(0, -0.14, 0), mat=board_mat, uv_scale=0.45, smooth=True, bevel=0.04)

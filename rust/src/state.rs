@@ -83,14 +83,16 @@ pub struct CameraOrbit {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    pub current_dist: f32,
 }
 
 impl Default for CameraOrbit {
     fn default() -> Self {
         Self {
             yaw: 0.0,
-            pitch: 0.32,
-            distance: 6.8,
+            pitch: 0.38,
+            distance: 5.4,
+            current_dist: 5.4,
         }
     }
 }

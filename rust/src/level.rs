@@ -245,15 +245,15 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(8.2, 0.0, 2.0),
-        Vec3::new(2.0, 0.13, 1.6),
+        Vec3::new(9.0, 0.0, 2.0),
+        Vec3::new(2.2, 0.13, 1.6),
         Some((wood_col, 0.45, 0.0)),
     );
     spawn_solid_box(
         commands,
         meshes,
         materials,
-        Vec3::new(13.5, -3.0, 0.0),
+        Vec3::new(15.0, -3.0, 0.0),
         Vec3::new(4.0, 3.0, 10.0),
         None,
     );
@@ -261,7 +261,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(13.5, -0.4, 0.0),
+        Vec3::new(15.0, -0.4, 0.0),
         Vec3::new(7.92, 0.74, 19.92),
         wood_col,
         0.35,
@@ -271,7 +271,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(13.5, -3.4, 0.0),
+        Vec3::new(15.0, -3.4, 0.0),
         Vec3::new(7.52, 5.14, 19.32),
         cab_col,
         0.5,
@@ -285,13 +285,13 @@ pub fn spawn_kitchen_level_inner(
         LevelEntity,
         SceneRoot(stove_scene),
         SceneRetryPath::new(stove_path),
-        Transform::from_xyz(13.5, 0.0, -6.5),
+        Transform::from_xyz(15.0, 0.0, -6.5),
     ));
     spawn_solid_box(
         commands,
         meshes,
         materials,
-        Vec3::new(13.5, 0.55, -6.5),
+        Vec3::new(15.0, 0.55, -6.5),
         Vec3::new(2.2, 0.55, 1.8),
         None,
     );
@@ -301,7 +301,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(8.5, -3.925, 12.5),
+        Vec3::new(8.8, -3.925, 12.5),
         Vec3::new(1.6, 2.075, 1.6),
         None,
     );
@@ -309,7 +309,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(8.5, -2.0, 12.5),
+        Vec3::new(8.8, -2.0, 12.5),
         Vec3::new(3.12, 0.24, 3.12),
         table_col,
         0.4,
@@ -319,7 +319,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(5.5, -4.925, 16.5),
+        Vec3::new(8.8, -4.925, 16.5),
         Vec3::new(1.6, 1.075, 1.6),
         None,
     );
@@ -327,7 +327,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(5.5, -4.0, 16.5),
+        Vec3::new(8.8, -4.0, 16.5),
         Vec3::new(3.12, 0.24, 3.12),
         table_col,
         0.4,
@@ -403,7 +403,7 @@ pub fn spawn_kitchen_level_inner(
         commands,
         meshes,
         materials,
-        Vec3::new(6.5, -5.98, -4.0),
+        Vec3::new(9.0, -5.98, -4.0),
         Vec3::new(6.8, 0.04, 25.8),
         Color::srgb(0.72, 0.22, 0.18),
         0.85,
@@ -411,13 +411,40 @@ pub fn spawn_kitchen_level_inner(
     );
 
     // Solid Room Walls & Left Tiled Backsplash Wall (south half Z in [-2, 22], leaving Z < -2 open to Dining Room)
-    spawn_solid_box(
+    spawn_fallback_mesh(
         commands,
         meshes,
         materials,
         Vec3::new(-7.35, 3.4, 10.0),
-        Vec3::new(0.25, 3.8, 12.0),
-        Some((tile_col, 0.2, 0.0)),
+        Vec3::new(0.44, 7.5, 23.9),
+        tile_col,
+        0.2,
+        0.0,
+    );
+    spawn_solid_box(
+        commands,
+        meshes,
+        materials,
+        Vec3::new(-7.1, 4.2, 10.0),
+        Vec3::new(0.42, 4.2, 12.0),
+        None,
+    );
+    // Left Upper Wall Cabinet & Back-Left Raised Shelf colliders (prevent camera clipping)
+    spawn_solid_box(
+        commands,
+        meshes,
+        materials,
+        Vec3::new(-6.2, 11.0, 8.0),
+        Vec3::new(1.15, 2.2, 10.0),
+        None,
+    );
+    spawn_solid_box(
+        commands,
+        meshes,
+        materials,
+        Vec3::new(-2.6, 8.3, -21.7),
+        Vec3::new(3.3, 0.45, 0.8),
+        None,
     );
     spawn_solid_box(
         commands,
@@ -461,13 +488,13 @@ pub fn spawn_kitchen_level_inner(
         FridgeGoal,
         SceneRoot(fridge_scene),
         SceneRetryPath::new(fridge_path),
-        Transform::from_xyz(13.5, -6.0, -18.5),
+        Transform::from_xyz(15.0, -6.0, -18.5),
     ));
     spawn_solid_box(
         commands,
         meshes,
         materials,
-        Vec3::new(13.5, 0.6, -19.2),
+        Vec3::new(15.0, 0.6, -19.2),
         Vec3::new(3.4, 6.6, 2.0),
         None,
     );
@@ -585,12 +612,12 @@ pub fn spawn_kitchen_level_inner(
         (-2.5, 1.35, -5.0, 1.1),
         (-5.2, 2.35, -14.5, 1.15),
         (-2.6, 3.35, -20.2, 1.2),
-        (13.5, 0.6, 2.0, 1.25),
+        (15.0, 0.6, 2.0, 1.25),
         // Zone 3: Stove, Stepping Stool, Dining Table & Kitchen Floor (in front of Fridge)
-        (13.5, 1.6, -6.5, 1.35),
-        (8.5, -1.3, 12.5, 1.45),
+        (15.0, 1.6, -6.5, 1.35),
+        (8.8, -1.3, 12.5, 1.45),
         (-13.0, -0.5, -9.0, 1.55),
-        (8.0, -5.2, -13.0, 1.80),
+        (9.0, -5.2, -13.0, 1.80),
     ];
     for (i, (x, y, z, scale)) in tendy_spots.into_iter().enumerate() {
         commands.spawn((
