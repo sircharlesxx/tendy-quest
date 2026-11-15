@@ -227,6 +227,7 @@ pub fn update_hud(
 }
 
 pub fn spawn_tutorial_overlay(mut commands: Commands) {
+    crate::audio::set_tutorial_visible(true);
     commands
         .spawn((
             TutorialOverlay,
@@ -520,6 +521,7 @@ pub fn despawn_tutorial_overlay(
     mut commands: Commands,
     q: Query<Entity, With<TutorialOverlay>>,
 ) {
+    crate::audio::set_tutorial_visible(false);
     for e in &q {
         commands.entity(e).despawn_recursive();
     }

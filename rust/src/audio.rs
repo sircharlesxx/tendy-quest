@@ -73,6 +73,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setUzumakiMode)]
         fn js_set_uzumaki_mode(level: u8);
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setTutorialVisible)]
+        fn js_set_tutorial_visible(active: bool);
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = initMode)]
         fn js_init_mode() -> u32;
 
@@ -172,6 +175,10 @@ mod imp {
         js_set_uzumaki_mode(level);
     }
 
+    pub fn set_tutorial_visible(active: bool) {
+        js_set_tutorial_visible(active);
+    }
+
     pub fn init_test_mode() -> u32 {
         js_init_mode()
     }
@@ -255,6 +262,8 @@ mod imp {
 
     pub fn set_uzumaki_mode(_level: u8) {}
 
+    pub fn set_tutorial_visible(_active: bool) {}
+
     pub fn init_test_mode() -> u32 {
         0
     }
@@ -267,8 +276,8 @@ mod imp {
 pub use imp::{
     init_test_mode, is_muted, is_voice_speaking, play_bgm, play_boss_music, play_cutscene_music,
     play_headphone_music, play_sfx, play_viking_chant_music, set_touch_boss_mode,
-    set_touch_playing, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
-    take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
-    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x,
-    touch_move_y,
+    set_touch_playing, set_tutorial_visible, set_uzumaki_mode, speak_voice,
+    take_cutscene_start_time, take_touch_action_tap, take_touch_attack, take_touch_dash,
+    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy,
+    take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
 };

@@ -9,6 +9,7 @@
   <title>Tendy Quest — Giant Kitchen</title>
   <link data-trunk rel="copy-dir" href="../assets/models" data-target-path="assets/models" />
   <link data-trunk rel="copy-dir" href="../assets/audio" data-target-path="assets/audio" />
+  <link data-trunk rel="copy-dir" href="../assets/sprites" data-target-path="assets/sprites" />
   <script>
     window.tendyAudio = (() => {
       const SFX_NAMES = [
@@ -1075,12 +1076,56 @@
       from { margin-left: -2px; margin-top: -1px; }
       to { margin-left: 2px; margin-top: 2px; }
     }
+    #tutorial-stan-box {
+      position: fixed;
+      left: calc(50% - 462px);
+      top: 52%;
+      transform: translateY(-50%);
+      width: 172px;
+      padding: 6px;
+      border-radius: 14px;
+      background: rgba(18, 13, 8, 0.86);
+      border: 2px solid rgba(251, 191, 36, 0.72);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+      z-index: 18;
+      pointer-events: none;
+      display: none;
+    }
+    body.tutorial-active #tutorial-stan-box {
+      display: block;
+    }
+    #tutorial-stan-gif {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+    }
+    @media (max-width: 959px) {
+      #tutorial-stan-box {
+        left: 50%;
+        top: 102px;
+        transform: translateX(-50%);
+        width: 128px;
+      }
+    }
+    @media (max-height: 639px) {
+      #tutorial-stan-box {
+        left: 14px;
+        top: auto;
+        bottom: 14px;
+        transform: none;
+        width: 92px;
+      }
+    }
   </style>
 </head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
     <p>Loading Giant Kitchen (Rust + WebAssembly)...</p>
+  </div>
+  <div id="tutorial-stan-box" aria-hidden="true">
+    <img id="tutorial-stan-gif" src="./assets/sprites/tutorial_stan.gif" alt="Stan dancing in plaid onesie" />
   </div>
   <div id="uzumaki-overlay" aria-hidden="true">
     <div id="uzumaki-speedlines"></div>
@@ -1595,6 +1640,10 @@
         document.body.classList.toggle("uzumaki-mode", on);
       }
 
+      function setTutorialVisible(active) {
+        document.body.classList.toggle("tutorial-active", !!active);
+      }
+
       window.tendyFullscreen = {
         request: requestOptimalFullscreen,
         toggle: toggleFullscreen,
@@ -1627,6 +1676,7 @@
         setPlaying,
         setBossMode,
         setUzumakiMode,
+        setTutorialVisible,
         initMode() { const m = pendingInitMode; pendingInitMode = 0; return m; },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
       };

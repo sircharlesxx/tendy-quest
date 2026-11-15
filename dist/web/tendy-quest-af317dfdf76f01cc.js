@@ -1296,6 +1296,9 @@ function __wbg_get_imports() {
             const ret = arg0.setTimeout(arg1, arg2);
             return ret;
         }, arguments); },
+        __wbg_setTutorialVisible_3c7d79c5566fc1b4: function(arg0) {
+            window.tendyInput.setTutorialVisible(arg0 !== 0);
+        },
         __wbg_setUzumakiMode_de8d2896f4e3e3b4: function(arg0) {
             window.tendyInput.setUzumakiMode(arg0);
         },

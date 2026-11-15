@@ -9,6 +9,7 @@
   <title>Tendy Quest — Giant Kitchen</title>
   
   
+  
   <script>
     window.tendyAudio = (() => {
       const SFX_NAMES = [
@@ -1075,12 +1076,56 @@
       from { margin-left: -2px; margin-top: -1px; }
       to { margin-left: 2px; margin-top: 2px; }
     }
+    #tutorial-stan-box {
+      position: fixed;
+      left: calc(50% - 462px);
+      top: 52%;
+      transform: translateY(-50%);
+      width: 172px;
+      padding: 6px;
+      border-radius: 14px;
+      background: rgba(18, 13, 8, 0.86);
+      border: 2px solid rgba(251, 191, 36, 0.72);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+      z-index: 18;
+      pointer-events: none;
+      display: none;
+    }
+    body.tutorial-active #tutorial-stan-box {
+      display: block;
+    }
+    #tutorial-stan-gif {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+    }
+    @media (max-width: 959px) {
+      #tutorial-stan-box {
+        left: 50%;
+        top: 102px;
+        transform: translateX(-50%);
+        width: 128px;
+      }
+    }
+    @media (max-height: 639px) {
+      #tutorial-stan-box {
+        left: 14px;
+        top: auto;
+        bottom: 14px;
+        transform: none;
+        width: 92px;
+      }
+    }
   </style>
-<link rel="modulepreload" href="./tendy-quest-477b2a671151c249.js" crossorigin="anonymous" integrity="sha384-/ttY/nCfE22su3HUa1jntrj2JT/u4YghQnEqWxdjxzLYr3WLmxeLcxAk1yPMRnvA"><link rel="preload" href="./tendy-quest-477b2a671151c249_bg.wasm" crossorigin="anonymous" integrity="sha384-PV+fD9x93+1OHMAH9+8JmLV0PU/6T4EDgCKxw+bFznIHCVb8keoNrEqUEnYQjEwD" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-af317dfdf76f01cc.js" crossorigin="anonymous" integrity="sha384-8Ccf+AOg8AAVxhKvT1Ft+pIX7iz7cD8Od3Yqdap9Una+khHQdbMYfU3lP52JT3Hy"><link rel="preload" href="./tendy-quest-af317dfdf76f01cc_bg.wasm" crossorigin="anonymous" integrity="sha384-Ai9tDWBW9OwT3V5rNLefRZNGc21D322fz5tG4zcR848IUYY9xvrXHYYUNSPtela5" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
     <p>Loading Giant Kitchen (Rust + WebAssembly)...</p>
+  </div>
+  <div id="tutorial-stan-box" aria-hidden="true">
+    <img id="tutorial-stan-gif" src="./assets/sprites/tutorial_stan.gif" alt="Stan dancing in plaid onesie" />
   </div>
   <div id="uzumaki-overlay" aria-hidden="true">
     <div id="uzumaki-speedlines"></div>
@@ -1595,6 +1640,10 @@
         document.body.classList.toggle("uzumaki-mode", on);
       }
 
+      function setTutorialVisible(active) {
+        document.body.classList.toggle("tutorial-active", !!active);
+      }
+
       window.tendyFullscreen = {
         request: requestOptimalFullscreen,
         toggle: toggleFullscreen,
@@ -1627,6 +1676,7 @@
         setPlaying,
         setBossMode,
         setUzumakiMode,
+        setTutorialVisible,
         initMode() { const m = pendingInitMode; pendingInitMode = 0; return m; },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
       };
@@ -1646,8 +1696,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-477b2a671151c249.js';
-const wasm = await init({ module_or_path: './tendy-quest-477b2a671151c249_bg.wasm' });
+import init, * as bindings from './tendy-quest-af317dfdf76f01cc.js';
+const wasm = await init({ module_or_path: './tendy-quest-af317dfdf76f01cc_bg.wasm' });
 
 
 window.wasmBindings = bindings;
