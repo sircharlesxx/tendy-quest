@@ -34,6 +34,10 @@ def apply_box_uv(obj, scale=1.0, smooth=True):
     ix = 1.0 / max(abs(sx), 1e-4)
     iy = 1.0 / max(abs(sy), 1e-4)
     iz = 1.0 / max(abs(sz), 1e-4)
+    if isinstance(scale, (tuple, list)):
+        su, sv = scale[0], scale[1]
+    else:
+        su = sv = scale
 
     for poly in mesh.polygons:
         n = poly.normal
@@ -47,7 +51,7 @@ def apply_box_uv(obj, scale=1.0, smooth=True):
                 u, w = vy, vz
             else:
                 u, w = vx, vz
-            uv_layer[loop_idx].uv = (u * scale + 0.5, w * scale + 0.5)
+            uv_layer[loop_idx].uv = (u * su + 0.5, w * sv + 0.5)
     set_smooth(obj, smooth=smooth)
 
 
@@ -173,7 +177,7 @@ def mat_butcher_block():
     plank_id = np.floor(y_staggered / plank_h).astype(np.int32)
 
     rng = np.random.default_rng(77)
-    plank_tones = rng.uniform(-0.11, 0.09, size=(strips, planks_y)).astype(np.float32)
+    plank_tones = rng.uniform(-0.06, 0.06, size=(strips, planks_y)).astype(np.float32)
     tone = plank_tones[strip_id % strips, plank_id % planks_y]
 
     # Wood fibers running vertically along Y (countertop length)
@@ -193,17 +197,17 @@ def mat_butcher_block():
         np.exp(-((np.minimum(fy, 1.0 - fy) * plank_h) ** 2) / 3.2),
     ).astype(np.float32)
 
-    base = 0.62 + tone + (fibers - 0.5) * 0.14 + pores - seam_mask * 0.26
+    base = 0.78 + tone + (fibers - 0.5) * 0.09 + pores * 0.6 - seam_mask * 0.11
     rgb = np.stack(
         [
-            base * 1.18,
-            base * 0.80 - seam_mask * 0.04,
-            base * 0.45 - seam_mask * 0.03,
+            base * 1.12,
+            base * 0.84 - seam_mask * 0.02,
+            base * 0.50 - seam_mask * 0.02,
         ],
         axis=-1,
     )
-    height = (fibers * 0.18 + n_fine * 0.22 - seam_mask * 0.85).astype(np.float32)
-    return make_numpy_pbr_material("ButcherBlockMat", rgb, height, roughness=0.22, normal_strength=4.5)
+    height = (fibers * 0.12 + n_fine * 0.12 - seam_mask * 0.45).astype(np.float32)
+    return make_numpy_pbr_material("ButcherBlockMat", rgb, height, roughness=0.26, normal_strength=1.8)
 
 
 def mat_sage_tile():
@@ -433,18 +437,39 @@ def mat_cutting_board():
 def mat_syrup_label():
     s = 512
     y, x = np.mgrid[0:s, 0:s].astype(np.float32)
-    u, v = x / s, y / s
-    # Warm cream parchment label with red-amber border stripe & bold dark medallion
-    rgb = np.full((s, s, 3), [0.95, 0.89, 0.72], dtype=np.float32)
-    border = (v < 0.14) | (v > 0.86)
-    rgb[border] = [0.78, 0.24, 0.06]
-    dist = np.sqrt((u - 0.5) ** 2 + (v - 0.5) ** 2)
-    rgb[dist < 0.24] = [0.85, 0.42, 0.08]
-    rgb[(dist >= 0.21) & (dist < 0.24)] = [0.42, 0.14, 0.03]
-    # Vertical rib lines along parchment paper
+    v = y / s
+    # Warm cream parchment label with dark-red top/bottom trim borders & golden-orange center band
+    rgb = np.full((s, s, 3), [0.96, 0.90, 0.74], dtype=np.float32)
+    border = (v < 0.16) | (v > 0.84)
+    rgb[border] = [0.76, 0.20, 0.06]
+    center_band = (v > 0.38) & (v < 0.62)
+    rgb[center_band] = [0.88, 0.46, 0.09]
     n = fbm_noise(s, freqs=(16, 48), weights=(0.6, 0.4), seed=31)
     rgb *= (0.94 + 0.1 * n)[..., None]
     return make_numpy_pbr_material("SyrupLabelMat", rgb, n, roughness=0.65, normal_strength=1.5)
+
+
+def mat_window_view():
+    s = 512
+    y, x = np.mgrid[0:s, 0:s].astype(np.float32)
+    u, v = x / s, y / s
+    n = fbm_noise(s, freqs=(4, 8, 16, 32), weights=(0.45, 0.30, 0.15, 0.10), seed=19)
+
+    # Sky gradient: soft light blue at top blending to warm sunlit cream near horizon
+    t_sky = np.clip((v - 0.35) / 0.65, 0.0, 1.0)[..., None]
+    sky_low = np.array([0.98, 0.96, 0.86], dtype=np.float32)[None, None, :]
+    sky_high = np.array([0.84, 0.94, 1.00], dtype=np.float32)[None, None, :]
+    rgb = sky_low * (1.0 - t_sky) + sky_high * t_sky
+
+    # Soft out-of-focus sunlit green garden foliage on the lower half
+    foliage_edge = 0.48 + 0.08 * np.sin(u * 10.0) + (n - 0.5) * 0.10
+    in_foliage = np.clip((foliage_edge - v) * 18.0, 0.0, 1.0)[..., None]
+    green_dark = np.array([0.46, 0.72, 0.36], dtype=np.float32)[None, None, :]
+    green_sun = np.array([0.68, 0.86, 0.50], dtype=np.float32)[None, None, :]
+    foliage = green_dark * (1.0 - n[..., None]) + green_sun * n[..., None]
+    rgb = rgb * (1.0 - in_foliage) + foliage * in_foliage
+
+    return make_numpy_pbr_material("WindowViewMat", rgb, None, roughness=0.2, emission_strength=0.85)
 
 
 # --- Geometry Helpers ---
@@ -917,7 +942,7 @@ def build_syrup_bottle():
     add_cylinder(0.30, 0.65, (0, 0, 2.36), mat=glass, vertices=28)
     add_torus(0.28, 0.072, (0.45, 0, 2.06), rotation=(math.pi / 2, 0, 0), mat=glass)
     add_cylinder(0.34, 0.34, (0, 0, 2.78), mat=cap, vertices=28)
-    add_cylinder(0.67, 0.92, (0, 0, 1.00), mat=label, vertices=32, uv_scale=0.35)
+    add_cylinder(0.67, 0.92, (0, 0, 1.00), mat=label, vertices=32, uv_scale=0.95)
     export_glb(os.path.join(OUTPUT_DIR, "syrup_bottle.glb"))
 
 
@@ -940,15 +965,13 @@ def build_kitchen_environment():
     gingham = mat_gingham()
     board_mat = mat_cutting_board()
     wall = create_solid_material("KitchenWallMat", (0.79, 0.83, 0.76, 1.0), roughness=0.72)
-    ceiling = create_solid_material("CeilingMat", (0.95, 0.94, 0.90, 1.0), roughness=0.82)
     cab = create_solid_material("CabinetWoodMat", (0.46, 0.29, 0.16, 1.0), roughness=0.45)
     cab_trim = create_solid_material("CabinetTrimMat", (0.38, 0.23, 0.12, 1.0), roughness=0.52)
     floor = create_solid_material("KitchenFloorMat", (0.58, 0.43, 0.28, 1.0), roughness=0.48)
     stone = create_solid_material("SideStoneMat", (0.88, 0.86, 0.81, 1.0), roughness=0.28)
     steel = create_solid_material("StainlessMat", (0.86, 0.88, 0.92, 1.0), roughness=0.16, metallic=0.92)
     dark_sink = create_solid_material("SinkBasinMat", (0.30, 0.32, 0.34, 1.0), roughness=0.35, metallic=0.85)
-    sky = create_solid_material("WindowSkyMat", (0.82, 0.94, 1.0, 1.0), roughness=0.15, emission_strength=0.95)
-    tree = create_solid_material("OutdoorTreeMat", (0.28, 0.56, 0.22, 1.0), roughness=0.75, emission_strength=0.2)
+    sky = mat_window_view()
     red_cer = create_solid_material("RedCeramicMat", (0.80, 0.14, 0.12, 1.0), roughness=0.18)
     tomato = create_solid_material("TomatoMat", (0.88, 0.12, 0.08, 1.0), roughness=0.15)
     blue_cer = create_solid_material("BlueBowlMat", (0.55, 0.74, 0.84, 1.0), roughness=0.22)
@@ -958,8 +981,8 @@ def build_kitchen_environment():
     terracotta = create_solid_material("TerracottaMat", (0.74, 0.36, 0.22, 1.0), roughness=0.72)
     plant_g = create_solid_material("PlantMat", (0.18, 0.52, 0.16, 1.0), roughness=0.62)
 
-    # 1. Varnished Butcher-Block Countertop (14m x 44m, world-space uv_scale=0.085) & oak under-cabinet base
-    add_cube(1.0, (0, 0, -0.5), scale=(14.0, 44.0, 1.0), mat=wood, uv_scale=0.085)
+    # 1. Varnished Butcher-Block Countertop (14m x 44m, anisotropic world-space UVs) & oak under-cabinet base
+    add_cube(1.0, (0, 0, -0.5), scale=(14.0, 44.0, 1.0), mat=wood, uv_scale=(0.14, 0.032))
     add_cube(1.0, (0, 0, -2.75), scale=(13.5, 43.5, 3.5), mat=cab)
     add_cube(1.0, (1.5, -2.0, -4.75), scale=(32.0, 54.0, 0.5), mat=floor)
 
@@ -970,21 +993,16 @@ def build_kitchen_environment():
     for cz in (6.1, 11.1):
         add_cube(1.0, (-3.95, 3.5, cz), scale=(0.15, 34.0, 0.24), mat=cab_trim)
 
-    # 3. Warm Sage Back Wall, Front Closure Wall, Right Kitchen Wing & Ceiling (complete indoor room!)
+    # 3. Warm Sage Back Wall & Low Right-Side Kitchen Wing (unblocked ceiling/sky for sunlit countertop)
     add_cube(1.0, (2.0, 22.8, 5.2), scale=(30.0, 0.6, 17.5), mat=wall)
-    add_cube(1.0, (2.0, -25.0, 5.2), scale=(30.0, 0.6, 17.5), mat=wall)  # behind camera so 360 look is seamless
-    add_cube(1.0, (2.0, 0.0, 13.8), scale=(32.0, 52.0, 0.6), mat=ceiling)
 
-    # Right kitchen wall + lower stone counter wing at X = +11.2 (leaves clear 3.5m aisle next to countertop)
-    add_cube(1.0, (13.6, -1.0, 4.8), scale=(0.8, 50.0, 17.5), mat=wall)
+    # Right kitchen low wainscoting wall + lower stone counter wing at X = +11.6 (top at Z=4.45 so sun streams over)
+    add_cube(1.0, (13.6, -1.0, 1.2), scale=(0.8, 50.0, 6.5), mat=wall)
     add_cube(1.0, (11.6, -1.0, -0.6), scale=(3.6, 46.0, 0.8), mat=stone)
     add_cube(1.0, (11.6, -1.0, -2.75), scale=(3.4, 45.5, 3.5), mat=cab)
-    add_cube(1.0, (12.4, 2.0, 8.2), scale=(2.4, 32.0, 4.8), mat=cab)
 
-    # 4. Sunny Kitchen Window (Back-Right: X = +5.0, Y = 22.3) + Garden Foliage + Potted Plant + Gingham Curtains
-    add_cube(1.0, (5.0, 22.35, 6.2), scale=(7.6, 0.2, 5.6), mat=sky)
-    for tx, tz, tr in [(3.5, 5.2, 1.1), (6.4, 5.6, 1.3), (5.0, 4.6, 0.9)]:
-        add_sphere(tr, (tx, 22.45, tz), mat=tree)
+    # 4. Sunny Kitchen Window (Back-Right: X = +5.0, Y = 22.3) + Garden Foliage Texture + Potted Plant + Gingham Curtains
+    add_cube(1.0, (5.0, 22.35, 6.2), scale=(7.6, 0.2, 5.6), mat=sky, uv_scale=0.16)
     # Wood window frame + mullions + deep sill
     for mx in (1.2, 5.0, 8.8):
         add_cube(1.0, (mx, 22.18, 6.2), scale=(0.28, 0.35, 5.8), mat=cab)

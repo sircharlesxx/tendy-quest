@@ -196,7 +196,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::FlexEnd,
-                padding: UiRect::bottom(Val::Px(18.0)),
+                padding: UiRect::bottom(Val::Px(22.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.16)),
@@ -206,9 +206,9 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(8.0),
-                    padding: UiRect::all(Val::Px(14.0)),
-                    max_width: Val::Px(600.0),
+                    row_gap: Val::Px(6.0),
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
+                    max_width: Val::Px(740.0),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.74)),
@@ -218,7 +218,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new("TENDY QUEST: GIANT KITCHEN"),
                     TextFont {
-                        font_size: 28.0,
+                        font_size: 24.0,
                         ..default()
                     },
                     TextColor(Color::srgb(1.0, 0.82, 0.22)),
@@ -226,7 +226,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new("Collect all 10 Golden Tendies along the countertop and reach the Pancake Stack!\nDodge Broccoli Brutes, lunging Carrot Lancers, and Kale Slime trails."),
                     TextFont {
-                        font_size: 15.0,
+                        font_size: 14.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.95, 0.92, 0.86)),
@@ -241,7 +241,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                          - [H] : Toggle this Controls Guide anytime",
                     ),
                     TextFont {
-                        font_size: 16.0,
+                        font_size: 14.5,
                         ..default()
                     },
                     TextColor(Color::srgb(0.85, 0.95, 1.0)),
@@ -250,7 +250,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     StartButton,
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(24.0), Val::Px(11.0)),
+                        padding: UiRect::axes(Val::Px(22.0), Val::Px(8.0)),
                         margin: UiRect::top(Val::Px(4.0)),
                         ..default()
                     },
@@ -261,7 +261,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     btn.spawn((
                         Text::new("START QUEST (SPACE / CLICK)"),
                         TextFont {
-                            font_size: 18.0,
+                            font_size: 16.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),

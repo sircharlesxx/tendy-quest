@@ -2,32 +2,32 @@ use bevy::prelude::*;
 use crate::state::{LevelEntity, PlatformBox, PowerupKind, PowerupPickup, TendyPickup};
 
 pub fn setup_lighting_and_camera(mut commands: Commands) {
-    commands.insert_resource(ClearColor(Color::srgb(0.78, 0.84, 0.76)));
+    commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(1.0, 0.95, 0.88),
-        brightness: 260.0,
+        color: Color::srgb(1.0, 0.96, 0.90),
+        brightness: 480.0,
     });
 
     // Warm sunny kitchen key light from the window
     commands.spawn((
         DirectionalLight {
-            illuminance: 24000.0,
+            illuminance: 20000.0,
             shadows_enabled: true,
             color: Color::srgb(1.0, 0.96, 0.86),
             ..default()
         },
-        Transform::from_xyz(8.0, 16.0, 8.0).looking_at(Vec3::new(0.0, 0.0, -4.0), Vec3::Y),
+        Transform::from_xyz(5.0, 22.0, 12.0).looking_at(Vec3::new(0.0, 0.0, -4.0), Vec3::Y),
     ));
 
     // Soft warm fill light so faces and front details stay crisp
     commands.spawn((
         DirectionalLight {
-            illuminance: 3200.0,
+            illuminance: 5500.0,
             shadows_enabled: false,
             color: Color::srgb(1.0, 0.93, 0.84),
             ..default()
         },
-        Transform::from_xyz(-9.0, 8.0, 12.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+        Transform::from_xyz(-6.0, 14.0, 16.0).looking_at(Vec3::new(0.0, 1.0, -2.0), Vec3::Y),
     ));
 
     // Warm overhead kitchen lights for specular highlights across wood, ceramics, glass & syrup
