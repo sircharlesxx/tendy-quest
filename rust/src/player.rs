@@ -757,14 +757,14 @@ pub fn animate_player_limbs(
     let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
         if *state.get() == GameState::HeadphoneCutscene {
             if stats.cutscene_beat >= 4 {
-                // Solemn Sacred Vow: right arm raised high to swear never to step on headphones/iPads again!
+                // Solemn Sacred Vow: right arm raised high above head to swear never to step on headphones/iPads again!
                 (
                     Quat::IDENTITY,
                     Quat::IDENTITY,
                     Quat::from_rotation_z(-0.22),
-                    Quat::from_rotation_x(-2.45) * Quat::from_rotation_z(0.18),
+                    Quat::from_rotation_z(2.35) * Quat::from_rotation_x(0.55),
                     Quat::from_rotation_x(0.06),
-                    Quat::from_rotation_x(-0.18),
+                    Quat::from_rotation_x(-0.14),
                     0.02,
                 )
             } else if stats.cutscene_beat == 3 {

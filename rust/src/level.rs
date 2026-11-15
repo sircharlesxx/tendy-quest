@@ -408,11 +408,11 @@ fn spawn_floor_headphones(
                 .with_scale(Vec3::splat(scale)),
         ))
         .with_children(|hp| {
-            // Subtle danger indicator ring around floor headphones
+            // Subtle danger ring around floor headphones (Bevy Torus::new takes inner_radius, outer_radius)
             hp.spawn((
-                Mesh3d(meshes.add(Torus::new(0.05, 1.65))),
+                Mesh3d(meshes.add(Torus::new(1.38, 1.56))),
                 MeshMaterial3d(warn_ring),
-                Transform::from_xyz(0.0, 0.04, 0.0),
+                Transform::from_xyz(0.0, 0.03, 0.0).with_scale(Vec3::new(1.0, 0.22, 1.0)),
             ));
             // Curved headband resting flat on floor (-Z arch connecting left/right earcups)
             for (seg_x, seg_z, rot_y) in [
@@ -1015,8 +1015,8 @@ pub fn spawn_kitchen_level_inner(
         (9.2, 6.0),
         (-16.0, -2.5),
         (15.5, -3.0),
-        (-5.0, -11.5),
-        (7.5, -15.0),
+        (-10.5, -11.5),
+        (10.5, -15.0),
         (-22.0, -18.0),
         (21.0, -19.5),
         (-11.0, -25.5),

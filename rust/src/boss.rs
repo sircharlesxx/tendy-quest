@@ -2217,27 +2217,27 @@ pub fn update_headphone_cutscene(
                 )
             }
             2 => {
-                // Wide sweep across the Graveyard of Cracked iPads & Snapped Headsets
+                // Elevated sweeping pan across all 5 Cracked iPads & Snapped Headsets
                 let u = ((t - 6.2) / 6.6).clamp(0.0, 1.0);
                 (
-                    Vec3::new(-3.6 + u * 7.2, base_y + 1.85, 3.2),
-                    Vec3::new(0.0, base_y + 1.25, -2.4),
+                    Vec3::new(-4.0 + u * 8.0, base_y + 2.85, 3.8),
+                    Vec3::new(-0.8 + u * 1.6, base_y + 1.25, -2.8),
                 )
             }
             3 => {
                 // Remorseful push-in on Stan's face with cracked iPads rising behind him
                 let u = ((t - 12.8) / 6.6).clamp(0.0, 1.0);
                 (
-                    Vec3::new(-1.25 + u * 0.60, base_y + 2.15, 2.55 - u * 0.35),
+                    Vec3::new(-1.35 + u * 0.65, base_y + 2.15, 2.75 - u * 0.35),
                     Vec3::new(0.0, base_y + 1.85, -0.4),
                 )
             }
             _ => {
-                // Heroic low-angle crane orbit as Stan swears his Sacred Vow
+                // Heroic low-angle crane orbit as Stan swears his Sacred Vow above subtitle bar
                 let u = ((t - 19.4) / 6.6).clamp(0.0, 1.0);
                 (
-                    Vec3::new(2.2 - u * 1.2, base_y + 1.45 + u * 0.85, 3.5 - u * 0.4),
-                    Vec3::new(0.0, base_y + 1.75, -0.6),
+                    Vec3::new(2.3 - u * 1.3, base_y + 1.65 + u * 0.75, 4.1 - u * 0.3),
+                    Vec3::new(0.0, base_y + 1.45, -0.6),
                 )
             }
         };
