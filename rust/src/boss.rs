@@ -784,14 +784,14 @@ fn spawn_anime_figurine(
                 f.spawn((
                     Mesh3d(meshes.add(Sphere::new(0.032))),
                     MeshMaterial3d(eye_iris.clone()),
-                    Transform::from_xyz(sx * 0.055, 0.94, -0.132),
+                    Transform::from_xyz(sx * 0.055, 0.94, -0.138),
                 ));
             }
             // Distinct Anime Hair + Iconic Prop
             f.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.165))),
+                Mesh3d(meshes.add(Sphere::new(0.158))),
                 MeshMaterial3d(hair_mat.clone()),
-                Transform::from_xyz(0.0, 0.98, 0.03),
+                Transform::from_xyz(0.0, 0.99, 0.055),
             ));
             match style {
                 AnimeFigurineStyle::TwinTailMagical | AnimeFigurineStyle::CyberIdol => {
@@ -1119,13 +1119,13 @@ pub fn enter_cutscene(
         );
     }
 
-    // Top Shelf: Wing Zero & Classic RX-78 Gundams
+    // Top Shelf: Wing Zero & Classic RX-78 Gundams (front -Z rotated by PI to face south +Z camera)
     spawn_gundam_mecha(
         &mut commands,
         &mut meshes,
         &mut materials,
         Vec3::new(-3.88, base_y + 2.89, -3.56),
-        0.22,
+        PI + 0.18,
         0.54,
         GundamStyle::Rx78,
     );
@@ -1134,7 +1134,7 @@ pub fn enter_cutscene(
         &mut meshes,
         &mut materials,
         Vec3::new(-2.90, base_y + 2.89, -3.56),
-        -0.20,
+        PI - 0.18,
         0.54,
         GundamStyle::WingZero,
     );
@@ -1144,7 +1144,7 @@ pub fn enter_cutscene(
         &mut meshes,
         &mut materials,
         Vec3::new(-4.05, base_y + 1.91, -3.56),
-        0.25,
+        PI + 0.22,
         0.55,
         AnimeFigurineStyle::TwinTailMagical,
     );
@@ -1153,7 +1153,7 @@ pub fn enter_cutscene(
         &mut meshes,
         &mut materials,
         Vec3::new(-3.40, base_y + 1.91, -3.56),
-        0.05,
+        PI + 0.04,
         0.55,
         AnimeFigurineStyle::SpikyShonen,
     );
@@ -1162,7 +1162,7 @@ pub fn enter_cutscene(
         &mut meshes,
         &mut materials,
         Vec3::new(-2.75, base_y + 1.91, -3.56),
-        -0.22,
+        PI - 0.20,
         0.55,
         AnimeFigurineStyle::CyberIdol,
     );
@@ -1172,7 +1172,7 @@ pub fn enter_cutscene(
         &mut meshes,
         &mut materials,
         Vec3::new(-2.02, base_y + 1.08, -2.68),
-        0.52,
+        PI + 0.42,
         0.38,
         GundamStyle::RedComet,
     );
@@ -1585,11 +1585,11 @@ pub fn update_cutscene(
                     player.roll_timer = if (p % 1.4) < 0.42 { 0.42 - (p % 1.4) } else { 0.0 };
                     player.attack_timer = if (p % 1.4) > 0.65 && (p % 1.4) < 1.05 { 0.25 } else { 0.0 };
                 } else {
-                    // Plant heroically facing camera + subtle talk bob while Stan speaks
+                    // Plant heroically facing camera + raised saber guard while Stan speaks
                     p_tf.translation = Vec3::new(-0.30, base_y + (t * 8.0).sin().abs() * 0.018, 0.25);
                     p_tf.rotation = Quat::from_rotation_y(PI * 0.90);
                     player.roll_timer = 0.0;
-                    player.attack_timer = 0.0;
+                    player.attack_timer = 0.22;
                 }
             }
             7 => {
@@ -1604,7 +1604,7 @@ pub fn update_cutscene(
                 p_tf.translation = Vec3::new(-1.35, base_y + bob, 0.40);
                 p_tf.rotation = Quat::from_rotation_y(-PI * 0.68);
                 player.roll_timer = 0.0;
-                player.attack_timer = if (0.5..1.1).contains(&p) { 0.28 } else { 0.0 };
+                player.attack_timer = if p < 4.5 { 0.21 } else { 0.0 };
             }
         }
     }
@@ -1656,13 +1656,13 @@ pub fn update_cutscene(
                 } else if p < 0.72 {
                     let s = (p - 0.32) / 0.40;
                     (
-                        Vec3::new(-0.35 + s * 1.05, base_y + 1.98, -1.62),
-                        Vec3::new(0.05 + s * 1.10, base_y + 1.82, -3.45),
+                        Vec3::new(-0.95 + s * 1.45, base_y + 1.96, -1.28),
+                        Vec3::new(-0.65 + s * 1.35, base_y + 1.78, -3.45),
                     )
                 } else {
                     let s = (p - 0.72) / 0.28;
                     (
-                        Vec3::new(1.15 + s * 0.85, base_y + 1.90, -1.70 + s * 0.20),
+                        Vec3::new(1.15 + s * 0.85, base_y + 1.90, -1.55),
                         Vec3::new(1.65 + s * 1.15, base_y + 1.65, -2.65),
                     )
                 }
@@ -1701,8 +1701,8 @@ pub fn update_cutscene(
                 } else {
                     let s = ((p - 3.0) / 5.0).clamp(0.0, 1.0);
                     (
-                        Vec3::new(-0.42 - s * 0.08, base_y + 2.22 - s * 0.04, 2.20 - s * 0.18),
-                        Vec3::new(-0.30, base_y + 2.02, 0.25),
+                        Vec3::new(-0.42 - s * 0.08, base_y + 2.34 - s * 0.04, 2.85 - s * 0.22),
+                        Vec3::new(-0.25, base_y + 2.22, 0.25),
                     )
                 }
             }
@@ -1720,13 +1720,13 @@ pub fn update_cutscene(
                 if p < 0.70 {
                     let s = p / 0.70;
                     (
-                        Vec3::new(-0.15 - s * 0.22, base_y + 2.38, 1.90 - s * 0.32),
-                        Vec3::new(-1.32, base_y + 2.28, 0.40),
+                        Vec3::new(-0.05 - s * 0.18, base_y + 2.46, 2.35 - s * 0.25),
+                        Vec3::new(-1.32, base_y + 2.32, 0.40),
                     )
                 } else {
                     let s = (p - 0.70) / 0.30;
-                    let close_pos = Vec3::new(-0.37, base_y + 2.38, 1.58);
-                    let close_look = Vec3::new(-1.32, base_y + 2.28, 0.40);
+                    let close_pos = Vec3::new(-0.23, base_y + 2.46, 2.10);
+                    let close_look = Vec3::new(-1.32, base_y + 2.32, 0.40);
                     (
                         close_pos.lerp(Vec3::new(0.10, base_y + 2.70, 5.20), s),
                         close_look.lerp(Vec3::new(0.10, base_y + 1.80, 0.35), s),
