@@ -38,6 +38,23 @@ impl Default for PlayerStats {
     }
 }
 
+#[derive(Resource)]
+pub struct CameraOrbit {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+}
+
+impl Default for CameraOrbit {
+    fn default() -> Self {
+        Self {
+            yaw: 0.0,
+            pitch: 0.32,
+            distance: 6.8,
+        }
+    }
+}
+
 #[derive(Component, Clone, Copy)]
 pub struct PlatformBox {
     pub half_extents: Vec3,

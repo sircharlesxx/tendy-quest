@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::enemies::spawn_initial_enemies_inner;
 use crate::level::spawn_kitchen_level_inner;
 use crate::player::spawn_player_inner;
-use crate::state::{GameState, LevelEntity, PlayerStats};
+use crate::state::{CameraOrbit, GameState, LevelEntity, PlayerStats};
 
 #[derive(Component)]
 pub struct TutorialOverlay;
@@ -195,29 +195,30 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
+                align_items: AlignItems::FlexEnd,
+                padding: UiRect::bottom(Val::Px(28.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.72)),
+            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.25)),
         ))
         .with_children(|root| {
             root.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(14.0),
-                    padding: UiRect::all(Val::Px(28.0)),
-                    max_width: Val::Px(560.0),
+                    row_gap: Val::Px(10.0),
+                    padding: UiRect::all(Val::Px(20.0)),
+                    max_width: Val::Px(640.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.14, 0.09, 0.05, 0.96)),
-                BorderRadius::all(Val::Px(16.0)),
+                BackgroundColor(Color::srgba(0.14, 0.09, 0.05, 0.92)),
+                BorderRadius::all(Val::Px(14.0)),
             ))
             .with_children(|card| {
                 card.spawn((
                     Text::new("TENDY QUEST: GIANT KITCHEN"),
                     TextFont {
-                        font_size: 32.0,
+                        font_size: 28.0,
                         ..default()
                     },
                     TextColor(Color::srgb(1.0, 0.82, 0.22)),
@@ -225,7 +226,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new("Collect all 10 Golden Tendies along the countertop and reach the Pancake Stack!\nDodge Broccoli Brutes, lunging Carrot Lancers, and Kale Slime trails."),
                     TextFont {
-                        font_size: 17.0,
+                        font_size: 15.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.95, 0.92, 0.86)),
@@ -233,13 +234,14 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     Text::new(
                         "CONTROLS:\n\
-                         - [W A S D] or [Arrow Keys] : Run\n\
+                         - [Mouse Move] : Look around in 3D space ([Scroll] Zoom, [Click] Lock Cursor, [ESC] Unlock)\n\
+                         - [W A S D] or [Arrow Keys] : Run (relative to camera look)\n\
                          - [SPACE] : Jump & Double-Jump (hop onto Sponges & Pancakes!)\n\
                          - [SHIFT] : Belly Dash (brief invulnerability)\n\
                          - [H] : Toggle this Controls Guide anytime",
                     ),
                     TextFont {
-                        font_size: 18.0,
+                        font_size: 16.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.85, 0.95, 1.0)),
@@ -248,8 +250,8 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     StartButton,
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(28.0), Val::Px(14.0)),
-                        margin: UiRect::top(Val::Px(8.0)),
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(11.0)),
+                        margin: UiRect::top(Val::Px(4.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
@@ -259,7 +261,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     btn.spawn((
                         Text::new("START QUEST (SPACE / CLICK)"),
                         TextFont {
-                            font_size: 20.0,
+                            font_size: 18.0,
                             ..default()
                         },
                         TextColor(Color::WHITE),
@@ -404,6 +406,7 @@ pub fn handle_restart_input(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
+    mut orbit: ResMut<CameraOrbit>,
     mut next_state: ResMut<NextState<GameState>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<RestartButton>)>,
     level_q: Query<Entity, With<LevelEntity>>,
@@ -421,6 +424,7 @@ pub fn handle_restart_input(
         commands.entity(e).despawn_recursive();
     }
     *stats = PlayerStats::default();
+    *orbit = CameraOrbit::default();
     spawn_kitchen_level_inner(&mut commands, &asset_server, &mut meshes, &mut materials);
     spawn_player_inner(&mut commands, &asset_server);
     spawn_initial_enemies_inner(&mut commands, &asset_server);

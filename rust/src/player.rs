@@ -1,6 +1,9 @@
+use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
+use bevy::window::{CursorGrabMode, PrimaryWindow};
 use crate::state::{
-    GameState, LevelEntity, PlatformBox, PlayerStats, PowerupKind, PowerupPickup, TendyPickup,
+    CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats, PowerupKind, PowerupPickup,
+    TendyPickup,
 };
 
 #[derive(Component)]
@@ -42,9 +45,46 @@ pub fn spawn_player_inner(commands: &mut Commands, asset_server: &AssetServer) {
     ));
 }
 
+pub fn camera_mouse_look(
+    mouse_motion: Res<AccumulatedMouseMotion>,
+    mouse_scroll: Res<AccumulatedMouseScroll>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut orbit: ResMut<CameraOrbit>,
+    mut window_q: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if let Ok(mut window) = window_q.get_single_mut() {
+        if mouse_buttons.just_pressed(MouseButton::Left) {
+            window.cursor_options.grab_mode = CursorGrabMode::Locked;
+            window.cursor_options.visible = false;
+        }
+        if keys.just_pressed(KeyCode::Escape) {
+            window.cursor_options.grab_mode = CursorGrabMode::None;
+            window.cursor_options.visible = true;
+        }
+    }
+
+    if mouse_motion.delta != Vec2::ZERO {
+        orbit.yaw -= mouse_motion.delta.x * 0.0045;
+        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.06, 1.15);
+    }
+
+    if mouse_scroll.delta.y != 0.0 {
+        orbit.distance = (orbit.distance - mouse_scroll.delta.y * 0.5).clamp(3.5, 13.0);
+    }
+}
+
+pub fn unlock_cursor(mut window_q: Query<&mut Window, With<PrimaryWindow>>) {
+    if let Ok(mut window) = window_q.get_single_mut() {
+        window.cursor_options.grab_mode = CursorGrabMode::None;
+        window.cursor_options.visible = true;
+    }
+}
+
 pub fn player_movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
+    orbit: Res<CameraOrbit>,
     mut stats: ResMut<PlayerStats>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     platform_q: Query<(&Transform, &PlatformBox), Without<Player>>,
@@ -68,23 +108,25 @@ pub fn player_movement(
     }
     stats.dash_energy = (stats.dash_energy + 24.0 * dt).min(100.0);
 
-    // Input direction
-    let mut dir = Vec3::ZERO;
+    // Camera-relative movement input
+    let mut forward_in = 0.0_f32;
+    let mut right_in = 0.0_f32;
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-        dir.z -= 1.0;
+        forward_in += 1.0;
     }
     if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-        dir.z += 1.0;
+        forward_in -= 1.0;
     }
     if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
-        dir.x -= 1.0;
+        right_in -= 1.0;
     }
     if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
-        dir.x += 1.0;
+        right_in += 1.0;
     }
-    if dir.length_squared() > 0.0 {
-        dir = dir.normalize();
-    }
+
+    let forward = Vec3::new(-orbit.yaw.sin(), 0.0, -orbit.yaw.cos());
+    let right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
+    let dir = (forward * forward_in + right * right_in).normalize_or_zero();
 
     // Dash (Shift)
     let shift_pressed =
@@ -115,7 +157,6 @@ pub fn player_movement(
     player.velocity.z = dir.z * speed;
 
     if dir.length_squared() > 0.01 {
-        // Blender +Y -> glTF -Z forward, so yaw = atan2(-dir.x, -dir.z)
         let target_yaw = (-dir.x).atan2(-dir.z);
         let diff = (target_yaw - player.facing_yaw + std::f32::consts::PI)
             .rem_euclid(std::f32::consts::TAU)
@@ -165,17 +206,25 @@ pub fn player_movement(
 
 pub fn update_camera(
     time: Res<Time>,
+    orbit: Res<CameraOrbit>,
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>)>,
     mut cam_q: Query<&mut Transform, With<Camera3d>>,
 ) {
     let (Ok(p_tf), Ok(mut c_tf)) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
-    let target_pos = p_tf.translation + Vec3::new(0.0, 4.4, 7.2);
-    let dt = (time.delta_secs() * 7.0).min(1.0);
+    let anchor = p_tf.translation + Vec3::new(0.0, 1.35, 0.0);
+    let offset = Vec3::new(
+        orbit.yaw.sin() * orbit.pitch.cos(),
+        orbit.pitch.sin(),
+        orbit.yaw.cos() * orbit.pitch.cos(),
+    ) * orbit.distance;
+    let target_pos = anchor + offset;
+    let dt = (time.delta_secs() * 12.0).min(1.0);
     c_tf.translation = c_tf.translation.lerp(target_pos, dt);
-    let look_at = p_tf.translation + Vec3::new(0.0, 1.3, -2.5);
-    c_tf.look_at(look_at, Vec3::Y);
+    let look_target = p_tf.translation + Vec3::new(0.0, 1.25, 0.0)
+        - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * 1.5;
+    c_tf.look_at(look_target, Vec3::Y);
 }
 
 pub fn animate_and_collect_pickups(
@@ -233,7 +282,6 @@ pub fn victory_dance(
         return;
     };
     let t = time.elapsed_secs();
-    // Face the camera (+Z) and bounce happily!
     tf.rotation = Quat::from_rotation_y(std::f32::consts::PI + (t * 6.0).sin() * 0.35);
     tf.translation.y = 1.9 + (t * 8.0).sin().abs() * 0.35;
 }

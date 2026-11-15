@@ -8,9 +8,10 @@ use bevy::prelude::*;
 use enemies::{spawn_initial_enemies, update_enemies};
 use level::{setup_lighting_and_camera, spawn_kitchen_level};
 use player::{
-    animate_and_collect_pickups, player_movement, spawn_player, update_camera, victory_dance,
+    animate_and_collect_pickups, camera_mouse_look, player_movement, spawn_player, unlock_cursor,
+    update_camera, victory_dance,
 };
-use state::{GameState, PlayerStats};
+use state::{CameraOrbit, GameState, PlayerStats};
 use ui::{
     despawn_tutorial_overlay, handle_restart_input, handle_tutorial_input, spawn_game_over_overlay,
     spawn_hud, spawn_stage_clear_overlay, spawn_tutorial_overlay, toggle_tutorial_hotkey,
@@ -30,6 +31,7 @@ fn main() {
         }))
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
+        .init_resource::<CameraOrbit>()
         .add_systems(
             Startup,
             (
@@ -46,9 +48,11 @@ fn main() {
             Update,
             (handle_tutorial_input, update_camera).run_if(in_state(GameState::Tutorial)),
         )
+        .add_systems(OnExit(GameState::Playing), unlock_cursor)
         .add_systems(
             Update,
             (
+                camera_mouse_look,
                 player_movement,
                 update_camera,
                 animate_and_collect_pickups,
