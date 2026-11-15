@@ -161,39 +161,46 @@ pub fn ensure_hero_vikings_gear(
 
     // Attach Christmas + Vikings Onesie overlay and chest/back crests directly to HeroTorso
     commands.entity(torso).with_children(|t| {
-        // Festive green onesie tunic shell + red festive chest/belly sash + white fur trim
+        // Festive green onesie tunic shell conforming cleanly outside HeroTorso plaid bounds + white fur trim
         t.spawn((
             LevelEntity,
             HeroCosmetic,
-            Mesh3d(meshes.add(Cylinder::new(0.395, 0.68))),
+            Mesh3d(meshes.add(Sphere::new(0.44))),
             MeshMaterial3d(xmas_green.clone()),
-            Transform::from_xyz(0.0, 0.30, 0.0).with_scale(Vec3::new(1.04, 1.0, 0.86)),
+            Transform::from_xyz(0.0, 0.29, 0.0).with_scale(Vec3::new(1.05, 1.22, 0.89)),
         ));
         t.spawn((
             LevelEntity,
             HeroCosmetic,
-            Mesh3d(meshes.add(Cylinder::new(0.41, 0.12))),
+            Mesh3d(meshes.add(Sphere::new(0.27))),
+            MeshMaterial3d(xmas_green.clone()),
+            Transform::from_xyz(0.0, 0.63, -0.01).with_scale(Vec3::new(1.64, 0.78, 0.98)),
+        ));
+        t.spawn((
+            LevelEntity,
+            HeroCosmetic,
+            Mesh3d(meshes.add(Cylinder::new(0.445, 0.13))),
             MeshMaterial3d(xmas_red.clone()),
-            Transform::from_xyz(0.0, 0.56, 0.0).with_scale(Vec3::new(1.06, 1.0, 0.88)),
+            Transform::from_xyz(0.0, 0.48, 0.0).with_scale(Vec3::new(1.05, 1.0, 0.89)),
         ));
         t.spawn((
             LevelEntity,
             HeroCosmetic,
             Mesh3d(meshes.add(Torus::new(0.055, 0.34))),
             MeshMaterial3d(fur_white.clone()),
-            Transform::from_xyz(0.0, 0.70, 0.0),
+            Transform::from_xyz(0.0, 0.72, 0.0),
         ));
         t.spawn((
             LevelEntity,
             HeroCosmetic,
-            Mesh3d(meshes.add(Cylinder::new(0.415, 0.09))),
+            Mesh3d(meshes.add(Cylinder::new(0.445, 0.09))),
             MeshMaterial3d(vikings_gold.clone()),
-            Transform::from_xyz(0.0, 0.08, 0.0).with_scale(Vec3::new(1.05, 1.0, 0.88)),
+            Transform::from_xyz(0.0, 0.14, 0.0).with_scale(Vec3::new(1.05, 1.0, 0.89)),
         ));
 
         // Vikings Horned Shield Emblem on BOTH front (-Z) and back (+Z) so visible from 3rd-person cam!
         for z_dir in [-1.0_f32, 1.0_f32] {
-            let z_off = z_dir * 0.355;
+            let z_off = z_dir * 0.395;
             t.spawn((
                 LevelEntity,
                 HeroCosmetic,
@@ -356,10 +363,10 @@ pub fn enter_cutscene(
     crate::audio::play_sfx("thunder");
 
     // Dimly lit, spooky atmosphere for Stan's bedroom backstory
-    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.02, 0.06)));
+    commands.insert_resource(ClearColor(Color::srgb(0.015, 0.01, 0.035)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.32, 0.24, 0.56),
-        brightness: 115.0,
+        color: Color::srgb(0.24, 0.18, 0.44),
+        brightness: 42.0,
     });
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
@@ -380,7 +387,7 @@ pub fn enter_cutscene(
         &mut materials,
         Vec3::new(0.0, base_y - 0.15, 0.0),
         Vec3::new(16.0, 0.3, 14.0),
-        Color::srgb(0.11, 0.09, 0.14),
+        Color::srgb(0.06, 0.05, 0.09),
         None,
     );
     spawn_box(
@@ -389,7 +396,7 @@ pub fn enter_cutscene(
         &mut materials,
         Vec3::new(0.0, base_y + 3.2, -5.0),
         Vec3::new(16.0, 6.8, 0.3),
-        Color::srgb(0.13, 0.11, 0.20),
+        Color::srgb(0.07, 0.06, 0.12),
         None,
     );
     spawn_box(
@@ -398,7 +405,7 @@ pub fn enter_cutscene(
         &mut materials,
         Vec3::new(-6.8, base_y + 3.2, 0.0),
         Vec3::new(0.3, 6.8, 14.0),
-        Color::srgb(0.10, 0.09, 0.17),
+        Color::srgb(0.06, 0.05, 0.10),
         None,
     );
     spawn_box(
@@ -956,6 +963,11 @@ fn spawn_mom_mesh_hierarchy(
             ))
             .with_children(|t| {
                 t.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.35, 0.30))),
+                    MeshMaterial3d(slacks.clone()),
+                    Transform::from_xyz(0.0, -0.03, 0.0).with_scale(Vec3::new(1.02, 1.0, 0.78)),
+                ));
+                t.spawn((
                     Mesh3d(meshes.add(Cylinder::new(0.36, 0.78))),
                     MeshMaterial3d(sweater.clone()),
                     Transform::from_xyz(0.0, 0.32, 0.0).with_scale(Vec3::new(1.05, 1.0, 0.78)),
@@ -1013,13 +1025,13 @@ fn spawn_mom_mesh_hierarchy(
             for (sx, part_name) in [(-1.0_f32, "LeftLeg"), (1.0_f32, "RightLeg")] {
                 mom.spawn((
                     MomPart(part_name),
-                    Transform::from_xyz(sx * 0.16, 0.65, 0.0),
+                    Transform::from_xyz(sx * 0.16, 0.72, 0.0),
                 ))
                 .with_children(|leg| {
                     leg.spawn((
-                        Mesh3d(meshes.add(Cylinder::new(0.11, 0.64))),
+                        Mesh3d(meshes.add(Cylinder::new(0.115, 0.72))),
                         MeshMaterial3d(slacks.clone()),
-                        Transform::from_xyz(0.0, -0.32, 0.0),
+                        Transform::from_xyz(0.0, -0.36, 0.0),
                     ));
                 });
             }
@@ -1042,10 +1054,11 @@ fn spawn_mom_mesh_hierarchy(
                 ));
             });
 
-            // Right arm holding Crimson Lightsaber
+            // Right arm holding Crimson Lightsaber in ready duel guard
             mom.spawn((
                 MomPart("RightArm"),
-                Transform::from_xyz(0.42, 1.42, 0.0),
+                Transform::from_xyz(0.42, 1.42, 0.0)
+                    .with_rotation(Quat::from_rotation_x(-0.85) * Quat::from_rotation_z(-0.18)),
             ))
             .with_children(|arm| {
                 arm.spawn((
@@ -1061,7 +1074,7 @@ fn spawn_mom_mesh_hierarchy(
                 // Crimson Lightsaber
                 arm.spawn(
                     Transform::from_xyz(0.02, -0.56, -0.05)
-                        .with_rotation(Quat::from_rotation_x(-1.15)),
+                        .with_rotation(Quat::from_rotation_x(-0.45)),
                 )
                 .with_children(|saber| {
                     saber.spawn((
@@ -1132,8 +1145,7 @@ pub fn enter_boss_fight(
     stats.boss_max_hp = 100.0;
     stats.boss_hp = 100.0;
     stats.mom_quote = MOM_QUOTES[0].to_string();
-    stats.hint_text =
-        "SHIFT/R-Click/ROLL: Dodge & Roll | L-Click/E/SABER: Lightsaber Slash!".to_string();
+    stats.hint_text = "ROLL: Dodge & Roll | SABER: Lightsaber Slash!".to_string();
 
     orbit.yaw = 0.0;
     orbit.pitch = 0.45;
@@ -1141,7 +1153,7 @@ pub fn enter_boss_fight(
     orbit.current_dist = 11.2;
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
-        p_tf.translation = Vec3::new(0.0, 0.0, 14.5);
+        p_tf.translation = Vec3::new(0.0, 0.0, 12.5);
         p_tf.rotation = Quat::IDENTITY;
         p_tf.scale = Vec3::splat(3.2);
         player.velocity = Vec3::ZERO;
@@ -1157,13 +1169,13 @@ pub fn enter_boss_fight(
         &mut meshes,
         &mut materials,
         Vec3::new(0.0, 0.0, -3.5),
-        2.15,
+        2.65,
     );
     commands.entity(mom_ent).insert(MomBoss {
         hp: 100.0,
         max_hp: 100.0,
-        state: MomState::Pursue,
-        timer: 0.0,
+        state: MomState::Staggered,
+        timer: 1.5,
         voice_timer: 5.5,
         summon_timer: 10.0,
         quote_idx: 0,
@@ -1176,11 +1188,11 @@ pub fn enter_boss_fight(
     // Ensure a fierce wave of hardened veggie minions is in the arena
     if enemy_q.iter().count() < 5 {
         for (kind, pos) in [
-            (EnemyKind::BroccoliBrute, Vec3::new(-3.8, 0.0, 4.0)),
-            (EnemyKind::CarrotLancer, Vec3::new(3.8, 0.0, 2.0)),
-            (EnemyKind::BroccoliBrute, Vec3::new(-2.5, 0.0, -8.5)),
-            (EnemyKind::CarrotLancer, Vec3::new(2.5, 0.0, -10.5)),
-            (EnemyKind::KaleSlime, Vec3::new(0.0, 0.0, 6.0)),
+            (EnemyKind::BroccoliBrute, Vec3::new(-4.2, 0.0, 2.0)),
+            (EnemyKind::CarrotLancer, Vec3::new(4.2, 0.0, 1.0)),
+            (EnemyKind::BroccoliBrute, Vec3::new(-2.8, 0.0, -7.5)),
+            (EnemyKind::CarrotLancer, Vec3::new(2.8, 0.0, -9.5)),
+            (EnemyKind::KaleSlime, Vec3::new(0.0, 0.0, -1.5)),
         ] {
             spawn_enemy_at(&mut commands, &asset_server, kind, pos);
         }
@@ -1275,7 +1287,7 @@ pub fn update_boss_fight(
         let box_w = if narrow { (win.width() * 0.92).min(360.0) } else { 400.0 };
         hud_node.width = Val::Px(box_w);
         hud_node.margin = UiRect::left(Val::Px(-box_w * 0.5));
-        hud_node.top = Val::Px(if narrow { 126.0 } else { 12.0 });
+        hud_node.top = Val::Px(if narrow { 150.0 } else { 12.0 });
     }
 
     let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
@@ -1336,7 +1348,7 @@ pub fn update_boss_fight(
             let flat_kb = Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero();
             mom_tf.translation += flat_kb * 1.6;
             crate::audio::play_sfx("saber_hit");
-            stats.hint_text = format!("DIRECT SABER HIT! Mom HP: {:.0}/{:.0}", mom.hp, mom.max_hp);
+            stats.hint_text = format!("SABER HIT! Mom HP: {:.0}/{:.0}", mom.hp, mom.max_hp);
         }
 
         // Check Minion hits
@@ -1388,16 +1400,16 @@ pub fn update_boss_fight(
             // Match player elevation smoothly so Mom follows Stan between counter & floor
             let dy = p_tf.translation.y - mom_tf.translation.y;
             mom_tf.translation.y += dy * (dt * 2.8).min(1.0);
-            if dist < 5.4 {
+            if dist < 5.8 {
                 mom.state = MomState::SaberWindup;
-                mom.timer = 0.52;
+                mom.timer = 0.65;
                 mom.dealt_slash_hit = false;
                 mom.lunge_dir = flat.normalize_or_zero();
                 0.0
             } else {
                 let dir = flat.normalize_or_zero();
-                mom_tf.translation += dir * 6.2 * dt;
-                6.2
+                mom_tf.translation += dir * 5.4 * dt;
+                5.4
             }
         }
         MomState::SaberWindup => {
@@ -1415,12 +1427,14 @@ pub fn update_boss_fight(
         }
         MomState::SaberSlash => {
             mom.timer -= dt;
-            mom_tf.translation += mom.lunge_dir * 12.5 * dt;
-            if !mom.dealt_slash_hit && dist < 4.8 && (p_tf.translation.y - mom_tf.translation.y).abs() < 3.4 {
+            if dist > 4.0 {
+                mom_tf.translation += mom.lunge_dir * 10.5 * dt;
+            }
+            if !mom.dealt_slash_hit && dist < 5.0 && (p_tf.translation.y - mom_tf.translation.y).abs() < 3.4 {
                 mom.dealt_slash_hit = true;
                 if player.roll_timer > 0.0 || player.invuln_timer > 0.0 {
                     stats.score += 300;
-                    stats.hint_text = "DODGE & ROLL EVADED MOM'S SABER! (+300)".to_string();
+                    stats.hint_text = "EVADED MOM'S SABER! (+300)".to_string();
                     crate::audio::play_sfx("shield");
                 } else {
                     stats.hearts -= 1;
@@ -1436,18 +1450,36 @@ pub fn update_boss_fight(
                 }
             }
             if mom.timer <= 0.0 {
-                mom.state = MomState::Pursue;
+                mom.state = MomState::Staggered;
+                mom.timer = 1.35;
             }
-            12.5
+            10.5
         }
         MomState::Staggered => {
             mom.timer -= dt;
+            if dist > 0.2 {
+                mom_tf.rotation = Quat::from_rotation_y((-flat.x).atan2(-flat.z));
+            }
             if mom.timer <= 0.0 {
                 mom.state = MomState::Pursue;
             }
             0.0
         }
     };
+
+    // Enforce minimum duel spacing so Mom never overlaps inside Stan's mesh
+    let min_sep = 3.8_f32;
+    let after_flat = Vec3::new(
+        p_tf.translation.x - mom_tf.translation.x,
+        0.0,
+        p_tf.translation.z - mom_tf.translation.z,
+    );
+    let after_dist = after_flat.length();
+    if after_dist < min_sep && after_dist > 0.01 {
+        let push_back = after_flat.normalize() * (min_sep - after_dist);
+        mom_tf.translation.x -= push_back.x;
+        mom_tf.translation.z -= push_back.z;
+    }
 
     mom_tf.translation.x = mom_tf.translation.x.clamp(-18.5, 20.5);
     mom_tf.translation.z = mom_tf.translation.z.clamp(-20.0, 20.0);
@@ -1461,7 +1493,7 @@ pub fn update_boss_fight(
             Quat::from_rotation_x(s * 0.72),
             Quat::from_rotation_x(-s * 0.72),
             Quat::from_rotation_x(-s * 0.55) * Quat::from_rotation_z(-0.18),
-            Quat::from_rotation_x(-0.6 + s * 0.35) * Quat::from_rotation_z(0.18),
+            Quat::from_rotation_x(-0.85 + s * 0.25) * Quat::from_rotation_z(-0.15),
             Quat::from_rotation_x(-0.08),
         ),
         MomState::SaberWindup => (
@@ -1477,7 +1509,7 @@ pub fn update_boss_fight(
                 Quat::from_rotation_x(-0.45),
                 Quat::from_rotation_x(0.45),
                 Quat::from_rotation_x(-0.5),
-                Quat::from_rotation_x(-1.1) * Quat::from_rotation_y(sweep),
+                Quat::from_rotation_x(-0.65) * Quat::from_rotation_y(sweep),
                 Quat::from_rotation_x(-0.28),
             )
         }
