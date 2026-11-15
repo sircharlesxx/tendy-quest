@@ -9,8 +9,8 @@ mod ui;
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
 use bevy::prelude::*;
 use boss::{
-    ensure_hero_vikings_gear, enter_boss_fight, enter_cutscene, exit_boss_fight, exit_cutscene,
-    update_boss_fight, update_cutscene,
+    ensure_hero_eye_reflections, ensure_hero_vikings_gear, enter_boss_fight, enter_cutscene,
+    exit_boss_fight, exit_cutscene, update_boss_fight, update_cutscene,
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
@@ -97,7 +97,12 @@ fn main() {
         .add_systems(OnExit(GameState::Cutscene), exit_cutscene)
         .add_systems(
             Update,
-            (update_cutscene, ensure_hero_vikings_gear, animate_player_limbs)
+            (
+                update_cutscene,
+                ensure_hero_vikings_gear,
+                ensure_hero_eye_reflections,
+                animate_player_limbs,
+            )
                 .run_if(in_state(GameState::Cutscene)),
         )
         .add_systems(

@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::enemies::{spawn_enemy_at, Enemy, EnemyKind};
 use crate::player::Player;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlayerStats};
+use crate::ui::HudOverlay;
 
 #[derive(Component)]
 pub struct CutsceneEntity;
@@ -20,6 +21,9 @@ pub struct CutsceneMom;
 pub struct CutsceneEsxiLed(pub f32);
 
 #[derive(Component)]
+pub struct CutsceneEyeReflection;
+
+#[derive(Component)]
 pub struct HeroCosmetic;
 
 #[derive(Component)]
@@ -33,9 +37,6 @@ pub struct CutsceneBeatTitle;
 
 #[derive(Component)]
 pub struct CutsceneSubtitleText;
-
-#[derive(Component)]
-pub struct SkipCutsceneButton;
 
 #[derive(Component)]
 pub struct BossHudNode;
@@ -91,7 +92,7 @@ pub fn ensure_hero_vikings_gear(
     part_q: Query<(Entity, &Name), Without<HeroCosmetic>>,
 ) {
     let should_wear =
-        *state.get() == GameState::BossFight || (*state.get() == GameState::Cutscene && stats.cutscene_beat >= 3);
+        *state.get() == GameState::BossFight || (*state.get() == GameState::Cutscene && stats.cutscene_beat >= 6);
     if !should_wear || !existing_q.is_empty() {
         return;
     }
@@ -340,6 +341,495 @@ fn spawn_box(
     ));
 }
 
+#[derive(Clone, Copy)]
+enum GundamStyle {
+    Rx78,
+    WingZero,
+    RedComet,
+}
+
+#[derive(Clone, Copy)]
+enum AnimeFigurineStyle {
+    TwinTailMagical,
+    SpikyShonen,
+    CyberIdol,
+}
+
+/// Attach tiny emissive ESXi DCUI + vSphere reflections onto Stan's HeroHead pupils during cutscene shots.
+pub fn ensure_hero_eye_reflections(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    state: Res<State<GameState>>,
+    existing_q: Query<Entity, With<CutsceneEyeReflection>>,
+    head_q: Query<(Entity, &Name), Without<CutsceneEyeReflection>>,
+) {
+    if *state.get() != GameState::Cutscene || !existing_q.is_empty() {
+        return;
+    }
+
+    let Some((head_ent, _)) = head_q.iter().find(|(_, n)| n.as_str() == "HeroHead") else {
+        return;
+    };
+
+    let screen_navy = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.18, 0.58, 0.98),
+        emissive: LinearRgba::new(0.25, 0.90, 1.85, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let esxi_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.85, 0.16),
+        emissive: LinearRgba::new(2.4, 1.75, 0.14, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let vsphere_cyan = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.95, 1.0),
+        emissive: LinearRgba::new(0.45, 2.1, 2.7, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let gleam_white = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::new(3.2, 3.2, 3.2, 1.0),
+        unlit: true,
+        ..default()
+    });
+
+    commands.entity(head_ent).with_children(|head| {
+        head.spawn((
+            CutsceneEntity,
+            CutsceneEyeReflection,
+            Visibility::Visible,
+            Transform::IDENTITY,
+        ))
+        .with_children(|refl| {
+            // Eye centers in HeroHead local space sit at (sx * 0.10, 0.32, -0.317)
+            for sx in [-1.0_f32, 1.0_f32] {
+                let ex = sx * 0.10;
+                refl.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.022, 0.020, 0.004)))),
+                    MeshMaterial3d(screen_navy.clone()),
+                    Transform::from_xyz(ex, 0.320, -0.318),
+                ));
+                refl.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.020, 0.0055, 0.004)))),
+                    MeshMaterial3d(esxi_gold.clone()),
+                    Transform::from_xyz(ex, 0.327, -0.320),
+                ));
+                refl.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.015, 0.004, 0.004)))),
+                    MeshMaterial3d(vsphere_cyan.clone()),
+                    Transform::from_xyz(ex - 0.002, 0.318, -0.320),
+                ));
+                refl.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.0045))),
+                    MeshMaterial3d(gleam_white.clone()),
+                    Transform::from_xyz(ex + 0.007, 0.328, -0.321),
+                ));
+            }
+        });
+    });
+}
+
+fn spawn_gundam_mecha(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+    yaw: f32,
+    scale: f32,
+    style: GundamStyle,
+) {
+    let white = materials.add(StandardMaterial {
+        base_color: match style {
+            GundamStyle::RedComet => Color::srgb(0.88, 0.20, 0.22),
+            _ => Color::srgb(0.95, 0.96, 0.98),
+        },
+        perceptual_roughness: 0.32,
+        metallic: 0.15,
+        ..default()
+    });
+    let chest_mat = materials.add(StandardMaterial {
+        base_color: match style {
+            GundamStyle::Rx78 => Color::srgb(0.12, 0.30, 0.85),
+            GundamStyle::WingZero => Color::srgb(0.10, 0.22, 0.62),
+            GundamStyle::RedComet => Color::srgb(0.45, 0.08, 0.12),
+        },
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let accent_red = materials.add(StandardMaterial {
+        base_color: match style {
+            GundamStyle::WingZero => Color::srgb(0.18, 0.42, 0.92),
+            GundamStyle::RedComet => Color::srgb(0.20, 0.20, 0.24),
+            GundamStyle::Rx78 => Color::srgb(0.86, 0.14, 0.18),
+        },
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.80, 0.15),
+        emissive: LinearRgba::new(0.35, 0.25, 0.02, 1.0),
+        metallic: 0.65,
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    let gunmetal = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.18, 0.22),
+        metallic: 0.72,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let visor_glow = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: match style {
+            GundamStyle::RedComet => LinearRgba::new(3.2, 0.4, 1.6, 1.0),
+            _ => LinearRgba::new(0.4, 3.0, 1.8, 1.0),
+        },
+        unlit: true,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            CutsceneEntity,
+            LevelEntity,
+            Transform::from_translation(pos)
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::splat(scale)),
+        ))
+        .with_children(|g| {
+            // Stand plinth
+            g.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.32, 0.03))),
+                MeshMaterial3d(gunmetal.clone()),
+                Transform::from_xyz(0.0, 0.015, 0.0),
+            ));
+            // Legs, boots & angular knee armor
+            for sx in [-1.0_f32, 1.0_f32] {
+                let lx = sx * 0.11;
+                g.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.12, 0.08, 0.22)))),
+                    MeshMaterial3d(accent_red.clone()),
+                    Transform::from_xyz(lx, 0.07, -0.02),
+                ));
+                g.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.10, 0.44, 0.12)))),
+                    MeshMaterial3d(white.clone()),
+                    Transform::from_xyz(lx, 0.33, 0.0),
+                ));
+                g.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.09, 0.11, 0.05)))),
+                    MeshMaterial3d(white.clone()),
+                    Transform::from_xyz(lx, 0.38, -0.075),
+                ));
+            }
+            // Waist skirt & chest core
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.34, 0.12, 0.19)))),
+                MeshMaterial3d(white.clone()),
+                Transform::from_xyz(0.0, 0.60, 0.0),
+            ));
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.10, 0.10, 0.21)))),
+                MeshMaterial3d(accent_red.clone()),
+                Transform::from_xyz(0.0, 0.60, -0.01),
+            ));
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.38, 0.28, 0.22)))),
+                MeshMaterial3d(chest_mat.clone()),
+                Transform::from_xyz(0.0, 0.80, 0.0),
+            ));
+            // Chest twin vents / WingZero zero-system orb
+            for sx in [-1.0_f32, 1.0_f32] {
+                g.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.09, 0.06, 0.04)))),
+                    MeshMaterial3d(gold.clone()),
+                    Transform::from_xyz(sx * 0.10, 0.83, -0.11),
+                ));
+            }
+            if matches!(style, GundamStyle::WingZero) {
+                g.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.048))),
+                    MeshMaterial3d(visor_glow.clone()),
+                    Transform::from_xyz(0.0, 0.80, -0.11),
+                ));
+            }
+            // Flared shoulder pauldrons + arms
+            for sx in [-1.0_f32, 1.0_f32] {
+                g.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.18, 0.16, 0.20)))),
+                    MeshMaterial3d(white.clone()),
+                    Transform::from_xyz(sx * 0.27, 0.88, 0.0)
+                        .with_rotation(Quat::from_rotation_z(sx * -0.22)),
+                ));
+                g.spawn((
+                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.09, 0.30, 0.10)))),
+                    MeshMaterial3d(white.clone()),
+                    Transform::from_xyz(sx * 0.28, 0.68, -0.02),
+                ));
+            }
+            // Left Heater Shield + Right Beam Rifle
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.04, 0.42, 0.24)))),
+                MeshMaterial3d(accent_red.clone()),
+                Transform::from_xyz(-0.36, 0.72, -0.05)
+                    .with_rotation(Quat::from_rotation_y(0.28)),
+            ));
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.05, 0.08, 0.44)))),
+                MeshMaterial3d(gunmetal.clone()),
+                Transform::from_xyz(0.30, 0.64, -0.22)
+                    .with_rotation(Quat::from_rotation_x(0.20)),
+            ));
+            // Head Helmet + Glowing Visor + Iconic V-Fin / Commander Horn
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.20, 0.20, 0.20)))),
+                MeshMaterial3d(white.clone()),
+                Transform::from_xyz(0.0, 1.05, 0.0),
+            ));
+            g.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.15, 0.045, 0.04)))),
+                MeshMaterial3d(visor_glow.clone()),
+                Transform::from_xyz(0.0, 1.05, -0.095),
+            ));
+            match style {
+                GundamStyle::RedComet => {
+                    g.spawn((
+                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.03, 0.18, 0.04)))),
+                        MeshMaterial3d(gold),
+                        Transform::from_xyz(0.0, 1.19, -0.07)
+                            .with_rotation(Quat::from_rotation_x(-0.35)),
+                    ));
+                }
+                _ => {
+                    for sx in [-1.0_f32, 1.0_f32] {
+                        g.spawn((
+                            Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.18, 0.035, 0.03)))),
+                            MeshMaterial3d(gold.clone()),
+                            Transform::from_xyz(sx * 0.08, 1.16, -0.10)
+                                .with_rotation(Quat::from_rotation_z(sx * 0.46)),
+                        ));
+                    }
+                }
+            }
+            // Backpack / Beam Sabers / Wing Zero Angel Wings
+            match style {
+                GundamStyle::WingZero => {
+                    for sx in [-1.0_f32, 1.0_f32] {
+                        g.spawn((
+                            Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.56, 0.16, 0.03)))),
+                            MeshMaterial3d(white.clone()),
+                            Transform::from_xyz(sx * 0.34, 1.02, 0.14)
+                                .with_rotation(Quat::from_rotation_z(sx * 0.48) * Quat::from_rotation_y(sx * 0.22)),
+                        ));
+                        g.spawn((
+                            Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.42, 0.12, 0.03)))),
+                            MeshMaterial3d(white.clone()),
+                            Transform::from_xyz(sx * 0.26, 0.78, 0.15)
+                                .with_rotation(Quat::from_rotation_z(sx * -0.45)),
+                        ));
+                    }
+                }
+                GundamStyle::Rx78 => {
+                    for sx in [-1.0_f32, 1.0_f32] {
+                        g.spawn((
+                            Mesh3d(meshes.add(Cylinder::new(0.025, 0.26))),
+                            MeshMaterial3d(visor_glow.clone()),
+                            Transform::from_xyz(sx * 0.11, 1.06, 0.13)
+                                .with_rotation(Quat::from_rotation_z(sx * 0.22)),
+                        ));
+                    }
+                }
+                GundamStyle::RedComet => {
+                    g.spawn((
+                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.22, 0.22, 0.10)))),
+                        MeshMaterial3d(gunmetal),
+                        Transform::from_xyz(0.0, 0.84, 0.14),
+                    ));
+                }
+            }
+        });
+}
+
+fn spawn_anime_figurine(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+    yaw: f32,
+    scale: f32,
+    style: AnimeFigurineStyle,
+) {
+    let base_mat = materials.add(StandardMaterial {
+        base_color: match style {
+            AnimeFigurineStyle::CyberIdol => Color::srgb(0.10, 0.82, 0.95),
+            AnimeFigurineStyle::SpikyShonen => Color::srgb(0.95, 0.65, 0.12),
+            AnimeFigurineStyle::TwinTailMagical => Color::srgb(0.95, 0.36, 0.72),
+        },
+        emissive: match style {
+            AnimeFigurineStyle::CyberIdol => LinearRgba::new(0.1, 0.9, 1.3, 1.0),
+            AnimeFigurineStyle::SpikyShonen => LinearRgba::new(1.1, 0.55, 0.05, 1.0),
+            AnimeFigurineStyle::TwinTailMagical => LinearRgba::new(1.1, 0.2, 0.65, 1.0),
+        },
+        metallic: 0.4,
+        ..default()
+    });
+    let skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.84, 0.74),
+        perceptual_roughness: 0.45,
+        ..default()
+    });
+    let hair_color = match style {
+        AnimeFigurineStyle::TwinTailMagical => Color::srgb(0.98, 0.84, 0.22),
+        AnimeFigurineStyle::SpikyShonen => Color::srgb(0.09, 0.08, 0.12),
+        AnimeFigurineStyle::CyberIdol => Color::srgb(0.12, 0.92, 0.88),
+    };
+    let hair_mat = materials.add(StandardMaterial {
+        base_color: hair_color,
+        emissive: if matches!(style, AnimeFigurineStyle::CyberIdol) {
+            LinearRgba::new(0.05, 0.35, 0.35, 1.0)
+        } else {
+            LinearRgba::BLACK
+        },
+        perceptual_roughness: 0.40,
+        ..default()
+    });
+    let outfit_main = materials.add(StandardMaterial {
+        base_color: match style {
+            AnimeFigurineStyle::TwinTailMagical => Color::srgb(0.16, 0.45, 0.95),
+            AnimeFigurineStyle::SpikyShonen => Color::srgb(0.96, 0.40, 0.08),
+            AnimeFigurineStyle::CyberIdol => Color::srgb(0.88, 0.90, 0.96),
+        },
+        perceptual_roughness: 0.42,
+        ..default()
+    });
+    let outfit_trim = materials.add(StandardMaterial {
+        base_color: match style {
+            AnimeFigurineStyle::TwinTailMagical => Color::srgb(0.95, 0.16, 0.45),
+            AnimeFigurineStyle::SpikyShonen => Color::srgb(0.12, 0.22, 0.65),
+            AnimeFigurineStyle::CyberIdol => Color::srgb(0.58, 0.18, 0.92),
+        },
+        ..default()
+    });
+    let eye_iris = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.68, 0.98),
+        emissive: LinearRgba::new(0.1, 0.35, 0.7, 1.0),
+        ..default()
+    });
+
+    commands
+        .spawn((
+            CutsceneEntity,
+            LevelEntity,
+            Transform::from_translation(pos)
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::splat(scale)),
+        ))
+        .with_children(|f| {
+            // Glossy acrylic collector plinth
+            f.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.24, 0.04))),
+                MeshMaterial3d(base_mat.clone()),
+                Transform::from_xyz(0.0, 0.02, 0.0),
+            ));
+            // Legs
+            for sx in [-1.0_f32, 1.0_f32] {
+                f.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.042, 0.40))),
+                    MeshMaterial3d(if matches!(style, AnimeFigurineStyle::SpikyShonen) {
+                        outfit_main.clone()
+                    } else {
+                        skin.clone()
+                    }),
+                    Transform::from_xyz(sx * 0.065, 0.24, 0.0),
+                ));
+            }
+            // Pleated Skirt or Martial Gi Sash
+            if !matches!(style, AnimeFigurineStyle::SpikyShonen) {
+                f.spawn((
+                    Mesh3d(meshes.add(Cone::new(0.19, 0.22))),
+                    MeshMaterial3d(outfit_main.clone()),
+                    Transform::from_xyz(0.0, 0.49, 0.0),
+                ));
+            }
+            // Torso + Ribbon / Belt + Arms
+            f.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.095, 0.30))),
+                MeshMaterial3d(outfit_main.clone()),
+                Transform::from_xyz(0.0, 0.66, 0.0),
+            ));
+            f.spawn((
+                Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.16, 0.08, 0.14)))),
+                MeshMaterial3d(outfit_trim.clone()),
+                Transform::from_xyz(0.0, 0.57, 0.0),
+            ));
+            for sx in [-1.0_f32, 1.0_f32] {
+                f.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.035, 0.26))),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(sx * 0.13, 0.68, -0.02)
+                        .with_rotation(Quat::from_rotation_z(sx * 0.45)),
+                ));
+            }
+            // Anime Head + Large Stylized Eyes
+            f.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.15))),
+                MeshMaterial3d(skin),
+                Transform::from_xyz(0.0, 0.94, 0.0),
+            ));
+            for sx in [-1.0_f32, 1.0_f32] {
+                f.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.032))),
+                    MeshMaterial3d(eye_iris.clone()),
+                    Transform::from_xyz(sx * 0.055, 0.94, -0.132),
+                ));
+            }
+            // Distinct Anime Hair + Iconic Prop
+            f.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.165))),
+                MeshMaterial3d(hair_mat.clone()),
+                Transform::from_xyz(0.0, 0.98, 0.03),
+            ));
+            match style {
+                AnimeFigurineStyle::TwinTailMagical | AnimeFigurineStyle::CyberIdol => {
+                    for sx in [-1.0_f32, 1.0_f32] {
+                        f.spawn((
+                            Mesh3d(meshes.add(Cone::new(0.075, 0.48))),
+                            MeshMaterial3d(hair_mat.clone()),
+                            Transform::from_xyz(sx * 0.19, 0.84, 0.05)
+                                .with_rotation(Quat::from_rotation_z(sx * 2.85)),
+                        ));
+                    }
+                    // Magical star wand or cyber microphone
+                    f.spawn((
+                        Mesh3d(meshes.add(Cylinder::new(0.015, 0.34))),
+                        MeshMaterial3d(base_mat.clone()),
+                        Transform::from_xyz(0.22, 0.82, -0.10)
+                            .with_rotation(Quat::from_rotation_z(-0.25)),
+                    ));
+                    f.spawn((
+                        Mesh3d(meshes.add(Sphere::new(0.055))),
+                        MeshMaterial3d(base_mat),
+                        Transform::from_xyz(0.26, 0.99, -0.10),
+                    ));
+                }
+                AnimeFigurineStyle::SpikyShonen => {
+                    for angle in [-0.75_f32, -0.35, 0.0, 0.35, 0.75] {
+                        f.spawn((
+                            Mesh3d(meshes.add(Cone::new(0.065, 0.24))),
+                            MeshMaterial3d(hair_mat.clone()),
+                            Transform::from_xyz(angle * 0.14, 1.15, 0.02)
+                                .with_rotation(Quat::from_rotation_z(-angle * 0.7)),
+                        ));
+                    }
+                }
+            }
+        });
+}
+
 pub fn enter_cutscene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -347,12 +837,17 @@ pub fn enter_cutscene(
     mut stats: ResMut<PlayerStats>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     cosmetic_q: Query<Entity, With<HeroCosmetic>>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
 ) {
     for e in &cosmetic_q {
         commands.entity(e).despawn_recursive();
     }
+    for mut node in &mut hud_q {
+        node.display = Display::None;
+    }
 
-    stats.cutscene_timer = 0.0;
+    let start_t = crate::audio::take_cutscene_start_time();
+    stats.cutscene_timer = if start_t > 0.0 { start_t } else { 0.0 };
     stats.cutscene_beat = 0;
     stats.boss_mode = false;
     stats.hint_text.clear();
@@ -365,13 +860,14 @@ pub fn enter_cutscene(
     // Dimly lit, spooky atmosphere for Stan's bedroom backstory
     commands.insert_resource(ClearColor(Color::srgb(0.015, 0.01, 0.035)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.24, 0.18, 0.44),
-        brightness: 42.0,
+        color: Color::srgb(0.26, 0.20, 0.46),
+        brightness: 46.0,
     });
 
+    let base_y = 40.0_f32;
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
-        p_tf.translation = Vec3::new(-0.3, 40.0, -1.3);
-        p_tf.rotation = Quat::from_rotation_y(0.15);
+        p_tf.translation = Vec3::new(-0.3, base_y, -1.60);
+        p_tf.rotation = Quat::IDENTITY;
         p_tf.scale = Vec3::splat(1.35);
         player.velocity = Vec3::ZERO;
         player.grounded = true;
@@ -379,7 +875,6 @@ pub fn enter_cutscene(
         player.attack_timer = 0.0;
     }
 
-    let base_y = 40.0_f32;
     // Spooky dark bedroom floor, back/side walls, rug, and bed
     spawn_box(
         &mut commands,
@@ -437,7 +932,7 @@ pub fn enter_cutscene(
         None,
     );
 
-    // Work-from-home Desk + Dual VMware ESXi DCUI Monitors
+    // Work-from-home Desk + Detailed Dual VMware ESXi DCUI & vSphere Monitors
     spawn_box(
         &mut commands,
         &mut meshes,
@@ -447,43 +942,247 @@ pub fn enter_cutscene(
         Color::srgb(0.24, 0.16, 0.11),
         None,
     );
-    for mx in [-0.95_f32, 0.95_f32] {
+    // Left Monitor: VMware ESXi 8 DCUI Console
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-0.98, base_y + 1.85, -3.55),
+        Vec3::new(1.65, 1.08, 0.10),
+        Color::srgb(0.06, 0.06, 0.08),
+        None,
+    );
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-0.98, base_y + 2.20, -3.48),
+        Vec3::new(1.50, 0.24, 0.03),
+        Color::srgb(0.98, 0.78, 0.08),
+        Some(LinearRgba::new(1.4, 1.05, 0.08, 1.0)),
+    );
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-0.98, base_y + 1.72, -3.48),
+        Vec3::new(1.50, 0.66, 0.03),
+        Color::srgb(0.07, 0.14, 0.25),
+        Some(LinearRgba::new(0.14, 0.42, 0.72, 1.0)),
+    );
+    for (row_idx, w) in [0.55_f32, 0.42, 0.50, 0.34].iter().enumerate() {
+        let ry = base_y + 1.92 - (row_idx as f32) * 0.11;
         spawn_box(
             &mut commands,
             &mut meshes,
             &mut materials,
-            Vec3::new(mx, base_y + 1.85, -3.55),
-            Vec3::new(1.65, 1.08, 0.10),
-            Color::srgb(0.06, 0.06, 0.08),
-            None,
+            Vec3::new(-1.32, ry, -3.455),
+            Vec3::new(0.42, 0.04, 0.02),
+            Color::srgb(0.85, 0.92, 1.0),
+            Some(LinearRgba::new(0.9, 1.0, 1.1, 1.0)),
         );
-        // ESXi Host DCUI Yellow top bar + Dark slate/cyan hypervisor console screen
         spawn_box(
             &mut commands,
             &mut meshes,
             &mut materials,
-            Vec3::new(mx, base_y + 2.18, -3.48),
-            Vec3::new(1.50, 0.24, 0.03),
-            Color::srgb(0.98, 0.78, 0.08),
-            Some(LinearRgba::new(1.1, 0.85, 0.08, 1.0)),
-        );
-        spawn_box(
-            &mut commands,
-            &mut meshes,
-            &mut materials,
-            Vec3::new(mx, base_y + 1.72, -3.48),
-            Vec3::new(1.50, 0.64, 0.03),
-            Color::srgb(0.08, 0.14, 0.24),
-            Some(LinearRgba::new(0.12, 0.38, 0.65, 1.0)),
+            Vec3::new(-0.62, ry, -3.455),
+            Vec3::new(*w, 0.04, 0.02),
+            Color::srgb(0.98, 0.82, 0.20),
+            Some(LinearRgba::new(1.1, 0.85, 0.15, 1.0)),
         );
     }
+
+    // Right Monitor: VMware vSphere Cluster Telemetry
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(0.98, base_y + 1.85, -3.55),
+        Vec3::new(1.65, 1.08, 0.10),
+        Color::srgb(0.06, 0.06, 0.08),
+        None,
+    );
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(0.98, base_y + 2.20, -3.48),
+        Vec3::new(1.50, 0.22, 0.03),
+        Color::srgb(0.10, 0.55, 0.92),
+        Some(LinearRgba::new(0.16, 0.85, 1.45, 1.0)),
+    );
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(0.98, base_y + 1.72, -3.48),
+        Vec3::new(1.50, 0.68, 0.03),
+        Color::srgb(0.06, 0.10, 0.18),
+        Some(LinearRgba::new(0.08, 0.24, 0.45, 1.0)),
+    );
+    for (idx, (bx, bw, col, em)) in [
+        (0.55_f32, 0.52_f32, Color::srgb(0.18, 0.95, 0.52), LinearRgba::new(0.25, 1.4, 0.7, 1.0)),
+        (0.62, 0.68, Color::srgb(0.22, 0.82, 1.0), LinearRgba::new(0.3, 1.2, 1.6, 1.0)),
+        (0.52, 0.45, Color::srgb(0.98, 0.72, 0.16), LinearRgba::new(1.3, 0.8, 0.15, 1.0)),
+        (1.35, 0.42, Color::srgb(0.68, 0.42, 1.0), LinearRgba::new(0.9, 0.45, 1.5, 1.0)),
+    ]
+    .iter()
+    .enumerate()
+    {
+        spawn_box(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(*bx, base_y + 1.94 - (idx as f32) * 0.12, -3.455),
+            Vec3::new(*bw, 0.055, 0.02),
+            *col,
+            Some(*em),
+        );
+    }
+
+    // Monitor stands + RGB Mechanical Keyboard + Gaming Mouse on Desk
+    for mx in [-0.98_f32, 0.98_f32] {
+        spawn_box(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(mx, base_y + 1.22, -3.60),
+            Vec3::new(0.14, 0.36, 0.12),
+            Color::srgb(0.12, 0.13, 0.16),
+            None,
+        );
+    }
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-0.18, base_y + 1.09, -2.65),
+        Vec3::new(1.02, 0.05, 0.34),
+        Color::srgb(0.08, 0.09, 0.12),
+        None,
+    );
+    for (kx, col, em) in [
+        (-0.52_f32, Color::srgb(0.2, 0.9, 1.0), LinearRgba::new(0.25, 1.1, 1.5, 1.0)),
+        (-0.18, Color::srgb(0.75, 0.3, 1.0), LinearRgba::new(0.9, 0.35, 1.4, 1.0)),
+        (0.16, Color::srgb(1.0, 0.45, 0.2), LinearRgba::new(1.3, 0.45, 0.2, 1.0)),
+    ] {
+        spawn_box(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(kx, base_y + 1.12, -2.65),
+            Vec3::new(0.30, 0.02, 0.22),
+            col,
+            Some(em),
+        );
+    }
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(0.62, base_y + 1.10, -2.65),
+        Vec3::new(0.14, 0.05, 0.22),
+        Color::srgb(0.14, 0.85, 1.0),
+        Some(LinearRgba::new(0.2, 0.95, 1.4, 1.0)),
+    );
+
+    // 2-Tier Collector Display Shelf above Bed / Left of Desk (Gundams & Anime Figurines)
+    spawn_box(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-3.40, base_y + 2.55, -3.98),
+        Vec3::new(2.36, 2.25, 0.08),
+        Color::srgb(0.10, 0.09, 0.16),
+        None,
+    );
+    for sy in [base_y + 1.88, base_y + 2.86] {
+        spawn_box(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(-3.40, sy, -3.62),
+            Vec3::new(2.26, 0.06, 0.66),
+            Color::srgb(0.24, 0.16, 0.12),
+            None,
+        );
+    }
+    for sx in [-4.52_f32, -2.28_f32] {
+        spawn_box(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            Vec3::new(sx, base_y + 2.65, -3.62),
+            Vec3::new(0.08, 2.05, 0.66),
+            Color::srgb(0.20, 0.14, 0.10),
+            None,
+        );
+    }
+
+    // Top Shelf: Wing Zero & Classic RX-78 Gundams
+    spawn_gundam_mecha(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-3.88, base_y + 2.89, -3.56),
+        0.22,
+        0.54,
+        GundamStyle::Rx78,
+    );
+    spawn_gundam_mecha(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-2.90, base_y + 2.89, -3.56),
+        -0.20,
+        0.54,
+        GundamStyle::WingZero,
+    );
+    // Bottom Shelf: 3 Anime Collector Figurines
+    spawn_anime_figurine(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-4.05, base_y + 1.91, -3.56),
+        0.25,
+        0.55,
+        AnimeFigurineStyle::TwinTailMagical,
+    );
+    spawn_anime_figurine(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-3.40, base_y + 1.91, -3.56),
+        0.05,
+        0.55,
+        AnimeFigurineStyle::SpikyShonen,
+    );
+    spawn_anime_figurine(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-2.75, base_y + 1.91, -3.56),
+        -0.22,
+        0.55,
+        AnimeFigurineStyle::CyberIdol,
+    );
+    // Bonus Red Comet Chibi Mecha on Desk corner
+    spawn_gundam_mecha(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        Vec3::new(-2.02, base_y + 1.08, -2.68),
+        0.52,
+        0.38,
+        GundamStyle::RedComet,
+    );
 
     // Bare-metal ESXi Host Server Rack beside desk with blinking LEDs
     spawn_box(
         &mut commands,
         &mut meshes,
         &mut materials,
-        Vec3::new(2.75, base_y + 1.3, -3.1),
+        Vec3::new(2.82, base_y + 1.3, -3.1),
         Vec3::new(1.15, 2.6, 1.3),
         Color::srgb(0.09, 0.10, 0.13),
         None,
@@ -494,7 +1193,7 @@ pub fn enter_cutscene(
             &mut commands,
             &mut meshes,
             &mut materials,
-            Vec3::new(2.75, ry, -2.43),
+            Vec3::new(2.82, ry, -2.43),
             Vec3::new(0.95, 0.26, 0.04),
             Color::srgb(0.16, 0.18, 0.22),
             None,
@@ -510,22 +1209,22 @@ pub fn enter_cutscene(
                 unlit: true,
                 ..default()
             })),
-            Transform::from_xyz(3.05, ry, -2.38),
+            Transform::from_xyz(3.12, ry, -2.38),
         ));
     }
 
-    // Eerie monitor cyan glow + spooky purple doorway backlight
+    // Eerie monitor cyan glow + spooky purple doorway backlight + collector shelf spot + close-up key light
     commands.spawn((
         CutsceneEntity,
         LevelEntity,
         PointLight {
-            color: Color::srgb(0.25, 0.65, 1.0),
-            intensity: 26000.0,
-            range: 9.0,
+            color: Color::srgb(0.32, 0.72, 1.0),
+            intensity: 28000.0,
+            range: 9.5,
             shadows_enabled: false,
             ..default()
         },
-        Transform::from_xyz(0.0, base_y + 2.3, -2.4),
+        Transform::from_xyz(0.0, base_y + 2.35, -2.4),
     ));
     commands.spawn((
         CutsceneEntity,
@@ -539,8 +1238,32 @@ pub fn enter_cutscene(
         },
         Transform::from_xyz(3.2, base_y + 3.4, 2.2),
     ));
+    commands.spawn((
+        CutsceneEntity,
+        LevelEntity,
+        PointLight {
+            color: Color::srgb(0.95, 0.90, 1.0),
+            intensity: 30000.0,
+            range: 6.5,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(-3.40, base_y + 3.15, -2.45),
+    ));
+    commands.spawn((
+        CutsceneEntity,
+        LevelEntity,
+        PointLight {
+            color: Color::srgb(0.88, 0.88, 1.0),
+            intensity: 40000.0,
+            range: 12.0,
+            shadows_enabled: false,
+            ..default()
+        },
+        Transform::from_xyz(-0.1, base_y + 3.8, 1.9),
+    ));
 
-    // Spooky Mailman carrying the Christmas Vikings Onesie Parcel (enters left during Beat 2)
+    // Spooky Mailman carrying the Christmas Vikings Onesie Parcel (enters left during Beat 5)
     let mail_blue = materials.add(StandardMaterial {
         base_color: Color::srgb(0.16, 0.30, 0.65),
         perceptual_roughness: 0.65,
@@ -556,7 +1279,7 @@ pub fn enter_cutscene(
             CutsceneEntity,
             LevelEntity,
             CutsceneMailman,
-            Transform::from_xyz(-8.0, base_y, 0.2).with_rotation(Quat::from_rotation_y(-PI * 0.5)),
+            Transform::from_xyz(-10.0, base_y, -0.35).with_rotation(Quat::from_rotation_y(-PI * 0.5)),
         ))
         .with_children(|m| {
             m.spawn((
@@ -574,7 +1297,6 @@ pub fn enter_cutscene(
                 MeshMaterial3d(mail_blue),
                 Transform::from_xyz(0.0, 1.94, 0.0),
             ));
-            // Festive parcel box with golden glow & Vikings purple ribbon
             m.spawn((
                 CutscenePackage,
                 Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.68, 0.48, 0.56)))),
@@ -598,17 +1320,17 @@ pub fn enter_cutscene(
             });
         });
 
-    // Mom enters in Beat 4 from right doorway wielding Crimson Lightsaber
+    // Mom enters in Beat 7 from right doorway wielding Crimson Lightsaber
     let mom_root = spawn_mom_mesh_hierarchy(
         &mut commands,
         &mut meshes,
         &mut materials,
-        Vec3::new(8.5, base_y, 0.4),
+        Vec3::new(9.5, base_y, 0.35),
         1.55,
     );
     commands.entity(mom_root).insert((CutsceneEntity, CutsceneMom));
 
-    // Cutscene Letterbox UI + Subtitles + Skip Button
+    // Clean Unskippable Letterbox UI + Subtitles (zero HUD / zero input buttons)
     commands
         .spawn((
             CutsceneOverlay,
@@ -625,7 +1347,7 @@ pub fn enter_cutscene(
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    padding: UiRect::axes(Val::Px(18.0), Val::Px(14.0)),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(13.0)),
                     justify_content: JustifyContent::Center,
                     ..default()
                 },
@@ -636,20 +1358,23 @@ pub fn enter_cutscene(
                     CutsceneBeatTitle,
                     Text::new("CHAPTER I: 3:00 AM ON THE ESXi HOST"),
                     TextFont {
-                        font_size: 20.0,
+                        font_size: 18.0,
                         ..default()
                     },
+                    TextLayout::new_with_justify(JustifyText::Center),
                     TextColor(Color::srgb(0.78, 0.62, 1.0)),
+                    Node {
+                        max_width: Val::Percent(94.0),
+                        ..default()
+                    },
                 ));
             });
 
             root.spawn((
                 Node {
                     width: Val::Percent(100.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(10.0),
-                    padding: UiRect::axes(Val::Px(18.0), Val::Px(14.0)),
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(16.0)),
+                    justify_content: JustifyContent::Center,
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.02, 0.01, 0.05, 0.88)),
@@ -657,44 +1382,79 @@ pub fn enter_cutscene(
             .with_children(|bot| {
                 bot.spawn((
                     CutsceneSubtitleText,
-                    Text::new("Stan worked late from home in the dark, managing virtual machines on his ESXi host..."),
+                    Text::new("3:00 AM. In the dark solitude of his bedroom, Stan worked from home..."),
                     TextFont {
-                        font_size: 16.5,
+                        font_size: 16.0,
                         ..default()
                     },
+                    TextLayout::new_with_justify(JustifyText::Center),
                     TextColor(Color::srgb(0.96, 0.94, 0.88)),
-                ));
-                bot.spawn((
-                    SkipCutsceneButton,
-                    Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(20.0), Val::Px(8.0)),
+                        max_width: Val::Percent(94.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.45, 0.16, 0.68)),
-                    BorderRadius::all(Val::Px(8.0)),
-                ))
-                .with_children(|btn| {
-                    btn.spawn((
-                        Text::new("SKIP TO BOSS BATTLE (SPACE / TAP)"),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
+                ));
             });
         });
 }
 
+fn cutscene_beat_script(beat: u8) -> (&'static str, &'static str, &'static str, &'static str) {
+    match beat {
+        1 => (
+            "CHAPTER I: 3:00 AM ON THE ESXi HOST",
+            "3:00 AM. In the dark solitude of his bedroom, Stan worked from home...",
+            "In the dead of night, in a dimly lit bedroom, Stan worked tirelessly from home.",
+            "narrator",
+        ),
+        2 => (
+            "HYPERVISOR WORKLOADS: BARE METAL",
+            "Virtual machines hummed across his VMware ESXi monitors and rack.",
+            "Managing critical virtual machines across his glowing VMware ESXi screens and bare metal server rack.",
+            "narrator",
+        ),
+        3 => (
+            "HYPERSCALE FOCUS: MONITOR GLOW",
+            "The cold glow of his ESXi screens reflected across Stan's focused eyes.",
+            "The cold blue and gold glow of the hypervisor screens reflected sharply across Stan's tired eyes.",
+            "narrator",
+        ),
+        4 => (
+            "STAN'S SANCTUARY: GUNDAMS & FIGURES",
+            "Surrounded by his prized Gundam models and anime figures, night grew late...",
+            "Guarded by his prized Gundam model kits and anime figurines lining the shelves, midnight slipped by.",
+            "narrator",
+        ),
+        5 => (
+            "CHAPTER II: THE MAILMAN'S MYSTERIOUS PARCEL",
+            "Until a mysterious mailman appeared with Stan's new Christmas Vikings Onesie!",
+            "Until a mysterious mailman stepped out of the shadows, carrying Stan's newly ordered Christmas Vikings onesie!",
+            "narrator",
+        ),
+        6 => (
+            "CHAPTER III: AWAKENING OF THE VIKINGS ONESIE",
+            "STAN: \"Whoa... Putting on this Vikings onesie unlocked Dodge & Roll AND a Lightsaber?!\"",
+            "Whoa... putting on this Christmas Vikings onesie just unlocked ancient Dodge and Roll powers, and a Lightsaber?!",
+            "stan",
+        ),
+        7 => (
+            "FINAL BOSS: MOM STORMS IN!",
+            "MOM: \"STAN! DROP THAT LIGHTSABER AND EAT YOUR VEGETABLES RIGHT NOW!\"",
+            "Stan! Drop that lightsaber and eat your vegetables right this second!",
+            "mom",
+        ),
+        _ => (
+            "THE TENDY DUEL BEGINS",
+            "STAN: \"Not until I finish my tendies, Mom! VIKINGS ONESIE... ENGAGE!\"",
+            "Not until I finish my chicken tendies, Mom! Vikings onesie, ignite!",
+            "stan",
+        ),
+    }
+}
+
 pub fn update_cutscene(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    touches: Res<Touches>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
-    skip_q: Query<&Interaction, (Changed<Interaction>, With<SkipCutsceneButton>)>,
     mut player_q: Query<(&mut Transform, &mut Player), With<Player>>,
     mut mailman_q: Query<
         &mut Transform,
@@ -723,28 +1483,50 @@ pub fn update_cutscene(
             Without<CutsceneMom>,
         ),
     >,
-    mut led_q: Query<(&CutsceneEsxiLed, &mut Transform), (Without<Camera3d>, Without<Player>, Without<CutsceneMailman>, Without<CutsceneMom>)>,
+    mut led_q: Query<
+        (&CutsceneEsxiLed, &mut Transform),
+        (
+            Without<Camera3d>,
+            Without<Player>,
+            Without<CutsceneMailman>,
+            Without<CutsceneMom>,
+        ),
+    >,
+    mut eye_refl_q: Query<&mut Visibility, With<CutsceneEyeReflection>>,
     mut title_q: Query<&mut Text, With<CutsceneBeatTitle>>,
     mut sub_q: Query<&mut Text, (With<CutsceneSubtitleText>, Without<CutsceneBeatTitle>)>,
 ) {
-    let dt = time.delta_secs().min(0.05);
-    stats.cutscene_timer += dt;
-    let t = stats.cutscene_timer;
+    const BEAT_ENDS: [f32; 8] = [5.5, 13.0, 20.0, 26.5, 33.5, 41.5, 47.5, 54.0];
 
-    // Skip immediately on Space/Enter/Tap/Button
-    let skip_clicked = skip_q.iter().any(|i| *i == Interaction::Pressed);
-    if (t > 0.35
-        && (skip_clicked
-            || keys.just_pressed(KeyCode::Space)
-            || keys.just_pressed(KeyCode::Enter)
-            || touches.any_just_pressed()
-            || crate::audio::take_touch_action_tap()
-            || crate::audio::take_touch_jump()))
-        || t >= 18.0
-    {
+    let dt = time.delta_secs().min(0.05);
+    let mut t = stats.cutscene_timer + dt;
+
+    let mut target_beat: u8 = 9;
+    for (idx, &end_t) in BEAT_ENDS.iter().enumerate() {
+        if t < end_t {
+            target_beat = (idx as u8) + 1;
+            break;
+        }
+    }
+
+    // Wait cleanly for TTS to finish before advancing to the next beat or leaving cutscene
+    if stats.cutscene_beat > 0 && target_beat > stats.cutscene_beat {
+        if crate::audio::is_voice_speaking() {
+            let hold_idx = (stats.cutscene_beat.saturating_sub(1) as usize).min(7);
+            t = BEAT_ENDS[hold_idx] - 0.01;
+            target_beat = stats.cutscene_beat;
+        } else if target_beat == 9 {
+            stats.cutscene_timer = t;
+            next_state.set(GameState::BossFight);
+            return;
+        }
+    } else if target_beat == 9 && !crate::audio::is_voice_speaking() {
+        stats.cutscene_timer = t;
         next_state.set(GameState::BossFight);
         return;
     }
+
+    stats.cutscene_timer = t;
 
     // Pulse ESXi rack activity LEDs
     for (led, mut tf) in &mut led_q {
@@ -752,126 +1534,205 @@ pub fn update_cutscene(
         tf.scale = Vec3::splat(pulse);
     }
 
-    // Determine beat 1..4 and speak voice narration once per transition
-    let new_beat: u8 = if t < 4.5 {
-        1
-    } else if t < 9.0 {
-        2
-    } else if t < 13.5 {
-        3
-    } else {
-        4
-    };
-
-    if new_beat != stats.cutscene_beat {
-        stats.cutscene_beat = new_beat;
-        let (title, sub, voice, role) = match new_beat {
-            1 => (
-                "CHAPTER I: 3:00 AM ON THE ESXi HOST",
-                "In a dimly lit bedroom, Stan worked from home on his bare-metal VMware ESXi host...",
-                "In a dimly lit bedroom, Stan worked from home through the dead of night, managing virtual machines on his ESXi host.",
-                "narrator",
-            ),
-            2 => (
-                "CHAPTER II: THE MAILMAN'S MYSTERIOUS PARCEL",
-                "Suddenly a spooky mailman arrived, delivering Stan's new Christmas Vikings Onesie!",
-                "Suddenly, a mysterious mailman arrived at the door, delivering Stan's newly purchased Christmas onesie with the Vikings logo!",
-                "narrator",
-            ),
-            3 => (
-                "CHAPTER III: AWAKENING OF THE VIKINGS ONESIE",
-                "Putting it on unlocked Stan's Dodge & Roll powers and a blazing Lightsaber!",
-                "Putting on the Christmas Vikings onesie unlocked ancient reflexes: Dodge and Roll mechanics, and a blazing Lightsaber!",
-                "narrator",
-            ),
-            _ => (
-                "FINAL BOSS: MOM HAS ENTERED WITH A LIGHTSABER!",
-                "MOM: \"STAN! YOU MUST EAT YOUR VEGGIES!\"",
-                "Stan! Put down those chicken tendies! You must eat your veggies right now!",
-                "mom",
-            ),
-        };
+    if target_beat != stats.cutscene_beat && target_beat <= 8 {
+        stats.cutscene_beat = target_beat;
+        let (title, sub, voice, role) = cutscene_beat_script(target_beat);
         if let Ok(mut txt) = title_q.get_single_mut() {
             txt.0 = title.to_string();
         }
         if let Ok(mut txt) = sub_q.get_single_mut() {
             txt.0 = sub.to_string();
         }
-        if new_beat == 3 {
+        if target_beat == 6 || target_beat == 8 {
             crate::audio::play_sfx("saber_ignite");
-        } else if new_beat == 4 {
+        } else if target_beat == 7 {
             crate::audio::play_sfx("mom_yell");
         }
         crate::audio::speak_voice(voice, role);
     }
 
-    // Animate cutscene actors & camera across the 4 beats
+    for mut vis in &mut eye_refl_q {
+        *vis = if stats.cutscene_beat <= 4 {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+
+    // Animate Stan across beats 1..8
     let base_y = 40.0_f32;
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
+        player.velocity = Vec3::ZERO;
         match stats.cutscene_beat {
-            1 => {
-                // Working at ESXi desk facing north (-Z)
-                p_tf.translation = Vec3::new(-0.3, base_y, -1.4);
-                p_tf.rotation = Quat::from_rotation_y(0.0);
-                player.velocity = Vec3::ZERO;
-                player.roll_timer = 0.0;
-            }
-            2 => {
-                // Turns left toward incoming mailman
-                p_tf.translation = Vec3::new(-0.3, base_y, -1.0);
-                p_tf.rotation = Quat::from_rotation_y(PI * 0.45);
-                player.roll_timer = 0.0;
-            }
-            3 => {
-                // Showcases new Christmas Vikings Onesie + Dodge & Roll + Lightsaber!
-                let p = (t - 9.0).clamp(0.0, 4.5);
-                p_tf.translation = Vec3::new((p * 1.6).sin() * 1.2, base_y + (p * 3.0).sin().abs() * 0.4, 0.2);
-                p_tf.rotation = Quat::from_rotation_y(PI + (p * 1.4).sin() * 0.35);
-                player.roll_timer = if (p % 1.4) < 0.42 { 0.42 - (p % 1.4) } else { 0.0 };
-                player.attack_timer = if (p % 1.4) > 0.65 && (p % 1.4) < 0.95 { 0.25 } else { 0.0 };
-            }
-            _ => {
-                // Faces off against Mom on right
-                p_tf.translation = Vec3::new(-1.3, base_y, 0.4);
-                p_tf.rotation = Quat::from_rotation_y(-PI * 0.5);
+            1..=4 => {
+                p_tf.translation = Vec3::new(-0.3, base_y, -1.60);
+                p_tf.rotation = Quat::from_rotation_y((t * 1.4).sin() * 0.025);
                 player.roll_timer = 0.0;
                 player.attack_timer = 0.0;
+            }
+            5 => {
+                p_tf.translation = Vec3::new(-0.15, base_y, -0.70);
+                p_tf.rotation = Quat::from_rotation_y(PI * 0.55);
+                player.roll_timer = 0.0;
+                player.attack_timer = 0.0;
+            }
+            6 => {
+                let p = (t - 33.5).clamp(0.0, 8.0);
+                if p < 3.0 {
+                    p_tf.translation =
+                        Vec3::new((p * 1.9).sin() * 0.9, base_y + (p * 3.2).sin().abs() * 0.35, 0.20);
+                    p_tf.rotation = Quat::from_rotation_y(PI + (p * 1.8).sin() * 0.45);
+                    player.roll_timer = if (p % 1.4) < 0.42 { 0.42 - (p % 1.4) } else { 0.0 };
+                    player.attack_timer = if (p % 1.4) > 0.65 && (p % 1.4) < 1.05 { 0.25 } else { 0.0 };
+                } else {
+                    // Plant heroically facing camera + subtle talk bob while Stan speaks
+                    p_tf.translation = Vec3::new(-0.30, base_y + (t * 8.0).sin().abs() * 0.018, 0.25);
+                    p_tf.rotation = Quat::from_rotation_y(PI * 0.90);
+                    player.roll_timer = 0.0;
+                    player.attack_timer = 0.0;
+                }
+            }
+            7 => {
+                p_tf.translation = Vec3::new(-1.35, base_y, 0.45);
+                p_tf.rotation = Quat::from_rotation_y(-PI * 0.55);
+                player.roll_timer = 0.0;
+                player.attack_timer = 0.0;
+            }
+            _ => {
+                let p = (t - 47.5).clamp(0.0, 6.5);
+                let bob = if p < 4.5 { (t * 10.0).sin().abs() * 0.02 } else { 0.0 };
+                p_tf.translation = Vec3::new(-1.35, base_y + bob, 0.40);
+                p_tf.rotation = Quat::from_rotation_y(-PI * 0.68);
+                player.roll_timer = 0.0;
+                player.attack_timer = if (0.5..1.1).contains(&p) { 0.28 } else { 0.0 };
             }
         }
     }
 
+    // Mailman delivers parcel in Beat 5, then exits offstage for Beat 6+
     if let Ok(mut m_tf) = mailman_q.get_single_mut() {
-        let walk_t = ((t - 4.2) / 2.2).clamp(0.0, 1.0);
-        let x = -7.5 + walk_t * 5.6;
-        m_tf.translation = Vec3::new(x, base_y, -0.3);
-        m_tf.rotation = Quat::from_rotation_y(-PI * 0.5);
+        if stats.cutscene_beat == 5 {
+            let walk_t = ((t - 26.5) / 2.6).clamp(0.0, 1.0);
+            m_tf.translation = Vec3::new(-6.8 + walk_t * 4.9, base_y, -0.35);
+            m_tf.rotation = Quat::from_rotation_y(-PI * 0.5);
+        } else {
+            m_tf.translation = Vec3::new(-12.0, base_y, -0.35);
+        }
     }
 
+    // Mom storms in from right doorway in Beat 7 & faces off in Beat 8
     if let Ok(mut mom_tf) = mom_q.get_single_mut() {
-        let enter_t = ((t - 13.3) / 1.4).clamp(0.0, 1.0);
-        let x = 8.5 - enter_t * 6.5;
-        mom_tf.translation = Vec3::new(x, base_y, 0.4);
-        mom_tf.rotation = Quat::from_rotation_y(PI * 0.5);
+        if stats.cutscene_beat == 7 {
+            let enter_t = ((t - 41.5) / 1.0).clamp(0.0, 1.0);
+            let yell_bob = if enter_t >= 1.0 { (t * 15.0).sin().abs() * 0.03 } else { 0.0 };
+            mom_tf.translation = Vec3::new(6.5 - enter_t * 4.95, base_y + yell_bob, 0.35);
+            mom_tf.rotation = Quat::from_rotation_y(PI * 0.70);
+        } else if stats.cutscene_beat == 8 {
+            mom_tf.translation = Vec3::new(1.55, base_y, 0.35);
+            mom_tf.rotation = Quat::from_rotation_y(PI * 0.55);
+        } else {
+            mom_tf.translation = Vec3::new(9.5, base_y, 0.35);
+        }
     }
 
+    // Choreographed 8-shot cinematic camera (pans, screen focus, eye reflections, shelf, speaker close-ups)
     if let Ok(mut c_tf) = cam_q.get_single_mut() {
         let (cam_pos, look_at) = match stats.cutscene_beat {
-            1 => (
-                Vec3::new(-2.4 + (t * 0.25).sin() * 0.5, base_y + 3.2, 2.8),
-                Vec3::new(0.6, base_y + 1.6, -2.8),
-            ),
-            2 => (
-                Vec3::new(-0.8, base_y + 2.8, 4.4),
-                Vec3::new(-1.3, base_y + 1.4, -0.4),
-            ),
-            3 => (
-                Vec3::new((t * 0.8).sin() * 2.4, base_y + 2.7, 4.6),
-                Vec3::new(0.0, base_y + 1.5, 0.0),
-            ),
-            _ => (
-                Vec3::new(0.2, base_y + 2.6, 5.2),
-                Vec3::new(0.4, base_y + 1.6, 0.3),
-            ),
+            1 => {
+                let p = (t / 5.5).clamp(0.0, 1.0);
+                (
+                    Vec3::new(-3.2 + p * 1.3, base_y + 3.2 - p * 0.5, 2.7 - p * 1.5),
+                    Vec3::new(0.1, base_y + 1.85, -2.5),
+                )
+            }
+            2 => {
+                let p = ((t - 5.5) / 7.5).clamp(0.0, 1.0);
+                if p < 0.32 {
+                    let s = p / 0.32;
+                    (
+                        Vec3::new(-1.85 + s * 0.85, base_y + 2.02, -2.02),
+                        Vec3::new(-1.55 + s * 0.65, base_y + 1.85, -3.45),
+                    )
+                } else if p < 0.72 {
+                    let s = (p - 0.32) / 0.40;
+                    (
+                        Vec3::new(-0.35 + s * 1.05, base_y + 1.98, -1.62),
+                        Vec3::new(0.05 + s * 1.10, base_y + 1.82, -3.45),
+                    )
+                } else {
+                    let s = (p - 0.72) / 0.28;
+                    (
+                        Vec3::new(1.15 + s * 0.85, base_y + 1.90, -1.70 + s * 0.20),
+                        Vec3::new(1.65 + s * 1.15, base_y + 1.65, -2.65),
+                    )
+                }
+            }
+            3 => {
+                // Extreme macro zoom-in onto Stan's glowing ESXi eye reflections
+                let p = ((t - 13.0) / 7.0).clamp(0.0, 1.0);
+                (
+                    Vec3::new(-0.44 + p * 0.18, base_y + 2.43 + p * 0.05, -2.66 + p * 0.12),
+                    Vec3::new(-0.30, base_y + 2.484, -2.055),
+                )
+            }
+            4 => {
+                // Smooth collector pan across Anime Figurines & Gundams
+                let p = ((t - 20.0) / 6.5).clamp(0.0, 1.0);
+                (
+                    Vec3::new(-4.05 + p * 1.30, base_y + 2.38 + p * 0.56, -1.30),
+                    Vec3::new(-3.75 + p * 0.70, base_y + 2.55 + p * 0.32, -3.55),
+                )
+            }
+            5 => {
+                let p = ((t - 26.5) / 7.0).clamp(0.0, 1.0);
+                (
+                    Vec3::new(0.80 - p * 0.40, base_y + 2.45, 2.95 - p * 0.65),
+                    Vec3::new(-1.05, base_y + 1.55, -0.45),
+                )
+            }
+            6 => {
+                let p = (t - 33.5).clamp(0.0, 8.0);
+                if p < 3.0 {
+                    let s = p / 3.0;
+                    (
+                        Vec3::new((p * 1.1).sin() * 2.1, base_y + 2.55 - s * 0.25, 4.1 - s * 0.9),
+                        Vec3::new(-0.1, base_y + 1.55, 0.1),
+                    )
+                } else {
+                    let s = ((p - 3.0) / 5.0).clamp(0.0, 1.0);
+                    (
+                        Vec3::new(-0.42 - s * 0.08, base_y + 2.22 - s * 0.04, 2.20 - s * 0.18),
+                        Vec3::new(-0.30, base_y + 2.02, 0.25),
+                    )
+                }
+            }
+            7 => {
+                // Dramatic villain zoom-in on Mom yelling while waving her Crimson Lightsaber
+                let p = ((t - 41.5) / 6.0).clamp(0.0, 1.0);
+                (
+                    Vec3::new(0.10 + p * 0.20, base_y + 2.62 - p * 0.07, 2.40 - p * 0.50),
+                    Vec3::new(1.52, base_y + 2.54, 0.35),
+                )
+            }
+            _ => {
+                // Stan talks back in intense close-up, then dramatic wide duel pull-out
+                let p = ((t - 47.5) / 6.5).clamp(0.0, 1.0);
+                if p < 0.70 {
+                    let s = p / 0.70;
+                    (
+                        Vec3::new(-0.15 - s * 0.22, base_y + 2.38, 1.90 - s * 0.32),
+                        Vec3::new(-1.32, base_y + 2.28, 0.40),
+                    )
+                } else {
+                    let s = (p - 0.70) / 0.30;
+                    let close_pos = Vec3::new(-0.37, base_y + 2.38, 1.58);
+                    let close_look = Vec3::new(-1.32, base_y + 2.28, 0.40);
+                    (
+                        close_pos.lerp(Vec3::new(0.10, base_y + 2.70, 5.20), s),
+                        close_look.lerp(Vec3::new(0.10, base_y + 1.80, 0.35), s),
+                    )
+                }
+            }
         };
         c_tf.translation = cam_pos;
         c_tf.look_at(look_at, Vec3::Y);
@@ -882,12 +1743,16 @@ pub fn exit_cutscene(
     mut commands: Commands,
     ent_q: Query<Entity, With<CutsceneEntity>>,
     ui_q: Query<Entity, With<CutsceneOverlay>>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
 ) {
     for e in &ent_q {
         commands.entity(e).despawn_recursive();
     }
     for e in &ui_q {
         commands.entity(e).despawn_recursive();
+    }
+    for mut node in &mut hud_q {
+        node.display = Display::Flex;
     }
 }
 
