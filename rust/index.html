@@ -30,6 +30,24 @@
         } catch (_) {}
       },
     };
+    window.tendyTelemetry = {
+      state: "Tutorial",
+      hearts: 5,
+      tendies: 0,
+      stamina: 100,
+      bossHp: 100,
+      credits: 0,
+      inCity: false,
+      update(state, hearts, tendies, stamina, bossHp, credits, inCity) {
+        this.state = state;
+        this.hearts = hearts;
+        this.tendies = tendies;
+        this.stamina = stamina;
+        this.bossHp = bossHp;
+        this.credits = credits;
+        this.inCity = inCity;
+      },
+    };
     window.tendyAudio = (() => {
       const SFX_NAMES = [
         "jump", "double_jump", "dash", "tendy", "powerup",

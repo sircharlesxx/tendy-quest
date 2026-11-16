@@ -93,6 +93,17 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearCheckpoint)]
         fn js_clear_checkpoint();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = update)]
+        fn js_update_telemetry(
+            state: &str,
+            hearts: i32,
+            tendies: u32,
+            stamina: f32,
+            boss_hp: f32,
+            credits: u32,
+            in_city: bool,
+        );
     }
 
     pub fn play_bgm() {
@@ -215,6 +226,18 @@ mod imp {
     pub fn clear_checkpoint() {
         js_clear_checkpoint();
     }
+
+    pub fn update_telemetry(
+        state: &str,
+        hearts: i32,
+        tendies: u32,
+        stamina: f32,
+        boss_hp: f32,
+        credits: u32,
+        in_city: bool,
+    ) {
+        js_update_telemetry(state, hearts, tendies, stamina, boss_hp, credits, in_city);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -311,13 +334,25 @@ mod imp {
 
     #[allow(dead_code)]
     pub fn clear_checkpoint() {}
+
+    pub fn update_telemetry(
+        _state: &str,
+        _hearts: i32,
+        _tendies: u32,
+        _stamina: f32,
+        _boss_hp: f32,
+        _credits: u32,
+        _in_city: bool,
+    ) {
+    }
 }
 
 pub use imp::{
     init_test_mode, is_muted, is_voice_speaking, load_checkpoint, play_bgm, play_boss_music,
     play_cutscene_music, play_hacking_music, play_headphone_music, play_sfx,
     play_viking_chant_music, save_checkpoint, set_touch_boss_mode, set_touch_playing,
-    set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time, take_touch_action_tap, take_touch_attack, take_touch_dash,
-    take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy,
-    take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
+    set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
+    take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
+    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x,
+    touch_move_y, update_telemetry,
 };

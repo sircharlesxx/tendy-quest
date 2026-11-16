@@ -30,6 +30,24 @@
         } catch (_) {}
       },
     };
+    window.tendyTelemetry = {
+      state: "Tutorial",
+      hearts: 5,
+      tendies: 0,
+      stamina: 100,
+      bossHp: 100,
+      credits: 0,
+      inCity: false,
+      update(state, hearts, tendies, stamina, bossHp, credits, inCity) {
+        this.state = state;
+        this.hearts = hearts;
+        this.tendies = tendies;
+        this.stamina = stamina;
+        this.bossHp = bossHp;
+        this.credits = credits;
+        this.inCity = inCity;
+      },
+    };
     window.tendyAudio = (() => {
       const SFX_NAMES = [
         "jump", "double_jump", "dash", "tendy", "powerup",
@@ -1248,7 +1266,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-d40398a5f5612e5a.js" crossorigin="anonymous" integrity="sha384-ZNifoRxlqYY+8by+K8TtdjRBUulsExA+iVucUUKYGXlna29MILxOIkh5dBGFl31B"><link rel="preload" href="./tendy-quest-d40398a5f5612e5a_bg.wasm" crossorigin="anonymous" integrity="sha384-9QzLu1YDw8oY0cD6V5+pyz1T4yCwDMUdxwKQjj1BACQtDl/NdA2k/AQjnsvpV2Em" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-c949f2733c25f30f.js" crossorigin="anonymous" integrity="sha384-4U5FRUBlOK/CTh8qbuJb4aoeV63phGohZWmKF6FenfgxdMKty+0Vh5ytt1daivc2"><link rel="preload" href="./tendy-quest-c949f2733c25f30f_bg.wasm" crossorigin="anonymous" integrity="sha384-xZg7xpKhgmTnkMm9vtkPw6WfjObet7h2ApDLTTAHUlSi2l2Q77XjSb1VZiDnlhAk" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1827,8 +1845,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-d40398a5f5612e5a.js';
-const wasm = await init({ module_or_path: './tendy-quest-d40398a5f5612e5a_bg.wasm' });
+import init, * as bindings from './tendy-quest-c949f2733c25f30f.js';
+const wasm = await init({ module_or_path: './tendy-quest-c949f2733c25f30f_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -181,6 +181,7 @@ pub fn spawn_hud(mut commands: Commands) {
 
 pub fn update_hud(
     stats: Res<PlayerStats>,
+    state: Res<State<GameState>>,
     mut hearts_q: Query<&mut Text, With<HeartsText>>,
     mut tendy_q: Query<&mut Text, (With<TendyText>, Without<HeartsText>)>,
     mut score_q: Query<&mut Text, (With<ScoreText>, Without<HeartsText>, Without<TendyText>)>,
@@ -268,6 +269,15 @@ pub fn update_hud(
     if let Ok(mut node) = dash_q.get_single_mut() {
         node.width = Val::Percent(stats.dash_energy.clamp(0.0, 100.0));
     }
+    crate::audio::update_telemetry(
+        &format!("{:?}", state.get()),
+        stats.hearts,
+        stats.tendies,
+        stats.dash_energy,
+        stats.boss_hp,
+        stats.tendy_credits,
+        stats.in_city,
+    );
 }
 
 pub fn spawn_tutorial_overlay(mut commands: Commands) {
