@@ -210,7 +210,7 @@ pub fn update_hud(
     }
     if let Ok(mut t) = score_q.get_single_mut() {
         if stats.in_city {
-            t.0 = format!("SCORE: {:06}\nNYC | {}/50", stats.score, stats.tendies);
+            t.0 = format!("SCORE: {:06}\nCEDAR RAPIDS | {}/50", stats.score, stats.tendies);
         } else {
             t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
         }

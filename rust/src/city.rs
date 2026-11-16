@@ -696,7 +696,7 @@ pub fn spawn_nyc_world_if_needed(
         LevelEntity,
         CityWorldMarker,
         Mesh3d(meshes.add(Cuboid::new(CITY_HALF_EXTENT * 2.0, 1.0, CITY_HALF_EXTENT * 2.0))),
-        MeshMaterial3d(asphalt),
+        MeshMaterial3d(asphalt.clone()),
         Transform::from_xyz(0.0, -0.5, 0.0),
         PlatformBox {
             half_extents: Vec3::new(CITY_HALF_EXTENT, 0.5, CITY_HALF_EXTENT),
@@ -802,13 +802,100 @@ pub fn spawn_nyc_world_if_needed(
         }),
     ];
 
-    // Spawn 16 inner skyscrapers + 20 outer skyline towers
+    // Spawn Downtown Cedar Rapids blocks + Cedar River & Mays Island on the West (x = -114) + Greene Square Park at (69, 69)
+    let water_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.05, 0.22, 0.42, 0.92),
+        metallic: 0.35,
+        perceptual_roughness: 0.18,
+        ..default()
+    });
+    let park_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.34, 0.16),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let pub_brick_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.38, 0.14, 0.12),
+        perceptual_roughness: 0.78,
+        ..default()
+    });
+    let pub_sign_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.78, 0.16),
+        emissive: LinearRgba::rgb(2.6, 1.6, 0.25),
+        ..default()
+    });
+
+    // Cedar River along West Downtown (x = -114) + Mays Island Courthouse + 1st/2nd/3rd Ave Bridges
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(water_mat),
+        Transform::from_xyz(-114.0, 0.03, 0.0).with_scale(Vec3::new(34.0, 0.06, 270.0)),
+    ));
+    // Mays Island (Linn County Courthouse / City Hall)
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(sidewalk_mat.clone()),
+        Transform::from_xyz(-114.0, 0.12, 0.0).with_scale(Vec3::new(18.0, 0.24, 34.0)),
+    ));
+    for &bz in &[-46.0_f32, 0.0, 46.0] {
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(asphalt.clone()),
+            Transform::from_xyz(-114.0, 0.16, bz).with_scale(Vec3::new(36.0, 0.18, 12.0)),
+        ));
+    }
+
+    // Pub 217 (217 3rd Ave SE) at (18, 0, 34) facing 3rd Ave SE (z = 46), with Alley right beside it at x = 28.5!
+    commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(pub_brick_mat.clone()),
+            Transform::from_xyz(17.5, 4.5, 33.5).with_scale(Vec3::new(11.0, 9.0, 10.0)),
+            PlatformBox {
+                half_extents: Vec3::new(5.5, 4.5, 5.0),
+            },
+        ))
+        .with_children(|p| {
+            // Glowing PUB 217 marquee facing 3rd Ave SE (+Z)
+            p.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_sign_mat.clone()),
+                Transform::from_xyz(0.0, 0.25, 0.52).with_scale(Vec3::new(0.68, 0.18, 0.06)),
+            ));
+        });
+
     let mut b_idx = 0_usize;
     let block_all = [-114.0_f32, -69.0, -23.0, 23.0, 69.0, 114.0];
     for &bx in &block_all {
         for &bz in &block_all {
+            // Skip Cedar River blocks on West (except Mays Island at z == 0)
+            if bx < -100.0 && bz.abs() > 1.0 {
+                continue;
+            }
+            // Skip block (23, 23) so Pub 217 + Mike's Alley at (17.5..28.5, 33.5) stay open!
+            if (bx - 23.0).abs() < 1.0 && (bz - 23.0).abs() < 1.0 {
+                continue;
+            }
+            // Greene Square Park at (69, 69)
+            if (bx - 69.0).abs() < 1.0 && (bz - 69.0).abs() < 1.0 {
+                commands.spawn((
+                    LevelEntity,
+                    CityWorldMarker,
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(park_mat.clone()),
+                    Transform::from_xyz(bx, 0.06, bz).with_scale(Vec3::new(26.5, 0.12, 26.5)),
+                ));
+                continue;
+            }
             let is_outer = bx.abs() > 90.0 || bz.abs() > 90.0;
-            // Sidewalk base on every inner block (no PlatformBox so player feet never snag)
             commands.spawn((
                 LevelEntity,
                 CityWorldMarker,
@@ -817,7 +904,7 @@ pub fn spawn_nyc_world_if_needed(
                 Transform::from_xyz(bx, 0.04, bz).with_scale(Vec3::new(26.5, 0.08, 26.5)),
             ));
 
-            let height = 24.0 + ((b_idx * 17 + 7) % 34) as f32 + if is_outer { 12.0 } else { 0.0 };
+            let height = 18.0 + ((b_idx * 17 + 7) % 28) as f32 + if is_outer { 10.0 } else { 0.0 };
             let footprint = if is_outer { 18.0 } else { 17.0 };
             let b_mat = building_mats[b_idx % building_mats.len()].clone();
 
@@ -1902,7 +1989,7 @@ pub fn enter_city_play(
             stats.tendies = 0;
             stats.player_scale = 1.8;
             stats.hint_text =
-                "Collect 50 Tendies (use top-right Radar)! Meet TJ & Dodge Lexie's Pickled Garlic!"
+                "PUB 217, DOWNTOWN CEDAR RAPIDS! Talk to TJ, check Mike in the Alley, & grab 50 Tendies!"
                     .to_string();
         }
     }
@@ -1912,9 +1999,9 @@ pub fn enter_city_play(
             stats.saved_city_pos
         } else {
             Vec3::new(
-                if is_titan_preview { 4.2 } else { 0.0 },
+                if is_titan_preview { 4.2 } else { 18.0 },
                 0.0,
-                if is_titan_preview { -18.0 } else { 82.0 },
+                if is_titan_preview { -18.0 } else { 44.0 },
             )
         };
         p_tf.scale = Vec3::splat(stats.player_scale);

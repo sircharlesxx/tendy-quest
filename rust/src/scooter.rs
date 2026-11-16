@@ -1,7 +1,8 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crate::audio::{
-    play_bgm, play_cutscene_music, play_hacking_music, play_scooter_music, play_sfx, speak_voice,
+    play_bgm, play_hacking_music, play_headphone_music, play_scooter_music, play_sfx,
+    set_uzumaki_mode, speak_voice,
 };
 use crate::city::CityWorldMarker;
 use crate::player::Player;
@@ -138,7 +139,7 @@ pub fn spawn_city_scooters(
     });
 
     let spots = [
-        (Vec3::new(3.8, 0.0, 74.0), 0.25_f32),
+        (Vec3::new(22.5, 0.0, 44.0), 0.25_f32),
         (Vec3::new(-4.5, 0.0, 46.0), -0.4),
         (Vec3::new(42.0, 0.0, 42.0), 1.2),
         (Vec3::new(-42.0, 0.0, 42.0), -1.1),
@@ -206,17 +207,10 @@ pub fn spawn_city_mike(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    seed: u64,
+    _seed: u64,
 ) {
-    let alley_spots = [
-        Vec3::new(-23.0, 0.0, 56.0),
-        Vec3::new(23.0, 0.0, 34.0),
-        Vec3::new(-23.0, 0.0, 11.0),
-        Vec3::new(23.0, 0.0, -11.0),
-        Vec3::new(-23.0, 0.0, -34.0),
-        Vec3::new(11.0, 0.0, 58.0),
-    ];
-    let pos = alley_spots[(seed as usize) % alley_spots.len()];
+    // Mike hangs out in the alley right next to Pub 217 (217 3rd Ave SE)
+    let pos = Vec3::new(28.5, 0.0, 32.0);
 
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
@@ -954,20 +948,20 @@ pub struct MikeCutsceneDialog {
 
 const MIKE_BACKSTORIES: [(&str, &str); 4] = [
     (
-        "Are you sure you want this, traveler? I've been guarding these brick alleys since the 1998 Hell in a Cell... take a hit of this cosmic herb.",
-        "Whoa... the alley walls are breathing, Mike. Let's go take down Lexie.",
+        "Are you sure you want this, traveler? Look at the bricks behind Pub 217... Cedar Rapids is built inside a giant spiral. Smoke this and see the truth.",
+        "Every street... every tendy... it's all twisting into a spiral, Mike...",
     ),
     (
-        "Are you sure you want this, traveler? Time folds sideways behind this dumpster. Smoke this sacred tendy leaf and see the matrix.",
-        "I can taste colors right now, bro... thanks for the alley wisdom.",
+        "Are you sure you want this, traveler? Time coils inward behind this alley. Take a hit—the spiral will heal your wounds, if your mind survives it.",
+        "I can hear the spirals spinning in my skull... thanks for the wisdom, Mike.",
     ),
     (
-        "Are you sure you want this, traveler? My championship belt was forged in 420-degree fry oil... inhale deep and embrace the smoke.",
-        "My head is spinning in 4D... this weed hits way harder than garlic.",
+        "Are you sure you want this, traveler? My championship belt was forged at the center of the Cedar River vortex... inhale the sacred alley smoke.",
+        "The ink... the spirals... everything in Downtown Cedar Rapids is connected!",
     ),
     (
-        "Are you sure you want this, traveler? Every avenue in Manhattan leads back to this alley... spark up and let the neon clouds carry you.",
-        "Pure enlightenment... I'm ready to shred Manhattan now, Mike.",
+        "Are you sure you want this, traveler? Once you step into the spiral behind Pub 217, you never truly leave. Let the smoke mend your body.",
+        "My hearts are healed, but the spirals won't stop turning...",
     ),
 ];
 
@@ -990,36 +984,38 @@ pub fn enter_mike_cutscene(
     stats.cutscene_timer = 0.0;
     stats.cutscene_beat = 0;
 
-    commands.insert_resource(ClearColor(Color::srgb(0.07, 0.02, 0.14)));
+    // Intense Uzumaki stark black-and-white manga ink aesthetic
+    set_uzumaki_mode(2);
+    commands.insert_resource(ClearColor(Color::srgb(0.02, 0.02, 0.02)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.85, 0.95, 0.88),
-        brightness: 950.0,
+        color: Color::srgb(0.95, 0.95, 0.95),
+        brightness: 1100.0,
     });
 
     let stage = Vec3::new(0.0, 0.0, -210.0);
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
+    let spiral_torus = meshes.add(Torus::new(0.10, 1.0));
 
     let brick = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.18, 0.08, 0.22),
+        base_color: Color::srgb(0.08, 0.08, 0.08),
         ..default()
     });
     let floor_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.09, 0.06, 0.14),
+        base_color: Color::srgb(0.04, 0.04, 0.04),
         ..default()
     });
     let smoke_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.45, 0.96, 0.58, 0.36),
-        emissive: LinearRgba::new(0.22, 0.85, 0.45, 1.0),
+        base_color: Color::srgba(0.92, 0.92, 0.92, 0.42),
+        emissive: LinearRgba::new(0.75, 0.75, 0.75, 1.0),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
     });
-    let neon_ring_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.85, 0.25, 0.98, 0.42),
-        emissive: LinearRgba::new(0.9, 0.2, 1.1, 1.0),
-        alpha_mode: AlphaMode::Blend,
+    let spiral_white = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::new(1.6, 1.6, 1.6, 1.0),
         unlit: true,
         ..default()
     });
@@ -1139,7 +1135,7 @@ pub fn enter_mike_cutscene(
             ));
         });
 
-    // Swirling psychedelic smoke puffs & neon rings
+    // Swirling Uzumaki concentric spirals & ink smoke clouds
     for i in 0..16 {
         let ang = i as f32 * 0.42;
         let rad = 0.6 + (i % 4) as f32 * 0.55;
@@ -1156,13 +1152,17 @@ pub fn enter_mike_cutscene(
             Transform::from_translation(bp).with_scale(Vec3::splat(0.32 + (i % 3) as f32 * 0.16)),
         ));
     }
-    commands.spawn((
-        MikeCutsceneEntity,
-        Mesh3d(unit_cyl),
-        MeshMaterial3d(neon_ring_mat),
-        Transform::from_translation(stage + Vec3::new(0.0, 0.05, 0.0))
-            .with_scale(Vec3::new(3.8, 0.04, 3.8)),
-    ));
+    for ring_i in 0..8 {
+        let sc = 0.8 + ring_i as f32 * 0.65;
+        commands.spawn((
+            MikeCutsceneEntity,
+            Mesh3d(spiral_torus.clone()),
+            MeshMaterial3d(spiral_white.clone()),
+            Transform::from_translation(stage + Vec3::new(0.0, 1.7, -2.8))
+                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2))
+                .with_scale(Vec3::splat(sc)),
+        ));
+    }
 
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         c_tf.translation = stage + Vec3::new(2.6, 2.2, 3.4);
@@ -1224,7 +1224,7 @@ pub fn enter_mike_cutscene(
             });
         });
 
-    play_cutscene_music();
+    play_headphone_music(2);
     play_sfx("smoke_puff");
     speak_voice(mike_line, "tj");
 }
@@ -1311,7 +1311,8 @@ pub fn exit_mike_cutscene(
             p.fov = std::f32::consts::FRAC_PI_4;
         }
     }
-    stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
+    set_uzumaki_mode(0);
+    stats.hearts = (stats.hearts + 3).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.high_timer = 30.0;
     play_bgm();
