@@ -2,7 +2,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crate::audio::{
     is_voice_speaking, play_bgm, play_hacking_music, play_headphone_music, play_scooter_music,
-    play_sfx, play_viking_chant_music, set_uzumaki_mode, speak_voice,
+    play_sfx, play_viking_chant_music, set_uzumaki_mode, speak_voice, touch_move_x, touch_move_y,
 };
 use crate::city::CityWorldMarker;
 use crate::player::Player;
@@ -797,20 +797,22 @@ pub fn update_city_scooter_and_phone(
     }
 
     if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
-        let mut throttle = 0.0_f32;
+        let mut throttle = -touch_move_y();
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
             throttle += 1.0;
         }
         if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
             throttle -= 1.0;
         }
-        let mut steer = 0.0_f32;
+        throttle = throttle.clamp(-1.0, 1.0);
+        let mut steer = -touch_move_x();
         if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
             steer += 1.0;
         }
         if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
             steer -= 1.0;
         }
+        steer = steer.clamp(-1.0, 1.0);
 
         let turbo = (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight))
             && stats.dash_energy > 2.0
@@ -838,7 +840,9 @@ pub fn update_city_scooter_and_phone(
 
         let wall_r = 0.82;
         for (b_tf, b_box) in &platform_q {
-            if b_tf.translation.y - b_box.half_extents.y > 2.0 {
+            let top_y = b_tf.translation.y + b_box.half_extents.y;
+            let bot_y = b_tf.translation.y - b_box.half_extents.y;
+            if top_y <= 0.25 || bot_y > 2.0 {
                 continue;
             }
             let min_x = b_tf.translation.x - b_box.half_extents.x - wall_r;
@@ -1242,6 +1246,7 @@ pub fn update_mike_cutscene(
     }
 
     if keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::Escape)
         || mouse_buttons.just_pressed(MouseButton::Left)
     {

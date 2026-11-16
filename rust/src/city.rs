@@ -2148,10 +2148,20 @@ pub fn enter_city_intro_cutscene(
 
 pub fn update_city_intro_cutscene(
     time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
     mut cam_q: Query<&mut Transform, With<Camera3d>>,
 ) {
+    if keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::Enter)
+        || keys.just_pressed(KeyCode::Escape)
+        || mouse_buttons.just_pressed(MouseButton::Left)
+    {
+        next_state.set(GameState::CityPlay);
+        return;
+    }
     let dt = time.delta_secs().min(0.05);
     stats.cutscene_timer += dt;
     let t = stats.cutscene_timer;
@@ -2728,7 +2738,7 @@ pub fn update_city_driving(
     let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
 
     // 1. If currently on foot, check for nearby hijackable car
-    if stats.driving_car.is_none() {
+    if stats.driving_car.is_none() && stats.riding_scooter.is_none() {
         if stats.player_scale >= 6.0 {
             return;
         }
