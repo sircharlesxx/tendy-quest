@@ -211,8 +211,8 @@ pub fn spawn_city_mike(
     materials: &mut Assets<StandardMaterial>,
     _seed: u64,
 ) {
-    // Mike hangs out in the alley right next to Pub 217 (217 3rd St SE)
-    let pos = Vec3::new(-14.5, 0.0, 22.0);
+    // Mike is inside Pub 217 at the bar!
+    let pos = Vec3::new(-16.2, 0.0, 32.8);
 
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));

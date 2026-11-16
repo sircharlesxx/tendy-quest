@@ -660,10 +660,10 @@ pub fn spawn_nyc_world_if_needed(
         commands.entity(e).despawn_recursive();
     }
 
-    commands.insert_resource(ClearColor(Color::srgb(0.62, 0.74, 0.86)));
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.04, 0.09)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(1.0, 0.98, 0.94),
-        brightness: 860.0,
+        color: Color::srgb(0.75, 0.80, 0.95),
+        brightness: 440.0,
     });
 
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
@@ -919,7 +919,8 @@ pub fn spawn_nyc_world_if_needed(
         }
     }
 
-    // Pub 217 (217 3rd St SE) on the LEFT of 3rd St SE at (-17.5, 0, 34.0) with Alley beside it at z = 22!
+    // Walk-In Pub 217 (217 3rd St SE) on the LEFT of 3rd St SE (-25..-11.5, z = 27..41)
+    // Open doorway on East face (x = -11.5, z = 34.0) so Stan walks straight inside to find Mike!
     let pub_cream_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.84, 0.80, 0.72),
         perceptual_roughness: 0.78,
@@ -929,36 +930,255 @@ pub fn spawn_nyc_world_if_needed(
         base_color: Color::srgb(0.08, 0.08, 0.10),
         ..default()
     });
-    commands
-        .spawn((
+    let pub_navy_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.11, 0.14, 0.22),
+        perceptual_roughness: 0.75,
+        ..default()
+    });
+    let pub_wood_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.24, 0.11, 0.07),
+        metallic: 0.15,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let pub_floor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.22, 0.14),
+        perceptual_roughness: 0.72,
+        ..default()
+    });
+    let cooler_glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.96, 1.0),
+        emissive: LinearRgba::rgb(1.3, 1.4, 1.6),
+        ..default()
+    });
+    let tv_glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.35, 0.78, 1.0),
+        emissive: LinearRgba::rgb(0.6, 1.3, 1.8),
+        ..default()
+    });
+    let pendant_glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.86, 0.55),
+        emissive: LinearRgba::rgb(2.4, 1.8, 0.8),
+        ..default()
+    });
+    let beer_amber_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.96, 0.68, 0.14),
+        emissive: LinearRgba::rgb(0.75, 0.45, 0.06),
+        metallic: 0.25,
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+
+    // Warm streetlights & Pub 217 entrance + interior lights so 217 pops clearly at night
+    for (lx, ly, lz, intensity, range) in [
+        (-10.2_f32, 4.5_f32, 34.0_f32, 42000.0_f32, 24.0_f32),
+        (-18.5, 5.2, 34.0, 52000.0, 26.0),
+        (0.0, 7.5, 38.0, 38000.0, 32.0),
+    ] {
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            PointLight {
+                color: Color::srgb(1.0, 0.86, 0.62),
+                intensity,
+                range,
+                ..default()
+            },
+            Transform::from_xyz(lx, ly, lz),
+        ));
+    }
+
+    // Pub 217 Floor Slab
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_floor_mat),
+        Transform::from_xyz(-18.25, 0.04, 34.0).with_scale(Vec3::new(13.5, 0.08, 14.0)),
+    ));
+    // Pub 217 Shell Walls (West, North, South, East-North, East-South leaving 4.4m open front door at z = 34)
+    for (wx, wy, wz, sx, sy, sz, mat) in [
+        (-24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32, pub_navy_mat.clone()), // Back West wall
+        (-18.25, 3.2, 27.25, 13.5, 6.4, 0.5, pub_brick_mat.clone()),                       // North wall
+        (-18.25, 3.2, 40.75, 13.5, 6.4, 0.5, pub_brick_mat.clone()),                       // South wall
+        (-11.75, 3.2, 29.5, 0.5, 6.4, 4.5, pub_brick_mat.clone()),                         // East front (N of door)
+        (-11.75, 3.2, 38.5, 0.5, 6.4, 4.5, pub_brick_mat.clone()),                         // East front (S of door)
+        (-11.75, 5.4, 34.0, 0.5, 2.0, 4.6, pub_cream_mat.clone()),                         // Doorway header
+        (-18.25, 6.5, 34.0, 13.5, 0.35, 14.0, pub_black_mat.clone()),                      // Dark drop-grid ceiling
+    ] {
+        commands.spawn((
             LevelEntity,
             CityWorldMarker,
             Mesh3d(unit_box.clone()),
-            MeshMaterial3d(pub_brick_mat.clone()),
-            Transform::from_xyz(-17.5, 5.2, 34.0).with_scale(Vec3::new(12.0, 10.4, 11.0)),
+            MeshMaterial3d(mat),
+            Transform::from_xyz(wx, wy, wz).with_scale(Vec3::new(sx, sy, sz)),
             PlatformBox {
-                half_extents: Vec3::new(6.0, 5.2, 5.5),
+                half_extents: Vec3::new(sx * 0.5, sy * 0.5, sz * 0.5),
             },
-        ))
-        .with_children(|p| {
-            // Cream/limestone ground-floor storefront trim facing 3rd St SE (+X)
-            p.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(pub_cream_mat),
-                Transform::from_xyz(0.51, -0.32, 0.0).with_scale(Vec3::new(0.04, 0.34, 0.96)),
+        ));
+    }
+    // Glowing PUB 217 vertical blade sign + exterior cream trim so 217 is unmistakable at night
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_cream_mat),
+        Transform::from_xyz(-11.42, 1.8, 38.5).with_scale(Vec3::new(0.16, 3.4, 4.2)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_black_mat.clone()),
+        Transform::from_xyz(-10.5, 4.2, 37.0).with_scale(Vec3::new(1.6, 2.8, 0.45)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_sign_mat.clone()),
+        Transform::from_xyz(-10.5, 4.2, 37.0).with_scale(Vec3::new(1.2, 2.3, 0.52)),
+    ));
+
+    // Pub 217 Interior: L-shaped mahogany bar counter + 4 tall wooden barstools
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_wood_mat.clone()),
+        Transform::from_xyz(-19.5, 0.62, 32.5).with_scale(Vec3::new(1.1, 1.24, 6.4)),
+        PlatformBox {
+            half_extents: Vec3::new(0.55, 0.62, 3.2),
+        },
+    ));
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_wood_mat.clone()),
+        Transform::from_xyz(-21.2, 0.62, 35.2).with_scale(Vec3::new(3.8, 1.24, 1.1)),
+        PlatformBox {
+            half_extents: Vec3::new(1.9, 0.62, 0.55),
+        },
+    ));
+    for sz in [30.2_f32, 31.6, 33.0, 34.4] {
+        commands
+            .spawn((
+                LevelEntity,
+                CityWorldMarker,
+                Transform::from_xyz(-18.3, 0.0, sz),
+            ))
+            .with_children(|s| {
+                s.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(pub_wood_mat.clone()),
+                    Transform::from_xyz(0.0, 0.82, 0.0).with_scale(Vec3::new(0.55, 0.08, 0.55)),
+                ));
+                s.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(pub_wood_mat.clone()),
+                    Transform::from_xyz(0.24, 1.22, 0.0).with_scale(Vec3::new(0.08, 0.78, 0.50)),
+                ));
+                for (lx, lz) in [(-0.22, -0.22), (0.22, -0.22), (-0.22, 0.22), (0.22, 0.22)] {
+                    s.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(pub_wood_mat.clone()),
+                        Transform::from_xyz(lx, 0.40, lz).with_scale(Vec3::new(0.07, 0.80, 0.07)),
+                    ));
+                }
+            });
+    }
+    // Hanging industrial pendant lights over the bar
+    for pz in [29.8_f32, 32.4, 35.0, 37.6] {
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(pub_black_mat.clone()),
+            Transform::from_xyz(-18.6, 5.2, pz).with_scale(Vec3::new(0.03, 2.2, 0.03)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_cone.clone()),
+            MeshMaterial3d(pub_black_mat.clone()),
+            Transform::from_xyz(-18.6, 4.0, pz).with_scale(Vec3::new(0.45, 0.45, 0.45)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_sphere.clone()),
+            MeshMaterial3d(pendant_glow_mat.clone()),
+            Transform::from_xyz(-18.6, 3.78, pz).with_scale(Vec3::splat(0.14)),
+        ));
+    }
+    // Back bar: 2 illuminated beer coolers, draft tap tower, POS terminal, & 3 sports TVs
+    for cz in [29.4_f32, 33.4] {
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(cooler_glow_mat.clone()),
+            Transform::from_xyz(-24.2, 1.35, cz).with_scale(Vec3::new(0.55, 2.1, 2.2)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(tv_glow_mat.clone()),
+            Transform::from_xyz(-24.3, 3.35, cz).with_scale(Vec3::new(0.16, 1.15, 2.0)),
+        ));
+    }
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(tv_glow_mat),
+        Transform::from_xyz(-24.3, 3.35, 31.4).with_scale(Vec3::new(0.16, 0.95, 1.5)),
+    ));
+    // Draft beer tap tower + POS screen
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(sidewalk_mat.clone()),
+        Transform::from_xyz(-22.2, 1.45, 31.4).with_scale(Vec3::new(0.28, 0.65, 1.8)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(cooler_glow_mat),
+        Transform::from_xyz(-20.6, 1.55, 34.4).with_scale(Vec3::new(0.18, 0.42, 0.55)),
+    ));
+
+    // Left corner of Pub 217: Table with a 7-tier Beer Tower Pyramid reaching nearly to the ceiling!
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(pub_wood_mat.clone()),
+        Transform::from_xyz(-22.6, 0.55, 38.6).with_scale(Vec3::new(2.2, 1.1, 2.2)),
+        PlatformBox {
+            half_extents: Vec3::new(1.1, 0.55, 1.1),
+        },
+    ));
+    for tier in 0..7_usize {
+        let count = 7 - tier;
+        let y = 1.42 + tier as f32 * 0.68;
+        let spread = (count as f32 - 1.0) * 0.24;
+        for j in 0..count {
+            let off = -spread * 0.5 + j as f32 * 0.24;
+            commands.spawn((
+                LevelEntity,
+                CityWorldMarker,
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(beer_amber_mat.clone()),
+                Transform::from_xyz(-22.6 + off * 0.5, y, 38.6 + off * 0.5)
+                    .with_scale(Vec3::new(0.13, 0.64, 0.13)),
             ));
-            // Vertical black PUB 217 blade sign jutting out toward 3rd St SE
-            p.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(pub_black_mat),
-                Transform::from_xyz(0.58, -0.05, 0.28).with_scale(Vec3::new(0.14, 0.28, 0.05)),
-            ));
-            p.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(pub_sign_mat.clone()),
-                Transform::from_xyz(0.59, -0.05, 0.28).with_scale(Vec3::new(0.10, 0.22, 0.06)),
-            ));
-        });
+        }
+    }
 
     let mut b_idx = 0_usize;
     let block_all = [-114.0_f32, -69.0, -23.0, 23.0, 69.0, 114.0];
@@ -1766,10 +1986,10 @@ pub fn enter_city_intro_cutscene(
         &existing_city_q,
         &old_level_q,
     );
-    commands.insert_resource(ClearColor(Color::srgb(0.62, 0.74, 0.86)));
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.04, 0.09)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(1.0, 0.98, 0.94),
-        brightness: 860.0,
+        color: Color::srgb(0.75, 0.80, 0.95),
+        brightness: 440.0,
     });
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
@@ -2040,10 +2260,10 @@ pub fn enter_city_play(
         &existing_city_q,
         &old_level_q,
     );
-    commands.insert_resource(ClearColor(Color::srgb(0.62, 0.74, 0.86)));
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.04, 0.09)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(1.0, 0.98, 0.94),
-        brightness: 860.0,
+        color: Color::srgb(0.75, 0.80, 0.95),
+        brightness: 440.0,
     });
 
     let resuming_from_tj = stats.tj_return_city || stats.mike_return_city;
@@ -2081,7 +2301,7 @@ pub fn enter_city_play(
             stats.tendies = 0;
             stats.player_scale = 1.8;
             stats.hint_text =
-                "PUB 217, 3RD ST SE CEDAR RAPIDS! Meet TJ, bump Mike in the alley, & grab 50 Tendies!"
+                "PUB 217 AT NIGHT! Walk inside Pub 217 to find Mike, meet TJ, & grab 50 Tendies!"
                     .to_string();
         }
     }
