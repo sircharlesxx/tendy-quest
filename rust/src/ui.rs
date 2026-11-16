@@ -65,6 +65,50 @@ pub struct TutorialControlsText;
 #[derive(Component)]
 pub struct TutorialBtnText;
 
+#[derive(Component)]
+pub struct CinemaLetterbox;
+
+pub fn spawn_cinema_letterbox(mut commands: Commands) {
+    for is_top in [true, false] {
+        commands.spawn((
+            CinemaLetterbox,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: if is_top { Val::Px(0.0) } else { Val::Auto },
+                bottom: if is_top { Val::Auto } else { Val::Px(0.0) },
+                height: Val::Percent(9.0),
+                display: Display::None,
+                ..default()
+            },
+            BackgroundColor(Color::BLACK),
+            ZIndex(20),
+        ));
+    }
+}
+
+pub fn sync_cinema_letterbox(
+    state: Res<State<GameState>>,
+    mut q: Query<&mut Node, With<CinemaLetterbox>>,
+) {
+    let show = matches!(
+        state.get(),
+        GameState::Cutscene
+            | GameState::HeadphoneCutscene
+            | GameState::MomVictoryCutscene
+            | GameState::CityIntroCutscene
+            | GameState::TjCutscene
+            | GameState::MikeCutscene
+    );
+    let disp = if show { Display::Flex } else { Display::None };
+    for mut n in &mut q {
+        if n.display != disp {
+            n.display = disp;
+        }
+    }
+}
+
 pub fn spawn_hud(mut commands: Commands) {
     commands
         .spawn((
@@ -238,6 +282,10 @@ pub fn update_hud(
         }
         if stats.in_city {
             tags.push(format!("CREDITS: {}", stats.tendy_credits));
+            if stats.wanted_stars > 0 {
+                let stars = "*".repeat(stats.wanted_stars as usize);
+                tags.push(format!("WANTED: {}", stars));
+            }
             if stats.high_timer > 0.0 {
                 tags.push(format!("HIGH+DRUNK {:.0}s", stats.high_timer));
             } else {

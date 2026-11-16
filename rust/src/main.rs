@@ -39,8 +39,9 @@ use state::{CameraOrbit, GameState, PlayerStats};
 use tj::{enter_tj_cutscene, exit_tj_cutscene, update_city_tj, update_tj_cutscene};
 use ui::{
     adapt_ui_to_viewport, check_url_test_mode, despawn_tutorial_overlay, handle_restart_input,
-    handle_tutorial_input, spawn_game_over_overlay, spawn_hud, spawn_stage_clear_overlay,
-    spawn_tutorial_overlay, toggle_audio_hotkey, toggle_tutorial_hotkey, update_hud,
+    handle_tutorial_input, spawn_cinema_letterbox, spawn_game_over_overlay, spawn_hud,
+    spawn_stage_clear_overlay, spawn_tutorial_overlay, sync_cinema_letterbox,
+    toggle_audio_hotkey, toggle_tutorial_hotkey, update_hud,
 };
 
 fn main() {
@@ -74,6 +75,7 @@ fn main() {
                 spawn_player,
                 spawn_initial_enemies,
                 spawn_hud,
+                spawn_cinema_letterbox,
             ),
         )
         .add_systems(
@@ -83,6 +85,7 @@ fn main() {
                 toggle_audio_hotkey,
                 update_enraged_visuals,
                 update_hud,
+                sync_cinema_letterbox,
                 adapt_ui_to_viewport,
             ),
         )

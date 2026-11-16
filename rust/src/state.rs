@@ -67,6 +67,8 @@ pub struct PlayerStats {
     pub riding_scooter: Option<Entity>,
     pub phone_open: bool,
     pub high_timer: f32,
+    pub wanted_stars: u8,
+    pub wanted_decay_timer: f32,
 }
 
 impl Default for PlayerStats {
@@ -120,6 +122,8 @@ impl Default for PlayerStats {
             riding_scooter: None,
             phone_open: false,
             high_timer: 0.0,
+            wanted_stars: 0,
+            wanted_decay_timer: 0.0,
         }
     }
 }

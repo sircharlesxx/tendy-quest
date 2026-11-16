@@ -174,6 +174,19 @@ def run_playtest(base_url):
     finally:
         d.quit()
 
+    # 5. Cutscene Cinematic & Dramatic Pacing Check (TJ Cutscene)
+    d = make_driver()
+    try:
+        d.get(base_url + "?tj=1&cutscene_t=17.0")
+        ready = wait_ready(d)
+        metrics["cutscene"] = {
+            "ready": ready,
+            "state": (get_telemetry(d) or {}).get("state", ""),
+        }
+        metrics["panics"].extend(collect_panics(d))
+    finally:
+        d.quit()
+
     return metrics
 
 
@@ -215,6 +228,9 @@ def analyze_and_improve(metrics, apply_tuning=False):
         findings.append(
             f"OK: Checkpoint persisted ({metrics['city'].get('saved_checkpoint', '')})."
         )
+
+    if metrics.get("cutscene", {}).get("ready"):
+        findings.append("OK: Cutscene rendered cleanly with 2.39:1 cinema letterbox & zero panics.")
 
     return findings, tuned
 

@@ -657,10 +657,10 @@ pub fn spawn_nyc_world_if_needed(
         commands.entity(e).despawn_recursive();
     }
 
-    commands.insert_resource(ClearColor(Color::srgb(0.45, 0.67, 0.89)));
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.02, 0.09)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(1.0, 0.96, 0.90),
-        brightness: 790.0,
+        color: Color::srgb(0.62, 0.72, 1.0),
+        brightness: 560.0,
     });
 
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
@@ -669,23 +669,25 @@ pub fn spawn_nyc_world_if_needed(
     let unit_cone = meshes.add(Cone::new(1.0, 1.0));
 
     let asphalt = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.16, 0.17, 0.21),
-        perceptual_roughness: 0.92,
+        base_color: Color::srgb(0.05, 0.06, 0.11),
+        metallic: 0.25,
+        perceptual_roughness: 0.26,
         ..default()
     });
     let sidewalk_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.56, 0.56, 0.58),
-        perceptual_roughness: 0.88,
+        base_color: Color::srgb(0.14, 0.15, 0.22),
+        metallic: 0.18,
+        perceptual_roughness: 0.42,
         ..default()
     });
     let yellow_stripe = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.78, 0.14),
-        perceptual_roughness: 0.55,
+        base_color: Color::srgb(0.12, 0.95, 1.0),
+        emissive: LinearRgba::rgb(0.15, 1.35, 1.65),
         ..default()
     });
     let white_stripe = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.92, 0.92, 0.94),
-        perceptual_roughness: 0.55,
+        base_color: Color::srgb(0.98, 0.24, 0.88),
+        emissive: LinearRgba::rgb(1.15, 0.18, 0.95),
         ..default()
     });
 
@@ -744,56 +746,58 @@ pub fn spawn_nyc_world_if_needed(
         }
     }
 
-    // Architectural palette for 36 Manhattan Skyscrapers
+    // Architectural palette for 36 Cyberpunk Night-City Skyscrapers
     let building_mats = [
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.24, 0.34, 0.46),
-            metallic: 0.45,
-            perceptual_roughness: 0.28,
-            ..default()
-        }),
-        materials.add(StandardMaterial {
-            base_color: Color::srgb(0.46, 0.42, 0.38),
-            perceptual_roughness: 0.72,
-            ..default()
-        }),
-        materials.add(StandardMaterial {
-            base_color: Color::srgb(0.16, 0.19, 0.26),
-            metallic: 0.60,
+            base_color: Color::srgb(0.06, 0.08, 0.15),
+            metallic: 0.65,
             perceptual_roughness: 0.22,
             ..default()
         }),
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.54, 0.28, 0.22),
-            perceptual_roughness: 0.80,
+            base_color: Color::srgb(0.11, 0.06, 0.17),
+            metallic: 0.55,
+            perceptual_roughness: 0.28,
             ..default()
         }),
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.36, 0.42, 0.48),
-            metallic: 0.35,
-            perceptual_roughness: 0.40,
+            base_color: Color::srgb(0.05, 0.11, 0.16),
+            metallic: 0.70,
+            perceptual_roughness: 0.20,
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.14, 0.07, 0.12),
+            metallic: 0.50,
+            perceptual_roughness: 0.30,
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.08, 0.10, 0.18),
+            metallic: 0.60,
+            perceptual_roughness: 0.24,
             ..default()
         }),
     ];
     let window_glow = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.92, 0.68),
-        emissive: LinearRgba::rgb(1.15, 0.92, 0.45),
+        base_color: Color::srgb(0.22, 0.96, 1.0),
+        emissive: LinearRgba::rgb(0.25, 1.45, 1.85),
         ..default()
     });
     let billboard_mats = [
         materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.80, 0.12),
-            emissive: LinearRgba::rgb(2.4, 1.4, 0.2),
+            base_color: Color::srgb(0.15, 0.96, 1.0),
+            emissive: LinearRgba::rgb(0.2, 2.2, 2.6),
             ..default()
         }),
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.48, 0.14, 0.78),
-            emissive: LinearRgba::rgb(1.4, 0.4, 2.2),
+            base_color: Color::srgb(1.0, 0.18, 0.78),
+            emissive: LinearRgba::rgb(2.4, 0.25, 1.8),
             ..default()
         }),
         materials.add(StandardMaterial {
-            base_color: Color::srgb(0.18, 0.92, 0.48),
-            emissive: LinearRgba::rgb(0.3, 1.8, 0.7),
+            base_color: Color::srgb(0.22, 1.0, 0.48),
+            emissive: LinearRgba::rgb(0.3, 2.0, 0.75),
             ..default()
         }),
     ];
@@ -1584,6 +1588,11 @@ pub fn enter_city_intro_cutscene(
         &existing_city_q,
         &old_level_q,
     );
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.02, 0.09)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.62, 0.72, 1.0),
+        brightness: 560.0,
+    });
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
         p_tf.translation = Vec3::new(0.0, 0.0, 82.0);
@@ -1853,6 +1862,11 @@ pub fn enter_city_play(
         &existing_city_q,
         &old_level_q,
     );
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.02, 0.09)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.62, 0.72, 1.0),
+        brightness: 560.0,
+    });
 
     let resuming_from_tj = stats.tj_return_city || stats.mike_return_city;
     let from_mike = stats.mike_return_city;
@@ -2215,6 +2229,13 @@ pub fn update_city_driving(
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
+    if stats.wanted_stars > 0 {
+        stats.wanted_decay_timer -= dt;
+        if stats.wanted_decay_timer <= 0.0 {
+            stats.wanted_stars -= 1;
+            stats.wanted_decay_timer = 14.0;
+        }
+    }
     let Ok((mut p_tf, mut player, mut p_vis)) = player_q.get_single_mut() else {
         return;
     };
@@ -2256,6 +2277,8 @@ pub fn update_city_driving(
                     car_tf.rotation = Quat::from_rotation_y(car.yaw);
                     play_sfx("car_door");
                     play_sfx("car_horn");
+                    stats.wanted_stars = (stats.wanted_stars + 1).min(5);
+                    stats.wanted_decay_timer = 14.0;
                     stats.hint_text =
                         "HIJACKED! [WASD] Drive | [SPACE] Drift | [SHIFT] Nitro | [G] Horn | [F/E] Exit"
                             .to_string();

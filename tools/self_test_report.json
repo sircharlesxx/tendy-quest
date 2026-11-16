@@ -1,0 +1,46 @@
+[
+  {
+    "iteration": 1,
+    "metrics": {
+      "panics": [],
+      "kitchen": {
+        "ready": true,
+        "telemetry": {
+          "bossHp": 100,
+          "credits": 0,
+          "hearts": 5,
+          "inCity": false,
+          "stamina": 100,
+          "state": "Tutorial",
+          "tendies": 0,
+          "update": {}
+        },
+        "min_stamina": 100
+      },
+      "boss": {
+        "start_boss_hp": 100,
+        "end_boss_hp": 100,
+        "end_hearts": 5,
+        "zero_stamina_hits": 0,
+        "sample_count": 6
+      },
+      "city": {
+        "in_city": true,
+        "state": "CityPlay",
+        "saved_checkpoint": "city|0|0|0|0|0"
+      },
+      "titan": {
+        "state": "CityPlay",
+        "boss_hp": 300,
+        "hearts": 5
+      },
+      "checkpoint_saved": true
+    },
+    "findings": [
+      "OK: Zero runtime panics across all 4 gameplay phases.",
+      "OK: Boss stamina pacing balanced (starvation rate 0%).",
+      "OK: Checkpoint persisted (city|0|0|0|0|0)."
+    ],
+    "tuned": false
+  }
+]
