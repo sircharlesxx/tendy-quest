@@ -3,6 +3,7 @@ use crate::audio::{
     is_voice_speaking, play_headphone_music, play_sfx, speak_voice,
 };
 use crate::state::GameState;
+use crate::ui::HudOverlay;
 
 #[derive(Component)]
 pub struct LexieVictoryEntity;
@@ -53,17 +54,17 @@ pub struct LexieVictoryState {
 const GROSS_BEATS: [(&str, &str, &str); 4] = [
     (
         "LEXIE (CONSUMED BY THE GARLIC SPIRAL)",
-        "HEHEHEHAHAHA!! YOU THINK YOU WON?! THE PICKLED GARLIC SPIRAL LIVES IN MY VEINS!! MY BOILS ARE BURSTING—DROWN IN MY WARM FERMENTED BRINE!!",
+        "HEHEHEHAHAHA!! YOU THINK YOU WON?! THE PICKLED GARLIC SPIRAL LIVES IN MY VEINS!! MY BOILS ARE BURSTING - DROWN IN MY WARM FERMENTED BRINE!!",
         "lexie",
     ),
     (
         "STAN (TO TJ & DEREK)",
-        "EWWWW!! Look at her spiral eyes—green vinegar is shooting out of her ears!! Derek! TJ! DO NOT LET THAT CHUNKY GARLIC SLIME TOUCH YOU!!",
+        "EWWWW!! Look at her spiral eyes - green vinegar is shooting out of her ears!! Derek! TJ! DO NOT LET THAT CHUNKY GARLIC SLIME TOUCH YOU!!",
         "stan",
     ),
     (
         "DEREK & TJ (HORRIFIED)",
-        "OH GOD SHE'S MELTING INTO PICKLED FEET JUICE!! MY EYES ARE WATERING—THE STENCH IS SO THICK YOU CAN CHEW IT!!",
+        "OH GOD SHE'S MELTING INTO PICKLED FEET JUICE!! MY EYES ARE WATERING - THE STENCH IS SO THICK YOU CAN CHEW IT!!",
         "tj",
     ),
     (
@@ -79,8 +80,14 @@ pub fn enter_lexie_victory_cutscene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut v_state: ResMut<LexieVictoryState>,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+    mut hud_q: Query<&mut Visibility, With<HudOverlay>>,
+    mut clear_col: ResMut<ClearColor>,
 ) {
     *v_state = LexieVictoryState::default();
+    for mut hv in &mut hud_q {
+        *hv = Visibility::Hidden;
+    }
+    clear_col.0 = Color::srgb(0.03, 0.01, 0.06);
     let stage = Vec3::new(0.0, 0.0, -420.0);
 
     // Bright dramatic lighting so the entire horror stage pops in vivid sickly color
@@ -284,24 +291,24 @@ pub fn enter_lexie_victory_cutscene(
                 MeshMaterial3d(mouth_dark),
                 Transform::from_xyz(0.0, 1.50, 0.52).with_scale(Vec3::new(1.15, 1.35, 0.65)),
             ));
-            // Pulsing disgusting boils on her cheeks & forehead
+            // Pulsing disgusting boils on the sides of her cheeks & forehead (never blocking her spiral eyes)
             for (i, (bx, by, bz)) in [
-                (-0.34_f32, 1.66_f32, 0.44_f32),
-                (0.36, 1.74, 0.42),
-                (-0.12, 2.04, 0.48),
-                (0.24, 1.56, 0.48),
+                (-0.42_f32, 1.62_f32, 0.34_f32),
+                (0.42, 1.64, 0.34),
+                (-0.22, 2.08, 0.38),
+                (0.24, 2.06, 0.38),
             ]
             .iter()
             .enumerate()
             {
                 lx.spawn((
                     LexieBoil {
-                        base_scale: 0.11 + (i % 2) as f32 * 0.04,
+                        base_scale: 0.06 + (i % 2) as f32 * 0.02,
                         phase: i as f32 * 1.1,
                     },
                     Mesh3d(meshes.add(Sphere::new(1.0))),
                     MeshMaterial3d(boil_mat.clone()),
-                    Transform::from_xyz(*bx, *by, *bz).with_scale(Vec3::splat(0.12)),
+                    Transform::from_xyz(*bx, *by, *bz).with_scale(Vec3::splat(0.07)),
                 ));
             }
         });
@@ -492,11 +499,11 @@ pub fn enter_lexie_victory_cutscene(
             }
         });
 
-    // Erupting disgusting slime & garlic chunk geyser blobs from Lexie's mouth & boils
-    let blob_mesh = meshes.add(Sphere::new(0.18));
-    for i in 0..28 {
-        let ang = (i as f32 / 28.0) * std::f32::consts::TAU * 2.0;
-        let spd = 1.6 + (i % 4) as f32 * 0.7;
+    // Erupting disgusting slime & garlic chunk geyser blobs strictly around Lexie (never hitting camera or Stan/Derek/TJ)
+    let blob_mesh = meshes.add(Sphere::new(0.10));
+    for i in 0..24 {
+        let ang = (i as f32 / 24.0) * std::f32::consts::TAU * 2.0;
+        let spd = 0.8 + (i % 4) as f32 * 0.32;
         let mat = if i % 3 == 0 {
             chunk_mat.clone()
         } else {
@@ -505,13 +512,13 @@ pub fn enter_lexie_victory_cutscene(
         commands.spawn((
             LexieVictoryEntity,
             LexieGrossBlob {
-                base_pos: stage + Vec3::new(0.0, 1.45, -1.75),
-                vel: Vec3::new(ang.cos() * spd, 3.8 + (i % 3) as f32 * 1.1, ang.sin() * spd),
+                base_pos: stage + Vec3::new(0.0, 1.45, -2.1),
+                vel: Vec3::new(ang.cos() * spd, 3.2 + (i % 3) as f32 * 0.85, ang.sin() * spd * 0.6),
                 phase: (i as f32) * 0.21,
             },
             Mesh3d(blob_mesh.clone()),
             MeshMaterial3d(mat),
-            Transform::from_translation(stage + Vec3::new(0.0, 1.45, -1.75)),
+            Transform::from_translation(stage + Vec3::new(0.0, 1.45, -2.1)),
         ));
     }
 
@@ -533,10 +540,10 @@ pub fn enter_lexie_victory_cutscene(
     }
 
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        c_tf.translation = stage + Vec3::new(0.65, 1.85, 0.25);
-        c_tf.look_at(stage + Vec3::new(0.0, 1.72, -2.2), Vec3::Y);
+        c_tf.translation = stage + Vec3::new(0.45, 1.85, 0.85);
+        c_tf.look_at(stage + Vec3::new(0.0, 1.65, -2.2), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = 0.60;
+            p.fov = 0.70;
         }
     }
 
@@ -566,7 +573,7 @@ pub fn enter_lexie_victory_cutscene(
             ))
             .with_children(|sfx_row| {
                 sfx_row.spawn((
-                    Text::new("ゴゴゴゴ... *SQUELCH*"),
+                    Text::new("*SQUELCH*  *SPLORCH*"),
                     TextFont {
                         font_size: 24.0,
                         ..default()
@@ -574,7 +581,7 @@ pub fn enter_lexie_victory_cutscene(
                     TextColor(Color::srgb(0.55, 1.0, 0.18)),
                 ));
                 sfx_row.spawn((
-                    Text::new("渦巻!! *BLAAARGH*"),
+                    Text::new("UZUMAKI!!  *BLAAARGH*"),
                     TextFont {
                         font_size: 24.0,
                         ..default()
@@ -670,9 +677,9 @@ pub fn update_lexie_victory_cutscene(
     let t = time.elapsed_secs();
     let stage = Vec3::new(0.0, 0.0, -420.0);
 
-    // Spin colored Uzumaki spirals behind Lexie
+    // Spin colored Uzumaki spirals flat-facing the camera behind Lexie
     for (mut stf, sp) in &mut spiral_q {
-        stf.rotate_y(sp.speed * dt);
+        stf.rotate_z(sp.speed * dt);
         let pulse = 1.0 + (t * 2.8 + sp.base_scale).sin() * 0.08;
         stf.scale = Vec3::splat(sp.base_scale * pulse);
     }
@@ -716,27 +723,27 @@ pub fn update_lexie_victory_cutscene(
         match v_state.beat {
             0 => {
                 // Close-up on maniacal Lexie + spinning colored Uzumaki spirals!
-                c_tf.translation = stage + Vec3::new(0.65 - push * 0.25, 1.85, 0.25 - push * 0.25);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.72, -2.2), Vec3::Y);
-                c_tf.rotate_local_z((t * 1.6).sin() * 0.05);
+                c_tf.translation = stage + Vec3::new(0.45 - push * 0.20, 1.85, 0.85 - push * 0.25);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.65, -2.2), Vec3::Y);
+                c_tf.rotate_local_z((t * 1.4).sin() * 0.035);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.60 - push * 0.06;
+                    p.fov = 0.70 - push * 0.06;
                 }
             }
             1 => {
                 // Close-up framing Stan, Derek & TJ together reacting in disgust!
-                c_tf.translation = stage + Vec3::new(0.35 - push * 0.25, 1.88, -0.35);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.65, 2.5), Vec3::Y);
+                c_tf.translation = stage + Vec3::new(0.0, 1.80, -0.45 + push * 0.20);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.60, 2.5), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.74;
+                    p.fov = 0.78;
                 }
             }
             2 => {
-                // Disgusting meltdown angle: Derek & TJ in foreground/side + Lexie bursting!
-                c_tf.translation = stage + Vec3::new(2.9, 2.2, 1.6 - push * 0.4);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.15, -1.8), Vec3::Y);
+                // Wide 3/4 view of Lexie melting into the bubbling green puddle while Derek & TJ watch!
+                c_tf.translation = stage + Vec3::new(3.8, 2.5, 1.8 - push * 0.35);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.0, -1.6), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.68;
+                    p.fov = 0.72;
                 }
             }
             _ => {
@@ -756,12 +763,16 @@ pub fn exit_lexie_victory_cutscene(
     ent_q: Query<Entity, With<LexieVictoryEntity>>,
     ov_q: Query<Entity, With<LexieVictoryOverlay>>,
     mut cam_q: Query<&mut Projection, With<Camera3d>>,
+    mut hud_q: Query<&mut Visibility, With<HudOverlay>>,
 ) {
     for e in &ent_q {
         commands.entity(e).despawn_recursive();
     }
     for e in &ov_q {
         commands.entity(e).despawn_recursive();
+    }
+    for mut hv in &mut hud_q {
+        *hv = Visibility::Inherited;
     }
     if let Ok(mut proj) = cam_q.get_single_mut() {
         if let Projection::Perspective(ref mut p) = *proj {
