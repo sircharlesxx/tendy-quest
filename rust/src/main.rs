@@ -12,7 +12,8 @@ use bevy::prelude::*;
 use boss::{
     ensure_hero_eye_reflections, ensure_hero_vikings_gear, enter_boss_fight, enter_cutscene,
     enter_headphone_cutscene, exit_boss_fight, exit_cutscene, exit_headphone_cutscene,
-    update_boss_fight, update_cutscene, update_enraged_visuals, update_headphone_cutscene,
+    update_boss_fight, update_boss_healing_tendies, update_cutscene, update_enraged_visuals,
+    update_headphone_cutscene,
 };
 use city::{
     animate_city_intro_lexie, enter_city_intro_cutscene, enter_city_play,
@@ -143,6 +144,7 @@ fn main() {
                 animate_player_limbs,
                 update_camera,
                 update_boss_fight,
+                update_boss_healing_tendies,
                 update_enemies,
                 animate_enemies,
                 toggle_tutorial_hotkey,

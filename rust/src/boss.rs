@@ -80,6 +80,86 @@ pub enum MomState {
     Staggered,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum BossTendyVariety {
+    CrispyGolden,
+    HoneyGlazed,
+    SpicyBuffalo,
+}
+
+#[derive(Component)]
+pub struct BossHealingTendy {
+    pub kind: BossTendyVariety,
+    pub base_y: f32,
+    pub phase: f32,
+}
+
+const BOSS_TENDY_SPOTS: [Vec3; 8] = [
+    Vec3::new(-18.0, -5.1, 10.0),
+    Vec3::new(18.0, -5.1, 10.0),
+    Vec3::new(-24.0, -5.1, -12.0),
+    Vec3::new(24.0, -5.1, -12.0),
+    Vec3::new(-10.0, -5.1, -24.0),
+    Vec3::new(10.0, -5.1, -24.0),
+    Vec3::new(-28.0, -5.1, 2.0),
+    Vec3::new(28.0, -5.1, 2.0),
+];
+
+fn spawn_boss_healing_tendy(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    kind: BossTendyVariety,
+    pos: Vec3,
+    phase: f32,
+) {
+    let (ring_col, emissive, scale_mul) = match kind {
+        BossTendyVariety::CrispyGolden => (
+            Color::srgba(1.0, 0.84, 0.22, 0.82),
+            LinearRgba::new(2.4, 1.7, 0.25, 1.0),
+            1.30,
+        ),
+        BossTendyVariety::HoneyGlazed => (
+            Color::srgba(0.24, 0.96, 0.52, 0.85),
+            LinearRgba::new(0.4, 3.2, 1.1, 1.0),
+            1.48,
+        ),
+        BossTendyVariety::SpicyBuffalo => (
+            Color::srgba(1.0, 0.34, 0.12, 0.86),
+            LinearRgba::new(3.6, 0.85, 0.15, 1.0),
+            1.36,
+        ),
+    };
+    let tendy_scene: Handle<Scene> = asset_server.load("models/golden_tendy.glb#Scene0");
+    let ring_mat = materials.add(StandardMaterial {
+        base_color: ring_col,
+        emissive,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    commands
+        .spawn((
+            BossHealingTendy {
+                kind,
+                base_y: pos.y,
+                phase,
+            },
+            LevelEntity,
+            Transform::from_translation(pos).with_scale(Vec3::splat(scale_mul)),
+            Visibility::default(),
+        ))
+        .with_children(|p| {
+            p.spawn(SceneRoot(tendy_scene));
+            p.spawn((
+                Mesh3d(meshes.add(Torus::new(0.10, 0.85))),
+                MeshMaterial3d(ring_mat),
+                Transform::from_xyz(0.0, -0.35, 0.0),
+            ));
+        });
+}
+
 #[derive(Component)]
 pub struct MomBoss {
     pub hp: f32,
@@ -88,6 +168,8 @@ pub struct MomBoss {
     pub timer: f32,
     pub voice_timer: f32,
     pub summon_timer: f32,
+    pub tendy_respawn_timer: f32,
+    pub tendy_spawn_seq: usize,
     pub quote_idx: usize,
     pub walk_phase: f32,
     pub lunge_dir: Vec3,
@@ -3099,6 +3181,7 @@ pub fn enter_boss_fight(
     enemy_q: Query<Entity, With<Enemy>>,
     mom_q: Query<Entity, With<MomBoss>>,
     hud_q: Query<Entity, With<BossHudNode>>,
+    healing_tendy_q: Query<Entity, With<BossHealingTendy>>,
 ) {
     for e in &enemy_q {
         commands.entity(e).despawn_recursive();
@@ -3107,6 +3190,9 @@ pub fn enter_boss_fight(
         commands.entity(e).despawn_recursive();
     }
     for e in &hud_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &healing_tendy_q {
         commands.entity(e).despawn_recursive();
     }
 
@@ -3144,7 +3230,7 @@ pub fn enter_boss_fight(
     stats.boss_hp = init_hp;
     stats.mom_quote = MOM_QUOTES[0].to_string();
     stats.hint_text =
-        "DODGE & ROLL (SHIFT / Right-Click / ROLL) to evade Mom & break her saber guard!"
+        "DODGE & ROLL (SHIFT / ROLL) to counter Mom! Grab glowing Tendies to refuel Hearts!"
             .to_string();
 
     orbit.yaw = 0.0;
@@ -3184,12 +3270,32 @@ pub fn enter_boss_fight(
         timer: 0.0,
         voice_timer: 5.5,
         summon_timer: 8.5,
+        tendy_respawn_timer: 7.5,
+        tendy_spawn_seq: 6,
         quote_idx: 0,
         walk_phase: 0.0,
         lunge_dir: Vec3::Z,
         hit_cooldown: 0.0,
         dealt_slash_hit: false,
     });
+
+    // Scatter varied healing tendies across the apartment floor so Stan can refuel hearts mid-duel
+    let varieties = [
+        BossTendyVariety::CrispyGolden,
+        BossTendyVariety::HoneyGlazed,
+        BossTendyVariety::SpicyBuffalo,
+    ];
+    for (idx, &pos) in BOSS_TENDY_SPOTS.iter().take(6).enumerate() {
+        spawn_boss_healing_tendy(
+            &mut commands,
+            &asset_server,
+            &mut meshes,
+            &mut materials,
+            varieties[idx % varieties.len()],
+            pos,
+            idx as f32 * 0.9,
+        );
+    }
 
     // Spawn hardened veggie minions across the open 1,200 Sq Ft Apartment Floor
     for (kind, pos) in [
@@ -3264,6 +3370,100 @@ pub fn enter_boss_fight(
                 TextColor(Color::srgb(1.0, 0.88, 0.55)),
             ));
         });
+}
+
+pub fn update_boss_healing_tendies(
+    mut commands: Commands,
+    time: Res<Time>,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut stats: ResMut<PlayerStats>,
+    player_q: Query<&Transform, With<Player>>,
+    mut mom_q: Query<&mut MomBoss, Without<Player>>,
+    mut healing_tendy_q: Query<
+        (Entity, &mut Transform, &mut BossHealingTendy),
+        (Without<Player>, Without<MomBoss>),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    let Ok(p_tf) = player_q.get_single() else {
+        return;
+    };
+
+    let mut active_tendies = 0usize;
+    for (t_ent, mut t_tf, mut tendy) in &mut healing_tendy_q {
+        tendy.phase += dt * 2.8;
+        t_tf.translation.y = tendy.base_y + tendy.phase.sin() * 0.28;
+        t_tf.rotate_y(dt * 1.9);
+
+        let d_xz = Vec2::new(
+            p_tf.translation.x - t_tf.translation.x,
+            p_tf.translation.z - t_tf.translation.z,
+        )
+        .length();
+        let d_y = (p_tf.translation.y - t_tf.translation.y).abs();
+        let can_use = stats.hearts < stats.max_hearts
+            || stats.dash_energy < 85.0
+            || tendy.kind == BossTendyVariety::SpicyBuffalo;
+        if d_xz < 3.2 && d_y < 3.8 && can_use {
+            let (heal, energy, msg) = match tendy.kind {
+                BossTendyVariety::CrispyGolden => (
+                    1,
+                    30.0,
+                    "ATE CRISPY GOLDEN TENDY! +1 HEART & +30 ROLL ENERGY!",
+                ),
+                BossTendyVariety::HoneyGlazed => (
+                    2,
+                    50.0,
+                    "ATE HONEY-GLAZED TENDY! +2 HEARTS & +50 ROLL ENERGY!",
+                ),
+                BossTendyVariety::SpicyBuffalo => {
+                    stats.speed_boost_timer = stats.speed_boost_timer.max(4.0);
+                    (
+                        1,
+                        100.0,
+                        "ATE SPICY BUFFALO TENDY! +1 HEART, FULL ROLL & SPEED BOOST!",
+                    )
+                }
+            };
+            stats.hearts = (stats.hearts + heal).min(stats.max_hearts);
+            stats.dash_energy = (stats.dash_energy + energy).min(100.0);
+            stats.score += 250;
+            stats.hint_text = msg.to_string();
+            crate::audio::play_sfx("tendy");
+            commands.entity(t_ent).despawn_recursive();
+        } else {
+            active_tendies += 1;
+        }
+    }
+
+    if let Ok(mut mom) = mom_q.get_single_mut() {
+        mom.tendy_respawn_timer -= dt;
+        if mom.tendy_respawn_timer <= 0.0 {
+            mom.tendy_respawn_timer = 7.5;
+            if active_tendies < 6 {
+                let varieties = [
+                    BossTendyVariety::CrispyGolden,
+                    BossTendyVariety::HoneyGlazed,
+                    BossTendyVariety::SpicyBuffalo,
+                ];
+                let spot = BOSS_TENDY_SPOTS[mom.tendy_spawn_seq % BOSS_TENDY_SPOTS.len()];
+                let variety = varieties[mom.tendy_spawn_seq % varieties.len()];
+                mom.tendy_spawn_seq = mom.tendy_spawn_seq.wrapping_add(1);
+                spawn_boss_healing_tendy(
+                    &mut commands,
+                    &asset_server,
+                    &mut meshes,
+                    &mut materials,
+                    variety,
+                    spot,
+                    t,
+                );
+            }
+        }
+    }
 }
 
 pub fn update_boss_fight(
@@ -3359,7 +3559,7 @@ pub fn update_boss_fight(
                     "MOM PARRIED! Use DODGE & ROLL (SHIFT / ROLL) to evade & break her guard!"
                         .to_string();
             } else {
-                let dmg = if stats.enraged { 16.0 } else { 12.5 };
+                let dmg = if stats.enraged { 22.0 } else { 17.0 };
                 mom.hp = (mom.hp - dmg).max(0.0);
                 stats.boss_hp = mom.hp;
                 stats.score += 1000;
@@ -3414,7 +3614,7 @@ pub fn update_boss_fight(
     let to_player = p_tf.translation - mom_tf.translation;
     let flat = Vec3::new(to_player.x, 0.0, to_player.z);
     let dist = flat.length();
-    let chase_speed = if mom.hp < 50.0 { 8.8 } else { 7.8 };
+    let chase_speed = if mom.hp < 50.0 { 8.0 } else { 7.0 };
     let move_speed = match mom.state {
         MomState::Pursue => {
             if dist > 0.2 {
@@ -3426,7 +3626,7 @@ pub fn update_boss_fight(
             mom_tf.translation.y += dy * (dt * 3.4).min(1.0);
             if dist < 6.4 {
                 mom.state = MomState::SaberWindup;
-                mom.timer = if mom.hp < 50.0 { 0.40 } else { 0.48 };
+                mom.timer = if mom.hp < 50.0 { 0.48 } else { 0.56 };
                 mom.dealt_slash_hit = false;
                 mom.lunge_dir = flat.normalize_or_zero();
                 stats.hint_text = "MOM WINDING UP — DODGE ROLL NOW (SHIFT / ROLL)!".to_string();
@@ -3467,8 +3667,7 @@ pub fn update_boss_fight(
                     mom.state = MomState::Staggered;
                     mom.timer = 1.65;
                 } else if player.invuln_timer <= 0.0 {
-                    let dmg_hearts = if mom.hp < 50.0 && stats.hearts > 2 { 2 } else { 1 };
-                    stats.hearts -= dmg_hearts;
+                    stats.hearts -= 1;
                     player.invuln_timer = 0.9;
                     p_tf.translation += mom.lunge_dir * 3.6;
                     player.velocity.y = 6.2;
@@ -3584,9 +3783,13 @@ pub fn update_boss_fight(
 pub fn exit_boss_fight(
     mut commands: Commands,
     hud_q: Query<Entity, With<BossHudNode>>,
+    healing_tendy_q: Query<Entity, With<BossHealingTendy>>,
 ) {
     crate::audio::set_touch_boss_mode(false);
     for e in &hud_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &healing_tendy_q {
         commands.entity(e).despawn_recursive();
     }
 }
