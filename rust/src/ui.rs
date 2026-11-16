@@ -73,7 +73,7 @@ pub fn spawn_hud(mut commands: Commands) {
                         padding: UiRect::axes(Val::Px(7.0), Val::Px(4.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.16)),
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.05, 0.26)),
                     BorderRadius::all(Val::Px(6.0)),
                 ))
                 .with_children(|col| {
@@ -110,12 +110,12 @@ pub fn spawn_hud(mut commands: Commands) {
                     });
                     col.spawn((
                         TendyText,
-                        Text::new("TENDIES 0/12 · 15cm (Tiny Toy)"),
+                        Text::new("TENDIES 0/12 | 15cm (Tiny Toy)"),
                         TextFont {
                             font_size: 11.5,
                             ..default()
                         },
-                        TextColor(Color::srgba(1.0, 0.86, 0.35, 0.86)),
+                        TextColor(Color::srgba(1.0, 0.88, 0.38, 0.92)),
                     ));
                     col.spawn((
                         StatusText,
@@ -124,7 +124,7 @@ pub fn spawn_hud(mut commands: Commands) {
                             font_size: 10.5,
                             ..default()
                         },
-                        TextColor(Color::srgba(0.8, 1.0, 0.84, 0.82)),
+                        TextColor(Color::srgba(0.88, 1.0, 0.9, 0.9)),
                     ));
                 });
 
@@ -184,7 +184,7 @@ pub fn update_hud(
     }
     if let Ok(mut t) = tendy_q.get_single_mut() {
         t.0 = format!(
-            "TENDIES {}/{} · {}cm ({})",
+            "TENDIES {}/{} | {}cm ({})",
             stats.tendies,
             stats.total_tendies,
             stats.height_cm(),
