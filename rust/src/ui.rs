@@ -63,38 +63,38 @@ pub fn spawn_hud(mut commands: Commands) {
             },
         ))
         .with_children(|parent| {
-            // Top-left: Hearts, Dash Bar, Tendy & Size Counter
+            // Top-left: Compact, translucent Hearts, Dash Bar, Tendy & Size Counter
             parent
                 .spawn((
                     Node {
                         flex_direction: FlexDirection::Column,
-                        max_width: Val::Percent(56.0),
-                        row_gap: Val::Px(4.0),
-                        padding: UiRect::all(Val::Px(9.0)),
+                        max_width: Val::Px(290.0),
+                        row_gap: Val::Px(2.0),
+                        padding: UiRect::axes(Val::Px(7.0), Val::Px(4.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.08, 0.05, 0.03, 0.72)),
-                    BorderRadius::all(Val::Px(10.0)),
+                    BackgroundColor(Color::srgba(0.03, 0.03, 0.04, 0.16)),
+                    BorderRadius::all(Val::Px(6.0)),
                 ))
                 .with_children(|col| {
                     col.spawn((
                         HeartsText,
-                        Text::new("HEARTS: 5 / 5"),
+                        Text::new("HEARTS 5/5"),
                         TextFont {
-                            font_size: 15.5,
+                            font_size: 12.5,
                             ..default()
                         },
-                        TextColor(Color::srgb(1.0, 0.32, 0.36)),
+                        TextColor(Color::srgba(1.0, 0.42, 0.46, 0.88)),
                     ));
                     // Dash bar
                     col.spawn((
                         Node {
-                            width: Val::Px(132.0),
-                            height: Val::Px(12.0),
+                            width: Val::Px(92.0),
+                            height: Val::Px(5.0),
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.18, 0.18, 0.22)),
-                        BorderRadius::all(Val::Px(6.0)),
+                        BackgroundColor(Color::srgba(0.16, 0.18, 0.22, 0.35)),
+                        BorderRadius::all(Val::Px(3.0)),
                     ))
                     .with_children(|bar| {
                         bar.spawn((
@@ -104,27 +104,27 @@ pub fn spawn_hud(mut commands: Commands) {
                                 height: Val::Percent(100.0),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgb(0.2, 0.78, 1.0)),
-                            BorderRadius::all(Val::Px(6.0)),
+                            BackgroundColor(Color::srgba(0.28, 0.82, 1.0, 0.78)),
+                            BorderRadius::all(Val::Px(3.0)),
                         ));
                     });
                     col.spawn((
                         TendyText,
-                        Text::new("TENDIES: 0 / 12\nSIZE: 15cm (Tiny Toy)"),
+                        Text::new("TENDIES 0/12 · 15cm (Tiny Toy)"),
                         TextFont {
-                            font_size: 14.5,
+                            font_size: 11.5,
                             ..default()
                         },
-                        TextColor(Color::srgb(1.0, 0.82, 0.22)),
+                        TextColor(Color::srgba(1.0, 0.86, 0.35, 0.86)),
                     ));
                     col.spawn((
                         StatusText,
                         Text::new(""),
                         TextFont {
-                            font_size: 12.0,
+                            font_size: 10.5,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.75, 1.0, 0.78)),
+                        TextColor(Color::srgba(0.8, 1.0, 0.84, 0.82)),
                     ));
                 });
 
@@ -180,11 +180,11 @@ pub fn update_hud(
     mut dash_q: Query<&mut Node, With<DashBarFill>>,
 ) {
     if let Ok(mut t) = hearts_q.get_single_mut() {
-        t.0 = format!("HEARTS: {} / {}", stats.hearts.max(0), stats.max_hearts);
+        t.0 = format!("HEARTS {}/{}", stats.hearts.max(0), stats.max_hearts);
     }
     if let Ok(mut t) = tendy_q.get_single_mut() {
         t.0 = format!(
-            "TENDIES: {} / {}\nSIZE: {}cm ({})",
+            "TENDIES {}/{} · {}cm ({})",
             stats.tendies,
             stats.total_tendies,
             stats.height_cm(),
