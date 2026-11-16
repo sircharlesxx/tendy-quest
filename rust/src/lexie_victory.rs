@@ -107,6 +107,28 @@ pub fn enter_lexie_victory_cutscene(
         ..default()
     });
 
+    // Bright dramatic spotlights so the nighttime stage at z = -420 is vividly lit
+    commands.spawn((
+        LexieVictoryEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.96, 0.88),
+            intensity: 420_000.0,
+            range: 34.0,
+            ..default()
+        },
+        Transform::from_translation(stage + Vec3::new(1.5, 5.5, 2.5)),
+    ));
+    commands.spawn((
+        LexieVictoryEntity,
+        PointLight {
+            color: Color::srgb(0.65, 1.0, 0.30),
+            intensity: 240_000.0,
+            range: 22.0,
+            ..default()
+        },
+        Transform::from_translation(stage + Vec3::new(0.0, 2.8, -1.8)),
+    ));
+
     // Street floor + giant bubbling green pickled garlic puddle
     commands.spawn((
         LexieVictoryEntity,
@@ -191,11 +213,11 @@ pub fn enter_lexie_victory_cutscene(
         ));
     }
 
-    // Rising green stink clouds
-    let cloud_mesh = meshes.add(Sphere::new(0.65));
-    for i in 0..10 {
-        let ang = (i as f32 / 10.0) * std::f32::consts::TAU;
-        let pos = stage + Vec3::new(ang.cos() * 1.6, 0.4, -1.6 + ang.sin() * 1.6);
+    // Rising green stink clouds (positioned behind/around Lexie so they never block the camera)
+    let cloud_mesh = meshes.add(Sphere::new(0.36));
+    for i in 0..8 {
+        let ang = std::f32::consts::PI + (i as f32 / 7.0) * std::f32::consts::PI;
+        let pos = stage + Vec3::new(ang.cos() * 1.9, 0.35, -2.1 + ang.sin() * 1.1);
         commands.spawn((
             LexieVictoryEntity,
             LexieStinkCloud {
@@ -209,7 +231,7 @@ pub fn enter_lexie_victory_cutscene(
     }
 
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        c_tf.translation = stage + Vec3::new(1.2, 1.5, 0.6);
+        c_tf.translation = stage + Vec3::new(1.8, 2.1, 1.4);
         c_tf.look_at(stage + Vec3::new(0.0, 1.0, -1.6), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
             p.fov = 0.64;
@@ -334,22 +356,22 @@ pub fn update_lexie_victory_cutscene(
         let push = (bt / 5.0).min(1.0);
         match v_state.beat {
             0 => {
-                c_tf.translation = stage + Vec3::new(1.15 - push * 0.35, 1.35, -0.15);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.05, -1.6), Vec3::Y);
+                c_tf.translation = stage + Vec3::new(1.8 - push * 0.4, 2.1, 1.4 - push * 0.3);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.0, -1.6), Vec3::Y);
+                if let Projection::Perspective(ref mut p) = *proj {
+                    p.fov = 0.64;
+                }
+            }
+            1 => {
+                c_tf.translation = stage + Vec3::new(-1.4 + push * 0.3, 2.0, 0.3 + push * 0.25);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.75, 2.4), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
                     p.fov = 0.62;
                 }
             }
-            1 => {
-                c_tf.translation = stage + Vec3::new(-0.95 + push * 0.25, 1.95, 1.05);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.75, 2.4), Vec3::Y);
-                if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.60;
-                }
-            }
             _ => {
-                c_tf.translation = stage + Vec3::new(2.8, 2.3, 4.4 - push * 0.6);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.0, -0.2), Vec3::Y);
+                c_tf.translation = stage + Vec3::new(3.4, 2.8, 5.6 - push * 0.7);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.1, 0.2), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
                     p.fov = 0.72;
                 }
