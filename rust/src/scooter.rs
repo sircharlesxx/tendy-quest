@@ -890,7 +890,7 @@ pub fn update_city_scooter_and_phone(
     }
 
     if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
-        let mut throttle = -touch_move_y();
+        let mut throttle = touch_move_y();
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
             throttle += 1.0;
         }
