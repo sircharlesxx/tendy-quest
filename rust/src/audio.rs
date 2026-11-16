@@ -22,6 +22,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playHackingMusic)]
         fn js_play_hacking_music();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playScooterMusic)]
+        fn js_play_scooter_music();
+
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = speakVoice)]
         fn js_speak_voice(text: &str, role: &str);
 
@@ -128,6 +131,10 @@ mod imp {
 
     pub fn play_hacking_music() {
         js_play_hacking_music();
+    }
+
+    pub fn play_scooter_music() {
+        js_play_scooter_music();
     }
 
     pub fn speak_voice(text: &str, role: &str) {
@@ -254,6 +261,8 @@ mod imp {
 
     pub fn play_hacking_music() {}
 
+    pub fn play_scooter_music() {}
+
     pub fn speak_voice(_text: &str, _role: &str) {}
 
     pub fn is_voice_speaking() -> bool {
@@ -349,7 +358,7 @@ mod imp {
 
 pub use imp::{
     init_test_mode, is_muted, is_voice_speaking, load_checkpoint, play_bgm, play_boss_music,
-    play_cutscene_music, play_hacking_music, play_headphone_music, play_sfx,
+    play_cutscene_music, play_hacking_music, play_headphone_music, play_scooter_music, play_sfx,
     play_viking_chant_music, save_checkpoint, set_touch_boss_mode, set_touch_playing,
     set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,

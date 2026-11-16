@@ -836,10 +836,9 @@ pub fn enter_tj_cutscene(
     commands
         .spawn((
             TjCutsceneOverlay,
-            ZIndex(25),
             Node {
                 position_type: PositionType::Absolute,
-                bottom: Val::Percent(10.5),
+                bottom: Val::Px(20.0),
                 left: Val::Percent(6.0),
                 width: Val::Percent(88.0),
                 flex_direction: FlexDirection::Column,

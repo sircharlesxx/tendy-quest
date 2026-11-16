@@ -679,6 +679,70 @@
             }, 105);
           } catch (_) {}
         },
+        playScooterMusic() {
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            let scStep = 0;
+            const bassLine = [82.41, 82.41, 98.0, 110.0, 82.41, 82.41, 123.47, 110.0];
+            const leadRiff = [329.63, 392.0, 493.88, 659.25, 587.33, 493.88, 392.0, 440.0];
+            vikingTimer = setInterval(() => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const s = scStep % 16;
+              scStep += 1;
+
+              // Punchy synthwave kick on 0, 4, 8, 12
+              if (s % 4 === 0) {
+                const ko = ac.createOscillator();
+                const kg = ac.createGain();
+                ko.type = "sine";
+                ko.frequency.setValueAtTime(140, now);
+                ko.frequency.exponentialRampToValueAtTime(38, now + 0.14);
+                kg.gain.setValueAtTime(0.30, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+                ko.connect(kg);
+                kg.connect(masterGain);
+                ko.start(now);
+                ko.stop(now + 0.16);
+              }
+              // Snappy electro snare on 4, 12
+              if (s % 8 === 4) {
+                mkNoise(0.09, 0.14, 2400);
+              }
+              // Driving outrun sawtooth bass
+              const bo = ac.createOscillator();
+              const bg = ac.createGain();
+              bo.type = "sawtooth";
+              bo.frequency.setValueAtTime(bassLine[(s >> 1) % bassLine.length], now);
+              bg.gain.setValueAtTime(0.11, now);
+              bg.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+              bo.connect(bg);
+              bg.connect(masterGain);
+              bo.start(now);
+              bo.stop(now + 0.095);
+
+              // Soaring cyberpunk scooter lead every 2 steps
+              if (s % 2 === 0) {
+                const lo = ac.createOscillator();
+                const lg = ac.createGain();
+                lo.type = "square";
+                lo.frequency.setValueAtTime(leadRiff[(s >> 1) % leadRiff.length], now);
+                lg.gain.setValueAtTime(0.075, now);
+                lg.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+                lo.connect(lg);
+                lg.connect(masterGain);
+                lo.start(now);
+                lo.stop(now + 0.17);
+              }
+            }, 105);
+          } catch (_) {}
+        },
         _voiceToken: 0,
         _voiceActive: false,
         _voiceGraceUntilMs: 0,

@@ -1,5 +1,8 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use crate::audio::{play_bgm, play_cutscene_music, play_hacking_music, play_sfx, speak_voice};
+use crate::audio::{
+    play_bgm, play_cutscene_music, play_hacking_music, play_scooter_music, play_sfx, speak_voice,
+};
 use crate::city::CityWorldMarker;
 use crate::player::Player;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
@@ -35,6 +38,31 @@ pub struct CityMike;
 
 #[derive(Component)]
 pub struct PhoneMazeUi;
+
+#[derive(Component)]
+pub struct ScootPromptUi;
+
+#[derive(Component)]
+pub struct ScootPromptButton;
+
+#[derive(Component)]
+pub struct ScootPromptText;
+
+#[derive(SystemParam)]
+pub struct ScootUiParams<'w, 's> {
+    pub ui_q: Query<'w, 's, Entity, With<ScootPromptUi>>,
+    pub btn_q: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<ScootPromptButton>)>,
+    pub txt_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<ScootPromptText>,
+            Without<PhoneMazeCellText>,
+            Without<PhoneMazeStatusText>,
+        ),
+    >,
+}
 
 #[derive(Component)]
 pub struct PhoneMazeCell {
@@ -505,6 +533,7 @@ pub fn update_city_scooter_and_phone(
     mut cell_bg_q: Query<(&PhoneMazeCell, &mut BackgroundColor)>,
     mut cell_txt_q: Query<(&PhoneMazeCellText, &mut Text, &mut TextColor)>,
     mut status_txt_q: Query<&mut Text, (With<PhoneMazeStatusText>, Without<PhoneMazeCellText>)>,
+    mut scoot_ui: ScootUiParams,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
@@ -632,7 +661,8 @@ pub fn update_city_scooter_and_phone(
         return;
     }
 
-    let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
+    let scoot_btn_clicked = scoot_ui.btn_q.iter().any(|i| *i == Interaction::Pressed);
+    let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE) || scoot_btn_clicked;
 
     // Check Mike in alleyway (beard, baseball cap, wrestling shirt) — triggers trippy cutscene on every interaction!
     for (m_tf, _mike) in &mut mike_q {
@@ -656,6 +686,9 @@ pub fn update_city_scooter_and_phone(
     // On foot: check nearby scooter
     if stats.riding_scooter.is_none() {
         if stats.driving_car.is_some() || stats.player_scale >= 6.0 {
+            for e in &scoot_ui.ui_q {
+                commands.entity(e).despawn_recursive();
+            }
             return;
         }
         let mut nearest: Option<(Entity, f32)> = None;
@@ -665,21 +698,79 @@ pub fn update_city_scooter_and_phone(
                 stf.translation.z - p_tf.translation.z,
             )
             .length();
-            if d < 3.6 && nearest.map_or(true, |(_, bd)| d < bd) {
+            if d < 5.2 && nearest.map_or(true, |(_, bd)| d < bd) {
                 nearest = Some((se, d));
             }
         }
 
         if let Some((se, _)) = nearest {
+            let btn_label = if !stats.scooter_app_unlocked {
+                "SCOOT! (HACK PHONE APP [F/E])".to_string()
+            } else if let Ok((_, _, sc)) = scooter_q.get(se) {
+                if sc.paid {
+                    "SCOOT! [F/E]".to_string()
+                } else {
+                    format!("SCOOT! (RENT: {} CREDITS)", SCOOTER_RENT_COST)
+                }
+            } else {
+                "SCOOT! [F/E]".to_string()
+            };
+
+            if scoot_ui.ui_q.is_empty() {
+                commands
+                    .spawn((
+                        ScootPromptUi,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(26.0),
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|root| {
+                        root.spawn((
+                            ScootPromptButton,
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.08, 0.72, 0.30)),
+                            BorderColor(Color::srgb(0.45, 1.0, 0.65)),
+                            BorderRadius::all(Val::Px(10.0)),
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                ScootPromptText,
+                                Text::new(btn_label.clone()),
+                                TextFont {
+                                    font_size: 16.0,
+                                    ..default()
+                                },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    });
+            } else if let Ok(mut st) = scoot_ui.txt_q.get_single_mut() {
+                if st.0 != btn_label {
+                    st.0 = btn_label;
+                }
+            }
+
             if !stats.scooter_app_unlocked {
                 if interact {
+                    for e in &scoot_ui.ui_q {
+                        commands.entity(e).despawn_recursive();
+                    }
                     stats.phone_open = true;
                     *maze = PhoneMazeState::default();
                     spawn_phone_maze_ui(&mut commands, &maze);
                     play_hacking_music();
                 } else {
                     stats.hint_text =
-                        "SCOOTER LOCKED! Press [P] or [F/E] to hack SCOOTR.OS on your phone!"
+                        "SCOOTER LOCKED! Click [SCOOT!] or press [P] to hack SCOOTR.OS!"
                             .to_string();
                 }
             } else if let Ok((_, stf, mut sc)) = scooter_q.get_mut(se) {
@@ -700,21 +791,33 @@ pub fn update_city_scooter_and_phone(
                         p_tf.translation = stf.translation + Vec3::Y * 0.25;
                         player.velocity = Vec3::ZERO;
                         play_sfx("hack_success");
+                        play_scooter_music();
                         stats.hint_text =
                             "RIDING SCOOTER! [WASD] Zip | [SHIFT] Turbo | [F/E] Hop Off"
                                 .to_string();
                     }
                 } else if sc.paid {
-                    stats.hint_text = "[F / E] Ride Unlocked Scooter".to_string();
+                    stats.hint_text = "Click [SCOOT!] or press [F / E] to Ride Scooter".to_string();
                 } else {
                     stats.hint_text = format!(
-                        "[F / E] Rent Scooter ({} Tendy Credits | You have {})",
+                        "Click [SCOOT!] or press [F / E] to Rent ({} Credits | Have {})",
                         SCOOTER_RENT_COST, stats.tendy_credits
                     );
                 }
             }
+        } else {
+            for e in &scoot_ui.ui_q {
+                commands.entity(e).despawn_recursive();
+            }
         }
         return;
+    }
+
+    if let Ok(mut st) = scoot_ui.txt_q.get_single_mut() {
+        let lbl = "HOP OFF SCOOTER [F/E]";
+        if st.0 != lbl {
+            st.0 = lbl.to_string();
+        }
     }
 
     let Some(se) = stats.riding_scooter else {
@@ -729,6 +832,7 @@ pub fn update_city_scooter_and_phone(
         }
         stats.riding_scooter = None;
         play_sfx("car_door");
+        play_bgm();
         stats.hint_text = "HOPPED OFF SCOOTER!".to_string();
         return;
     }
@@ -1073,14 +1177,13 @@ pub fn enter_mike_cutscene(
     commands
         .spawn((
             MikeCutsceneOverlay,
-            ZIndex(25),
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::FlexEnd,
                 align_items: AlignItems::Center,
-                padding: UiRect::bottom(Val::Percent(10.5)),
+                padding: UiRect::bottom(Val::Px(22.0)),
                 ..default()
             },
         ))

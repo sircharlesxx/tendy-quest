@@ -2125,12 +2125,16 @@ pub fn exit_city_play(
     mut stats: ResMut<PlayerStats>,
     ui_q: Query<Entity, With<CityPlayUi>>,
     phone_q: Query<Entity, With<crate::scooter::PhoneMazeUi>>,
+    scoot_ui_q: Query<Entity, With<crate::scooter::ScootPromptUi>>,
     mut player_q: Query<&mut Visibility, With<Player>>,
 ) {
     for e in &ui_q {
         commands.entity(e).despawn_recursive();
     }
     for e in &phone_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &scoot_ui_q {
         commands.entity(e).despawn_recursive();
     }
     stats.driving_car = None;
