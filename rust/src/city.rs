@@ -1711,6 +1711,8 @@ fn spawn_50_city_tendies(
         step += 1;
     }
     crate::scooter::spawn_city_scooters(commands, meshes, materials);
+    crate::stunts::spawn_stunt_course(commands, meshes, materials);
+    spots.extend(crate::stunts::stunt_tendy_spots());
     let mut mike_seed_bytes = [0u8; 8];
     let _ = getrandom::getrandom(&mut mike_seed_bytes);
     let mike_seed = u64::from_le_bytes(mike_seed_bytes);

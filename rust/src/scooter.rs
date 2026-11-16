@@ -17,6 +17,34 @@ pub struct CityScooter {
     pub speed: f32,
     pub paid: bool,
     pub occupied: bool,
+    // Stunt physics
+    pub y: f32,
+    pub vy: f32,
+    pub grounded: bool,
+    pub ground_h: f32,
+    pub last_slope: f32,
+    pub air_t: f32,
+    pub flip: f32,
+    pub boost_t: f32,
+}
+
+impl CityScooter {
+    pub fn new(yaw: f32) -> Self {
+        Self {
+            yaw,
+            speed: 0.0,
+            paid: false,
+            occupied: false,
+            y: 0.0,
+            vy: 0.0,
+            grounded: true,
+            ground_h: 0.0,
+            last_slope: 0.0,
+            air_t: 0.0,
+            flip: 0.0,
+            boost_t: 0.0,
+        }
+    }
 }
 
 #[derive(Component)]
@@ -162,6 +190,10 @@ pub fn spawn_city_scooters(
     let spots = [
         (Vec3::new(-1.8, 0.0, 40.0), 0.25_f32),
         (Vec3::new(-4.5, 0.0, 46.0), -0.4),
+        // Stunt course starts: 3rd St SE Gauntlet (north), Cross-Street Send (east), Greene Square Park
+        (Vec3::new(1.8, 0.0, 33.0), std::f32::consts::PI),
+        (Vec3::new(8.0, 0.0, 49.5), std::f32::consts::FRAC_PI_2),
+        (Vec3::new(58.0, 0.0, 50.0), 0.0),
         (Vec3::new(42.0, 0.0, 42.0), 1.2),
         (Vec3::new(-42.0, 0.0, 42.0), -1.1),
         (Vec3::new(42.0, 0.0, 0.0), 1.57),
@@ -170,20 +202,31 @@ pub fn spawn_city_scooters(
         (Vec3::new(42.0, 0.0, -46.0), 2.4),
     ];
 
+    let flame_mesh = meshes.add(Cone::new(0.2, 1.1));
+    let flame_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.55, 0.12),
+        emissive: LinearRgba::new(6.0, 2.4, 0.3, 1.0),
+        unlit: true,
+        ..default()
+    });
+
     for (pos, yaw) in spots {
         commands
             .spawn((
                 LevelEntity,
                 CityWorldMarker,
-                CityScooter {
-                    yaw,
-                    speed: 0.0,
-                    paid: false,
-                    occupied: false,
-                },
+                CityScooter::new(yaw),
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
             .with_children(|s| {
+                s.spawn((
+                    crate::stunts::ScooterBoostFlame,
+                    Mesh3d(flame_mesh.clone()),
+                    MeshMaterial3d(flame_mat.clone()),
+                    Transform::from_xyz(0.0, 0.28, -1.3)
+                        .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                    Visibility::Hidden,
+                ));
                 s.spawn((
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(deck_mat.clone()),
@@ -451,7 +494,7 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
                     });
 
                 phone.spawn((
-                    Text::new("[P / ESC] Put Phone Away  |  Cost: 12 Tendy Credits"),
+                    Text::new("[P / ESC] Put Phone Away  |  FREE RIDE ONCE UNLOCKED!"),
                     TextFont {
                         font_size: 10.5,
                         ..default()
@@ -587,7 +630,7 @@ pub fn update_city_scooter_and_phone(
                             player.velocity = Vec3::ZERO;
                             play_scooter_music();
                             stats.hint_text =
-                                "SCOOTER UNLOCKED! [WASD] Zip | [SHIFT] Turbo | [F/E] Hop Off"
+                                "SCOOTER UNLOCKED! [WASD] Zip | [SHIFT] Turbo | Hit RAMPS & BOOST RINGS | [SPACE] Backflip | [F/E] Hop Off"
                                     .to_string();
                             mounted = true;
                             break;
@@ -600,7 +643,7 @@ pub fn update_city_scooter_and_phone(
                 play_bgm();
             }
                         stats.hint_text =
-                            "VEO APP UNLOCKED! Walk to any scooter and press [F/E] or click [SCOOT!]!"
+                            "VEO APP UNLOCKED! Grab a scooter, hit the VEO STUNT GATES (north + east) & Greene Square!"
                                 .to_string();
                     }
                     return;
@@ -754,7 +797,7 @@ pub fn update_city_scooter_and_phone(
                     play_sfx("hack_success");
                     play_scooter_music();
                     stats.hint_text =
-                        "RIDING SCOOTER! [WASD] Zip | [SHIFT] Turbo | [F/E] Hop Off"
+                        "RIDING! [WASD] Zip | [SHIFT] Turbo | Hit RAMPS & BOOST RINGS | [SPACE] Backflip | [F/E] Hop Off"
                             .to_string();
                 } else {
                     stats.hint_text = "Click [SCOOT!] or press [F / E] to Ride Scooter".to_string();
@@ -779,11 +822,25 @@ pub fn update_city_scooter_and_phone(
         return;
     };
 
-    if interact {
-        if let Ok((_, stf, mut sc)) = scooter_q.get_mut(se) {
+    let airborne = scooter_q
+        .get(se)
+        .map(|(_, _, sc)| !sc.grounded)
+        .unwrap_or(false);
+
+    if interact && !airborne {
+        if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
             sc.occupied = false;
             sc.speed = 0.0;
+            sc.y = 0.0;
+            sc.vy = 0.0;
+            sc.grounded = true;
+            sc.flip = 0.0;
+            sc.air_t = 0.0;
+            sc.boost_t = 0.0;
+            stf.translation.y = 0.0;
+            stf.rotation = Quat::from_rotation_y(sc.yaw);
             p_tf.translation = Vec3::new(stf.translation.x + 1.4, 0.0, stf.translation.z);
+            p_tf.rotation = Quat::from_rotation_y(sc.yaw + std::f32::consts::PI);
         }
         stats.riding_scooter = None;
         play_sfx("car_door");
@@ -821,9 +878,28 @@ pub fn update_city_scooter_and_phone(
             stats.dash_energy = (stats.dash_energy - 28.0 * dt).max(0.0);
         }
 
-        let max_spd = if turbo { 42.0 } else { 30.0 };
+        let boosting = sc.boost_t > 0.0;
+        if boosting {
+            sc.boost_t = (sc.boost_t - dt).max(0.0);
+            if throttle > -0.05 {
+                throttle = 1.0;
+            }
+        }
+        let max_spd = if boosting {
+            58.0
+        } else if turbo {
+            42.0
+        } else {
+            30.0
+        };
+        let accel = if boosting { 95.0 } else { 36.0 };
         if throttle > 0.05 {
-            sc.speed = (sc.speed + 36.0 * dt).min(max_spd);
+            if sc.speed > max_spd {
+                // Coming down from a boost: bleed speed off smoothly instead of snapping
+                sc.speed = (sc.speed - 18.0 * dt).max(max_spd);
+            } else {
+                sc.speed = (sc.speed + accel * dt).min(max_spd);
+            }
         } else if throttle < -0.05 {
             sc.speed = (sc.speed - 38.0 * dt).max(-12.0);
         } else {
@@ -836,13 +912,13 @@ pub fn update_city_scooter_and_phone(
         let fwd = Vec2::new(sc.yaw.sin(), sc.yaw.cos());
         stf.translation.x = (stf.translation.x + fwd.x * sc.speed * dt).clamp(-126.0, 126.0);
         stf.translation.z = (stf.translation.z + fwd.y * sc.speed * dt).clamp(-126.0, 126.0);
-        stf.translation.y = 0.0;
+        stf.translation.y = sc.y;
 
         let wall_r = 0.82;
         for (b_tf, b_box) in &platform_q {
             let top_y = b_tf.translation.y + b_box.half_extents.y;
             let bot_y = b_tf.translation.y - b_box.half_extents.y;
-            if top_y <= 0.25 || bot_y > 2.0 {
+            if top_y <= 0.25 || top_y < sc.y + 0.1 || bot_y > sc.y + 2.0 {
                 continue;
             }
             let min_x = b_tf.translation.x - b_box.half_extents.x - wall_r;

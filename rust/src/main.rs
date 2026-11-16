@@ -8,6 +8,7 @@ mod lexie_victory;
 mod player;
 mod scooter;
 mod state;
+mod stunts;
 mod tj;
 mod ui;
 
@@ -78,6 +79,7 @@ fn main() {
         .init_resource::<MikeCutsceneDialog>()
         .init_resource::<DerekCutsceneState>()
         .init_resource::<LexieVictoryState>()
+        .init_resource::<stunts::StuntState>()
         .add_systems(
             Startup,
             (
@@ -222,6 +224,12 @@ fn main() {
                 update_city_minimap,
                 toggle_tutorial_hotkey,
             )
+                .run_if(in_state(GameState::CityPlay)),
+        )
+        .add_systems(
+            Update,
+            stunts::update_scooter_stunts
+                .after(update_city_scooter_and_phone)
                 .run_if(in_state(GameState::CityPlay)),
         )
         .add_systems(OnEnter(GameState::TjCutscene), enter_tj_cutscene)
