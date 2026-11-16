@@ -2132,17 +2132,69 @@ pub fn update_city_driving(
         (Entity, &mut Transform, &mut CityCar, &Children),
         (
             Without<Player>,
+            Without<CityCarWheel>,
             Without<PlatformBox>,
             Without<CityNpc>,
             Without<LexieBoss>,
             Without<GarlicProjectile>,
         ),
     >,
-    mut wheel_q: Query<(&mut Transform, &CityCarWheel), (Without<Player>, Without<CityCar>)>,
-    platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<CityCar>)>,
-    mut npc_q: Query<(&mut Transform, &mut CityNpc), (Without<Player>, Without<CityCar>)>,
-    mut lexie_q: Query<(&Transform, &mut LexieBoss), (Without<Player>, Without<CityCar>)>,
-    garlic_q: Query<(Entity, &Transform), (With<GarlicProjectile>, Without<Player>, Without<CityCar>)>,
+    mut wheel_q: Query<
+        (&mut Transform, &CityCarWheel),
+        (
+            Without<Player>,
+            Without<CityCar>,
+            Without<PlatformBox>,
+            Without<CityNpc>,
+            Without<LexieBoss>,
+            Without<GarlicProjectile>,
+        ),
+    >,
+    platform_q: Query<
+        (&Transform, &PlatformBox),
+        (
+            Without<Player>,
+            Without<CityCar>,
+            Without<CityCarWheel>,
+            Without<CityNpc>,
+            Without<LexieBoss>,
+            Without<GarlicProjectile>,
+        ),
+    >,
+    mut npc_q: Query<
+        (&mut Transform, &mut CityNpc),
+        (
+            Without<Player>,
+            Without<CityCar>,
+            Without<CityCarWheel>,
+            Without<PlatformBox>,
+            Without<LexieBoss>,
+            Without<GarlicProjectile>,
+        ),
+    >,
+    mut lexie_q: Query<
+        (&Transform, &mut LexieBoss),
+        (
+            Without<Player>,
+            Without<CityCar>,
+            Without<CityCarWheel>,
+            Without<PlatformBox>,
+            Without<CityNpc>,
+            Without<GarlicProjectile>,
+        ),
+    >,
+    garlic_q: Query<
+        (Entity, &Transform),
+        (
+            With<GarlicProjectile>,
+            Without<Player>,
+            Without<CityCar>,
+            Without<CityCarWheel>,
+            Without<PlatformBox>,
+            Without<CityNpc>,
+            Without<LexieBoss>,
+        ),
+    >,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((mut p_tf, mut player, mut p_vis)) = player_q.get_single_mut() else {
