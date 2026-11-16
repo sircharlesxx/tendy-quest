@@ -2,7 +2,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crate::audio::{
     is_voice_speaking, play_bgm, play_hacking_music, play_headphone_music, play_scooter_music,
-    play_sfx, set_uzumaki_mode, speak_voice,
+    play_sfx, play_viking_chant_music, set_uzumaki_mode, speak_voice,
 };
 use crate::city::CityWorldMarker;
 use crate::player::Player;
@@ -501,7 +501,11 @@ pub fn update_city_scooter_and_phone(
             for e in &veo_ui.phone_ui_q {
                 commands.entity(e).despawn_recursive();
             }
-            play_bgm();
+            if stats.in_city {
+                play_viking_chant_music();
+            } else {
+                play_bgm();
+            }
             return;
         } else if !stats.scooter_app_unlocked {
             stats.phone_open = true;
@@ -519,7 +523,11 @@ pub fn update_city_scooter_and_phone(
             for e in &veo_ui.phone_ui_q {
                 commands.entity(e).despawn_recursive();
             }
-            play_bgm();
+            if stats.in_city {
+                play_viking_chant_music();
+            } else {
+                play_bgm();
+            }
             return;
         }
 
@@ -586,7 +594,11 @@ pub fn update_city_scooter_and_phone(
                         }
                     }
                     if !mounted {
-                        play_bgm();
+                        if stats.in_city {
+                play_viking_chant_music();
+            } else {
+                play_bgm();
+            }
                         stats.hint_text =
                             "VEO APP UNLOCKED! Walk to any scooter and press [F/E] or click [SCOOT!]!"
                                 .to_string();
@@ -775,7 +787,11 @@ pub fn update_city_scooter_and_phone(
         }
         stats.riding_scooter = None;
         play_sfx("car_door");
-        play_bgm();
+        if stats.in_city {
+            play_viking_chant_music();
+        } else {
+            play_bgm();
+        }
         stats.hint_text = "HOPPED OFF SCOOTER!".to_string();
         return;
     }
@@ -1308,6 +1324,10 @@ pub fn exit_mike_cutscene(
     stats.hearts = (stats.hearts + 3).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.high_timer = 30.0;
-    play_bgm();
+    if stats.in_city {
+        play_viking_chant_music();
+    } else {
+        play_bgm();
+    }
 }
 

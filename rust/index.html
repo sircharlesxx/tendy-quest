@@ -146,6 +146,8 @@
           if (droneOsc1) { droneOsc1.stop(); droneOsc1.disconnect(); droneOsc1 = null; }
           if (droneOsc2) { droneOsc2.stop(); droneOsc2.disconnect(); droneOsc2 = null; }
           if (droneGain) { droneGain.disconnect(); droneGain = null; }
+          if (ctx && bgmGain) bgmGain.gain.setValueAtTime(0.0, ctx.currentTime);
+          if (ctx && ambGain) ambGain.gain.setValueAtTime(0.0, ctx.currentTime);
         } catch (_) {}
       }
 
@@ -472,9 +474,8 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.28, ac.currentTime);
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
             if (ambGain) ambGain.gain.setValueAtTime(0.0, ac.currentTime);
-            if (bgmSource) bgmSource.playbackRate.value = 1.24;
             // Epic 150 BPM Chicken-Tendy boss riff + driving synth drums
             const notes = [146.83, 174.61, 220.0, 261.63, 293.66, 261.63, 220.0, 174.61];
             const bass = [73.42, 73.42, 87.31, 87.31, 98.0, 98.0, 110.0, 82.41];
@@ -534,9 +535,8 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.06, ac.currentTime);
-            if (ambGain) ambGain.gain.setValueAtTime(0.04, ac.currentTime);
-            if (bgmSource) bgmSource.playbackRate.value = 1.08;
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
+            if (ambGain) ambGain.gain.setValueAtTime(0.0, ac.currentTime);
 
             // Deep D1/A1 symphonic sub-drone pad
             droneGain = ac.createGain();
