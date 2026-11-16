@@ -213,7 +213,7 @@ pub fn player_movement(
     // Drain screen-tap state so overlay transitions don't pick up stale taps
     let _ = crate::audio::take_touch_action_tap();
 
-    if stats.driving_car.is_some() {
+    if stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.phone_open {
         player.velocity = Vec3::ZERO;
         return;
     }

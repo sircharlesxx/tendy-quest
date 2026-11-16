@@ -219,6 +219,16 @@ pub fn update_hud(
         if stats.lock_on_active {
             tags.push("LOCK-ON [TAB]".to_string());
         }
+        if stats.in_city {
+            tags.push(format!("CREDITS: {}", stats.tendy_credits));
+            if stats.riding_scooter.is_some() {
+                tags.push("SCOOTER".to_string());
+            } else if stats.scooter_app_unlocked {
+                tags.push("APP: UNLOCKED".to_string());
+            } else {
+                tags.push("PHONE [P]".to_string());
+            }
+        }
         if stats.tj_recruited {
             tags.push("ALLY: TJ".to_string());
         }

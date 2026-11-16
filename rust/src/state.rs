@@ -60,6 +60,10 @@ pub struct PlayerStats {
     pub estus_drink_timer: f32,
     pub heavy_attack: bool,
     pub lock_on_active: bool,
+    pub tendy_credits: u32,
+    pub scooter_app_unlocked: bool,
+    pub riding_scooter: Option<Entity>,
+    pub phone_open: bool,
 }
 
 impl Default for PlayerStats {
@@ -107,6 +111,10 @@ impl Default for PlayerStats {
             estus_drink_timer: 0.0,
             heavy_attack: false,
             lock_on_active: false,
+            tendy_credits: 0,
+            scooter_app_unlocked: false,
+            riding_scooter: None,
+            phone_open: false,
         }
     }
 }

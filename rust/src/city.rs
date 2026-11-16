@@ -1233,9 +1233,9 @@ fn spawn_50_city_tendies(
             }
         }
     }
-    // Deterministically top up to exactly 50 if any overlap check trimmed one
+    // Deterministically top up to 75 so players have extra Tendies for Tendy Credits (scooters) + 50/50 Kaiju goal
     let mut step = 0_usize;
-    while spots.len() < 50 {
+    while spots.len() < 75 {
         let ax = ROAD_COORDS[step % ROAD_COORDS.len()];
         let sz = -108.0 + ((step * 29) % 216) as f32;
         let cand = Vec3::new(ax, 1.0, sz);
@@ -1245,6 +1245,7 @@ fn spawn_50_city_tendies(
         }
         step += 1;
     }
+    crate::scooter::spawn_city_scooters(commands, meshes, materials);
 
     for (i, pos) in spots.into_iter().enumerate() {
         commands
@@ -2098,12 +2099,18 @@ pub fn exit_city_play(
     mut commands: Commands,
     mut stats: ResMut<PlayerStats>,
     ui_q: Query<Entity, With<CityPlayUi>>,
+    phone_q: Query<Entity, With<crate::scooter::PhoneMazeUi>>,
     mut player_q: Query<&mut Visibility, With<Player>>,
 ) {
     for e in &ui_q {
         commands.entity(e).despawn_recursive();
     }
+    for e in &phone_q {
+        commands.entity(e).despawn_recursive();
+    }
     stats.driving_car = None;
+    stats.riding_scooter = None;
+    stats.phone_open = false;
     if let Ok(mut vis) = player_q.get_single_mut() {
         *vis = Visibility::Visible;
     }
@@ -2727,6 +2734,7 @@ pub fn update_city_pickups(
         if d < pickup_r {
             commands.entity(entity).despawn_recursive();
             stats.tendies += 1;
+            stats.tendy_credits += 1;
             stats.score += 200;
             play_sfx("tendy");
             if stats.tendies >= stats.total_tendies {

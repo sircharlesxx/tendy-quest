@@ -4,6 +4,7 @@ mod city;
 mod enemies;
 mod level;
 mod player;
+mod scooter;
 mod state;
 mod tj;
 mod ui;
@@ -30,6 +31,7 @@ use player::{
     animate_and_collect_pickups, animate_player_limbs, camera_mouse_look, player_movement,
     spawn_player, unlock_cursor, update_camera, victory_dance,
 };
+use scooter::{PhoneMazeState, update_city_scooter_and_phone};
 use state::{CameraOrbit, GameState, PlayerStats};
 use tj::{enter_tj_cutscene, exit_tj_cutscene, update_city_tj, update_tj_cutscene};
 use ui::{
@@ -59,6 +61,7 @@ fn main() {
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
+        .init_resource::<PhoneMazeState>()
         .add_systems(
             Startup,
             (
@@ -192,6 +195,7 @@ fn main() {
                 animate_player_limbs,
                 update_camera,
                 update_city_driving,
+                update_city_scooter_and_phone,
                 update_city_traffic,
                 update_city_npcs,
                 update_city_tj,
