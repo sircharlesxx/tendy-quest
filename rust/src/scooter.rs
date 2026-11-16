@@ -11,21 +11,6 @@ use crate::ui::HudOverlay;
 
 pub const SCOOTER_RENT_COST: u32 = 12;
 
-// 0 = open, 1 = firewall (#), 2 = $ AUTH_TOKEN, 3 = pulsing gate (%), 4 = KEY_A, 5 = KEY_B
-const MAZE: [[u8; 11]; 11] = [
-    [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
-    [1, 0, 1, 0, 1, 0, 1, 0, 1, 5, 0],
-    [0, 0, 0, 0, 1, 0, 0, 3, 1, 1, 0],
-    [0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0],
-    [0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1],
-    [0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0],
-    [0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0],
-    [1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0],
-    [0, 0, 0, 1, 0, 0, 3, 0, 1, 1, 0],
-    [0, 4, 1, 1, 1, 0, 1, 0, 0, 3, 0],
-    [0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 2],
-];
-
 #[derive(Component)]
 pub struct CityScooter {
     pub yaw: f32,
@@ -61,52 +46,86 @@ pub struct ScootUiParams<'w, 's> {
         &'static mut Text,
         (
             With<ScootPromptText>,
-            Without<PhoneMazeCellText>,
             Without<PhoneMazeStatusText>,
         ),
     >,
 }
 
 #[derive(Component)]
-pub struct PhoneMazeCell {
-    pub x: usize,
-    pub y: usize,
-}
+pub struct PhoneBezelNode;
 
 #[derive(Component)]
-pub struct PhoneMazeCellText {
-    pub x: usize,
-    pub y: usize,
-}
+pub struct VeoCursorNode;
+
+#[derive(Component)]
+pub struct VeoTargetNode;
+
+#[derive(Component)]
+pub struct VeoDriftButton;
 
 #[derive(Component)]
 pub struct PhoneMazeStatusText;
 
+#[derive(SystemParam)]
+pub struct VeoUiParams<'w, 's> {
+    pub phone_ui_q: Query<'w, 's, Entity, With<PhoneMazeUi>>,
+    pub bezel_q: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (
+            With<PhoneBezelNode>,
+            Without<VeoCursorNode>,
+            Without<VeoTargetNode>,
+            Without<VeoDriftButton>,
+        ),
+    >,
+    pub cursor_q: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (
+            With<VeoCursorNode>,
+            Without<PhoneBezelNode>,
+            Without<VeoTargetNode>,
+            Without<VeoDriftButton>,
+        ),
+    >,
+    pub target_q: Query<
+        'w,
+        's,
+        &'static mut Node,
+        (
+            With<VeoTargetNode>,
+            Without<PhoneBezelNode>,
+            Without<VeoCursorNode>,
+            Without<VeoDriftButton>,
+        ),
+    >,
+    pub drift_btn_q: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<VeoDriftButton>)>,
+    pub status_txt_q: Query<'w, 's, &'static mut Text, (With<PhoneMazeStatusText>, Without<ScootPromptText>)>,
+}
+
 #[derive(Resource)]
 pub struct PhoneMazeState {
-    pub px: usize,
-    pub py: usize,
-    pub moves: u32,
-    pub key_a: bool,
-    pub key_b: bool,
-    pub gate_open: bool,
-    pub gate_timer: f32,
-    pub visited: [[bool; 11]; 11],
+    pub taps_done: u32,
+    pub cursor_pos: f32,
+    pub cursor_dir: f32,
+    pub target_pos: f32,
+    pub wobble_t: f32,
+    pub last_msg: String,
 }
 
 impl Default for PhoneMazeState {
     fn default() -> Self {
-        let mut visited = [[false; 11]; 11];
-        visited[0][0] = true;
         Self {
-            px: 0,
-            py: 0,
-            moves: 0,
-            key_a: false,
-            key_b: false,
-            gate_open: true,
-            gate_timer: 0.0,
-            visited,
+            taps_done: 0,
+            cursor_pos: 0.15,
+            cursor_dir: 1.0,
+            target_pos: 0.50,
+            wobble_t: 0.0,
+            last_msg: "20 BEERS DEEP: Align cursor in GREEN zone & press [SPACE] or tap button!"
+                .to_string(),
         }
     }
 }
@@ -329,184 +348,118 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.02, 0.03, 0.58)),
+            BackgroundColor(Color::srgba(0.0, 0.02, 0.03, 0.60)),
         ))
         .with_children(|root| {
             root.spawn((
+                PhoneBezelNode,
                 Node {
-                    width: Val::Px(340.0),
+                    width: Val::Px(330.0),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    padding: UiRect::all(Val::Px(12.0)),
-                    row_gap: Val::Px(6.0),
+                    padding: UiRect::all(Val::Px(16.0)),
+                    row_gap: Val::Px(12.0),
                     border: UiRect::all(Val::Px(3.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.04, 0.06, 0.07)),
-                BorderColor(Color::srgb(0.12, 0.92, 0.58)),
-                BorderRadius::all(Val::Px(20.0)),
+                BackgroundColor(Color::srgb(0.05, 0.07, 0.09)),
+                BorderColor(Color::srgb(0.18, 0.92, 0.62)),
+                BorderRadius::all(Val::Px(22.0)),
             ))
             .with_children(|phone| {
                 phone.spawn((
-                    Text::new("SCOOTR.OS // 0x7F_KERNEL_MAZE"),
+                    Text::new("VEO.APP // 20 BEERS IN"),
                     TextFont {
-                        font_size: 13.0,
+                        font_size: 16.0,
                         ..default()
                     },
-                    TextColor(Color::srgb(0.18, 0.98, 0.62)),
+                    TextColor(Color::srgb(0.22, 0.98, 0.64)),
                 ));
                 phone.spawn((
                     PhoneMazeStatusText,
-                    Text::new("KEYS: 0/2 [K1,K2] | GATE: OPEN | PKT (0,0)"),
+                    Text::new(format!("STEP {}/3: {}", maze.taps_done, maze.last_msg)),
+                    TextFont {
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.95, 0.92, 0.62)),
+                ));
+
+                // Drunk timing slider bar
+                phone
+                    .spawn((
+                        Node {
+                            width: Val::Px(270.0),
+                            height: Val::Px(28.0),
+                            position_type: PositionType::Relative,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.12, 0.14, 0.18)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|bar| {
+                        // Green sweet-spot zone (26% wide)
+                        bar.spawn((
+                            VeoTargetNode,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(37.0),
+                                width: Val::Percent(26.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.16, 0.85, 0.38, 0.55)),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ));
+                        // Drunk jittering cyan cursor
+                        bar.spawn((
+                            VeoCursorNode,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(15.0),
+                                width: Val::Px(12.0),
+                                height: Val::Percent(100.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.25, 0.98, 1.0)),
+                            BorderRadius::all(Val::Px(4.0)),
+                        ));
+                    });
+
+                phone
+                    .spawn((
+                        VeoDriftButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.12, 0.62, 0.32)),
+                        BorderColor(Color::srgb(0.45, 1.0, 0.68)),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("UNLOCK VEO [SPACE / CLICK]"),
+                            TextFont {
+                                font_size: 13.5,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
+                phone.spawn((
+                    Text::new("[P / ESC] Put Phone Away  |  Cost: 12 Tendy Credits"),
                     TextFont {
                         font_size: 10.5,
                         ..default()
                     },
-                    TextColor(Color::srgb(0.55, 0.92, 0.86)),
-                ));
-                phone.spawn((
-                    Text::new("GRAB K1 & K2 BEFORE [$] | AVOID BLOCKED [%] GATES"),
-                    TextFont {
-                        font_size: 9.5,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.85, 0.78)),
-                ));
-
-                phone
-                    .spawn((
-                        Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(2.0),
-                            padding: UiRect::all(Val::Px(5.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.02, 0.03, 0.04)),
-                        BorderRadius::all(Val::Px(8.0)),
-                    ))
-                    .with_children(|grid| {
-                        for y in 0..11_usize {
-                            grid.spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(2.0),
-                                ..default()
-                            })
-                            .with_children(|row| {
-                                for x in 0..11_usize {
-                                    let (bg, fg, sym) = cell_visual(x, y, maze);
-                                    row.spawn((
-                                        PhoneMazeCell { x, y },
-                                        Node {
-                                            width: Val::Px(24.0),
-                                            height: Val::Px(24.0),
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            ..default()
-                                        },
-                                        BackgroundColor(bg),
-                                        BorderRadius::all(Val::Px(3.0)),
-                                    ))
-                                    .with_children(|cell| {
-                                        cell.spawn((
-                                            PhoneMazeCellText { x, y },
-                                            Text::new(sym),
-                                            TextFont {
-                                                font_size: 10.5,
-                                                ..default()
-                                            },
-                                            TextColor(fg),
-                                        ));
-                                    });
-                                }
-                            });
-                        }
-                    });
-
-                phone.spawn((
-                    Text::new("[WASD / ARROWS] Route | [P / ESC] Close | Cost: 12 Credits"),
-                    TextFont {
-                        font_size: 10.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.95, 0.82, 0.28)),
+                    TextColor(Color::srgb(0.75, 0.82, 0.85)),
                 ));
             });
         });
-}
-
-fn cell_visual(x: usize, y: usize, maze: &PhoneMazeState) -> (Color, Color, &'static str) {
-    if x == maze.px && y == maze.py {
-        return (
-            Color::srgb(0.08, 0.45, 0.55),
-            Color::srgb(0.4, 1.0, 1.0),
-            "@",
-        );
-    }
-    let dist = x.abs_diff(maze.px) + y.abs_diff(maze.py);
-    let cell = MAZE[y][x];
-    if dist > 3 && !maze.visited[y][x] && cell != 2 {
-        return (
-            Color::srgb(0.04, 0.05, 0.06),
-            Color::srgb(0.18, 0.26, 0.24),
-            "?",
-        );
-    }
-    match cell {
-        1 => (
-            Color::srgb(0.24, 0.06, 0.08),
-            Color::srgb(0.75, 0.22, 0.25),
-            "#",
-        ),
-        2 => {
-            if maze.key_a && maze.key_b {
-                (
-                    Color::srgb(0.32, 0.25, 0.05),
-                    Color::srgb(1.0, 0.92, 0.25),
-                    "$",
-                )
-            } else {
-                (
-                    Color::srgb(0.20, 0.14, 0.06),
-                    Color::srgb(0.8, 0.48, 0.20),
-                    "X",
-                )
-            }
-        }
-        3 => {
-            if maze.gate_open {
-                (
-                    Color::srgb(0.08, 0.22, 0.28),
-                    Color::srgb(0.35, 0.95, 1.0),
-                    "%",
-                )
-            } else {
-                (
-                    Color::srgb(0.35, 0.08, 0.16),
-                    Color::srgb(1.0, 0.35, 0.45),
-                    "%",
-                )
-            }
-        }
-        4 => {
-            if maze.key_a {
-                (Color::srgb(0.05, 0.11, 0.08), Color::srgb(0.22, 0.65, 0.42), ".")
-            } else {
-                (Color::srgb(0.14, 0.28, 0.08), Color::srgb(0.65, 1.0, 0.35), "K1")
-            }
-        }
-        5 => {
-            if maze.key_b {
-                (Color::srgb(0.05, 0.11, 0.08), Color::srgb(0.22, 0.65, 0.42), ".")
-            } else {
-                (Color::srgb(0.14, 0.28, 0.08), Color::srgb(0.65, 1.0, 0.35), "K2")
-            }
-        }
-        _ => (
-            Color::srgb(0.05, 0.11, 0.08),
-            Color::srgb(0.22, 0.65, 0.42),
-            ".",
-        ),
-    }
 }
 
 pub fn update_city_scooter_and_phone(
@@ -533,10 +486,7 @@ pub fn update_city_scooter_and_phone(
         (&Transform, &PlatformBox),
         (Without<Player>, Without<CityScooter>, Without<CityMike>),
     >,
-    phone_ui_q: Query<Entity, With<PhoneMazeUi>>,
-    mut cell_bg_q: Query<(&PhoneMazeCell, &mut BackgroundColor)>,
-    mut cell_txt_q: Query<(&PhoneMazeCellText, &mut Text, &mut TextColor)>,
-    mut status_txt_q: Query<&mut Text, (With<PhoneMazeStatusText>, Without<PhoneMazeCellText>)>,
+    mut veo_ui: VeoUiParams,
     mut scoot_ui: ScootUiParams,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -548,7 +498,7 @@ pub fn update_city_scooter_and_phone(
     if keys.just_pressed(KeyCode::KeyP) && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
         if stats.phone_open {
             stats.phone_open = false;
-            for e in &phone_ui_q {
+            for e in &veo_ui.phone_ui_q {
                 commands.entity(e).despawn_recursive();
             }
             play_bgm();
@@ -562,104 +512,84 @@ pub fn update_city_scooter_and_phone(
         }
     }
 
-    // Handle active Phone Hacking Maze minigame
+    // Handle active 20-Beers Veo App Unlock Minigame
     if stats.phone_open {
         if keys.just_pressed(KeyCode::Escape) {
             stats.phone_open = false;
-            for e in &phone_ui_q {
+            for e in &veo_ui.phone_ui_q {
                 commands.entity(e).despawn_recursive();
             }
             play_bgm();
             return;
         }
 
-        maze.gate_timer += dt;
-        let mut gate_toggled = false;
-        if maze.gate_timer >= 2.0 {
-            maze.gate_timer -= 2.0;
-            maze.gate_open = !maze.gate_open;
-            gate_toggled = true;
+        maze.wobble_t += dt;
+        let speed = 1.25 + (maze.taps_done as f32) * 0.25;
+        maze.cursor_pos += maze.cursor_dir * speed * dt;
+        // Drunk thumb jitter
+        maze.cursor_pos += (maze.wobble_t * 7.5).sin() * 0.35 * dt;
+        if maze.cursor_pos >= 0.95 {
+            maze.cursor_pos = 0.95;
+            maze.cursor_dir = -1.0;
+        } else if maze.cursor_pos <= 0.02 {
+            maze.cursor_pos = 0.02;
+            maze.cursor_dir = 1.0;
         }
 
-        let mut dx: isize = 0;
-        let mut dy: isize = 0;
-        if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
-            dy = -1;
-        } else if keys.just_pressed(KeyCode::KeyS) || keys.just_pressed(KeyCode::ArrowDown) {
-            dy = 1;
-        } else if keys.just_pressed(KeyCode::KeyA) || keys.just_pressed(KeyCode::ArrowLeft) {
-            dx = -1;
-        } else if keys.just_pressed(KeyCode::KeyD) || keys.just_pressed(KeyCode::ArrowRight) {
-            dx = 1;
+        // Drunk swaying phone bezel + moving target zone
+        if let Ok(mut bn) = veo_ui.bezel_q.get_single_mut() {
+            bn.margin = UiRect {
+                left: Val::Px((maze.wobble_t * 2.4).sin() * 38.0),
+                top: Val::Px((maze.wobble_t * 3.1).cos() * 24.0),
+                ..default()
+            };
+        }
+        if let Ok(mut cn) = veo_ui.cursor_q.get_single_mut() {
+            cn.left = Val::Percent((maze.cursor_pos * 100.0).clamp(0.0, 95.0));
+        }
+        if let Ok(mut tn) = veo_ui.target_q.get_single_mut() {
+            tn.left = Val::Percent(((maze.target_pos - 0.13) * 100.0).clamp(0.0, 74.0));
         }
 
-        let mut moved = false;
-        if dx != 0 || dy != 0 {
-            let nx = maze.px as isize + dx;
-            let ny = maze.py as isize + dy;
-            let valid_bounds = nx >= 0 && nx < 11 && ny >= 0 && ny < 11;
-            let cell = if valid_bounds { MAZE[ny as usize][nx as usize] } else { 1 };
-            let passable = valid_bounds && cell != 1 && (cell != 3 || maze.gate_open);
+        let btn_tapped = veo_ui.drift_btn_q.iter().any(|i| *i == Interaction::Pressed);
+        let attempt = keys.just_pressed(KeyCode::Space)
+            || keys.just_pressed(KeyCode::Enter)
+            || keys.just_pressed(KeyCode::KeyF)
+            || keys.just_pressed(KeyCode::KeyE)
+            || btn_tapped;
 
-            if passable {
-                let mx = nx as usize;
-                let my = ny as usize;
-                maze.px = mx;
-                maze.py = my;
-                maze.moves += 1;
-                maze.visited[my][mx] = true;
-                moved = true;
-
-                if cell == 4 {
-                    maze.key_a = true;
-                    play_sfx("hack_success");
-                } else if cell == 5 {
-                    maze.key_b = true;
-                    play_sfx("hack_success");
-                } else if cell == 2 {
-                    if maze.key_a && maze.key_b {
-                        stats.scooter_app_unlocked = true;
-                        stats.phone_open = false;
-                        for e in &phone_ui_q {
-                            commands.entity(e).despawn_recursive();
-                        }
-                        play_sfx("hack_success");
-                        play_bgm();
-                        stats.hint_text = format!(
-                            "SCOOTR APP HACKED! Press [F/E] near a Scooter ({} Tendy Credits)!",
-                            SCOOTER_RENT_COST
-                        );
-                        return;
-                    } else {
-                        play_sfx("hack_deny");
+        if attempt {
+            let in_zone = (maze.cursor_pos - maze.target_pos).abs() <= 0.15;
+            if in_zone {
+                maze.taps_done += 1;
+                if maze.taps_done >= 3 {
+                    stats.scooter_app_unlocked = true;
+                    stats.phone_open = false;
+                    for e in &veo_ui.phone_ui_q {
+                        commands.entity(e).despawn_recursive();
                     }
-                } else {
-                    play_sfx("hack_blip");
+                    play_sfx("hack_success");
+                    play_bgm();
+                    stats.hint_text = format!(
+                        "VEO SCOOTER UNLOCKED! Click [SCOOT!] ({} Tendy Credits)!",
+                        SCOOTER_RENT_COST
+                    );
+                    return;
                 }
+                play_sfx("hack_success");
+                maze.target_pos = if maze.taps_done == 1 { 0.30 } else { 0.72 };
+                maze.last_msg = if maze.taps_done == 1 {
+                    "QR SCANNED! Now confirm you're sober... (2/3)"
+                } else {
+                    "ONE EYE CLOSED! Tap PIN confirm! (3/3)"
+                }
+                .to_string();
             } else {
                 play_sfx("hack_deny");
+                maze.last_msg = "MISSED! Too many Busch Lights! Try again!".to_string();
             }
-        }
-
-        if moved || gate_toggled {
-            for (cell, mut bg) in &mut cell_bg_q {
-                let (new_bg, _, _) = cell_visual(cell.x, cell.y, &maze);
-                bg.0 = new_bg;
-            }
-            for (ct, mut t, mut tc) in &mut cell_txt_q {
-                let (_, new_fg, sym) = cell_visual(ct.x, ct.y, &maze);
-                t.0 = sym.to_string();
-                tc.0 = new_fg;
-            }
-            if let Ok(mut st) = status_txt_q.get_single_mut() {
-                let kc = maze.key_a as u8 + maze.key_b as u8;
-                st.0 = format!(
-                    "KEYS: {}/2 | GATE: {} | PKT ({},{})",
-                    kc,
-                    if maze.gate_open { "OPEN" } else { "LOCKED" },
-                    maze.px,
-                    maze.py
-                );
+            if let Ok(mut st) = veo_ui.status_txt_q.get_single_mut() {
+                st.0 = format!("STEP {}/3: {}", maze.taps_done, maze.last_msg);
             }
         }
         return;
