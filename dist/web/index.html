@@ -534,100 +534,209 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.14, ac.currentTime);
-            if (ambGain) ambGain.gain.setValueAtTime(0.08, ac.currentTime);
-            if (bgmSource) bgmSource.playbackRate.value = 1.05;
-            // Nordic low war drone + booming choir chant rhythm ("TENDY! WENDY! FENDY! BENDIES!")
+            if (bgmGain) bgmGain.gain.setValueAtTime(0.06, ac.currentTime);
+            if (ambGain) ambGain.gain.setValueAtTime(0.04, ac.currentTime);
+            if (bgmSource) bgmSource.playbackRate.value = 1.08;
+
+            // Deep D1/A1 symphonic sub-drone pad
             droneGain = ac.createGain();
-            droneGain.gain.setValueAtTime(0.07, ac.currentTime);
+            droneGain.gain.setValueAtTime(0.055, ac.currentTime);
             droneGain.connect(masterGain);
             droneOsc1 = ac.createOscillator();
             droneOsc1.type = "sawtooth";
-            droneOsc1.frequency.value = 55.0; // Deep A1 Viking horn/choir root
+            droneOsc1.frequency.value = 36.71; // D1
             droneOsc2 = ac.createOscillator();
             droneOsc2.type = "triangle";
-            droneOsc2.frequency.value = 82.41; // E2 fifth
-            const lp = ac.createBiquadFilter();
-            lp.type = "lowpass";
-            lp.frequency.value = 260;
-            droneOsc1.connect(lp);
-            droneOsc2.connect(lp);
-            lp.connect(droneGain);
+            droneOsc2.frequency.value = 55.0; // A1 fifth
+            const droneLp = ac.createBiquadFilter();
+            droneLp.type = "lowpass";
+            droneLp.frequency.value = 180;
+            droneOsc1.connect(droneLp);
+            droneOsc2.connect(droneLp);
+            droneLp.connect(droneGain);
             droneOsc1.start();
             droneOsc2.start();
 
-            const chantNotes = [110.0, 98.0, 110.0, 130.81, 110.0, 98.0, 146.83, 130.81];
+            // Pre-build noise buffer for crisp snare & hi-hat/crash
+            const noiseLen = Math.floor(ac.sampleRate * 0.35);
+            const noiseBuf = ac.createBuffer(1, noiseLen, ac.sampleRate);
+            const nData = noiseBuf.getChannelData(0);
+            for (let i = 0; i < noiseLen; i++) nData[i] = Math.random() * 2 - 1;
+
+            // Pre-build guitar/synth overdrive curve
+            const shaper = ac.createWaveShaper();
+            const curve = new Float32Array(256);
+            for (let i = 0; i < 256; i++) {
+              const x = (i * 2) / 256 - 1;
+              curve[i] = ((3 + 18) * x * 20 * (Math.PI / 180)) / (Math.PI + 18 * Math.abs(x));
+            }
+            shaper.curve = curve;
+            const cabLp = ac.createBiquadFilter();
+            cabLp.type = "lowpass";
+            cabLp.frequency.value = 1950;
+            cabLp.Q.value = 1.1;
+            const riffBus = ac.createGain();
+            riffBus.gain.value = 0.24;
+            shaper.connect(cabLp);
+            cabLp.connect(riffBus);
+            riffBus.connect(masterGain);
+
+            // 64-step (4-bar @ 142 BPM, 16th note = 105.6ms) D Phrygian Dominant Boss Progression
+            // Bass/Riff roots per 8th note (32 entries = 4 bars)
+            const riffNotes = [
+              // Bar 1: D5 chug + Phrygian turn
+              73.42, 73.42, 87.31, 73.42, 98.00, 73.42, 77.78, 65.41,
+              // Bar 2: Bb -> C -> D heroic climb
+              58.27, 58.27, 65.41, 65.41, 73.42, 73.42, 87.31, 82.41,
+              // Bar 3: G -> F -> Eb -> D dramatic chorus
+              98.00, 98.00, 87.31, 87.31, 77.78, 77.78, 73.42, 65.41,
+              // Bar 4: A -> Bb -> C# -> D tension turnaround
+              55.00, 55.00, 58.27, 58.27, 69.30, 69.30, 73.42, 82.41
+            ];
+            // Anthemic "TEN-DY! WEN-DY! FEN-DY! BEN-DIES!" brass/choir melody (16th-note grid, 0 = rest)
+            const lead64 = [
+              // Bar 1 ("TEN-DY! WEN-DY!")
+              293.66, 0, 349.23, 0, 440.00, 0, 392.00, 0, 349.23, 0, 311.13, 0, 293.66, 0, 261.63, 0,
+              // Bar 2 ("FEN-DY! BEN-DIES!")
+              466.16, 0, 440.00, 0, 392.00, 0, 349.23, 0, 440.00, 0, 0, 0, 523.25, 0, 440.00, 0,
+              // Bar 3 (Chorus soar)
+              587.33, 0, 523.25, 0, 466.16, 0, 440.00, 0, 392.00, 0, 349.23, 0, 311.13, 0, 293.66, 0,
+              // Bar 4 (Climax arpeggio)
+              440.00, 523.25, 587.33, 0, 659.25, 0, 587.33, 0, 554.37, 0, 587.33, 0, 698.46, 0, 587.33, 0
+            ];
+            // Vowel formant center frequencies for Viking choir stabs (A - E - O - A)
+            const formants = [730, 530, 570, 730];
+
             vikingStep = 0;
             const self = this;
             vikingTimer = setInterval(() => {
               if (muted || ac.state !== "running") return;
               const now = ac.currentTime;
-              const step = vikingStep % 32;
+              const step = vikingStep % 64;
+              const bar = Math.floor(step / 16);
+              const inBar = step % 16;
               vikingStep += 1;
 
-              // Heavy Viking war drum on strong beats
-              if (step % 4 === 0 || step % 8 === 6) {
+              // 1. Punchy metal kick (four-on-the-floor + double-kick 16ths on bar 3/4 turnaround)
+              const isKick =
+                inBar % 4 === 0 ||
+                inBar === 10 ||
+                (bar === 3 && inBar >= 12);
+              if (isKick) {
                 const ko = ac.createOscillator();
                 const kg = ac.createGain();
                 ko.type = "sine";
-                ko.frequency.setValueAtTime(step % 8 === 0 ? 115 : 88, now);
-                ko.frequency.exponentialRampToValueAtTime(34, now + 0.22);
-                kg.gain.setValueAtTime(step % 8 === 0 ? 0.36 : 0.24, now);
-                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+                ko.frequency.setValueAtTime(145, now);
+                ko.frequency.exponentialRampToValueAtTime(36, now + 0.11);
+                kg.gain.setValueAtTime(0.36, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
                 ko.connect(kg);
                 kg.connect(masterGain);
                 ko.start(now);
-                ko.stop(now + 0.25);
+                ko.stop(now + 0.14);
               }
 
-              // Stomp-clap / shield-bang every 2nd beat
-              if (step % 4 === 2) {
-                const so = ac.createOscillator();
+              // 2. Crisp snare on beats 2 & 4 (inBar 4 and 12) + fill on bar 3 end
+              if (inBar === 4 || inBar === 12 || (bar === 3 && (inBar === 14 || inBar === 15))) {
+                const ns = ac.createBufferSource();
+                ns.buffer = noiseBuf;
+                const sbp = ac.createBiquadFilter();
+                sbp.type = "bandpass";
+                sbp.frequency.value = 1850;
+                sbp.Q.value = 0.85;
                 const sg = ac.createGain();
-                so.type = "square";
-                so.frequency.setValueAtTime(190, now);
-                so.frequency.exponentialRampToValueAtTime(75, now + 0.08);
-                sg.gain.setValueAtTime(0.11, now);
-                sg.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
-                so.connect(sg);
+                sg.gain.setValueAtTime(0.22, now);
+                sg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                ns.connect(sbp);
+                sbp.connect(sg);
                 sg.connect(masterGain);
-                so.start(now);
-                so.stop(now + 0.10);
+                ns.start(now);
+                ns.stop(now + 0.15);
+
+                const sb = ac.createOscillator();
+                const sbg = ac.createGain();
+                sb.type = "triangle";
+                sb.frequency.setValueAtTime(195, now);
+                sb.frequency.exponentialRampToValueAtTime(95, now + 0.07);
+                sbg.gain.setValueAtTime(0.18, now);
+                sbg.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+                sb.connect(sbg);
+                sbg.connect(masterGain);
+                sb.start(now);
+                sb.stop(now + 0.09);
               }
 
-              // Baritone Viking choir syllables on "TEN-DY! WEN-DY! FEN-DY! BEN-DIES!"
-              if (step % 2 === 0) {
-                const freq = chantNotes[(step >> 1) % chantNotes.length];
-                const bpf = ac.createBiquadFilter();
-                bpf.type = "bandpass";
-                bpf.frequency.setValueAtTime(step % 4 === 0 ? 520 : 680, now);
-                bpf.Q.value = 3.2;
-                const cg = ac.createGain();
-                cg.gain.setValueAtTime(0.15, now);
-                cg.gain.exponentialRampToValueAtTime(0.001, now + 0.31);
-                bpf.connect(cg);
-                cg.connect(masterGain);
-                for (const det of [0.994, 1.0, 1.007]) {
-                  const vo = ac.createOscillator();
-                  vo.type = "sawtooth";
-                  vo.frequency.setValueAtTime(freq * det, now);
-                  vo.connect(bpf);
-                  vo.start(now);
-                  vo.stop(now + 0.32);
+              // 3. Driving 8th-note hi-hat + crash on bar 0 & bar 2 downbeat
+              if (inBar % 2 === 0) {
+                const isCrash = (step === 0 || step === 32);
+                const hs = ac.createBufferSource();
+                hs.buffer = noiseBuf;
+                const hhp = ac.createBiquadFilter();
+                hhp.type = "highpass";
+                hhp.frequency.value = isCrash ? 5200 : 7500;
+                const hg = ac.createGain();
+                hg.gain.setValueAtTime(isCrash ? 0.16 : 0.055, now);
+                hg.gain.exponentialRampToValueAtTime(0.001, now + (isCrash ? 0.34 : 0.045));
+                hs.connect(hhp);
+                hhp.connect(hg);
+                hg.connect(masterGain);
+                hs.start(now);
+                hs.stop(now + (isCrash ? 0.35 : 0.05));
+              }
+
+              // 4. Heavy distorted power-chord guitar riff (root + fifth) on 8th notes + gallops
+              if (step % 2 === 0 || (bar >= 2 && inBar % 4 === 3)) {
+                const root = riffNotes[(step >> 1) % riffNotes.length];
+                const gGain = ac.createGain();
+                const palmMute = (inBar % 4 !== 0 && bar < 2) ? 0.11 : 0.19;
+                gGain.gain.setValueAtTime(0.001, now);
+                gGain.gain.linearRampToValueAtTime(palmMute, now + 0.01);
+                gGain.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
+                gGain.connect(shaper);
+                for (const mult of [1.0, 1.498, 2.0]) {
+                  const go = ac.createOscillator();
+                  go.type = "sawtooth";
+                  go.frequency.setValueAtTime(root * mult, now);
+                  go.connect(gGain);
+                  go.start(now);
+                  go.stop(now + 0.18);
                 }
               }
 
-              // Periodic spoken Viking chant over active gameplay (never overrides cutscene speech)
-              if (step === 0 && !self._voiceActive && window.speechSynthesis && !window.speechSynthesis.speaking) {
+              // 5. Epic brass/choir lead melody ("TEN-DY! WEN-DY! FEN-DY! BEN-DIES!")
+              const leadFreq = lead64[step];
+              if (leadFreq > 0) {
+                const bpf = ac.createBiquadFilter();
+                bpf.type = "bandpass";
+                bpf.frequency.setValueAtTime(formants[(step >> 2) % formants.length] * 1.4, now);
+                bpf.Q.value = 1.8;
+                const lg = ac.createGain();
+                lg.gain.setValueAtTime(0.001, now);
+                lg.gain.linearRampToValueAtTime(bar >= 2 ? 0.13 : 0.095, now + 0.02);
+                lg.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+                bpf.connect(lg);
+                lg.connect(masterGain);
+                for (const det of [0.995, 1.0, 1.006]) {
+                  const lo = ac.createOscillator();
+                  lo.type = "sawtooth";
+                  lo.frequency.setValueAtTime(leadFreq * det, now);
+                  lo.connect(bpf);
+                  lo.start(now);
+                  lo.stop(now + 0.25);
+                }
+              }
+
+              // 6. Rare hype intro vocal once every ~32s (never spammed every 5s!)
+              if (vikingStep === 16 && !self._voiceActive && window.speechSynthesis && !window.speechSynthesis.speaking) {
                 try {
-                  const cu = new SpeechSynthesisUtterance("Tendy! Wendy! Fendy! Bendies! SKOL!");
-                  cu.pitch = 0.55;
-                  cu.rate = 0.88;
-                  cu.volume = 0.72;
+                  const cu = new SpeechSynthesisUtterance("Tendy, Wendy, Fendy, Bendies — Battle for Cedar Rapids!");
+                  cu.pitch = 0.68;
+                  cu.rate = 0.96;
+                  cu.volume = 0.65;
                   window.speechSynthesis.speak(cu);
                 } catch (_) {}
               }
-            }, 175);
+            }, 106);
           } catch (_) {}
         },
         playHackingMusic() {
