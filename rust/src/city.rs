@@ -2280,7 +2280,7 @@ pub fn update_city_driving(
                     stats.wanted_stars = (stats.wanted_stars + 1).min(5);
                     stats.wanted_decay_timer = 14.0;
                     stats.hint_text =
-                        "HIJACKED! [WASD] Drive | [SPACE] Drift | [SHIFT] Nitro | [G] Horn | [F/E] Exit"
+                        "GRAND THEFT TENDY! (Uber rating: 0 stars) [WASD] Drive | [SPACE] Drift | [SHIFT] Nitro | [F/E] Exit"
                             .to_string();
                 }
             } else if stats.hint_text.starts_with("Collect 50")

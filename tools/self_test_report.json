@@ -11,7 +11,7 @@
           "hearts": 5,
           "inCity": false,
           "stamina": 100,
-          "state": "Playing",
+          "state": "Tutorial",
           "tendies": 0,
           "update": {}
         },
@@ -31,7 +31,7 @@
       },
       "titan": {
         "state": "CityPlay",
-        "boss_hp": 215,
+        "boss_hp": 300,
         "hearts": 5
       },
       "checkpoint_saved": true,

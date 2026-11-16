@@ -244,14 +244,12 @@ def main():
 
     history = []
     for i in range(args.iterations):
-        print(f"=== Self-Test Iteration {i + 1}/{args.iterations} ===")
+        print(f"=== Self-Test Playthrough {i + 1}/{args.iterations} ===")
         metrics = run_playtest(args.url)
         findings, tuned = analyze_and_improve(metrics, apply_tuning=args.apply_tuning)
         for line in findings:
             print(" ", line)
         history.append({"iteration": i + 1, "metrics": metrics, "findings": findings, "tuned": tuned})
-        if not tuned:
-            break
 
     with open(REPORT_PATH, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)

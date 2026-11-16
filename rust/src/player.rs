@@ -264,7 +264,7 @@ pub fn player_movement(
         stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
         crate::audio::play_sfx("estus_drink");
         stats.hint_text = format!(
-            "TENDY ESTUS FLASK! +2 Hearts ({}/{} left)",
+            "CHUGGED HONEY-MUSTARD ESTUS! +2 Hearts, +100% Dignity ({}/{} left)",
             stats.estus_flasks, stats.max_estus_flasks
         );
     }

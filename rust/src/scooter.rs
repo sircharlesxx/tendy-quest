@@ -1073,13 +1073,14 @@ pub fn enter_mike_cutscene(
     commands
         .spawn((
             MikeCutsceneOverlay,
+            ZIndex(25),
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
                 justify_content: JustifyContent::FlexEnd,
                 align_items: AlignItems::Center,
-                padding: UiRect::bottom(Val::Px(22.0)),
+                padding: UiRect::bottom(Val::Percent(10.5)),
                 ..default()
             },
         ))
