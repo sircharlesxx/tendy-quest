@@ -156,6 +156,21 @@
           mkOsc("square", 494, 490, 0.22, 0.16);
           return true;
         }
+        if (name === "car_door") {
+          mkOsc("triangle", 190, 72, 0.11, 0.24);
+          mkNoise(0.06, 0.16, 450);
+          return true;
+        }
+        if (name === "car_drift") {
+          mkNoise(0.18, 0.14, 1850);
+          mkOsc("sawtooth", 580, 520, 0.14, 0.06);
+          return true;
+        }
+        if (name === "car_crash") {
+          mkNoise(0.24, 0.34, 900);
+          mkOsc("sawtooth", 140, 48, 0.22, 0.28);
+          return true;
+        }
         if (name === "headphone_crunch") {
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);

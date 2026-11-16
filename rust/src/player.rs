@@ -206,6 +206,11 @@ pub fn player_movement(
     // Drain screen-tap state so overlay transitions don't pick up stale taps
     let _ = crate::audio::take_touch_action_tap();
 
+    if stats.driving_car.is_some() {
+        player.velocity = Vec3::ZERO;
+        return;
+    }
+
     // Camera-relative movement input (keyboard + mobile virtual stick)
     let mut forward_in = 0.0_f32;
     let mut right_in = 0.0_f32;
@@ -470,7 +475,11 @@ pub fn update_camera(
     let (Ok(p_tf), Ok(mut c_tf)) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
-    let anchor_y = 0.55 + stats.player_scale * 0.92;
+    let anchor_y = if stats.driving_car.is_some() {
+        1.95
+    } else {
+        0.55 + stats.player_scale * 0.92
+    };
     let anchor = p_tf.translation + Vec3::Y * anchor_y;
     let aspect_mul = if let Ok(win) = window_q.get_single() {
         let aspect = win.width() / win.height().max(1.0);
@@ -478,7 +487,9 @@ pub fn update_camera(
     } else {
         1.0
     };
-    let cam_scale_mul = if stats.in_city {
+    let cam_scale_mul = if stats.driving_car.is_some() {
+        0.92
+    } else if stats.in_city {
         0.72 + stats.player_scale * 0.24
     } else {
         0.82 + stats.player_scale.sqrt() * 0.34

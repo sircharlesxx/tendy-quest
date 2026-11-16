@@ -156,6 +156,21 @@
           mkOsc("square", 494, 490, 0.22, 0.16);
           return true;
         }
+        if (name === "car_door") {
+          mkOsc("triangle", 190, 72, 0.11, 0.24);
+          mkNoise(0.06, 0.16, 450);
+          return true;
+        }
+        if (name === "car_drift") {
+          mkNoise(0.18, 0.14, 1850);
+          mkOsc("sawtooth", 580, 520, 0.14, 0.06);
+          return true;
+        }
+        if (name === "car_crash") {
+          mkNoise(0.24, 0.34, 900);
+          mkOsc("sawtooth", 140, 48, 0.22, 0.28);
+          return true;
+        }
         if (name === "headphone_crunch") {
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);
@@ -1130,7 +1145,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-dfa957ce8dd7727c.js" crossorigin="anonymous" integrity="sha384-W4g8kLFKzZcA1DY6vzLUEuGOWxRMO5ePu4dRQM3QgivqAOIQGNSExWcu+PCsmQ6t"><link rel="preload" href="./tendy-quest-dfa957ce8dd7727c_bg.wasm" crossorigin="anonymous" integrity="sha384-5BjGmwRvNepSPQlNV7p6gMbvZhHX+OvNWAwBvJY6kRPKOKBB1PBU20JcH19AcnMO" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-70cf1d961fe530b2.js" crossorigin="anonymous" integrity="sha384-zpDWRp8udGR26Mx+b2ZAPVjcvIFqftOhfGPg5gWi+TDkJPIqx/HhNzdExXvDIJp8"><link rel="preload" href="./tendy-quest-70cf1d961fe530b2_bg.wasm" crossorigin="anonymous" integrity="sha384-TmjkPcrzd9HJvHzHtYoy1zh+1QbhwGxRaW9gRW8eat7W/pJrJUpfCHD8ZAv+EwYh" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1709,8 +1724,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-dfa957ce8dd7727c.js';
-const wasm = await init({ module_or_path: './tendy-quest-dfa957ce8dd7727c_bg.wasm' });
+import init, * as bindings from './tendy-quest-70cf1d961fe530b2.js';
+const wasm = await init({ module_or_path: './tendy-quest-70cf1d961fe530b2_bg.wasm' });
 
 
 window.wasmBindings = bindings;

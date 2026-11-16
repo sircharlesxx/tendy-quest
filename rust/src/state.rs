@@ -53,6 +53,7 @@ pub struct PlayerStats {
     pub tj_recruited: bool,
     pub tj_return_city: bool,
     pub saved_city_pos: Vec3,
+    pub driving_car: Option<Entity>,
 }
 
 impl Default for PlayerStats {
@@ -93,6 +94,7 @@ impl Default for PlayerStats {
             tj_recruited: false,
             tj_return_city: false,
             saved_city_pos: Vec3::new(0.0, 0.0, 82.0),
+            driving_car: None,
         }
     }
 }

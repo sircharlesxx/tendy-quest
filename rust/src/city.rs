@@ -85,6 +85,21 @@ pub struct CityCar {
     pub dir: f32,
     pub speed: f32,
     pub horn_cooldown: f32,
+    pub occupied: bool,
+    pub parked: bool,
+    pub yaw: f32,
+    pub velocity: Vec2,
+    pub pitch_lean: f32,
+    pub roll_lean: f32,
+    pub steer_input: f32,
+    pub knock_vel: Vec2,
+    pub drift_sfx_cooldown: f32,
+    pub car_hp: f32,
+}
+
+#[derive(Component)]
+pub struct CityCarWheel {
+    pub is_front: bool,
 }
 
 #[derive(Component)]
@@ -1355,6 +1370,16 @@ fn spawn_city_traffic(
                     dir,
                     speed,
                     horn_cooldown: 0.0,
+                    occupied: false,
+                    parked: false,
+                    yaw,
+                    velocity: Vec2::ZERO,
+                    pitch_lean: 0.0,
+                    roll_lean: 0.0,
+                    steer_input: 0.0,
+                    knock_vel: Vec2::ZERO,
+                    drift_sfx_cooldown: 0.0,
+                    car_hp: 100.0,
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
@@ -1385,13 +1410,14 @@ fn spawn_city_traffic(
                     ));
                 }
                 // 4 Wheels
-                for (wx, wz) in [
-                    (-1.05_f32, 1.32_f32),
-                    (1.05, 1.32),
-                    (-1.05, -1.32),
-                    (1.05, -1.32),
+                for (wx, wz, is_front) in [
+                    (-1.05_f32, 1.32_f32, true),
+                    (1.05, 1.32, true),
+                    (-1.05, -1.32, false),
+                    (1.05, -1.32, false),
                 ] {
                     car.spawn((
+                        CityCarWheel { is_front },
                         Mesh3d(unit_cyl.clone()),
                         MeshMaterial3d(tire.clone()),
                         Transform::from_xyz(wx, 0.36, wz)
@@ -2069,12 +2095,426 @@ pub fn enter_city_play(
 
 pub fn exit_city_play(
     mut commands: Commands,
+    mut stats: ResMut<PlayerStats>,
     ui_q: Query<Entity, With<CityPlayUi>>,
+    mut player_q: Query<&mut Visibility, With<Player>>,
 ) {
     for e in &ui_q {
         commands.entity(e).despawn_recursive();
     }
+    stats.driving_car = None;
+    if let Ok(mut vis) = player_q.get_single_mut() {
+        *vis = Visibility::Visible;
+    }
     set_touch_boss_mode(false);
+}
+
+fn wrap_angle(mut a: f32) -> f32 {
+    while a > std::f32::consts::PI {
+        a -= std::f32::consts::TAU;
+    }
+    while a < -std::f32::consts::PI {
+        a += std::f32::consts::TAU;
+    }
+    a
+}
+
+pub fn update_city_driving(
+    mut commands: Commands,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut stats: ResMut<PlayerStats>,
+    mut orbit: ResMut<CameraOrbit>,
+    mut player_q: Query<(&mut Transform, &mut Player, &mut Visibility)>,
+    mut car_q: Query<
+        (Entity, &mut Transform, &mut CityCar, &Children),
+        (
+            Without<Player>,
+            Without<PlatformBox>,
+            Without<CityNpc>,
+            Without<LexieBoss>,
+            Without<GarlicProjectile>,
+        ),
+    >,
+    mut wheel_q: Query<(&mut Transform, &CityCarWheel), (Without<Player>, Without<CityCar>)>,
+    platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<CityCar>)>,
+    mut npc_q: Query<(&mut Transform, &mut CityNpc), (Without<Player>, Without<CityCar>)>,
+    mut lexie_q: Query<(&Transform, &mut LexieBoss), (Without<Player>, Without<CityCar>)>,
+    garlic_q: Query<(Entity, &Transform), (With<GarlicProjectile>, Without<Player>, Without<CityCar>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let Ok((mut p_tf, mut player, mut p_vis)) = player_q.get_single_mut() else {
+        return;
+    };
+
+    let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
+
+    // 1. If currently on foot, check for nearby hijackable car
+    if stats.driving_car.is_none() {
+        if stats.player_scale >= 6.0 {
+            return;
+        }
+        let mut nearest: Option<(Entity, f32)> = None;
+        for (car_e, car_tf, _car, _) in &car_q {
+            let d = Vec2::new(
+                car_tf.translation.x - p_tf.translation.x,
+                car_tf.translation.z - p_tf.translation.z,
+            )
+            .length();
+            if d < 5.4 && nearest.map_or(true, |(_, bd)| d < bd) {
+                nearest = Some((car_e, d));
+            }
+        }
+        if let Some((car_e, _)) = nearest {
+            if interact {
+                if let Ok((_, mut car_tf, mut car, _)) = car_q.get_mut(car_e) {
+                    car.occupied = true;
+                    car.parked = false;
+                    car.car_hp = car.car_hp.max(40.0);
+                    let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
+                    if !car.parked && car.velocity.length_squared() < 1.0 {
+                        car.velocity = fwd * (car.speed * 0.45);
+                    }
+                    stats.driving_car = Some(car_e);
+                    *p_vis = Visibility::Hidden;
+                    p_tf.translation = car_tf.translation;
+                    player.velocity = Vec3::ZERO;
+                    player.grounded = true;
+                    orbit.yaw = wrap_angle(car.yaw + std::f32::consts::PI);
+                    car_tf.rotation = Quat::from_rotation_y(car.yaw);
+                    play_sfx("car_door");
+                    play_sfx("car_horn");
+                    stats.hint_text =
+                        "HIJACKED! [WASD] Drive | [SPACE] Drift | [SHIFT] Nitro | [G] Horn | [F/E] Exit"
+                            .to_string();
+                }
+            } else if stats.hint_text.starts_with("Collect 50")
+                || stats.hint_text.starts_with("TJ JOINED")
+                || stats.hint_text.starts_with("EXITED")
+                || stats.hint_text.is_empty()
+            {
+                stats.hint_text = "[F / E] Hijack & Drive Car!".to_string();
+            }
+        } else if stats.hint_text == "[F / E] Hijack & Drive Car!" {
+            stats.hint_text =
+                "Collect 50 Tendies (use top-right Radar)! Meet TJ & Dodge Lexie's Pickled Garlic!"
+                    .to_string();
+        }
+        return;
+    }
+
+    let Some(driven_e) = stats.driving_car else {
+        return;
+    };
+
+    // 2. Handle exit / GTA IV high-speed bail-out
+    if interact {
+        if let Ok((_, car_tf, mut car, _)) = car_q.get_mut(driven_e) {
+            car.occupied = false;
+            car.parked = true;
+            let right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
+            let speed = car.velocity.length();
+            p_tf.translation = Vec3::new(
+                car_tf.translation.x - right.x * 2.35,
+                0.0,
+                car_tf.translation.z - right.y * 2.35,
+            );
+            if speed > 14.0 {
+                player.velocity = Vec3::new(car.velocity.x * 0.55, 5.2, car.velocity.y * 0.55);
+                player.roll_timer = 0.55;
+                player.invuln_timer = 0.8;
+                play_sfx("dash");
+                stats.hint_text = "GTA BAIL-OUT! Find another car or collect Tendies!".to_string();
+            } else {
+                player.velocity = Vec3::ZERO;
+                play_sfx("car_door");
+                stats.hint_text = "EXITED CAR! Press [F / E] near any car to drive.".to_string();
+            }
+        }
+        stats.driving_car = None;
+        *p_vis = Visibility::Visible;
+        return;
+    }
+
+    // 3. Driving physics for the occupied car
+    let mut driven_pos = Vec3::ZERO;
+    let mut driven_vel = Vec2::ZERO;
+    let mut driven_yaw = 0.0_f32;
+    let honking = keys.just_pressed(KeyCode::KeyG) || mouse_buttons.just_pressed(MouseButton::Left);
+
+    if let Ok((_, mut car_tf, mut car, children)) = car_q.get_mut(driven_e) {
+        if car.horn_cooldown > 0.0 {
+            car.horn_cooldown = (car.horn_cooldown - dt).max(0.0);
+        }
+        if car.drift_sfx_cooldown > 0.0 {
+            car.drift_sfx_cooldown = (car.drift_sfx_cooldown - dt).max(0.0);
+        }
+
+        let mut throttle = 0.0_f32;
+        if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+            throttle += 1.0;
+        }
+        if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+            throttle -= 1.0;
+        }
+        throttle += crate::audio::touch_move_y();
+        throttle = throttle.clamp(-1.0, 1.0);
+
+        let mut steer_cmd = 0.0_f32;
+        if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
+            steer_cmd += 1.0;
+        }
+        if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
+            steer_cmd -= 1.0;
+        }
+        steer_cmd -= crate::audio::touch_move_x();
+        steer_cmd = steer_cmd.clamp(-1.0, 1.0);
+
+        let handbrake = keys.pressed(KeyCode::Space) || crate::audio::take_touch_jump();
+        let nitro_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        let nitro_active = nitro_held && throttle > 0.1 && stats.dash_energy > 2.0;
+        if nitro_active {
+            stats.dash_energy = (stats.dash_energy - 38.0 * dt).max(0.0);
+        }
+
+        // Smooth steering input
+        car.steer_input += (steer_cmd - car.steer_input) * (dt * 9.0).min(1.0);
+
+        let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
+        let right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
+        let mut fwd_speed = car.velocity.dot(fwd);
+        let mut lat_speed = car.velocity.dot(right);
+
+        // Longitudinal acceleration / braking / reverse
+        let max_fwd = if nitro_active { 52.0 } else { 36.0 };
+        let accel_force = if nitro_active { 46.0 } else { 29.0 };
+        let mut pitch_target = 0.0_f32;
+
+        if throttle > 0.05 {
+            if fwd_speed < -1.0 {
+                // Braking from reverse
+                fwd_speed += 44.0 * dt;
+                pitch_target = 0.085;
+            } else {
+                fwd_speed = (fwd_speed + accel_force * throttle * dt).min(max_fwd);
+                pitch_target = if nitro_active { -0.095 } else { -0.055 };
+            }
+        } else if throttle < -0.05 {
+            if fwd_speed > 1.5 {
+                // Heavy GTA IV brake nose-dive
+                fwd_speed = (fwd_speed - 48.0 * (-throttle) * dt).max(0.0);
+                pitch_target = 0.105;
+            } else {
+                fwd_speed = (fwd_speed - 17.5 * (-throttle) * dt).max(-15.5);
+                pitch_target = 0.04;
+            }
+        } else {
+            // Rolling coast resistance
+            fwd_speed *= (1.0 - 1.35 * dt).max(0.0);
+        }
+
+        if handbrake {
+            fwd_speed *= (1.0 - 2.6 * dt).max(0.0);
+            pitch_target += 0.05;
+        }
+
+        // Speed-sensitive steering (reverse flips steering direction)
+        let speed_factor = (fwd_speed.abs() / 11.0).clamp(0.0, 1.0);
+        let high_speed_damp = 1.0 - (fwd_speed.abs() / 65.0).clamp(0.0, 0.35);
+        let dir_sign = if fwd_speed >= -0.4 { 1.0 } else { -1.0 };
+        let drift_turn_mul = if handbrake { 1.48 } else { 1.0 };
+        let turn_rate = 2.45 * speed_factor * high_speed_damp * drift_turn_mul * dir_sign;
+        car.yaw = wrap_angle(car.yaw + car.steer_input * turn_rate * dt);
+
+        // Recompute basis after yaw update, then damp lateral slip (handbrake = drift!)
+        let new_fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
+        let new_right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
+        let lat_grip = if handbrake { 1.65 } else { 7.8 };
+        lat_speed *= (1.0 - lat_grip * dt).max(0.0);
+
+        if (handbrake || lat_speed.abs() > 7.5) && fwd_speed.abs() > 8.0 && car.drift_sfx_cooldown <= 0.0
+        {
+            play_sfx("car_drift");
+            car.drift_sfx_cooldown = 0.28;
+        }
+
+        car.velocity = new_fwd * fwd_speed + new_right * lat_speed;
+
+        // GTA IV heavy body roll & pitch squat/dive
+        let roll_target = (-lat_speed * 0.017).clamp(-0.18, 0.18);
+        car.roll_lean += (roll_target - car.roll_lean) * (dt * 8.5).min(1.0);
+        car.pitch_lean += (pitch_target - car.pitch_lean) * (dt * 9.0).min(1.0);
+
+        car_tf.translation.x = (car_tf.translation.x + car.velocity.x * dt).clamp(-128.0, 128.0);
+        car_tf.translation.z = (car_tf.translation.z + car.velocity.y * dt).clamp(-128.0, 128.0);
+        car_tf.translation.y = 0.0;
+
+        // Building AABB collisions (bounce + scrape cleanly along skyscrapers)
+        let wall_r = 1.95;
+        for _ in 0..2 {
+            for (b_tf, b_box) in &platform_q {
+                if b_tf.translation.y - b_box.half_extents.y > 2.2 {
+                    continue;
+                }
+                let min_x = b_tf.translation.x - b_box.half_extents.x - wall_r;
+                let max_x = b_tf.translation.x + b_box.half_extents.x + wall_r;
+                let min_z = b_tf.translation.z - b_box.half_extents.z - wall_r;
+                let max_z = b_tf.translation.z + b_box.half_extents.z + wall_r;
+                if car_tf.translation.x > min_x
+                    && car_tf.translation.x < max_x
+                    && car_tf.translation.z > min_z
+                    && car_tf.translation.z < max_z
+                {
+                    let dx_l = car_tf.translation.x - min_x;
+                    let dx_r = max_x - car_tf.translation.x;
+                    let dz_b = car_tf.translation.z - min_z;
+                    let dz_f = max_z - car_tf.translation.z;
+                    let m = dx_l.min(dx_r).min(dz_b).min(dz_f);
+                    let impact;
+                    if (m - dx_l).abs() < 0.001 {
+                        car_tf.translation.x = min_x;
+                        impact = car.velocity.x.abs();
+                        car.velocity.x = -car.velocity.x.max(0.0) * 0.28;
+                    } else if (m - dx_r).abs() < 0.001 {
+                        car_tf.translation.x = max_x;
+                        impact = car.velocity.x.abs();
+                        car.velocity.x = -car.velocity.x.min(0.0) * 0.28;
+                    } else if (m - dz_b).abs() < 0.001 {
+                        car_tf.translation.z = min_z;
+                        impact = car.velocity.y.abs();
+                        car.velocity.y = -car.velocity.y.max(0.0) * 0.28;
+                    } else {
+                        car_tf.translation.z = max_z;
+                        impact = car.velocity.y.abs();
+                        car.velocity.y = -car.velocity.y.min(0.0) * 0.28;
+                    }
+                    if impact > 9.5 && car.horn_cooldown <= 0.0 {
+                        play_sfx("car_crash");
+                        car.horn_cooldown = 0.35;
+                        car.pitch_lean = 0.14;
+                    }
+                }
+            }
+        }
+
+        car_tf.rotation = Quat::from_rotation_y(car.yaw)
+            * Quat::from_rotation_x(car.pitch_lean)
+            * Quat::from_rotation_z(car.roll_lean);
+
+        // Steer front wheels visually
+        for &child in children.iter() {
+            if let Ok((mut w_tf, w)) = wheel_q.get_mut(child) {
+                let steer_yaw = if w.is_front { car.steer_input * 0.42 } else { 0.0 };
+                w_tf.rotation = Quat::from_rotation_y(steer_yaw)
+                    * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+            }
+        }
+
+        if honking && car.horn_cooldown <= 0.0 {
+            play_sfx("car_horn");
+            car.horn_cooldown = 0.32;
+        }
+
+        // Sync Stan's position to car for Tendy pickups, radar, and TJ trigger
+        p_tf.translation = car_tf.translation;
+        p_tf.rotation = Quat::from_rotation_y(car.yaw);
+
+        // Smooth GTA IV chase camera auto-align while steering/driving
+        if car.velocity.length() > 2.5 && !mouse_buttons.pressed(MouseButton::Right) {
+            let target_cam_yaw = wrap_angle(car.yaw + std::f32::consts::PI);
+            let diff = wrap_angle(target_cam_yaw - orbit.yaw);
+            orbit.yaw = wrap_angle(orbit.yaw + diff * (dt * 2.8).min(1.0));
+        }
+
+        driven_pos = car_tf.translation;
+        driven_vel = car.velocity;
+        driven_yaw = car.yaw;
+    }
+
+    // 4. Car-to-Car GTA collisions
+    let my_speed = driven_vel.length();
+    let mut car_hit_impulse = Vec2::ZERO;
+    for (other_e, mut other_tf, mut other_car, _) in &mut car_q {
+        if other_e == driven_e {
+            continue;
+        }
+        let delta = Vec2::new(
+            other_tf.translation.x - driven_pos.x,
+            other_tf.translation.z - driven_pos.z,
+        );
+        let dist = delta.length();
+        if dist < 3.4 && dist > 0.001 {
+            let n = delta / dist;
+            other_tf.translation.x += n.x * (3.4 - dist);
+            other_tf.translation.z += n.y * (3.4 - dist);
+            if my_speed > 5.0 {
+                other_car.knock_vel += n * (my_speed * 0.85) + driven_vel * 0.35;
+                other_car.yaw = wrap_angle(other_car.yaw + (n.x * driven_vel.y - n.y * driven_vel.x) * 0.03);
+                if other_car.horn_cooldown <= 0.0 {
+                    play_sfx("car_crash");
+                    play_sfx("car_horn");
+                    other_car.horn_cooldown = 0.9;
+                }
+                car_hit_impulse -= n * (my_speed * 0.32);
+            }
+        }
+    }
+    if car_hit_impulse.length_squared() > 0.01 {
+        if let Ok((_, _, mut car, _)) = car_q.get_mut(driven_e) {
+            car.velocity += car_hit_impulse;
+            car.pitch_lean = 0.12;
+        }
+    }
+
+    // 5. Pedestrians scatter away from speeding/honking driven car
+    if my_speed > 6.0 || honking {
+        for (mut npc_tf, mut npc) in &mut npc_q {
+            let diff = Vec2::new(
+                npc_tf.translation.x - driven_pos.x,
+                npc_tf.translation.z - driven_pos.z,
+            );
+            let dist = diff.length();
+            if dist < 9.5 && dist > 0.01 {
+                let away = diff / dist;
+                npc_tf.translation.x += away.x * 14.0 * dt;
+                npc_tf.translation.z += away.y * 14.0 * dt;
+                npc.home_x = npc_tf.translation.x;
+                npc.home_z = npc_tf.translation.z;
+            }
+        }
+    }
+
+    // 6. Smash Lexie's Garlic projectiles & ram Lexie at high speed!
+    for (g_e, g_tf) in &garlic_q {
+        let gd = Vec2::new(g_tf.translation.x - driven_pos.x, g_tf.translation.z - driven_pos.z).length();
+        if gd < 2.9 && (g_tf.translation.y - driven_pos.y).abs() < 2.6 {
+            commands.entity(g_e).despawn_recursive();
+            play_sfx("car_crash");
+        }
+    }
+    if my_speed > 11.0 {
+        for (l_tf, mut lexie) in &mut lexie_q {
+            if stats.lexie_defeated || lexie.on_tower {
+                continue;
+            }
+            let ld = Vec2::new(l_tf.translation.x - driven_pos.x, l_tf.translation.z - driven_pos.z).length();
+            if ld < 4.5 && lexie.hit_flash <= 0.0 {
+                let dmg = 14.0 + my_speed * 0.35;
+                stats.boss_hp = (stats.boss_hp - dmg).max(0.0);
+                stats.score += 350;
+                lexie.hit_flash = 0.45;
+                play_sfx("car_crash");
+                play_sfx("car_horn");
+                stats.hint_text = format!("CAR RAMMED LEXIE! ({:.0} DMG!)", dmg);
+                if let Ok((_, _, mut car, _)) = car_q.get_mut(driven_e) {
+                    let bounce = Vec2::new(driven_pos.x - l_tf.translation.x, driven_pos.z - l_tf.translation.z).normalize_or_zero();
+                    car.velocity = bounce * 10.0;
+                    car.yaw = wrap_angle(driven_yaw + 0.35);
+                }
+            }
+        }
+    }
 }
 
 pub fn update_city_traffic(
@@ -2090,12 +2530,35 @@ pub fn update_city_traffic(
         return;
     };
     let in_active_play = *state.get() == GameState::CityPlay;
+    let is_driving = stats.driving_car.is_some();
     let hit_radius = 1.9 + stats.player_scale * 0.22;
 
     for (mut car_tf, mut car) in &mut car_q {
+        if car.occupied {
+            continue;
+        }
         if car.horn_cooldown > 0.0 {
             car.horn_cooldown = (car.horn_cooldown - dt).max(0.0);
         }
+
+        if car.knock_vel.length_squared() > 0.05 {
+            car_tf.translation.x = (car_tf.translation.x + car.knock_vel.x * dt).clamp(-132.0, 132.0);
+            car_tf.translation.z = (car_tf.translation.z + car.knock_vel.y * dt).clamp(-132.0, 132.0);
+            car.knock_vel *= (1.0 - 3.6 * dt).max(0.0);
+        }
+
+        if car.parked {
+            car_tf.translation.x = (car_tf.translation.x + car.velocity.x * dt).clamp(-132.0, 132.0);
+            car_tf.translation.z = (car_tf.translation.z + car.velocity.y * dt).clamp(-132.0, 132.0);
+            car.velocity *= (1.0 - 2.2 * dt).max(0.0);
+            car.pitch_lean *= (1.0 - 6.0 * dt).max(0.0);
+            car.roll_lean *= (1.0 - 6.0 * dt).max(0.0);
+            car_tf.rotation = Quat::from_rotation_y(car.yaw)
+                * Quat::from_rotation_x(car.pitch_lean)
+                * Quat::from_rotation_z(car.roll_lean);
+            continue;
+        }
+
         if car.axis_x {
             car_tf.translation.x += car.dir * car.speed * dt;
             if car_tf.translation.x > CITY_HALF_EXTENT {
@@ -2110,6 +2573,11 @@ pub fn update_city_traffic(
             } else if car_tf.translation.z < -CITY_HALF_EXTENT {
                 car_tf.translation.z = CITY_HALF_EXTENT;
             }
+        }
+        car_tf.rotation = Quat::from_rotation_y(car.yaw);
+
+        if is_driving {
+            continue;
         }
 
         // Check car impact with Stan (flying above street height clears cars cleanly!)
