@@ -97,6 +97,12 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearCheckpoint)]
         fn js_clear_checkpoint();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = markMomDefeated)]
+        fn js_mark_mom_defeated();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = hasDefeatedMom)]
+        fn js_has_defeated_mom() -> bool;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = update)]
         fn js_update_telemetry(
             state: &str,
@@ -234,6 +240,14 @@ mod imp {
         js_clear_checkpoint();
     }
 
+    pub fn mark_mom_defeated() {
+        js_mark_mom_defeated();
+    }
+
+    pub fn has_defeated_mom() -> bool {
+        js_has_defeated_mom()
+    }
+
     pub fn update_telemetry(
         state: &str,
         hearts: i32,
@@ -344,6 +358,12 @@ mod imp {
     #[allow(dead_code)]
     pub fn clear_checkpoint() {}
 
+    pub fn mark_mom_defeated() {}
+
+    pub fn has_defeated_mom() -> bool {
+        false
+    }
+
     pub fn update_telemetry(
         _state: &str,
         _hearts: i32,
@@ -357,9 +377,10 @@ mod imp {
 }
 
 pub use imp::{
-    init_test_mode, is_muted, is_voice_speaking, load_checkpoint, play_bgm, play_boss_music,
-    play_cutscene_music, play_hacking_music, play_headphone_music, play_scooter_music, play_sfx,
-    play_viking_chant_music, save_checkpoint, set_touch_boss_mode, set_touch_playing,
+    has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
+    mark_mom_defeated, play_bgm, play_boss_music, play_cutscene_music, play_hacking_music,
+    play_headphone_music, play_scooter_music, play_sfx, play_viking_chant_music, save_checkpoint,
+    set_touch_boss_mode, set_touch_playing,
     set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
     take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x,

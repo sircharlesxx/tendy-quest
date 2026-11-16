@@ -377,9 +377,12 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     ));
                 });
                 let saved = crate::audio::load_checkpoint();
-                if let Some(stage) = saved.split('|').next().filter(|s| *s == "city" || *s == "boss") {
-                    let label = if stage == "city" {
-                        "CONTINUE CHECKPOINT: NYC [C] (SKIP MOM)"
+                let mom_defeated = crate::audio::has_defeated_mom()
+                    || saved.split('|').next() == Some("city");
+                let saved_stage = saved.split('|').next().unwrap_or("");
+                if mom_defeated || saved_stage == "boss" {
+                    let label = if mom_defeated {
+                        "SKIP TO CEDAR RAPIDS [C] (MOM DEFEATED!)"
                     } else {
                         "CONTINUE CHECKPOINT: MOM BOSS [C]"
                     };
@@ -581,7 +584,9 @@ pub fn handle_tutorial_input(
     if cont_clicked || keys.just_pressed(KeyCode::KeyC) {
         let saved = crate::audio::load_checkpoint();
         let parts: Vec<&str> = saved.split('|').collect();
-        if let Some(&stage) = parts.first() {
+        let stage = parts.first().copied().unwrap_or("");
+        let mom_defeated = crate::audio::has_defeated_mom() || stage == "city";
+        if mom_defeated || stage == "boss" {
             if let Some(s) = parts.get(1).and_then(|v| v.parse::<u32>().ok()) {
                 stats.score = s;
             }
@@ -594,7 +599,7 @@ pub fn handle_tutorial_input(
             if parts.get(5).copied() == Some("1") {
                 stats.scooter_app_unlocked = true;
             }
-            if stage == "city" {
+            if mom_defeated {
                 stats.in_city = true;
                 stats.tendies = 0;
                 stats.total_tendies = 50;

@@ -784,6 +784,10 @@ function __wbg_get_imports() {
             const ret = arg0[arg1 >>> 0];
             return ret;
         },
+        __wbg_hasDefeatedMom_cbadacbb19c3a006: function() {
+            const ret = window.tendySave.hasDefeatedMom();
+            return ret;
+        },
         __wbg_height_1934e7a5ea0b477e: function(arg0) {
             const ret = arg0.height;
             return ret;
@@ -932,6 +936,9 @@ function __wbg_get_imports() {
             } finally {
                 wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
             }
+        },
+        __wbg_markMomDefeated_079d53f657dfd337: function() {
+            window.tendySave.markMomDefeated();
         },
         __wbg_mark_6b7f03786f5e4d61: function(arg0, arg1) {
             performance.mark(getStringFromWasm0(arg0, arg1));

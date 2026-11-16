@@ -171,6 +171,9 @@ pub fn enter_mom_victory_cutscene(
     for mut node in &mut hud_q {
         node.display = Display::None;
     }
+    crate::audio::mark_mom_defeated();
+    crate::audio::mark_mom_defeated();
+    crate::ui::save_game_checkpoint("city", &stats);
     for e in &old_level_q {
         commands.entity(e).despawn_recursive();
     }
@@ -1650,6 +1653,9 @@ pub fn enter_city_intro_cutscene(
     for mut node in &mut hud_q {
         node.display = Display::None;
     }
+    crate::audio::mark_mom_defeated();
+    crate::audio::mark_mom_defeated();
+    crate::ui::save_game_checkpoint("city", &stats);
 
     stats.in_city = true;
     stats.boss_mode = false;
@@ -1965,6 +1971,7 @@ pub fn enter_city_play(
     stats.total_tendies = 50;
     stats.wave = 4;
 
+    crate::audio::mark_mom_defeated();
     crate::ui::save_game_checkpoint("city", &stats);
     if resuming_from_tj {
         stats.hint_text = if from_mike {
@@ -2861,7 +2868,8 @@ pub fn update_city_pickups(
             stats.tendies += 1;
             stats.tendy_credits += 1;
             stats.score += 200;
-            crate::ui::save_game_checkpoint("city", &stats);
+            crate::audio::mark_mom_defeated();
+    crate::ui::save_game_checkpoint("city", &stats);
             play_sfx("tendy");
             if stats.tendies >= stats.total_tendies {
                 stats.score += 5000;

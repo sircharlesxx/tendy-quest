@@ -29,6 +29,18 @@
           localStorage.removeItem("tendy_quest_save_v1");
         } catch (_) {}
       },
+      markMomDefeated() {
+        try {
+          localStorage.setItem("tendy_quest_mom_defeated_v1", "1");
+        } catch (_) {}
+      },
+      hasDefeatedMom() {
+        try {
+          return localStorage.getItem("tendy_quest_mom_defeated_v1") === "1";
+        } catch (_) {
+          return false;
+        }
+      },
     };
     window.tendyTelemetry = {
       state: "Tutorial",
