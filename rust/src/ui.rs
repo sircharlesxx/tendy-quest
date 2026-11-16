@@ -583,14 +583,24 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
 }
 
 pub fn spawn_game_over_overlay(commands: Commands, stats: Res<PlayerStats>) {
+    let title = if stats.in_city {
+        "OH NO! LEXIE'S GARLIC GOT YOU!"
+    } else {
+        "OH NO! TOO MANY VEGGIES!"
+    };
+    let btn = if stats.in_city {
+        "RETRY NYC (R / CLICK)"
+    } else {
+        "TRY AGAIN (R / CLICK)"
+    };
     spawn_end_card(
         commands,
-        "OH NO! TOO MANY VEGGIES!",
+        title,
         &format!(
             "TENDIES COLLECTED: {} / {}\nSCORE: {:06}",
             stats.tendies, stats.total_tendies, stats.score
         ),
-        "TRY AGAIN (R / CLICK)",
+        btn,
         Color::srgb(1.0, 0.35, 0.35),
     );
 }
@@ -679,6 +689,7 @@ pub fn handle_restart_input(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
+    state: Res<State<GameState>>,
     mut next_state: ResMut<NextState<GameState>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<RestartButton>)>,
     level_q: Query<Entity, With<LevelEntity>>,
@@ -695,6 +706,8 @@ pub fn handle_restart_input(
         return;
     }
 
+    let retry_city = *state.get() == GameState::GameOver && stats.in_city;
+
     for e in &end_q {
         commands.entity(e).despawn_recursive();
     }
@@ -707,6 +720,18 @@ pub fn handle_restart_input(
     *orbit = CameraOrbit::default();
     crate::audio::set_touch_boss_mode(false);
     crate::audio::set_uzumaki_mode(0);
+
+    if retry_city {
+        stats.in_city = true;
+        stats.tendies = 0;
+        stats.total_tendies = 50;
+        stats.player_scale = 1.8;
+        stats.wave = 4;
+        spawn_player_inner(&mut commands, &asset_server);
+        next_state.set(GameState::CityPlay);
+        return;
+    }
+
     commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
     commands.insert_resource(AmbientLight {
         color: Color::srgb(1.0, 0.96, 0.90),
