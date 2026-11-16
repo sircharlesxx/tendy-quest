@@ -569,11 +569,28 @@ pub fn update_city_scooter_and_phone(
                         commands.entity(e).despawn_recursive();
                     }
                     play_sfx("hack_success");
-                    play_bgm();
-                    stats.hint_text = format!(
-                        "VEO SCOOTER UNLOCKED! Click [SCOOT!] ({} Tendy Credits)!",
-                        SCOOTER_RENT_COST
-                    );
+                    let mut mounted = false;
+                    for (se, stf, mut sc) in &mut scooter_q {
+                        if p_tf.translation.distance(stf.translation) < 4.5 {
+                            sc.paid = true;
+                            sc.occupied = true;
+                            stats.riding_scooter = Some(se);
+                            p_tf.translation = stf.translation + Vec3::Y * 0.25;
+                            player.velocity = Vec3::ZERO;
+                            play_scooter_music();
+                            stats.hint_text =
+                                "SCOOTER UNLOCKED! [WASD] Zip | [SHIFT] Turbo | [F/E] Hop Off"
+                                    .to_string();
+                            mounted = true;
+                            break;
+                        }
+                    }
+                    if !mounted {
+                        play_bgm();
+                        stats.hint_text =
+                            "VEO APP UNLOCKED! Walk to any scooter and press [F/E] or click [SCOOT!]!"
+                                .to_string();
+                    }
                     return;
                 }
                 play_sfx("hack_success");
@@ -654,12 +671,6 @@ pub fn update_city_scooter_and_phone(
         if let Some((se, _)) = nearest {
             let btn_label = if !stats.scooter_app_unlocked {
                 "SCOOT! (HACK PHONE APP [F/E])".to_string()
-            } else if let Ok((_, _, sc)) = scooter_q.get(se) {
-                if sc.paid {
-                    "SCOOT! [F/E]".to_string()
-                } else {
-                    format!("SCOOT! (RENT: {} CREDITS)", SCOOTER_RENT_COST)
-                }
             } else {
                 "SCOOT! [F/E]".to_string()
             };
@@ -723,34 +734,18 @@ pub fn update_city_scooter_and_phone(
                 }
             } else if let Ok((_, stf, mut sc)) = scooter_q.get_mut(se) {
                 if interact {
-                    if !sc.paid && stats.tendy_credits < SCOOTER_RENT_COST {
-                        play_sfx("hack_deny");
-                        stats.hint_text = format!(
-                            "EXPENSIVE! Need {} Tendy Credits for Scooter (Have {}/{})!",
-                            SCOOTER_RENT_COST, stats.tendy_credits, SCOOTER_RENT_COST
-                        );
-                    } else {
-                        if !sc.paid {
-                            stats.tendy_credits -= SCOOTER_RENT_COST;
-                            sc.paid = true;
-                        }
-                        sc.occupied = true;
-                        stats.riding_scooter = Some(se);
-                        p_tf.translation = stf.translation + Vec3::Y * 0.25;
-                        player.velocity = Vec3::ZERO;
-                        play_sfx("hack_success");
-                        play_scooter_music();
-                        stats.hint_text =
-                            "RIDING SCOOTER! [WASD] Zip | [SHIFT] Turbo | [F/E] Hop Off"
-                                .to_string();
-                    }
-                } else if sc.paid {
-                    stats.hint_text = "Click [SCOOT!] or press [F / E] to Ride Scooter".to_string();
+                    sc.paid = true;
+                    sc.occupied = true;
+                    stats.riding_scooter = Some(se);
+                    p_tf.translation = stf.translation + Vec3::Y * 0.25;
+                    player.velocity = Vec3::ZERO;
+                    play_sfx("hack_success");
+                    play_scooter_music();
+                    stats.hint_text =
+                        "RIDING SCOOTER! [WASD] Zip | [SHIFT] Turbo | [F/E] Hop Off"
+                            .to_string();
                 } else {
-                    stats.hint_text = format!(
-                        "Click [SCOOT!] or press [F / E] to Rent ({} Credits | Have {})",
-                        SCOOTER_RENT_COST, stats.tendy_credits
-                    );
+                    stats.hint_text = "Click [SCOOT!] or press [F / E] to Ride Scooter".to_string();
                 }
             }
         } else {
