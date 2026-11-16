@@ -1,8 +1,8 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crate::audio::{
-    play_bgm, play_hacking_music, play_headphone_music, play_scooter_music, play_sfx,
-    set_uzumaki_mode, speak_voice,
+    is_voice_speaking, play_bgm, play_hacking_music, play_headphone_music, play_scooter_music,
+    play_sfx, set_uzumaki_mode, speak_voice,
 };
 use crate::city::CityWorldMarker;
 use crate::player::Player;
@@ -1161,6 +1161,7 @@ pub fn enter_mike_cutscene(
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::FlexEnd,
                 align_items: AlignItems::Center,
                 padding: UiRect::bottom(Val::Px(22.0)),
@@ -1220,10 +1221,14 @@ pub fn update_mike_cutscene(
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
     mut speaker_q: Query<&mut Text, With<MikeCutsceneSpeakerText>>,
     mut sub_q: Query<&mut Text, (With<MikeCutsceneSubtitleText>, Without<MikeCutsceneSpeakerText>)>,
+    mut beat1_start: Local<f32>,
 ) {
     let dt = time.delta_secs().min(0.05);
     stats.cutscene_timer += dt;
     let t = stats.cutscene_timer;
+    if stats.cutscene_beat == 0 && t <= dt * 2.0 {
+        *beat1_start = 0.0;
+    }
 
     if keys.just_pressed(KeyCode::Space)
         || keys.just_pressed(KeyCode::Escape)
@@ -1234,8 +1239,9 @@ pub fn update_mike_cutscene(
     }
 
     let (mike_line, stan_line) = MIKE_BACKSTORIES[dialog.variant];
-    if t >= 6.8 && stats.cutscene_beat == 0 {
+    if stats.cutscene_beat == 0 && t >= 4.0 && (!is_voice_speaking() || t >= 16.0) {
         stats.cutscene_beat = 1;
+        *beat1_start = t;
         play_sfx("smoke_puff");
         speak_voice(stan_line, "stan");
         if let Ok(mut sp) = speaker_q.get_single_mut() {
@@ -1245,7 +1251,8 @@ pub fn update_mike_cutscene(
             sb.0 = format!("\"{}\"", stan_line);
         }
     }
-    if t >= 12.2 {
+    let b1_t = (t - *beat1_start).max(0.0);
+    if stats.cutscene_beat == 1 && b1_t >= 3.5 && (!is_voice_speaking() || b1_t >= 16.0) {
         next_state.set(GameState::CityPlay);
         return;
     }
@@ -1258,26 +1265,26 @@ pub fn update_mike_cutscene(
         stf.translation.z = sm.base_pos.z + (t * 1.1 + sm.phase).cos() * 0.45;
     }
 
-    // Uzumaki face-focused close-up on Mike (eyes, baseball cap, light short beard) -> Stan reaction
+    // Uzumaki 3/4 dramatic close-up on Mike (eyes, baseball cap, light short beard) -> reverse 3/4 on Stan
     let stage = Vec3::new(0.0, 0.0, -210.0);
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         if stats.cutscene_beat == 0 {
-            let sway_x = (t * 1.1).sin() * 0.16;
-            let sway_y = (t * 1.5).cos() * 0.06;
-            c_tf.translation = stage + Vec3::new(sway_x, 1.92 + sway_y, -0.38);
-            c_tf.look_at(stage + Vec3::new(0.0, 1.88, -1.55), Vec3::Y);
-            c_tf.rotate_local_z((t * 1.65).sin() * 0.10);
+            let push = (t / 7.0).min(1.0);
+            let cam_pos = stage + Vec3::new(0.75 - push * 0.22, 1.72 + push * 0.04, 0.18 - push * 0.38);
+            c_tf.translation = cam_pos;
+            c_tf.look_at(stage + Vec3::new(0.0, 1.82, -1.55), Vec3::Y);
+            c_tf.rotate_local_z(0.035 + (t * 0.65).sin() * 0.025);
             if let Projection::Perspective(ref mut p) = *proj {
-                p.fov = 0.56 + (t * 2.2).sin() * 0.08;
+                p.fov = 0.64 - push * 0.06;
             }
         } else {
-            let angle = 0.55 + t * 0.35;
-            let dist = 3.2 + (t * 1.3).sin() * 0.4;
-            c_tf.translation = stage + Vec3::new(angle.sin() * dist, 1.95, angle.cos() * dist);
-            c_tf.look_at(stage + Vec3::new(0.0, 1.72, 0.9), Vec3::Y);
-            c_tf.rotate_local_z((t * 1.75).sin() * 0.10);
+            let push = (b1_t / 6.0).min(1.0);
+            let cam_pos = stage + Vec3::new(-1.10 + (b1_t * 0.35).sin() * 0.18, 1.80, 2.55 - push * 0.35);
+            c_tf.translation = cam_pos;
+            c_tf.look_at(stage + Vec3::new(0.0, 1.62, 0.9), Vec3::Y);
+            c_tf.rotate_local_z(-0.035 + (b1_t * 0.65).sin() * 0.025);
             if let Projection::Perspective(ref mut p) = *proj {
-                p.fov = std::f32::consts::FRAC_PI_4 + (t * 2.4).sin() * 0.10;
+                p.fov = 0.68 - push * 0.05;
             }
         }
     }

@@ -591,13 +591,21 @@ pub fn update_camera(
     } else {
         0.82 + stats.player_scale.sqrt() * 0.34
     };
-    let desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
+    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_tf.translation, stats.player_scale);
+    let pub_s = crate::city::pub217_scale(stats.player_scale);
+    let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
+    if in_pub217 {
+        desired_dist = desired_dist.min(4.2 * pub_s);
+    }
     let min_cam_dist = if stats.in_city {
         (2.2 + stats.player_scale * 1.8).min(desired_dist)
     } else {
         (2.2 + stats.player_scale * 0.45).min(desired_dist)
     };
-    let eff_pitch = (orbit.pitch + (orbit.distance - 10.6).max(0.0) * 0.008).clamp(0.15, 1.35);
+    let mut eff_pitch = (orbit.pitch + (orbit.distance - 10.6).max(0.0) * 0.008).clamp(0.15, 1.35);
+    if in_pub217 {
+        eff_pitch = eff_pitch.clamp(0.14, 0.28);
+    }
     let dir = Vec3::new(
         orbit.yaw.sin() * eff_pitch.cos(),
         eff_pitch.sin(),
@@ -669,6 +677,12 @@ pub fn update_camera(
     orbit.current_dist = orbit.current_dist.clamp(min_cam_dist, desired_dist);
 
     let mut cam_pos = anchor + dir * orbit.current_dist;
+    if in_pub217 {
+        let anch = crate::city::PUB217_ANCHOR;
+        cam_pos.x = cam_pos.x.clamp(anch.x - 13.0 * pub_s, anch.x - 0.65 * pub_s);
+        cam_pos.z = cam_pos.z.clamp(anch.z - 6.4 * pub_s, anch.z + 6.4 * pub_s);
+        cam_pos.y = cam_pos.y.min(5.5 * pub_s);
+    }
 
     // 2-pass 3D camera sphere pushout around any solid geometry touched by the camera sphere
     let cam_margin = Vec3::splat(0.38);
