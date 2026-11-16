@@ -1854,8 +1854,10 @@ pub fn enter_city_play(
         &old_level_q,
     );
 
-    let resuming_from_tj = stats.tj_return_city;
+    let resuming_from_tj = stats.tj_return_city || stats.mike_return_city;
+    let from_mike = stats.mike_return_city;
     stats.tj_return_city = false;
+    stats.mike_return_city = false;
     let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
     stats.boss_mode = true;
@@ -1864,8 +1866,12 @@ pub fn enter_city_play(
 
     crate::ui::save_game_checkpoint("city", &stats);
     if resuming_from_tj {
-        stats.hint_text =
-            "TJ JOINED YOUR QUEST! Collect 50 Tendies & take down Lexie together!".to_string();
+        stats.hint_text = if from_mike {
+            "TRIPPY ALLEY ENCOUNTER COMPLETE! (+2 Hearts, Full Stamina, Extra Woozy!)"
+                .to_string()
+        } else {
+            "TJ JOINED YOUR QUEST! Collect 50 Tendies & take down Lexie together!".to_string()
+        };
     } else {
         stats.boss_hp = 300.0;
         stats.boss_max_hp = 300.0;

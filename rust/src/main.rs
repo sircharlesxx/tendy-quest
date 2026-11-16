@@ -31,7 +31,10 @@ use player::{
     animate_and_collect_pickups, animate_player_limbs, camera_mouse_look, player_movement,
     spawn_player, unlock_cursor, update_camera, victory_dance,
 };
-use scooter::{PhoneMazeState, update_city_scooter_and_phone};
+use scooter::{
+    MikeCutsceneDialog, PhoneMazeState, enter_mike_cutscene, exit_mike_cutscene,
+    update_city_scooter_and_phone, update_mike_cutscene,
+};
 use state::{CameraOrbit, GameState, PlayerStats};
 use tj::{enter_tj_cutscene, exit_tj_cutscene, update_city_tj, update_tj_cutscene};
 use ui::{
@@ -62,6 +65,7 @@ fn main() {
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
         .init_resource::<PhoneMazeState>()
+        .init_resource::<MikeCutsceneDialog>()
         .add_systems(
             Startup,
             (
@@ -216,6 +220,12 @@ fn main() {
                 ensure_hero_eye_reflections,
             )
                 .run_if(in_state(GameState::TjCutscene)),
+        )
+        .add_systems(OnEnter(GameState::MikeCutscene), enter_mike_cutscene)
+        .add_systems(OnExit(GameState::MikeCutscene), exit_mike_cutscene)
+        .add_systems(
+            Update,
+            update_mike_cutscene.run_if(in_state(GameState::MikeCutscene)),
         )
         .add_systems(OnEnter(GameState::StageClear), spawn_stage_clear_overlay)
         .add_systems(

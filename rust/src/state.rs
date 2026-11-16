@@ -12,6 +12,7 @@ pub enum GameState {
     CityIntroCutscene,
     CityPlay,
     TjCutscene,
+    MikeCutscene,
     StageClear,
     GameOver,
 }
@@ -52,6 +53,7 @@ pub struct PlayerStats {
     pub rage_cooldown_timer: f32,
     pub tj_recruited: bool,
     pub tj_return_city: bool,
+    pub mike_return_city: bool,
     pub saved_city_pos: Vec3,
     pub driving_car: Option<Entity>,
     pub stamina_regen_delay: f32,
@@ -104,6 +106,7 @@ impl Default for PlayerStats {
             rage_cooldown_timer: 0.0,
             tj_recruited: false,
             tj_return_city: false,
+            mike_return_city: false,
             saved_city_pos: Vec3::new(0.0, 0.0, 82.0),
             driving_car: None,
             stamina_regen_delay: 0.0,

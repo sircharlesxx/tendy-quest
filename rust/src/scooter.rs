@@ -1,8 +1,9 @@
 use bevy::prelude::*;
-use crate::audio::{play_bgm, play_hacking_music, play_sfx, speak_voice};
+use crate::audio::{play_bgm, play_cutscene_music, play_hacking_music, play_sfx, speak_voice};
 use crate::city::CityWorldMarker;
 use crate::player::Player;
-use crate::state::{CameraOrbit, LevelEntity, PlatformBox, PlayerStats};
+use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
+use crate::ui::HudOverlay;
 
 pub const SCOOTER_RENT_COST: u32 = 12;
 
@@ -30,9 +31,7 @@ pub struct CityScooter {
 }
 
 #[derive(Component)]
-pub struct CityMike {
-    pub smoke_cooldown: f32,
-}
+pub struct CityMike;
 
 #[derive(Component)]
 pub struct PhoneMazeUi;
@@ -232,9 +231,7 @@ pub fn spawn_city_mike(
         .spawn((
             LevelEntity,
             CityWorldMarker,
-            CityMike {
-                smoke_cooldown: 0.0,
-            },
+            CityMike,
             Transform::from_translation(pos),
         ))
         .with_children(|m| {
@@ -487,6 +484,7 @@ pub fn update_city_scooter_and_phone(
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
     mut maze: ResMut<PhoneMazeState>,
+    mut next_state: ResMut<NextState<GameState>>,
     mut player_q: Query<
         (&mut Transform, &mut Player),
         (Without<CityScooter>, Without<PlatformBox>, Without<CityMike>),
@@ -636,28 +634,21 @@ pub fn update_city_scooter_and_phone(
 
     let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
 
-    // Check Mike in alleyway (beard, baseball cap, wrestling shirt)
-    for (m_tf, mut mike) in &mut mike_q {
-        if mike.smoke_cooldown > 0.0 {
-            mike.smoke_cooldown = (mike.smoke_cooldown - dt).max(0.0);
-        }
+    // Check Mike in alleyway (beard, baseball cap, wrestling shirt) — triggers trippy cutscene on every interaction!
+    for (m_tf, _mike) in &mut mike_q {
         let d = Vec2::new(
             m_tf.translation.x - p_tf.translation.x,
             m_tf.translation.z - p_tf.translation.z,
         )
         .length();
         if d < 3.4 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
-            if interact && mike.smoke_cooldown <= 0.0 {
-                mike.smoke_cooldown = 12.0;
-                stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
-                stats.dash_energy = 100.0;
-                stats.high_timer = 25.0;
-                play_sfx("smoke_puff");
-                speak_voice("Yo Stan... hit this in the alley real quick, bro.", "tj");
-                stats.hint_text =
-                    "SMOKED WITH MIKE! (+2 Hearts, Full Stamina, Extra Woozy!)".to_string();
-            } else if mike.smoke_cooldown <= 0.0 {
-                stats.hint_text = "[F / E] Smoke Weed with Mike in the Alley".to_string();
+            if interact {
+                stats.saved_city_pos = p_tf.translation;
+                stats.mike_return_city = true;
+                next_state.set(GameState::MikeCutscene);
+                return;
+            } else {
+                stats.hint_text = "[F / E] Talk & Smoke Weed with Mike in the Alley".to_string();
             }
         }
     }
@@ -832,3 +823,393 @@ pub fn update_city_scooter_and_phone(
         }
     }
 }
+
+#[derive(Component)]
+pub struct MikeCutsceneEntity;
+
+#[derive(Component)]
+pub struct MikeCutsceneOverlay;
+
+#[derive(Component)]
+pub struct MikeCutsceneSpeakerText;
+
+#[derive(Component)]
+pub struct MikeCutsceneSubtitleText;
+
+#[derive(Component)]
+pub struct MikeCutsceneSmoke {
+    pub base_pos: Vec3,
+    pub speed: f32,
+    pub phase: f32,
+}
+
+#[derive(Resource, Default)]
+pub struct MikeCutsceneDialog {
+    pub variant: usize,
+}
+
+const MIKE_BACKSTORIES: [(&str, &str); 4] = [
+    (
+        "Are you sure you want this, traveler? I've been guarding these brick alleys since the 1998 Hell in a Cell... take a hit of this cosmic herb.",
+        "Whoa... the alley walls are breathing, Mike. Let's go take down Lexie.",
+    ),
+    (
+        "Are you sure you want this, traveler? Time folds sideways behind this dumpster. Smoke this sacred tendy leaf and see the matrix.",
+        "I can taste colors right now, bro... thanks for the alley wisdom.",
+    ),
+    (
+        "Are you sure you want this, traveler? My championship belt was forged in 420-degree fry oil... inhale deep and embrace the smoke.",
+        "My head is spinning in 4D... this weed hits way harder than garlic.",
+    ),
+    (
+        "Are you sure you want this, traveler? Every avenue in Manhattan leads back to this alley... spark up and let the neon clouds carry you.",
+        "Pure enlightenment... I'm ready to shred Manhattan now, Mike.",
+    ),
+];
+
+pub fn enter_mike_cutscene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut stats: ResMut<PlayerStats>,
+    mut dialog: ResMut<MikeCutsceneDialog>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+) {
+    for mut n in &mut hud_q {
+        n.display = Display::None;
+    }
+
+    let mut rbytes = [0u8; 4];
+    let _ = getrandom::getrandom(&mut rbytes);
+    dialog.variant = (u32::from_le_bytes(rbytes) as usize) % MIKE_BACKSTORIES.len();
+    stats.cutscene_timer = 0.0;
+    stats.cutscene_beat = 0;
+
+    commands.insert_resource(ClearColor(Color::srgb(0.07, 0.02, 0.14)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.85, 0.95, 0.88),
+        brightness: 950.0,
+    });
+
+    let stage = Vec3::new(0.0, 0.0, -210.0);
+    let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
+    let unit_sphere = meshes.add(Sphere::new(1.0));
+
+    let brick = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.18, 0.08, 0.22),
+        ..default()
+    });
+    let floor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.09, 0.06, 0.14),
+        ..default()
+    });
+    let smoke_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.45, 0.96, 0.58, 0.36),
+        emissive: LinearRgba::new(0.22, 0.85, 0.45, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let neon_ring_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.85, 0.25, 0.98, 0.42),
+        emissive: LinearRgba::new(0.9, 0.2, 1.1, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+
+    // Alley floor & brick walls
+    commands.spawn((
+        MikeCutsceneEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(floor_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.25, 0.0))
+            .with_scale(Vec3::new(16.0, 0.5, 16.0)),
+    ));
+    for sx in [-4.5_f32, 4.5_f32] {
+        commands.spawn((
+            MikeCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(brick.clone()),
+            Transform::from_translation(stage + Vec3::new(sx, 3.5, 0.0))
+                .with_scale(Vec3::new(1.0, 7.5, 16.0)),
+        ));
+    }
+
+    // Spawn Mike (beard, red baseball cap, black wrestling shirt + gold belt)
+    let skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.90, 0.74, 0.62),
+        ..default()
+    });
+    let beard = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.14, 0.09),
+        ..default()
+    });
+    let wrestling_tee = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.08, 0.10),
+        ..default()
+    });
+    let belt_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.80, 0.16),
+        emissive: LinearRgba::new(0.5, 0.35, 0.05, 1.0),
+        ..default()
+    });
+    let cap_red = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.82, 0.14, 0.16),
+        ..default()
+    });
+    let jeans = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.24, 0.42),
+        ..default()
+    });
+    let plaid_red = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.76, 0.14, 0.16),
+        ..default()
+    });
+
+    // Mike facing Stan
+    commands
+        .spawn((
+            MikeCutsceneEntity,
+            Transform::from_translation(stage + Vec3::new(0.0, 0.0, -1.6)),
+        ))
+        .with_children(|m| {
+            for sx in [-0.15_f32, 0.15_f32] {
+                m.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(jeans.clone()),
+                    Transform::from_xyz(sx, 0.48, 0.0).with_scale(Vec3::new(0.22, 0.96, 0.24)),
+                ));
+            }
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(wrestling_tee.clone()),
+                Transform::from_xyz(0.0, 1.30, 0.0).with_scale(Vec3::new(0.68, 0.76, 0.36)),
+            ));
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(belt_gold.clone()),
+                Transform::from_xyz(0.0, 1.34, 0.19).with_scale(Vec3::new(0.46, 0.22, 0.04)),
+            ));
+            m.spawn((
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.88, 0.0).with_scale(Vec3::splat(0.26)),
+            ));
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(beard.clone()),
+                Transform::from_xyz(0.0, 1.77, 0.12).with_scale(Vec3::new(0.30, 0.22, 0.22)),
+            ));
+            m.spawn((
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(cap_red.clone()),
+                Transform::from_xyz(0.0, 2.05, 0.0).with_scale(Vec3::new(0.27, 0.14, 0.27)),
+            ));
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(cap_red.clone()),
+                Transform::from_xyz(0.0, 2.01, 0.24).with_scale(Vec3::new(0.34, 0.04, 0.26)),
+            ));
+        });
+
+    // Stan silhouette facing Mike
+    commands
+        .spawn((
+            MikeCutsceneEntity,
+            Transform::from_translation(stage + Vec3::new(0.0, 0.0, 1.6))
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
+        ))
+        .with_children(|s| {
+            s.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(plaid_red),
+                Transform::from_xyz(0.0, 1.1, 0.0).with_scale(Vec3::new(0.75, 1.3, 0.45)),
+            ));
+            s.spawn((
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(skin),
+                Transform::from_xyz(0.0, 1.95, 0.0).with_scale(Vec3::splat(0.28)),
+            ));
+        });
+
+    // Swirling psychedelic smoke puffs & neon rings
+    for i in 0..16 {
+        let ang = i as f32 * 0.42;
+        let rad = 0.6 + (i % 4) as f32 * 0.55;
+        let bp = stage + Vec3::new(ang.cos() * rad, 0.4 + (i % 5) as f32 * 0.55, ang.sin() * rad);
+        commands.spawn((
+            MikeCutsceneEntity,
+            MikeCutsceneSmoke {
+                base_pos: bp,
+                speed: 0.7 + (i % 3) as f32 * 0.35,
+                phase: i as f32 * 0.8,
+            },
+            Mesh3d(unit_sphere.clone()),
+            MeshMaterial3d(smoke_mat.clone()),
+            Transform::from_translation(bp).with_scale(Vec3::splat(0.32 + (i % 3) as f32 * 0.16)),
+        ));
+    }
+    commands.spawn((
+        MikeCutsceneEntity,
+        Mesh3d(unit_cyl),
+        MeshMaterial3d(neon_ring_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, 0.05, 0.0))
+            .with_scale(Vec3::new(3.8, 0.04, 3.8)),
+    ));
+
+    if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
+        c_tf.translation = stage + Vec3::new(2.6, 2.2, 3.4);
+        c_tf.look_at(stage + Vec3::new(0.0, 1.5, -0.4), Vec3::Y);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
+    }
+
+    // Subtitle overlay
+    let (mike_line, _) = MIKE_BACKSTORIES[dialog.variant];
+    commands
+        .spawn((
+            MikeCutsceneOverlay,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::FlexEnd,
+                align_items: AlignItems::Center,
+                padding: UiRect::bottom(Val::Px(22.0)),
+                ..default()
+            },
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    width: Val::Percent(88.0),
+                    max_width: Val::Px(780.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(14.0)),
+                    row_gap: Val::Px(6.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.08, 0.02, 0.14, 0.86)),
+                BorderColor(Color::srgb(0.35, 0.98, 0.55)),
+                BorderRadius::all(Val::Px(12.0)),
+            ))
+            .with_children(|card| {
+                card.spawn((
+                    MikeCutsceneSpeakerText,
+                    Text::new("MIKE (ALLEY ORACLE)  |  [SPACE / CLICK] Skip"),
+                    TextFont {
+                        font_size: 13.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.40, 1.0, 0.62)),
+                ));
+                card.spawn((
+                    MikeCutsceneSubtitleText,
+                    Text::new(format!("\"{}\"", mike_line)),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
+
+    play_cutscene_music();
+    play_sfx("smoke_puff");
+    speak_voice(mike_line, "tj");
+}
+
+pub fn update_mike_cutscene(
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    mut stats: ResMut<PlayerStats>,
+    dialog: Res<MikeCutsceneDialog>,
+    mut next_state: ResMut<NextState<GameState>>,
+    mut smoke_q: Query<(&mut Transform, &MikeCutsceneSmoke), Without<Camera3d>>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
+    mut speaker_q: Query<&mut Text, With<MikeCutsceneSpeakerText>>,
+    mut sub_q: Query<&mut Text, (With<MikeCutsceneSubtitleText>, Without<MikeCutsceneSpeakerText>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    stats.cutscene_timer += dt;
+    let t = stats.cutscene_timer;
+
+    if keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::Escape)
+        || mouse_buttons.just_pressed(MouseButton::Left)
+    {
+        next_state.set(GameState::CityPlay);
+        return;
+    }
+
+    let (mike_line, stan_line) = MIKE_BACKSTORIES[dialog.variant];
+    if t >= 6.8 && stats.cutscene_beat == 0 {
+        stats.cutscene_beat = 1;
+        play_sfx("smoke_puff");
+        speak_voice(stan_line, "stan");
+        if let Ok(mut sp) = speaker_q.get_single_mut() {
+            sp.0 = "STAN (ENLIGHTENED)  |  [SPACE / CLICK] Skip".to_string();
+        }
+        if let Ok(mut sb) = sub_q.get_single_mut() {
+            sb.0 = format!("\"{}\"", stan_line);
+        }
+    }
+    if t >= 12.2 {
+        next_state.set(GameState::CityPlay);
+        return;
+    }
+
+    // Animate swirling weed smoke clouds
+    for (mut stf, sm) in &mut smoke_q {
+        let rise = ((t * sm.speed + sm.phase) % 2.8) * 1.1;
+        stf.translation.x = sm.base_pos.x + (t * 1.4 + sm.phase).sin() * 0.45;
+        stf.translation.y = sm.base_pos.y + rise;
+        stf.translation.z = sm.base_pos.z + (t * 1.1 + sm.phase).cos() * 0.45;
+    }
+
+    // Trippy spiral + kaleidoscope FOV camera
+    let stage = Vec3::new(0.0, 0.0, -210.0);
+    if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
+        let angle = 0.55 + t * 0.35;
+        let dist = 3.8 + (t * 1.3).sin() * 0.55;
+        c_tf.translation = stage + Vec3::new(angle.sin() * dist, 1.9 + (t * 1.6).sin() * 0.35, angle.cos() * dist);
+        c_tf.look_at(stage + Vec3::new(0.0, 1.55, if stats.cutscene_beat == 0 { -1.1 } else { 0.8 }), Vec3::Y);
+        c_tf.rotate_local_z((t * 1.75).sin() * 0.12);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4 + (t * 2.4).sin() * 0.14;
+        }
+    }
+    let _ = mike_line;
+}
+
+pub fn exit_mike_cutscene(
+    mut commands: Commands,
+    mut stats: ResMut<PlayerStats>,
+    ent_q: Query<Entity, With<MikeCutsceneEntity>>,
+    ov_q: Query<Entity, With<MikeCutsceneOverlay>>,
+    mut cam_q: Query<&mut Projection, With<Camera3d>>,
+) {
+    for e in &ent_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &ov_q {
+        commands.entity(e).despawn_recursive();
+    }
+    if let Ok(mut proj) = cam_q.get_single_mut() {
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
+    }
+    stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
+    stats.dash_energy = 100.0;
+    stats.high_timer = 30.0;
+    play_bgm();
+}
+
