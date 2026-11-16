@@ -14,6 +14,7 @@ pub enum GameState {
     TjCutscene,
     MikeCutscene,
     DerekCutscene,
+    LexieVictoryCutscene,
     StageClear,
     GameOver,
 }

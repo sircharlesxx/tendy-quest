@@ -4,6 +4,7 @@ mod city;
 mod derek;
 mod enemies;
 mod level;
+mod lexie_victory;
 mod player;
 mod scooter;
 mod state;
@@ -32,6 +33,10 @@ use derek::{
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
+use lexie_victory::{
+    LexieVictoryState, enter_lexie_victory_cutscene, exit_lexie_victory_cutscene,
+    update_lexie_victory_cutscene,
+};
 use player::{
     animate_and_collect_pickups, animate_player_limbs, camera_mouse_look, player_movement,
     spawn_player, unlock_cursor, update_camera, victory_dance,
@@ -72,6 +77,7 @@ fn main() {
         .init_resource::<PhoneMazeState>()
         .init_resource::<MikeCutsceneDialog>()
         .init_resource::<DerekCutsceneState>()
+        .init_resource::<LexieVictoryState>()
         .add_systems(
             Startup,
             (
@@ -240,6 +246,12 @@ fn main() {
         .add_systems(
             Update,
             update_derek_cutscene.run_if(in_state(GameState::DerekCutscene)),
+        )
+        .add_systems(OnEnter(GameState::LexieVictoryCutscene), enter_lexie_victory_cutscene)
+        .add_systems(OnExit(GameState::LexieVictoryCutscene), exit_lexie_victory_cutscene)
+        .add_systems(
+            Update,
+            update_lexie_victory_cutscene.run_if(in_state(GameState::LexieVictoryCutscene)),
         )
         .add_systems(OnEnter(GameState::StageClear), spawn_stage_clear_overlay)
         .add_systems(

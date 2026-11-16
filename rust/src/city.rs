@@ -3264,9 +3264,9 @@ pub fn update_city_pickups(
         let d = (p_tf.translation + Vec3::Y * mid_y).distance(tf.translation);
         if d < pickup_r {
             commands.entity(entity).despawn_recursive();
-            stats.tendies += 1;
-            stats.tendy_credits += 1;
-            stats.score += 200;
+            stats.tendies = (stats.tendies + 2).min(stats.total_tendies);
+            stats.tendy_credits += 2;
+            stats.score += 400;
             crate::audio::mark_mom_defeated();
     crate::ui::save_game_checkpoint("city", &stats);
             play_sfx("tendy");
@@ -3372,8 +3372,8 @@ pub fn update_city_lexie(
             ));
         }
 
-        // Transition Lexie down to 5th Avenue Brawl once Stan grows large (>= 36 tendies)
-        if lexie.on_tower && (stats.tendies >= 36 || p_tf.translation.z < -42.0 && stats.tendies >= 25) {
+        // Transition Lexie down to 3rd St SE Brawl once Stan grows (>= 20 tendies)
+        if lexie.on_tower && (stats.tendies >= 20 || p_tf.translation.z < -42.0 && stats.tendies >= 14) {
             lexie.on_tower = false;
             lx_tf.translation = Vec3::new(0.0, 0.0, -44.0);
             play_sfx("thunder");
@@ -3494,7 +3494,7 @@ pub fn update_city_lexie(
                     "lexie",
                 );
                 commands.entity(lexie_ent).despawn_recursive();
-                next_state.set(GameState::StageClear);
+                next_state.set(GameState::LexieVictoryCutscene);
                 return;
             }
         }
