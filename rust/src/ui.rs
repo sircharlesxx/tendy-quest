@@ -271,7 +271,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
             .with_children(|card| {
                 card.spawn((
                     TutorialTitleText,
-                    Text::new("TENDY QUEST: 1,200 SQ FT APARTMENT"),
+                    Text::new("TENDY QUEST"),
                     TextFont {
                         font_size: 24.0,
                         ..default()
@@ -281,7 +281,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 card.spawn((
                     TutorialBodyText,
                     Text::new(
-                        "Eat all 12 Golden Tendies to grow from 17cm Toy to 180cm Adult!\nExplore the 1,200 sq ft apartment, dodge Cheese Cups & Controllers, DON'T step on Headphones, and open the Giant Fridge!",
+                        "Eat all 12 Golden Tendies to grow from 17cm Toy to 180cm Adult!\nExplore the apartment, dodge Cheese Cups & Controllers, DON'T step on Headphones, and open the Giant Fridge!",
                     ),
                     TextFont {
                         font_size: 13.5,
