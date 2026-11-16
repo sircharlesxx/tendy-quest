@@ -2001,11 +2001,76 @@
         }, 2500);
       }
 
+      // --- PC Gamepad / Controller Support (W3C Gamepad API) ---
+      let gpX = 0.0;
+      let gpY = 0.0;
+      let gpLastPoll = 0;
+      const gpPrevBtns = [];
+      const synthKey = (code, key, down) => {
+        try {
+          window.dispatchEvent(new KeyboardEvent(down ? "keydown" : "keyup", { code, key, bubbles: true }));
+        } catch (_) {}
+      };
+      function pollGamepad() {
+        const now = performance.now();
+        if (now - gpLastPoll < 8) return;
+        const dtMs = gpLastPoll ? Math.min(50, now - gpLastPoll) : 16;
+        gpLastPoll = now;
+        gpX = 0.0;
+        gpY = 0.0;
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        let pad = null;
+        for (let i = 0; i < pads.length; i++) {
+          if (pads[i] && pads[i].connected) { pad = pads[i]; break; }
+        }
+        if (!pad) return;
+        const dz = (v) => (Math.abs(v) < 0.16 ? 0.0 : (v - Math.sign(v) * 0.16) / 0.84);
+        let lx = dz(pad.axes[0] || 0);
+        let ly = -dz(pad.axes[1] || 0);
+        const btnDown = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
+        if (btnDown(12)) ly = 1.0;
+        if (btnDown(13)) ly = -1.0;
+        if (btnDown(14)) lx = -1.0;
+        if (btnDown(15)) lx = 1.0;
+        gpX = Math.max(-1.0, Math.min(1.0, lx));
+        gpY = Math.max(-1.0, Math.min(1.0, ly));
+
+        const rx = dz(pad.axes[2] || 0);
+        const ry = dz(pad.axes[3] || 0);
+        if (rx !== 0.0 || ry !== 0.0) {
+          const scale = (dtMs / 16.0) * 9.5;
+          lookDX += rx * scale;
+          lookDY += ry * scale;
+        }
+
+        const edge = (idx, onDown, onUp) => {
+          const cur = btnDown(idx);
+          const prev = !!gpPrevBtns[idx];
+          if (cur && !prev) {
+            window.tendyAudio.touchUnlock();
+            if (onDown) onDown();
+          } else if (!cur && prev && onUp) {
+            onUp();
+          }
+          gpPrevBtns[idx] = cur;
+        };
+        edge(0, () => { jumpQueued = true; actionTapQueued = true; synthKey("Space", " ", true); }, () => synthKey("Space", " ", false));
+        edge(1, () => { dashQueued = true; synthKey("ShiftLeft", "Shift", true); }, () => synthKey("ShiftLeft", "Shift", false));
+        edge(2, () => synthKey("KeyF", "f", true), () => synthKey("KeyF", "f", false));
+        edge(3, () => synthKey("KeyQ", "q", true), () => synthKey("KeyQ", "q", false));
+        edge(4, () => synthKey("KeyP", "p", true), () => synthKey("KeyP", "p", false));
+        edge(5, () => { attackQueued = true; });
+        edge(6, () => synthKey("KeyL", "l", true), () => synthKey("KeyL", "l", false));
+        edge(7, () => { attackQueued = true; synthKey("ShiftLeft", "Shift", true); }, () => synthKey("ShiftLeft", "Shift", false));
+        edge(8, () => synthKey("KeyC", "c", true), () => synthKey("KeyC", "c", false));
+        edge(9, () => { helpQueued = true; actionTapQueued = true; });
+      }
+
       return {
-        moveX: () => joyX,
-        moveY: () => joyY,
-        takeLookDX() { const v = lookDX; lookDX = 0.0; return v; },
-        takeLookDY() { const v = lookDY; lookDY = 0.0; return v; },
+        moveX: () => { pollGamepad(); return Math.abs(gpX) > 0.01 ? gpX : joyX; },
+        moveY: () => { pollGamepad(); return Math.abs(gpY) > 0.01 ? gpY : joyY; },
+        takeLookDX() { pollGamepad(); const v = lookDX; lookDX = 0.0; return v; },
+        takeLookDY() { pollGamepad(); const v = lookDY; lookDY = 0.0; return v; },
         takeZoomDelta() { const v = zoomDelta; zoomDelta = 0.0; return v; },
         takeJump() { const v = jumpQueued; jumpQueued = false; return v; },
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
