@@ -174,10 +174,10 @@ def run_playtest(base_url):
     finally:
         d.quit()
 
-    # 5. Cutscene Cinematic & Dramatic Pacing Check (TJ Cutscene)
+    # 5. Cutscene Cinematic & Kill Bill Framing Check (TJ Cutscene Crimson Snap-Zoom & Ankle Break)
     d = make_driver()
     try:
-        d.get(base_url + "?tj=1&cutscene_t=17.0")
+        d.get(base_url + "?tj=1&cutscene_t=23.5")
         ready = wait_ready(d)
         metrics["cutscene"] = {
             "ready": ready,

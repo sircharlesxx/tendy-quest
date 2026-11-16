@@ -895,7 +895,7 @@ pub fn update_tj_cutscene(
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
     mut player_q: Query<&mut Transform, (With<Player>, Without<Camera3d>, Without<TjCutsceneActor>, Without<TjCrackFlash>)>,
-    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>, Without<TjCutsceneActor>, Without<TjCrackFlash>)>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<TjCutsceneActor>, Without<TjCrackFlash>)>,
     mut leg_q: Query<(&TjLegPivot, &mut Transform), (Without<Camera3d>, Without<Player>, Without<TjCrackFlash>)>,
     mut cast_q: Query<&mut Visibility, (With<TjAnkleCast>, Without<TjCrackFlash>)>,
     mut flash_q: Query<(&mut Visibility, &mut Transform), (With<TjCrackFlash>, Without<Camera3d>, Without<Player>, Without<TjLegPivot>)>,
@@ -909,6 +909,7 @@ pub fn update_tj_cutscene(
             Without<TjSpeakerText>,
         ),
     >,
+    mut clear_col: ResMut<ClearColor>,
 ) {
     const BEAT_ENDS: [f32; 7] = [6.8, 13.8, 20.8, 28.0, 35.2, 41.8, 49.0];
     let dt = time.delta_secs().min(0.05);
@@ -953,6 +954,9 @@ pub fn update_tj_cutscene(
         }
         if let Ok(mut sb) = sub_q.get_single_mut() {
             sb.0 = sub.to_string();
+        }
+        if matches!(target_beat, 4 | 5) {
+            crate::audio::play_sfx("killbill_siren");
         }
         if target_beat == 6 {
             crate::audio::play_sfx("hit");
@@ -1008,8 +1012,17 @@ pub fn update_tj_cutscene(
         p_tf.translation.z += (target_z - p_tf.translation.z) * (dt * 10.0).min(1.0);
     }
 
-    // Dramatic Cinematography: Desk/Linux Terminal Pan -> Table/Feet Zoom -> Stan Face Hyper-Zoom -> Ankle Break
-    if let Ok(mut c_tf) = cam_q.get_single_mut() {
+    // Kill Bill Crimson Flash during Stan's intense stare-down & ankle break (Beats 4..6)
+    clear_col.0 = if matches!(beat, 4 | 5) {
+        Color::srgb(0.62, 0.02, 0.05)
+    } else if beat == 6 && t < 36.2 {
+        Color::srgb(0.95, 0.85, 0.12)
+    } else {
+        Color::srgb(0.02, 0.03, 0.07)
+    };
+
+    // Dramatic Cinematography: Desk/Linux Terminal Pan -> Table/Feet Zoom -> Kill Bill Crimson Snap-Zoom -> Ankle Break
+    if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         let (cam_pos, look_at) = match beat {
             1 => {
                 // Dramatic pan from wide 3 AM cubicle onto TJ's Linux terminal & dual monitors
@@ -1071,6 +1084,16 @@ pub fn update_tj_cutscene(
         };
         c_tf.translation = cam_pos;
         c_tf.look_at(look_at, Vec3::Y);
+        if matches!(beat, 4 | 5) {
+            let dutch = if beat == 4 { -0.09 } else { 0.11 };
+            c_tf.rotate_local_z(dutch);
+            if let Projection::Perspective(ref mut p) = *proj {
+                let snap_u = ((t - 20.8) / 1.2).clamp(0.0, 1.0);
+                p.fov = std::f32::consts::FRAC_PI_4 - snap_u * 0.34;
+            }
+        } else if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
     }
 }
 
@@ -1081,7 +1104,13 @@ pub fn exit_tj_cutscene(
     ui_q: Query<Entity, With<TjCutsceneOverlay>>,
     mut hud_q: Query<&mut Node, With<HudOverlay>>,
     mut cosmetic_q: Query<&mut Visibility, With<HeroCosmetic>>,
+    mut cam_q: Query<&mut Projection, With<Camera3d>>,
 ) {
+    if let Ok(mut proj) = cam_q.get_single_mut() {
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
+    }
     for e in &ent_q {
         commands.entity(e).despawn_recursive();
     }

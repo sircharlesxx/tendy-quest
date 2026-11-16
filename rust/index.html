@@ -231,6 +231,11 @@
           mkOsc("sine", 240, 360, 0.35, 0.12);
           return true;
         }
+        if (name === "killbill_siren") {
+          mkOsc("sawtooth", 680, 960, 0.35, 0.22);
+          setTimeout(() => mkOsc("sawtooth", 960, 620, 0.42, 0.20), 260);
+          return true;
+        }
         if (name === "headphone_crunch") {
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);

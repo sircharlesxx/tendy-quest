@@ -11,7 +11,7 @@
           "hearts": 5,
           "inCity": false,
           "stamina": 100,
-          "state": "Tutorial",
+          "state": "Playing",
           "tendies": 0,
           "update": {}
         },
@@ -31,15 +31,20 @@
       },
       "titan": {
         "state": "CityPlay",
-        "boss_hp": 300,
+        "boss_hp": 215,
         "hearts": 5
       },
-      "checkpoint_saved": true
+      "checkpoint_saved": true,
+      "cutscene": {
+        "ready": true,
+        "state": "TjCutscene"
+      }
     },
     "findings": [
       "OK: Zero runtime panics across all 4 gameplay phases.",
       "OK: Boss stamina pacing balanced (starvation rate 0%).",
-      "OK: Checkpoint persisted (city|0|0|0|0|0)."
+      "OK: Checkpoint persisted (city|0|0|0|0|0).",
+      "OK: Cutscene rendered cleanly with 2.39:1 cinema letterbox & zero panics."
     ],
     "tuned": false
   }
