@@ -588,6 +588,18 @@
               u.pitch = role === "stan_vow_3" ? 0.56 : 1.38;
               u.rate = 1.15;
               u.volume = 1.0;
+            } else if (role === "tj") {
+              u.pitch = 1.12;
+              u.rate = 1.02;
+              u.volume = 0.96;
+            } else if (role === "tj_upset") {
+              u.pitch = 1.32;
+              u.rate = 1.12;
+              u.volume = 1.0;
+            } else if (role === "stan_thought") {
+              u.pitch = 0.72;
+              u.rate = 0.92;
+              u.volume = 0.98;
             } else if (role === "narrator") {
               u.pitch = 0.90;
               u.rate = 0.92;
@@ -1118,7 +1130,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-8ad20917d305cd62.js" crossorigin="anonymous" integrity="sha384-hRhK+sF+wgiHa3ZWjZ22J1sSu6vUgWzJvfk298gHbnTGxiMDvnx+OMYP5mL0djdf"><link rel="preload" href="./tendy-quest-8ad20917d305cd62_bg.wasm" crossorigin="anonymous" integrity="sha384-kDPXP3VbnZDd/GN+8gEpu5l0dwlVouGBxsn6qRcpT78pkl8MNC3i773LIEClrQZW" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-72121ac91bb745cf.js" crossorigin="anonymous" integrity="sha384-qu9HVevMWuzAzsFGQMBvr65waG9fSy54cMYP+sG308PljVEXdYZofzOwzd44QXg6"><link rel="preload" href="./tendy-quest-72121ac91bb745cf_bg.wasm" crossorigin="anonymous" integrity="sha384-NK+t5vI1ASgChADS3vFhN2nsI+eXebCd48z5uPphsd1M4/gx1wGFgzRGNrC1B/Ux" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1604,6 +1616,7 @@
         if (s.includes("city_titan=1")) return 6;
         if (s.includes("headphones=2") || s.includes("uzumaki=1")) return 8;
         if (s.includes("headphones=1")) return 7;
+        if (s.includes("tj=1") || s.includes("tj_cutscene=1")) return 9;
         return 0;
       })();
       let pendingCutsceneTime = (() => {
@@ -1696,8 +1709,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-8ad20917d305cd62.js';
-const wasm = await init({ module_or_path: './tendy-quest-8ad20917d305cd62_bg.wasm' });
+import init, * as bindings from './tendy-quest-72121ac91bb745cf.js';
+const wasm = await init({ module_or_path: './tendy-quest-72121ac91bb745cf_bg.wasm' });
 
 
 window.wasmBindings = bindings;

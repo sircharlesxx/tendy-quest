@@ -5,6 +5,7 @@ mod enemies;
 mod level;
 mod player;
 mod state;
+mod tj;
 mod ui;
 
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
@@ -29,6 +30,7 @@ use player::{
     spawn_player, unlock_cursor, update_camera, victory_dance,
 };
 use state::{CameraOrbit, GameState, PlayerStats};
+use tj::{enter_tj_cutscene, exit_tj_cutscene, update_city_tj, update_tj_cutscene};
 use ui::{
     adapt_ui_to_viewport, check_url_test_mode, despawn_tutorial_overlay, handle_restart_input,
     handle_tutorial_input, spawn_game_over_overlay, spawn_hud, spawn_stage_clear_overlay,
@@ -190,12 +192,24 @@ fn main() {
                 update_camera,
                 update_city_traffic,
                 update_city_npcs,
+                update_city_tj,
                 update_city_pickups,
                 update_city_lexie,
                 update_city_minimap,
                 toggle_tutorial_hotkey,
             )
                 .run_if(in_state(GameState::CityPlay)),
+        )
+        .add_systems(OnEnter(GameState::TjCutscene), enter_tj_cutscene)
+        .add_systems(OnExit(GameState::TjCutscene), exit_tj_cutscene)
+        .add_systems(
+            Update,
+            (
+                update_tj_cutscene,
+                ensure_hero_vikings_gear,
+                ensure_hero_eye_reflections,
+            )
+                .run_if(in_state(GameState::TjCutscene)),
         )
         .add_systems(OnEnter(GameState::StageClear), spawn_stage_clear_overlay)
         .add_systems(

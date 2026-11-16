@@ -213,6 +213,9 @@ pub fn update_hud(
         if stats.has_ranch_shield {
             tags.push("RANCH SHIELD".to_string());
         }
+        if stats.tj_recruited {
+            tags.push("ALLY: TJ".to_string());
+        }
         if stats.audio_muted {
             tags.push("MUTED".to_string());
         }
@@ -466,6 +469,13 @@ pub fn check_url_test_mode(
         8 => {
             stats.rage_level = 1;
             next_state.set(GameState::HeadphoneCutscene);
+        }
+        9 => {
+            stats.in_city = true;
+            stats.tendies = 0;
+            stats.total_tendies = 50;
+            stats.wave = 4;
+            next_state.set(GameState::TjCutscene);
         }
         _ => {}
     }

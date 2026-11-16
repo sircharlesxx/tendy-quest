@@ -11,6 +11,7 @@ pub enum GameState {
     MomVictoryCutscene,
     CityIntroCutscene,
     CityPlay,
+    TjCutscene,
     StageClear,
     GameOver,
 }
@@ -49,6 +50,9 @@ pub struct PlayerStats {
     pub rage_swell_ticks: u32,
     pub rage_pulse_flash: f32,
     pub rage_cooldown_timer: f32,
+    pub tj_recruited: bool,
+    pub tj_return_city: bool,
+    pub saved_city_pos: Vec3,
 }
 
 impl Default for PlayerStats {
@@ -86,6 +90,9 @@ impl Default for PlayerStats {
             rage_swell_ticks: 0,
             rage_pulse_flash: 0.0,
             rage_cooldown_timer: 0.0,
+            tj_recruited: false,
+            tj_return_city: false,
+            saved_city_pos: Vec3::new(0.0, 0.0, 82.0),
         }
     }
 }

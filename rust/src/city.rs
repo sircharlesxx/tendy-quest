@@ -1823,35 +1823,47 @@ pub fn enter_city_play(
         &old_level_q,
     );
 
-    let is_titan_preview = stats.in_city && stats.tendies >= 50;
+    let resuming_from_tj = stats.tj_return_city;
+    stats.tj_return_city = false;
+    let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
     stats.boss_mode = true;
     stats.total_tendies = 50;
     stats.wave = 4;
-    stats.boss_hp = 300.0;
-    stats.boss_max_hp = 300.0;
-    stats.hearts = stats.max_hearts;
-    stats.lexie_defeated = false;
 
-    if is_titan_preview {
-        stats.player_scale = 18.0;
+    if resuming_from_tj {
         stats.hint_text =
-            "SKYSCRAPER KAIJU! Slash Lexie with your Lightsaber [CLICK / SLASH] & Dodge Roll garlic!"
-                .to_string();
+            "TJ JOINED YOUR QUEST! Collect 50 Tendies & take down Lexie together!".to_string();
     } else {
-        stats.tendies = 0;
-        stats.player_scale = 1.8;
-        stats.hint_text =
-            "Collect 50 Tendies (use top-right Radar)! Dodge Cars & Lexie's Pickled Garlic!"
-                .to_string();
+        stats.boss_hp = 300.0;
+        stats.boss_max_hp = 300.0;
+        stats.hearts = stats.max_hearts;
+        stats.lexie_defeated = false;
+
+        if is_titan_preview {
+            stats.player_scale = 18.0;
+            stats.hint_text =
+                "SKYSCRAPER KAIJU! Slash Lexie with your Lightsaber [CLICK / SLASH] & Dodge Roll garlic!"
+                    .to_string();
+        } else {
+            stats.tendies = 0;
+            stats.player_scale = 1.8;
+            stats.hint_text =
+                "Collect 50 Tendies (use top-right Radar)! Meet TJ & Dodge Lexie's Pickled Garlic!"
+                    .to_string();
+        }
     }
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
-        p_tf.translation = Vec3::new(
-            if is_titan_preview { 4.2 } else { 0.0 },
-            0.0,
-            if is_titan_preview { -18.0 } else { 82.0 },
-        );
+        p_tf.translation = if resuming_from_tj {
+            stats.saved_city_pos
+        } else {
+            Vec3::new(
+                if is_titan_preview { 4.2 } else { 0.0 },
+                0.0,
+                if is_titan_preview { -18.0 } else { 82.0 },
+            )
+        };
         p_tf.scale = Vec3::splat(stats.player_scale);
         player.velocity = Vec3::ZERO;
         player.facing_yaw = 0.0;
