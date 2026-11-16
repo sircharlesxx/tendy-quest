@@ -171,6 +171,11 @@
           mkOsc("sawtooth", 140, 48, 0.22, 0.28);
           return true;
         }
+        if (name === "estus_drink") {
+          mkOsc("sine", 523, 784, 0.28, 0.22);
+          mkOsc("triangle", 659, 1046, 0.34, 0.16);
+          return true;
+        }
         if (name === "headphone_crunch") {
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);

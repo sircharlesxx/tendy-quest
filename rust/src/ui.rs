@@ -104,7 +104,7 @@ pub fn spawn_hud(mut commands: Commands) {
                                 height: Val::Percent(100.0),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.28, 0.82, 1.0, 0.78)),
+                            BackgroundColor(Color::srgba(0.18, 0.78, 0.34, 0.88)),
                             BorderRadius::all(Val::Px(3.0)),
                         ));
                     });
@@ -212,6 +212,12 @@ pub fn update_hud(
         }
         if stats.has_ranch_shield {
             tags.push("RANCH SHIELD".to_string());
+        }
+        if stats.estus_flasks > 0 || stats.boss_mode {
+            tags.push(format!("ESTUS [Q]: {}/{}", stats.estus_flasks, stats.max_estus_flasks));
+        }
+        if stats.lock_on_active {
+            tags.push("LOCK-ON [TAB]".to_string());
         }
         if stats.tj_recruited {
             tags.push("ALLY: TJ".to_string());
@@ -583,11 +589,7 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
 }
 
 pub fn spawn_game_over_overlay(commands: Commands, stats: Res<PlayerStats>) {
-    let title = if stats.in_city {
-        "OH NO! LEXIE'S GARLIC GOT YOU!"
-    } else {
-        "OH NO! TOO MANY VEGGIES!"
-    };
+    let title = "YOU DIED";
     let btn = if stats.in_city {
         "RETRY NYC (R / CLICK)"
     } else {
@@ -601,7 +603,7 @@ pub fn spawn_game_over_overlay(commands: Commands, stats: Res<PlayerStats>) {
             stats.tendies, stats.total_tendies, stats.score
         ),
         btn,
-        Color::srgb(1.0, 0.35, 0.35),
+        Color::srgb(0.86, 0.10, 0.10),
     );
 }
 

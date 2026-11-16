@@ -3228,6 +3228,9 @@ pub fn enter_boss_fight(
     };
     stats.boss_max_hp = 100.0;
     stats.boss_hp = init_hp;
+    if !resuming_from_headphone {
+        stats.estus_flasks = stats.max_estus_flasks;
+    }
     stats.mom_quote = MOM_QUOTES[0].to_string();
     stats.hint_text =
         "DODGE & ROLL (SHIFT / ROLL) to counter Mom! Grab glowing Tendies to refuel Hearts!"
@@ -3559,7 +3562,8 @@ pub fn update_boss_fight(
                     "MOM PARRIED! Use DODGE & ROLL (SHIFT / ROLL) to evade & break her guard!"
                         .to_string();
             } else {
-                let dmg = if stats.enraged { 22.0 } else { 17.0 };
+                let base_dmg = if stats.enraged { 22.0 } else { 17.0 };
+                let dmg = base_dmg * if stats.heavy_attack { 1.85 } else { 1.0 };
                 mom.hp = (mom.hp - dmg).max(0.0);
                 stats.boss_hp = mom.hp;
                 stats.score += 1000;

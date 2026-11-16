@@ -194,14 +194,21 @@ pub fn player_movement(
     if stats.speed_boost_timer > 0.0 {
         stats.speed_boost_timer = (stats.speed_boost_timer - dt).max(0.0);
     }
-    let dash_regen = if stats.enraged && !stats.in_city {
-        60.0
-    } else if stats.boss_mode {
-        34.0
+    if stats.estus_drink_timer > 0.0 {
+        stats.estus_drink_timer = (stats.estus_drink_timer - dt).max(0.0);
+    }
+    if stats.stamina_regen_delay > 0.0 {
+        stats.stamina_regen_delay = (stats.stamina_regen_delay - dt).max(0.0);
     } else {
-        24.0
-    };
-    stats.dash_energy = (stats.dash_energy + dash_regen * dt).min(100.0);
+        let dash_regen = if stats.enraged && !stats.in_city {
+            62.0
+        } else if stats.boss_mode {
+            36.0
+        } else {
+            28.0
+        };
+        stats.dash_energy = (stats.dash_energy + dash_regen * dt).min(100.0);
+    }
 
     // Drain screen-tap state so overlay transitions don't pick up stale taps
     let _ = crate::audio::take_touch_action_tap();
@@ -235,35 +242,81 @@ pub fn player_movement(
     let move_mag = raw_move.length().min(1.0);
     let mut dir = raw_move.normalize_or_zero();
 
-    // Dash outside boss mode; Dodge & Roll + Lightsaber Slash in boss mode
+    // Target Lock-On toggle [TAB] & Estus Tendy Flask [Q / 1]
+    if keys.just_pressed(KeyCode::Tab) {
+        stats.lock_on_active = !stats.lock_on_active;
+        stats.hint_text = if stats.lock_on_active {
+            "TARGET LOCK-ON ENGAGED! [TAB] to unlock".to_string()
+        } else {
+            "Target Lock-On released.".to_string()
+        };
+    }
+    if (keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::Digit1))
+        && stats.estus_flasks > 0
+        && stats.hearts < stats.max_hearts
+        && stats.estus_drink_timer <= 0.0
+    {
+        stats.estus_flasks -= 1;
+        stats.estus_drink_timer = 0.65;
+        stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
+        crate::audio::play_sfx("estus_drink");
+        stats.hint_text = format!(
+            "TENDY ESTUS FLASK! +2 Hearts ({}/{} left)",
+            stats.estus_flasks, stats.max_estus_flasks
+        );
+    }
+
+    // Dash outside boss mode; Dark Souls Dodge Roll + Light/Heavy Saber Slash in boss mode
     let shift_pressed = keys.just_pressed(KeyCode::ShiftLeft)
         || keys.just_pressed(KeyCode::ShiftRight)
         || crate::audio::take_touch_dash()
         || (stats.boss_mode && mouse_buttons.just_pressed(MouseButton::Right));
+    let shift_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let touch_atk = crate::audio::take_touch_attack();
     if stats.boss_mode {
-        if shift_pressed && player.roll_timer <= 0.0 && stats.dash_energy >= 20.0 {
-            stats.dash_energy -= 20.0;
+        if shift_pressed && player.roll_timer <= 0.0 && stats.dash_energy >= 22.0 {
+            stats.dash_energy -= 22.0;
+            stats.stamina_regen_delay = 0.50;
             player.roll_timer = 0.45;
-            player.invuln_timer = 0.60;
+            player.invuln_timer = 0.58;
             player.dodge_counter_timer = 2.8;
             crate::audio::play_sfx("dodge_roll");
         }
-        if (mouse_buttons.just_pressed(MouseButton::Left)
-            || keys.just_pressed(KeyCode::KeyE)
-            || keys.just_pressed(KeyCode::KeyF)
-            || touch_atk)
-            && player.attack_cooldown <= 0.0
-        {
+        let light_btn = mouse_buttons.just_pressed(MouseButton::Left)
+            || keys.just_pressed(KeyCode::KeyJ)
+            || keys.just_pressed(KeyCode::KeyX)
+            || (!stats.in_city && (keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyF)))
+            || touch_atk;
+        let heavy_btn = keys.just_pressed(KeyCode::KeyC);
+        if heavy_btn && player.attack_cooldown <= 0.0 && stats.dash_energy >= 32.0 {
+            stats.dash_energy -= 32.0;
+            stats.stamina_regen_delay = 0.65;
+            stats.heavy_attack = true;
+            player.attack_timer = 0.40;
+            player.attack_cooldown = 0.58;
+            let lunge_fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
+            tf.translation += lunge_fwd * 0.9;
+            crate::audio::play_sfx("saber_swing");
+        } else if light_btn && player.attack_cooldown <= 0.0 && stats.dash_energy >= 16.0 {
+            stats.dash_energy -= 16.0;
+            stats.stamina_regen_delay = 0.42;
+            stats.heavy_attack = false;
             player.attack_timer = 0.28;
-            player.attack_cooldown = 0.34;
+            player.attack_cooldown = 0.36;
             crate::audio::play_sfx("saber_swing");
         }
-    } else if shift_pressed && player.dash_timer <= 0.0 && stats.dash_energy >= 35.0 {
-        stats.dash_energy -= 35.0;
+    } else if shift_pressed && player.dash_timer <= 0.0 && stats.dash_energy >= 30.0 {
+        stats.dash_energy -= 30.0;
+        stats.stamina_regen_delay = 0.45;
         player.dash_timer = 0.22;
         player.invuln_timer = 0.35;
         crate::audio::play_sfx("dash");
+    }
+
+    let sprinting = shift_held && move_mag > 0.15 && player.roll_timer <= 0.0 && stats.dash_energy > 2.0;
+    if sprinting {
+        stats.dash_energy = (stats.dash_energy - 15.0 * dt).max(0.0);
+        stats.stamina_regen_delay = 0.35;
     }
 
     // Jump & Double-Jump (Space or Touch JUMP)
@@ -297,11 +350,17 @@ pub fn player_movement(
         7.4
     };
     let mut speed = base_speed * size_ratio.powf(0.38);
+    if sprinting {
+        speed *= 1.36;
+    }
     if stats.speed_boost_timer > 0.0 {
         speed *= 1.75;
     }
     if stats.enraged && !stats.in_city {
         speed *= 1.38 + 0.10 * (stats.rage_level.min(4) as f32);
+    }
+    if stats.estus_drink_timer > 0.0 {
+        speed *= 0.38;
     }
     if player.slow_timer > 0.0 {
         speed *= 0.6;
@@ -470,11 +529,46 @@ pub fn update_camera(
     window_q: Query<&Window, With<PrimaryWindow>>,
     player_q: Query<&Transform, (With<Player>, Without<Camera3d>, Without<PlatformBox>)>,
     platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<Camera3d>)>,
+    lock_q: Query<
+        &Transform,
+        (
+            Or<(
+                With<crate::boss::MomBoss>,
+                With<crate::city::LexieBoss>,
+                With<crate::enemies::Enemy>,
+            )>,
+            Without<Player>,
+            Without<Camera3d>,
+            Without<PlatformBox>,
+        ),
+    >,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
     let (Ok(p_tf), Ok(mut c_tf)) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
+    if stats.lock_on_active && stats.driving_car.is_none() {
+        let mut best_pos: Option<Vec3> = None;
+        let mut best_dist = 70.0_f32;
+        for t in &lock_q {
+            let d = p_tf.translation.distance(t.translation);
+            if d > 0.5 && d < best_dist {
+                best_dist = d;
+                best_pos = Some(t.translation);
+            }
+        }
+        if let Some(target_pos) = best_pos {
+            let to_target = target_pos - p_tf.translation;
+            let desired_yaw = (-to_target.x).atan2(-to_target.z) + std::f32::consts::PI;
+            let mut diff = (desired_yaw - orbit.yaw) % std::f32::consts::TAU;
+            if diff > std::f32::consts::PI {
+                diff -= std::f32::consts::TAU;
+            } else if diff < -std::f32::consts::PI {
+                diff += std::f32::consts::TAU;
+            }
+            orbit.yaw += diff * (time.delta_secs().min(0.05) * 7.5).min(1.0);
+        }
+    }
     let anchor_y = if stats.driving_car.is_some() {
         1.95
     } else {

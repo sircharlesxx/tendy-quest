@@ -1864,6 +1864,7 @@ pub fn enter_city_play(
         stats.boss_hp = 300.0;
         stats.boss_max_hp = 300.0;
         stats.hearts = stats.max_hearts;
+        stats.estus_flasks = stats.max_estus_flasks;
         stats.lexie_defeated = false;
 
         if is_titan_preview {
@@ -2876,9 +2877,10 @@ pub fn update_city_lexie(
         if player.attack_timer > 0.14 && hit_dist < saber_reach && lexie.hit_flash <= 0.0 {
             lexie.hit_flash = 0.32;
             play_sfx("saber_hit");
+            let heavy_mul = if stats.heavy_attack { 1.85 } else { 1.0 };
             if stats.tendies < 50 {
                 // Chip damage capped until all 50 tendies give Skyscraper Titan Power
-                lexie.hp = (lexie.hp - 18.0).max(75.0);
+                lexie.hp = (lexie.hp - 18.0 * heavy_mul).max(75.0);
                 stats.hint_text = format!(
                     "Collect all 50 TENDIES ({}/50) for Full Skyscraper Titan Power to finish Lexie!",
                     stats.tendies

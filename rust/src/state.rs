@@ -54,6 +54,12 @@ pub struct PlayerStats {
     pub tj_return_city: bool,
     pub saved_city_pos: Vec3,
     pub driving_car: Option<Entity>,
+    pub stamina_regen_delay: f32,
+    pub estus_flasks: u32,
+    pub max_estus_flasks: u32,
+    pub estus_drink_timer: f32,
+    pub heavy_attack: bool,
+    pub lock_on_active: bool,
 }
 
 impl Default for PlayerStats {
@@ -95,6 +101,12 @@ impl Default for PlayerStats {
             tj_return_city: false,
             saved_city_pos: Vec3::new(0.0, 0.0, 82.0),
             driving_car: None,
+            stamina_regen_delay: 0.0,
+            estus_flasks: 3,
+            max_estus_flasks: 3,
+            estus_drink_timer: 0.0,
+            heavy_attack: false,
+            lock_on_active: false,
         }
     }
 }
