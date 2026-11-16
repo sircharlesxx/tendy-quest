@@ -176,6 +176,19 @@
           mkOsc("triangle", 659, 1046, 0.34, 0.16);
           return true;
         }
+        if (name === "hack_blip") {
+          mkOsc("square", 880, 1320, 0.05, 0.14);
+          return true;
+        }
+        if (name === "hack_deny") {
+          mkOsc("sawtooth", 190, 120, 0.14, 0.20);
+          return true;
+        }
+        if (name === "hack_success") {
+          mkOsc("square", 523, 1046, 0.16, 0.22);
+          setTimeout(() => mkOsc("sine", 784, 1568, 0.22, 0.22), 90);
+          return true;
+        }
         if (name === "headphone_crunch") {
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);
@@ -556,6 +569,67 @@
                 } catch (_) {}
               }
             }, 175);
+          } catch (_) {}
+        },
+        playHackingMusic() {
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            let hackStep = 0;
+            const arp = [220, 261.63, 329.63, 392, 440, 392, 329.63, 523.25, 293.66, 349.23, 440, 523.25, 587.33, 440, 392, 329.63];
+            const bass = [55, 55, 65.41, 65.41, 73.42, 73.42, 65.41, 82.41];
+            vikingTimer = setInterval(() => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const s = hackStep % 16;
+              hackStep += 1;
+
+              // Fast 16th-note cyber-arpeggio
+              const ao = ac.createOscillator();
+              const ag = ac.createGain();
+              ao.type = s % 4 === 0 ? "square" : "sawtooth";
+              ao.frequency.setValueAtTime(arp[s], now);
+              ag.gain.setValueAtTime(0.085, now);
+              ag.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
+              ao.connect(ag);
+              ag.connect(masterGain);
+              ao.start(now);
+              ao.stop(now + 0.10);
+
+              // Driving tech bass on 8th notes
+              if (s % 2 === 0) {
+                const bo = ac.createOscillator();
+                const bg = ac.createGain();
+                bo.type = "triangle";
+                bo.frequency.setValueAtTime(bass[(s >> 1) % bass.length], now);
+                bg.gain.setValueAtTime(0.18, now);
+                bg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                bo.connect(bg);
+                bg.connect(masterGain);
+                bo.start(now);
+                bo.stop(now + 0.15);
+              }
+
+              // Glitch data chirp every 4th step
+              if (s % 4 === 3) {
+                const co = ac.createOscillator();
+                const cg = ac.createGain();
+                co.type = "sine";
+                co.frequency.setValueAtTime(1480 + (hackStep % 5) * 220, now);
+                co.frequency.exponentialRampToValueAtTime(920, now + 0.045);
+                cg.gain.setValueAtTime(0.06, now);
+                cg.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+                co.connect(cg);
+                cg.connect(masterGain);
+                co.start(now);
+                co.stop(now + 0.055);
+              }
+            }, 105);
           } catch (_) {}
         },
         _voiceToken: 0,
@@ -1150,7 +1224,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-69730dcf5a711395.js" crossorigin="anonymous" integrity="sha384-zpDWRp8udGR26Mx+b2ZAPVjcvIFqftOhfGPg5gWi+TDkJPIqx/HhNzdExXvDIJp8"><link rel="preload" href="./tendy-quest-69730dcf5a711395_bg.wasm" crossorigin="anonymous" integrity="sha384-9z+ydPJLlI/MEwJAaFHEYXJJlWHW8XPJMeopPIJUMAoENYg/XQcYK8ZtZQc5Gkpg" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-8ac3a32d2894aee2.js" crossorigin="anonymous" integrity="sha384-7dcRDTQZyVFUELRAcdm/T9kA6Ip9AzYf+up8QQYjJ0hNu1It0Nt8ascu2mlrgRpw"><link rel="preload" href="./tendy-quest-8ac3a32d2894aee2_bg.wasm" crossorigin="anonymous" integrity="sha384-ee5FQHXR8lQI5CEQr8vAHV8+8SUFntfIb6groP0m3dYeqyATusObI6Qh0+8Chkvf" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1729,8 +1803,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-69730dcf5a711395.js';
-const wasm = await init({ module_or_path: './tendy-quest-69730dcf5a711395_bg.wasm' });
+import init, * as bindings from './tendy-quest-8ac3a32d2894aee2.js';
+const wasm = await init({ module_or_path: './tendy-quest-8ac3a32d2894aee2_bg.wasm' });
 
 
 window.wasmBindings = bindings;
