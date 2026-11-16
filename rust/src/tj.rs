@@ -965,7 +965,7 @@ pub fn update_tj_cutscene(
 
     // Animate TJ putting his feet up on the table (Beats 3..5) and snapping down on Beat 6!
     let feet_up = matches!(beat, 3 | 4 | 5);
-    let target_leg_pitch = if feet_up { -1.32 } else { 0.0 };
+    let target_leg_pitch = if feet_up { -1.82 } else { 0.0 };
     for (leg, mut l_tf) in &mut leg_q {
         let side_splay = if feet_up {
             if leg.is_left { -0.10 } else { 0.10 }
@@ -1031,8 +1031,8 @@ pub fn update_tj_cutscene(
                 // Monumental Zoom-In directly onto the table with TJ's feet resting on top!
                 let u = ((t - 13.8) / 7.0).clamp(0.0, 1.0);
                 (
-                    Vec3::new(1.55 - u * 0.75, base_y + 1.65 - u * 0.28, 2.05 - u * 0.55),
-                    Vec3::new(0.0, base_y + 1.06, 0.92),
+                    Vec3::new(1.55 - u * 0.45, base_y + 1.58 - u * 0.16, 1.85 - u * 0.35),
+                    Vec3::new(0.0, base_y + 1.08, 0.75),
                 )
             }
             4 => {
