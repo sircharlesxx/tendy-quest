@@ -324,6 +324,7 @@ pub fn update_city_tj(
     let Ok((_, mut tj_tf)) = tj_q.get_single_mut() else {
         return;
     };
+    tj_tf.scale = Vec3::splat(stats.player_scale.max(1.8));
 
     for (mut vis, mut b_tf) in &mut beacon_q {
         *vis = if stats.tj_recruited {

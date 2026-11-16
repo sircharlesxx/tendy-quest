@@ -479,7 +479,7 @@ pub fn update_city_scooter_and_phone(
         (Without<Player>, Without<PlatformBox>, Without<CityMike>),
     >,
     mut mike_q: Query<
-        (&Transform, &mut CityMike),
+        (&mut Transform, &mut CityMike),
         (Without<Player>, Without<CityScooter>, Without<PlatformBox>),
     >,
     platform_q: Query<
@@ -598,17 +598,21 @@ pub fn update_city_scooter_and_phone(
     let scoot_btn_clicked = scoot_ui.btn_q.iter().any(|i| *i == Interaction::Pressed);
     let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE) || scoot_btn_clicked;
 
-    // Check Mike in alleyway beside Pub 217 — bumping into him automatically triggers the Uzumaki cutscene!
-    for (m_tf, mut mike) in &mut mike_q {
+    // Check Mike inside Pub 217 — scales with Stan and auto-triggers Uzumaki cutscene when bumped!
+    let pub_s = crate::city::pub217_scale(stats.player_scale);
+    for (mut m_tf, mut mike) in &mut mike_q {
+        m_tf.scale = Vec3::splat(pub_s);
+        m_tf.translation = crate::city::PUB217_ANCHOR + Vec3::new(-4.45, 0.0, -1.2) * pub_s;
         let d = Vec2::new(
             m_tf.translation.x - p_tf.translation.x,
             m_tf.translation.z - p_tf.translation.z,
         )
         .length();
-        if d > 3.6 {
+        let trigger_r = 2.6 * pub_s.sqrt();
+        if d > 3.6 * pub_s.sqrt() {
             mike.was_inside = false;
         }
-        if d < 2.6 && !mike.was_inside && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+        if d < trigger_r && !mike.was_inside && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
             mike.was_inside = true;
             stats.saved_city_pos = p_tf.translation;
             stats.mike_return_city = true;

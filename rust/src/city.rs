@@ -14,6 +14,29 @@ const ROAD_COORDS: [f32; 5] = [-92.0, -46.0, 0.0, 46.0, 92.0];
 const BLOCK_COORDS: [f32; 4] = [-69.0, -23.0, 23.0, 69.0];
 const CITADEL_POS: Vec3 = Vec3::new(0.0, 0.0, -82.0);
 const LEXIE_TERRACE_POS: Vec3 = Vec3::new(0.0, 38.0, -75.5);
+pub const PUB217_ANCHOR: Vec3 = Vec3::new(-11.75, 0.0, 34.0);
+
+pub fn pub217_scale(player_scale: f32) -> f32 {
+    (player_scale / 1.8).max(1.0)
+}
+
+pub fn is_in_pub217(pos: Vec3, player_scale: f32) -> bool {
+    let s = pub217_scale(player_scale);
+    let min_x = PUB217_ANCHOR.x - 13.5 * s;
+    let max_x = PUB217_ANCHOR.x + 0.5 * s;
+    let min_z = PUB217_ANCHOR.z - 7.0 * s;
+    let max_z = PUB217_ANCHOR.z + 7.0 * s;
+    pos.x >= min_x && pos.x <= max_x && pos.z >= min_z && pos.z <= max_z
+}
+
+#[derive(Component)]
+pub struct Pub217Root;
+
+#[derive(Component)]
+pub struct Pub217ScaledCollider {
+    pub base_local: Vec3,
+    pub base_half: Vec3,
+}
 
 #[derive(Component)]
 pub struct CityWorldMarker;
@@ -988,196 +1011,200 @@ pub fn spawn_nyc_world_if_needed(
         ));
     }
 
-    // Pub 217 Floor Slab
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_floor_mat),
-        Transform::from_xyz(-18.25, 0.04, 34.0).with_scale(Vec3::new(13.5, 0.08, 14.0)),
-    ));
-    // Pub 217 Shell Walls (West, North, South, East-North, East-South leaving 4.4m open front door at z = 34)
-    for (wx, wy, wz, sx, sy, sz, mat) in [
-        (-24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32, pub_navy_mat.clone()), // Back West wall
-        (-18.25, 3.2, 27.25, 13.5, 6.4, 0.5, pub_brick_mat.clone()),                       // North wall
-        (-18.25, 3.2, 40.75, 13.5, 6.4, 0.5, pub_brick_mat.clone()),                       // South wall
-        (-11.75, 3.2, 29.5, 0.5, 6.4, 4.5, pub_brick_mat.clone()),                         // East front (N of door)
-        (-11.75, 3.2, 38.5, 0.5, 6.4, 4.5, pub_brick_mat.clone()),                         // East front (S of door)
-        (-11.75, 5.4, 34.0, 0.5, 2.0, 4.6, pub_cream_mat.clone()),                         // Doorway header
-        (-18.25, 6.5, 34.0, 13.5, 0.35, 14.0, pub_black_mat.clone()),                      // Dark drop-grid ceiling
-    ] {
-        commands.spawn((
+    // Pub 217 Visual Root (scales around East doorway anchor PUB217_ANCHOR so Stan always fits inside!)
+    commands
+        .spawn((
             LevelEntity,
             CityWorldMarker,
-            Mesh3d(unit_box.clone()),
-            MeshMaterial3d(mat),
-            Transform::from_xyz(wx, wy, wz).with_scale(Vec3::new(sx, sy, sz)),
-            PlatformBox {
-                half_extents: Vec3::new(sx * 0.5, sy * 0.5, sz * 0.5),
-            },
-        ));
-    }
-    // Glowing PUB 217 vertical blade sign + exterior cream trim so 217 is unmistakable at night
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_cream_mat),
-        Transform::from_xyz(-11.42, 1.8, 38.5).with_scale(Vec3::new(0.16, 3.4, 4.2)),
-    ));
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_black_mat.clone()),
-        Transform::from_xyz(-10.5, 4.2, 37.0).with_scale(Vec3::new(1.6, 2.8, 0.45)),
-    ));
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_sign_mat.clone()),
-        Transform::from_xyz(-10.5, 4.2, 37.0).with_scale(Vec3::new(1.2, 2.3, 0.52)),
-    ));
-
-    // Pub 217 Interior: L-shaped mahogany bar counter + 4 tall wooden barstools
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_wood_mat.clone()),
-        Transform::from_xyz(-19.5, 0.62, 32.5).with_scale(Vec3::new(1.1, 1.24, 6.4)),
-        PlatformBox {
-            half_extents: Vec3::new(0.55, 0.62, 3.2),
-        },
-    ));
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_wood_mat.clone()),
-        Transform::from_xyz(-21.2, 0.62, 35.2).with_scale(Vec3::new(3.8, 1.24, 1.1)),
-        PlatformBox {
-            half_extents: Vec3::new(1.9, 0.62, 0.55),
-        },
-    ));
-    for sz in [30.2_f32, 31.6, 33.0, 34.4] {
-        commands
-            .spawn((
-                LevelEntity,
-                CityWorldMarker,
-                Transform::from_xyz(-18.3, 0.0, sz),
-            ))
-            .with_children(|s| {
-                s.spawn((
+            Pub217Root,
+            Transform::from_translation(PUB217_ANCHOR),
+        ))
+        .with_children(|pub_root| {
+            // Floor Slab
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_floor_mat),
+                Transform::from_translation(Vec3::new(-18.25, 0.04, 34.0) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(13.5, 0.08, 14.0)),
+            ));
+            // Shell Walls (West, North, South, East-North, East-South leaving open front door at z = 34)
+            for (wx, wy, wz, sx, sy, sz, mat) in [
+                (-24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32, pub_navy_mat.clone()),
+                (-18.25, 3.2, 27.25, 13.5, 6.4, 0.5, pub_brick_mat.clone()),
+                (-18.25, 3.2, 40.75, 13.5, 6.4, 0.5, pub_brick_mat.clone()),
+                (-11.75, 3.2, 29.5, 0.5, 6.4, 4.5, pub_brick_mat.clone()),
+                (-11.75, 3.2, 38.5, 0.5, 6.4, 4.5, pub_brick_mat.clone()),
+                (-11.75, 5.4, 34.0, 0.5, 2.0, 4.6, pub_cream_mat.clone()),
+                (-18.25, 6.5, 34.0, 13.5, 0.35, 14.0, pub_black_mat.clone()),
+            ] {
+                pub_root.spawn((
                     Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(pub_wood_mat.clone()),
-                    Transform::from_xyz(0.0, 0.82, 0.0).with_scale(Vec3::new(0.55, 0.08, 0.55)),
+                    MeshMaterial3d(mat),
+                    Transform::from_translation(Vec3::new(wx, wy, wz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::new(sx, sy, sz)),
                 ));
-                s.spawn((
+            }
+            // Glowing PUB 217 blade sign + exterior cream trim
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_cream_mat),
+                Transform::from_translation(Vec3::new(-11.42, 1.8, 38.5) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(0.16, 3.4, 4.2)),
+            ));
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_black_mat.clone()),
+                Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(1.6, 2.8, 0.45)),
+            ));
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_sign_mat.clone()),
+                Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(1.2, 2.3, 0.52)),
+            ));
+            // L-shaped mahogany bar counter + 4 tall wooden barstools
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_wood_mat.clone()),
+                Transform::from_translation(Vec3::new(-19.5, 0.62, 32.5) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(1.1, 1.24, 6.4)),
+            ));
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_wood_mat.clone()),
+                Transform::from_translation(Vec3::new(-21.2, 0.62, 35.2) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(3.8, 1.24, 1.1)),
+            ));
+            for sz in [30.2_f32, 31.6, 33.0, 34.4] {
+                pub_root
+                    .spawn(Transform::from_translation(Vec3::new(-18.3, 0.0, sz) - PUB217_ANCHOR))
+                    .with_children(|s| {
+                        s.spawn((
+                            Mesh3d(unit_box.clone()),
+                            MeshMaterial3d(pub_wood_mat.clone()),
+                            Transform::from_xyz(0.0, 0.82, 0.0).with_scale(Vec3::new(0.55, 0.08, 0.55)),
+                        ));
+                        s.spawn((
+                            Mesh3d(unit_box.clone()),
+                            MeshMaterial3d(pub_wood_mat.clone()),
+                            Transform::from_xyz(0.24, 1.22, 0.0).with_scale(Vec3::new(0.08, 0.78, 0.50)),
+                        ));
+                        for (lx, lz) in [(-0.22, -0.22), (0.22, -0.22), (-0.22, 0.22), (0.22, 0.22)] {
+                            s.spawn((
+                                Mesh3d(unit_box.clone()),
+                                MeshMaterial3d(pub_wood_mat.clone()),
+                                Transform::from_xyz(lx, 0.40, lz).with_scale(Vec3::new(0.07, 0.80, 0.07)),
+                            ));
+                        }
+                    });
+            }
+            // Hanging industrial pendant lights over the bar
+            for pz in [29.8_f32, 32.4, 35.0, 37.6] {
+                pub_root.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(pub_black_mat.clone()),
+                    Transform::from_translation(Vec3::new(-18.6, 5.2, pz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::new(0.03, 2.2, 0.03)),
+                ));
+                pub_root.spawn((
+                    Mesh3d(unit_cone.clone()),
+                    MeshMaterial3d(pub_black_mat.clone()),
+                    Transform::from_translation(Vec3::new(-18.6, 4.0, pz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::new(0.45, 0.45, 0.45)),
+                ));
+                pub_root.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(pendant_glow_mat.clone()),
+                    Transform::from_translation(Vec3::new(-18.6, 3.78, pz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::splat(0.14)),
+                ));
+            }
+            // Back bar coolers, TVs, tap tower, POS terminal
+            for cz in [29.4_f32, 33.4] {
+                pub_root.spawn((
                     Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(pub_wood_mat.clone()),
-                    Transform::from_xyz(0.24, 1.22, 0.0).with_scale(Vec3::new(0.08, 0.78, 0.50)),
+                    MeshMaterial3d(cooler_glow_mat.clone()),
+                    Transform::from_translation(Vec3::new(-24.2, 1.35, cz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::new(0.55, 2.1, 2.2)),
                 ));
-                for (lx, lz) in [(-0.22, -0.22), (0.22, -0.22), (-0.22, 0.22), (0.22, 0.22)] {
-                    s.spawn((
-                        Mesh3d(unit_box.clone()),
-                        MeshMaterial3d(pub_wood_mat.clone()),
-                        Transform::from_xyz(lx, 0.40, lz).with_scale(Vec3::new(0.07, 0.80, 0.07)),
+                pub_root.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(tv_glow_mat.clone()),
+                    Transform::from_translation(Vec3::new(-24.3, 3.35, cz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::new(0.16, 1.15, 2.0)),
+                ));
+            }
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(tv_glow_mat),
+                Transform::from_translation(Vec3::new(-24.3, 3.35, 31.4) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(0.16, 0.95, 1.5)),
+            ));
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(sidewalk_mat.clone()),
+                Transform::from_translation(Vec3::new(-22.2, 1.45, 31.4) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(0.28, 0.65, 1.8)),
+            ));
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(cooler_glow_mat),
+                Transform::from_translation(Vec3::new(-20.6, 1.55, 34.4) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(0.18, 0.42, 0.55)),
+            ));
+            // Left corner: Table with 7-tier Beer Tower Pyramid reaching nearly to the ceiling!
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_wood_mat.clone()),
+                Transform::from_translation(Vec3::new(-22.6, 0.55, 38.6) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(2.2, 1.1, 2.2)),
+            ));
+            for tier in 0..7_usize {
+                let count = 7 - tier;
+                let y = 1.42 + tier as f32 * 0.68;
+                let spread = (count as f32 - 1.0) * 0.24;
+                for j in 0..count {
+                    let off = -spread * 0.5 + j as f32 * 0.24;
+                    pub_root.spawn((
+                        Mesh3d(unit_cyl.clone()),
+                        MeshMaterial3d(beer_amber_mat.clone()),
+                        Transform::from_translation(
+                            Vec3::new(-22.6 + off * 0.5, y, 38.6 + off * 0.5) - PUB217_ANCHOR,
+                        )
+                        .with_scale(Vec3::new(0.13, 0.64, 0.13)),
                     ));
                 }
-            });
-    }
-    // Hanging industrial pendant lights over the bar
-    for pz in [29.8_f32, 32.4, 35.0, 37.6] {
-        commands.spawn((
-            LevelEntity,
-            CityWorldMarker,
-            Mesh3d(unit_cyl.clone()),
-            MeshMaterial3d(pub_black_mat.clone()),
-            Transform::from_xyz(-18.6, 5.2, pz).with_scale(Vec3::new(0.03, 2.2, 0.03)),
-        ));
-        commands.spawn((
-            LevelEntity,
-            CityWorldMarker,
-            Mesh3d(unit_cone.clone()),
-            MeshMaterial3d(pub_black_mat.clone()),
-            Transform::from_xyz(-18.6, 4.0, pz).with_scale(Vec3::new(0.45, 0.45, 0.45)),
-        ));
-        commands.spawn((
-            LevelEntity,
-            CityWorldMarker,
-            Mesh3d(unit_sphere.clone()),
-            MeshMaterial3d(pendant_glow_mat.clone()),
-            Transform::from_xyz(-18.6, 3.78, pz).with_scale(Vec3::splat(0.14)),
-        ));
-    }
-    // Back bar: 2 illuminated beer coolers, draft tap tower, POS terminal, & 3 sports TVs
-    for cz in [29.4_f32, 33.4] {
-        commands.spawn((
-            LevelEntity,
-            CityWorldMarker,
-            Mesh3d(unit_box.clone()),
-            MeshMaterial3d(cooler_glow_mat.clone()),
-            Transform::from_xyz(-24.2, 1.35, cz).with_scale(Vec3::new(0.55, 2.1, 2.2)),
-        ));
-        commands.spawn((
-            LevelEntity,
-            CityWorldMarker,
-            Mesh3d(unit_box.clone()),
-            MeshMaterial3d(tv_glow_mat.clone()),
-            Transform::from_xyz(-24.3, 3.35, cz).with_scale(Vec3::new(0.16, 1.15, 2.0)),
-        ));
-    }
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(tv_glow_mat),
-        Transform::from_xyz(-24.3, 3.35, 31.4).with_scale(Vec3::new(0.16, 0.95, 1.5)),
-    ));
-    // Draft beer tap tower + POS screen
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(sidewalk_mat.clone()),
-        Transform::from_xyz(-22.2, 1.45, 31.4).with_scale(Vec3::new(0.28, 0.65, 1.8)),
-    ));
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(cooler_glow_mat),
-        Transform::from_xyz(-20.6, 1.55, 34.4).with_scale(Vec3::new(0.18, 0.42, 0.55)),
-    ));
+            }
+        });
 
-    // Left corner of Pub 217: Table with a 7-tier Beer Tower Pyramid reaching nearly to the ceiling!
-    commands.spawn((
-        LevelEntity,
-        CityWorldMarker,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(pub_wood_mat.clone()),
-        Transform::from_xyz(-22.6, 0.55, 38.6).with_scale(Vec3::new(2.2, 1.1, 2.2)),
-        PlatformBox {
-            half_extents: Vec3::new(1.1, 0.55, 1.1),
-        },
-    ));
-    for tier in 0..7_usize {
-        let count = 7 - tier;
-        let y = 1.42 + tier as f32 * 0.68;
-        let spread = (count as f32 - 1.0) * 0.24;
-        for j in 0..count {
-            let off = -spread * 0.5 + j as f32 * 0.24;
-            commands.spawn((
-                LevelEntity,
-                CityWorldMarker,
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(beer_amber_mat.clone()),
-                Transform::from_xyz(-22.6 + off * 0.5, y, 38.6 + off * 0.5)
-                    .with_scale(Vec3::new(0.13, 0.64, 0.13)),
-            ));
-        }
+    // Scaled PlatformBox colliders for Pub 217 walls, bar, and beer-pyramid table
+    for (wx, wy, wz, sx, sy, sz) in [
+        (-24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32),
+        (-18.25, 3.2, 27.25, 13.5, 6.4, 0.5),
+        (-18.25, 3.2, 40.75, 13.5, 6.4, 0.5),
+        (-11.75, 3.2, 29.5, 0.5, 6.4, 4.5),
+        (-11.75, 3.2, 38.5, 0.5, 6.4, 4.5),
+        (-11.75, 5.4, 34.0, 0.5, 2.0, 4.6),
+        (-18.25, 6.5, 34.0, 13.5, 0.35, 14.0),
+        (-19.5, 0.62, 32.5, 1.1, 1.24, 6.4),
+        (-21.2, 0.62, 35.2, 3.8, 1.24, 1.1),
+        (-22.6, 0.55, 38.6, 2.2, 1.1, 2.2),
+    ] {
+        let base_local = Vec3::new(wx, wy, wz) - PUB217_ANCHOR;
+        let base_half = Vec3::new(sx * 0.5, sy * 0.5, sz * 0.5);
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Pub217ScaledCollider {
+                base_local,
+                base_half,
+            },
+            Transform::from_translation(PUB217_ANCHOR + base_local),
+            PlatformBox {
+                half_extents: base_half,
+            },
+        ));
     }
 
     let mut b_idx = 0_usize;
@@ -2555,6 +2582,21 @@ fn wrap_angle(mut a: f32) -> f32 {
     a
 }
 
+pub fn update_pub217_scale(
+    stats: Res<PlayerStats>,
+    mut root_q: Query<&mut Transform, (With<Pub217Root>, Without<Pub217ScaledCollider>)>,
+    mut col_q: Query<(&mut Transform, &mut PlatformBox, &Pub217ScaledCollider), Without<Pub217Root>>,
+) {
+    let s = pub217_scale(stats.player_scale);
+    if let Ok(mut tf) = root_q.get_single_mut() {
+        tf.scale = Vec3::splat(s);
+    }
+    for (mut c_tf, mut pbox, sc) in &mut col_q {
+        c_tf.translation = PUB217_ANCHOR + sc.base_local * s;
+        pbox.half_extents = sc.base_half * s;
+    }
+}
+
 pub fn update_city_driving(
     mut commands: Commands,
     time: Res<Time>,
@@ -3421,6 +3463,8 @@ pub fn update_city_lexie(
         }
     }
 
+    let in_pub217 = is_in_pub217(p_tf.translation, stats.player_scale);
+
     // Update airborne Pickled Garlic Clove Projectiles & burst into lingering Stench Clouds
     for (g_ent, mut g_tf, mut proj) in &mut garlic_q {
         proj.age += dt;
@@ -3429,10 +3473,15 @@ pub fn update_city_lexie(
         g_tf.rotate_y(proj.spin * dt);
         g_tf.rotate_x(proj.spin * 0.7 * dt);
 
+        if is_in_pub217(g_tf.translation, stats.player_scale) {
+            commands.entity(g_ent).despawn_recursive();
+            continue;
+        }
+
         let hit_stan = g_tf.translation.distance(p_tf.translation + Vec3::Y * (0.5 * stats.player_scale))
             < (2.6 + stats.player_scale * 0.25);
 
-        if !stats.phone_open && hit_stan && player.roll_timer <= 0.0 && player.invuln_timer <= 0.0 {
+        if !stats.phone_open && !in_pub217 && hit_stan && player.roll_timer <= 0.0 && player.invuln_timer <= 0.0 {
             player.invuln_timer = 1.0;
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
@@ -3499,6 +3548,7 @@ pub fn update_city_lexie(
         )
         .length();
         if !stats.phone_open
+            && !in_pub217
             && flat_dist < cloud.radius * spread
             && p_tf.translation.y < 6.5
             && player.roll_timer <= 0.0

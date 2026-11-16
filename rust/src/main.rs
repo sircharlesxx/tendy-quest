@@ -23,7 +23,7 @@ use city::{
     exit_mom_victory_cutscene, update_city_intro_cutscene, update_city_intro_subtitles,
     update_city_driving, update_city_lexie, update_city_minimap, update_city_npcs,
     update_city_pickups, update_city_traffic, update_mom_victory_cutscene,
-    update_mom_victory_subtitles,
+    update_mom_victory_subtitles, update_pub217_scale,
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
@@ -198,6 +198,7 @@ fn main() {
                 player_movement,
                 animate_player_limbs,
                 update_camera,
+                update_pub217_scale,
                 update_city_driving,
                 update_city_scooter_and_phone,
                 update_city_traffic,
