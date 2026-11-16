@@ -2715,7 +2715,7 @@ pub fn update_city_traffic(
         return;
     };
     let in_active_play = *state.get() == GameState::CityPlay;
-    let is_driving = stats.driving_car.is_some();
+    let is_driving = stats.driving_car.is_some() || stats.phone_open;
     let hit_radius = 1.9 + stats.player_scale * 0.22;
 
     for (mut car_tf, mut car) in &mut car_q {
@@ -3119,7 +3119,7 @@ pub fn update_city_lexie(
         let hit_stan = g_tf.translation.distance(p_tf.translation + Vec3::Y * (0.5 * stats.player_scale))
             < (2.6 + stats.player_scale * 0.25);
 
-        if hit_stan && player.roll_timer <= 0.0 && player.invuln_timer <= 0.0 {
+        if !stats.phone_open && hit_stan && player.roll_timer <= 0.0 && player.invuln_timer <= 0.0 {
             player.invuln_timer = 1.0;
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
@@ -3185,7 +3185,8 @@ pub fn update_city_lexie(
             p_tf.translation.z - s_tf.translation.z,
         )
         .length();
-        if flat_dist < cloud.radius * spread
+        if !stats.phone_open
+            && flat_dist < cloud.radius * spread
             && p_tf.translation.y < 6.5
             && player.roll_timer <= 0.0
             && player.invuln_timer <= 0.0
