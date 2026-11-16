@@ -267,6 +267,46 @@ pub fn spawn_city_scooters(
     }
 }
 
+fn spawn_mike_shirt_text(
+    parent: &mut ChildBuilder,
+    unit_box: &Handle<Mesh>,
+    letter_mat: &Handle<StandardMaterial>,
+    center_y: f32,
+    z: f32,
+) {
+    // Bold 3D "M I K E" lettering across Mike's black shirt chest
+    let bars: [(f32, f32, f32, f32, f32); 14] = [
+        // M (left)
+        (-0.23, 0.0, 0.025, 0.14, 0.0),
+        (-0.14, 0.0, 0.025, 0.14, 0.0),
+        (-0.205, 0.025, 0.022, 0.085, -0.55),
+        (-0.165, 0.025, 0.022, 0.085, 0.55),
+        // I
+        (-0.075, 0.0, 0.026, 0.14, 0.0),
+        // K
+        (-0.005, 0.0, 0.025, 0.14, 0.0),
+        (0.032, 0.032, 0.022, 0.085, -0.68),
+        (0.032, -0.032, 0.022, 0.085, 0.68),
+        // E (right)
+        (0.115, 0.0, 0.025, 0.14, 0.0),
+        (0.155, 0.058, 0.075, 0.024, 0.0),
+        (0.148, 0.0, 0.062, 0.022, 0.0),
+        (0.155, -0.058, 0.075, 0.024, 0.0),
+        // Underline bar
+        (-0.02, -0.105, 0.44, 0.02, 0.0),
+        (-0.02, 0.105, 0.44, 0.02, 0.0),
+    ];
+    for (dx, dy, sx, sy, rz) in bars {
+        parent.spawn((
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(letter_mat.clone()),
+            Transform::from_xyz(dx, center_y + dy, z)
+                .with_rotation(Quat::from_rotation_z(rz))
+                .with_scale(Vec3::new(sx, sy, 0.025)),
+        ));
+    }
+}
+
 pub fn spawn_city_mike(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -337,17 +377,13 @@ pub fn spawn_city_mike(
                     Transform::from_xyz(sx, 0.48, 0.0).with_scale(Vec3::new(0.20, 0.96, 0.22)),
                 ));
             }
-            // Black wrestling t-shirt torso + gold championship belt graphic
+            // Black t-shirt torso with bold "MIKE" lettering across the chest
             m.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(wrestling_tee.clone()),
                 Transform::from_xyz(0.0, 1.28, 0.0).with_scale(Vec3::new(0.62, 0.72, 0.34)),
             ));
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(belt_gold.clone()),
-                Transform::from_xyz(0.0, 1.32, 0.18).with_scale(Vec3::new(0.42, 0.20, 0.04)),
-            ));
+            spawn_mike_shirt_text(m, &unit_box, &eye_white, 1.38, 0.18);
             // Head + Light Short Trimmed Beard
             m.spawn((
                 Mesh3d(unit_sphere.clone()),
@@ -1141,11 +1177,7 @@ pub fn enter_mike_cutscene(
                 MeshMaterial3d(wrestling_tee.clone()),
                 Transform::from_xyz(0.0, 1.30, 0.0).with_scale(Vec3::new(0.68, 0.76, 0.36)),
             ));
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(belt_gold.clone()),
-                Transform::from_xyz(0.0, 1.34, 0.19).with_scale(Vec3::new(0.46, 0.22, 0.04)),
-            ));
+            spawn_mike_shirt_text(m, &unit_box, &eye_white, 1.40, 0.19);
             m.spawn((
                 Mesh3d(unit_sphere.clone()),
                 MeshMaterial3d(skin.clone()),
