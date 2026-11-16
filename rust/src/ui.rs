@@ -593,9 +593,6 @@ pub fn handle_tutorial_input(
             if let Some(c) = parts.get(3).and_then(|v| v.parse::<u32>().ok()) {
                 stats.tendy_credits = c;
             }
-            if parts.get(4).copied() == Some("1") {
-                stats.tj_recruited = true;
-            }
             if parts.get(5).copied() == Some("1") {
                 stats.scooter_app_unlocked = true;
             }

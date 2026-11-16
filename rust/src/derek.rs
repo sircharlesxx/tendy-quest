@@ -304,7 +304,7 @@ pub fn spawn_city_derek(
 pub fn update_city_derek(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
-    stats: Res<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityDerek>>,
     mut derek_q: Query<(&mut Transform, &mut CityDerek), Without<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -317,11 +317,11 @@ pub fn update_city_derek(
     let pub_s = pub217_scale(stats.player_scale);
     for (mut d_tf, mut derek) in &mut derek_q {
         if derek.recruited {
-            let s = stats.player_scale.max(1.8);
+            let s = (stats.player_scale * 0.72).clamp(1.65, 9.0);
             d_tf.scale = Vec3::splat(s);
-            let fwd = Vec3::new(player.facing_yaw.sin(), 0.0, player.facing_yaw.cos());
+            let fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
             let right = Vec3::new(fwd.z, 0.0, -fwd.x);
-            let target = p_tf.translation + right * (1.8 * s) - fwd * (1.9 * s);
+            let target = p_tf.translation - right * (1.65 * s) - fwd * (1.4 * s);
             let delta = Vec3::new(target.x - d_tf.translation.x, 0.0, target.z - d_tf.translation.z);
             let dist = delta.length();
             if dist > 32.0 {
@@ -336,7 +336,7 @@ pub fn update_city_derek(
                 d_tf.rotation = Quat::from_rotation_y(dir.x.atan2(dir.z));
             } else {
                 d_tf.translation.y = 0.0;
-                d_tf.rotation = Quat::from_rotation_y(player.facing_yaw);
+                d_tf.rotation = Quat::from_rotation_y(player.facing_yaw + std::f32::consts::PI);
             }
             continue;
         }
@@ -359,6 +359,8 @@ pub fn update_city_derek(
             && ((inside && !derek.was_inside) || (dist < 4.5 * pub_s && interact))
         {
             derek.was_inside = true;
+            stats.saved_city_pos = p_tf.translation;
+            stats.derek_return_city = true;
             *d_state = DerekCutsceneState::default();
             next_state.set(GameState::DerekCutscene);
             return;

@@ -2039,6 +2039,7 @@ pub fn enter_city_intro_cutscene(
     stats.max_hearts = 20;
     stats.hearts = stats.max_hearts;
     stats.player_scale = 1.8;
+    stats.tj_recruited = false;
     stats.lexie_defeated = false;
     stats.hint_text.clear();
 
@@ -2336,10 +2337,12 @@ pub fn enter_city_play(
         brightness: 440.0,
     });
 
-    let resuming_from_tj = stats.tj_return_city || stats.mike_return_city;
+    let resuming_from_tj = stats.tj_return_city || stats.mike_return_city || stats.derek_return_city;
     let from_mike = stats.mike_return_city;
+    let from_derek = stats.derek_return_city;
     stats.tj_return_city = false;
     stats.mike_return_city = false;
+    stats.derek_return_city = false;
     let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
     stats.boss_mode = true;
@@ -2352,6 +2355,9 @@ pub fn enter_city_play(
         stats.hint_text = if from_mike {
             "TRIPPY ALLEY ENCOUNTER COMPLETE! (+2 Hearts, Full Stamina, Extra Woozy!)"
                 .to_string()
+        } else if from_derek {
+            "DEREK JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Beer Tower Truce!)"
+                .to_string()
         } else {
             "TJ JOINED YOUR QUEST! Collect 50 Tendies & take down Lexie together!".to_string()
         };
@@ -2359,8 +2365,9 @@ pub fn enter_city_play(
         stats.boss_hp = 300.0;
         stats.boss_max_hp = 300.0;
         stats.max_hearts = 20;
-    stats.hearts = stats.max_hearts;
+        stats.hearts = stats.max_hearts;
         stats.estus_flasks = stats.max_estus_flasks;
+        stats.tj_recruited = false;
         stats.lexie_defeated = false;
 
         if is_titan_preview {
