@@ -2034,6 +2034,7 @@ pub fn enter_city_intro_cutscene(
     stats.tendies = 0;
     stats.total_tendies = 50;
     stats.wave = 4;
+    stats.max_hearts = 20;
     stats.hearts = stats.max_hearts;
     stats.player_scale = 1.8;
     stats.lexie_defeated = false;
@@ -2365,7 +2366,8 @@ pub fn enter_city_play(
     } else {
         stats.boss_hp = 300.0;
         stats.boss_max_hp = 300.0;
-        stats.hearts = stats.max_hearts;
+        stats.max_hearts = 20;
+    stats.hearts = stats.max_hearts;
         stats.estus_flasks = stats.max_estus_flasks;
         stats.lexie_defeated = false;
 
