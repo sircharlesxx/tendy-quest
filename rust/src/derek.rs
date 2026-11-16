@@ -29,9 +29,6 @@ pub struct DerekBadgeText;
 pub struct DerekSubtitleText;
 
 #[derive(Component)]
-pub struct DerekSkipButton;
-
-#[derive(Component)]
 pub struct DerekCutsceneActor {
     pub is_stan: bool,
 }
@@ -833,28 +830,6 @@ pub fn enter_derek_cutscene(
                         },
                         TextColor(Color::srgb(0.65, 0.85, 1.0)),
                     ));
-                    hdr.spawn((
-                        DerekSkipButton,
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
-                            border: UiRect::all(Val::Px(1.5)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.22, 0.16, 0.34)),
-                        BorderColor(Color::srgb(0.95, 0.72, 0.22)),
-                        BorderRadius::all(Val::Px(6.0)),
-                    ))
-                    .with_children(|b| {
-                        b.spawn((
-                            Text::new("SKIP [SPACE]"),
-                            TextFont {
-                                font_size: 11.5,
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
                 });
                 card.spawn((
                     DerekSubtitleText,
@@ -967,8 +942,6 @@ pub struct DerekVfxQueries<'w, 's> {
 
 pub fn update_derek_cutscene(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut d_state: ResMut<DerekCutsceneState>,
     mut next_state: ResMut<NextState<GameState>>,
     mut actor_q: Query<(&mut Transform, &DerekCutsceneActor), Without<Camera3d>>,
@@ -978,21 +951,9 @@ pub fn update_derek_cutscene(
     mut spk_q: Query<&mut Text, With<DerekSpeakerText>>,
     mut badge_q: Query<&mut Text, (With<DerekBadgeText>, Without<DerekSpeakerText>)>,
     mut sub_q: Query<&mut Text, (With<DerekSubtitleText>, Without<DerekSpeakerText>, Without<DerekBadgeText>)>,
-    skip_q: Query<&Interaction, (Changed<Interaction>, With<DerekSkipButton>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     d_state.beat_t += dt;
-
-    let skip_clicked = skip_q.iter().any(|i| *i == Interaction::Pressed);
-    if skip_clicked
-        || keys.just_pressed(KeyCode::Space)
-        || keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::Escape)
-        || mouse_buttons.just_pressed(MouseButton::Left)
-    {
-        next_state.set(GameState::CityPlay);
-        return;
-    }
 
     if d_state.beat_t >= 4.0 && (!is_voice_speaking() || d_state.beat_t >= 18.0) {
         if d_state.beat + 1 >= DEREK_BEATS.len() as u8 {

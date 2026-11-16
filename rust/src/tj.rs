@@ -893,8 +893,6 @@ pub fn enter_tj_cutscene(
 
 pub fn update_tj_cutscene(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
     mut player_q: Query<&mut Transform, (With<Player>, Without<Camera3d>, Without<TjCutsceneActor>, Without<TjCrackFlash>)>,
@@ -914,15 +912,6 @@ pub fn update_tj_cutscene(
     >,
     mut clear_col: ResMut<ClearColor>,
 ) {
-    if keys.just_pressed(KeyCode::Space)
-        || keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::Escape)
-        || mouse_buttons.just_pressed(MouseButton::Left)
-    {
-        next_state.set(GameState::CityPlay);
-        return;
-    }
-
     const BEAT_ENDS: [f32; 7] = [6.8, 13.8, 20.8, 28.0, 35.2, 41.8, 49.0];
     let dt = time.delta_secs().min(0.05);
     let mut t = stats.cutscene_timer + dt;

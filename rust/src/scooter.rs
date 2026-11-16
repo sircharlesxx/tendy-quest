@@ -1277,7 +1277,7 @@ pub fn enter_mike_cutscene(
             .with_children(|card| {
                 card.spawn((
                     MikeCutsceneSpeakerText,
-                    Text::new("MIKE (ALLEY ORACLE)  |  [SPACE / CLICK] Skip"),
+                    Text::new("MIKE (ALLEY ORACLE)"),
                     TextFont {
                         font_size: 13.0,
                         ..default()
@@ -1303,8 +1303,6 @@ pub fn enter_mike_cutscene(
 
 pub fn update_mike_cutscene(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut stats: ResMut<PlayerStats>,
     dialog: Res<MikeCutsceneDialog>,
     mut next_state: ResMut<NextState<GameState>>,
@@ -1321,15 +1319,6 @@ pub fn update_mike_cutscene(
         *beat1_start = 0.0;
     }
 
-    if keys.just_pressed(KeyCode::Space)
-        || keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::Escape)
-        || mouse_buttons.just_pressed(MouseButton::Left)
-    {
-        next_state.set(GameState::CityPlay);
-        return;
-    }
-
     let (mike_line, stan_line) = MIKE_BACKSTORIES[dialog.variant];
     if stats.cutscene_beat == 0 && t >= 4.0 && (!is_voice_speaking() || t >= 16.0) {
         stats.cutscene_beat = 1;
@@ -1337,7 +1326,7 @@ pub fn update_mike_cutscene(
         play_sfx("smoke_puff");
         speak_voice(stan_line, "stan");
         if let Ok(mut sp) = speaker_q.get_single_mut() {
-            sp.0 = "STAN (ENLIGHTENED)  |  [SPACE / CLICK] Skip".to_string();
+            sp.0 = "STAN (ENLIGHTENED)".to_string();
         }
         if let Ok(mut sb) = sub_q.get_single_mut() {
             sb.0 = format!("\"{}\"", stan_line);

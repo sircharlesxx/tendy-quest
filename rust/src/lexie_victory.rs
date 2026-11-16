@@ -249,7 +249,7 @@ pub fn enter_lexie_victory_cutscene(
             .with_children(|card| {
                 card.spawn((
                     LexieVictorySpeakerText,
-                    Text::new(format!("{}  |  [SPACE / CLICK] Skip", spk)),
+                    Text::new(spk),
                     TextFont {
                         font_size: 13.5,
                         ..default()
@@ -275,8 +275,6 @@ pub fn enter_lexie_victory_cutscene(
 
 pub fn update_lexie_victory_cutscene(
     time: Res<Time>,
-    keys: Res<ButtonInput<KeyCode>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut v_state: ResMut<LexieVictoryState>,
     mut next_state: ResMut<NextState<GameState>>,
     mut blob_q: Query<(&mut Transform, &LexieGrossBlob), Without<Camera3d>>,
@@ -289,15 +287,6 @@ pub fn update_lexie_victory_cutscene(
     let dt = time.delta_secs().min(0.05);
     v_state.beat_t += dt;
 
-    if keys.just_pressed(KeyCode::Space)
-        || keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::Escape)
-        || mouse_buttons.just_pressed(MouseButton::Left)
-    {
-        next_state.set(GameState::StageClear);
-        return;
-    }
-
     if v_state.beat_t >= 4.0 && (!is_voice_speaking() || v_state.beat_t >= 16.0) {
         if v_state.beat + 1 >= GROSS_BEATS.len() as u8 {
             next_state.set(GameState::StageClear);
@@ -309,7 +298,7 @@ pub fn update_lexie_victory_cutscene(
         play_sfx("hit");
         speak_voice(line, voice);
         if let Ok(mut s) = spk_q.get_single_mut() {
-            s.0 = format!("{}  |  [SPACE / CLICK] Skip", spk);
+            s.0 = spk.to_string();
         }
         if let Ok(mut sub) = sub_q.get_single_mut() {
             sub.0 = format!("\"{}\"", line);
