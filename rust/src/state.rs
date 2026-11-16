@@ -13,6 +13,7 @@ pub enum GameState {
     CityPlay,
     TjCutscene,
     MikeCutscene,
+    DerekCutscene,
     StageClear,
     GameOver,
 }

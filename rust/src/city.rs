@@ -1676,6 +1676,7 @@ fn spawn_50_city_tendies(
     let _ = getrandom::getrandom(&mut mike_seed_bytes);
     let mike_seed = u64::from_le_bytes(mike_seed_bytes);
     crate::scooter::spawn_city_mike(commands, meshes, materials, mike_seed);
+    crate::derek::spawn_city_derek(commands, meshes, materials);
 
     for (i, pos) in spots.into_iter().enumerate() {
         commands

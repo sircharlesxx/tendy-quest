@@ -1,6 +1,7 @@
 mod audio;
 mod boss;
 mod city;
+mod derek;
 mod enemies;
 mod level;
 mod player;
@@ -24,6 +25,10 @@ use city::{
     update_city_driving, update_city_lexie, update_city_minimap, update_city_npcs,
     update_city_pickups, update_city_traffic, update_mom_victory_cutscene,
     update_mom_victory_subtitles, update_pub217_scale,
+};
+use derek::{
+    DerekCutsceneState, enter_derek_cutscene, exit_derek_cutscene, update_city_derek,
+    update_derek_cutscene,
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
@@ -66,6 +71,7 @@ fn main() {
         .init_resource::<CameraOrbit>()
         .init_resource::<PhoneMazeState>()
         .init_resource::<MikeCutsceneDialog>()
+        .init_resource::<DerekCutsceneState>()
         .add_systems(
             Startup,
             (
@@ -204,6 +210,7 @@ fn main() {
                 update_city_traffic,
                 update_city_npcs,
                 update_city_tj,
+                update_city_derek,
                 update_city_pickups,
                 update_city_lexie,
                 update_city_minimap,
@@ -227,6 +234,12 @@ fn main() {
         .add_systems(
             Update,
             update_mike_cutscene.run_if(in_state(GameState::MikeCutscene)),
+        )
+        .add_systems(OnEnter(GameState::DerekCutscene), enter_derek_cutscene)
+        .add_systems(OnExit(GameState::DerekCutscene), exit_derek_cutscene)
+        .add_systems(
+            Update,
+            update_derek_cutscene.run_if(in_state(GameState::DerekCutscene)),
         )
         .add_systems(OnEnter(GameState::StageClear), spawn_stage_clear_overlay)
         .add_systems(
