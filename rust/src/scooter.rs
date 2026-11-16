@@ -1,19 +1,24 @@
 use bevy::prelude::*;
-use crate::audio::{play_bgm, play_hacking_music, play_sfx};
+use crate::audio::{play_bgm, play_hacking_music, play_sfx, speak_voice};
 use crate::city::CityWorldMarker;
 use crate::player::Player;
 use crate::state::{CameraOrbit, LevelEntity, PlatformBox, PlayerStats};
 
 pub const SCOOTER_RENT_COST: u32 = 12;
 
-const MAZE: [[u8; 7]; 7] = [
-    [0, 0, 1, 0, 0, 0, 1],
-    [1, 0, 1, 0, 1, 0, 0],
-    [0, 0, 0, 0, 1, 1, 0],
-    [0, 1, 1, 0, 0, 0, 0],
-    [0, 0, 1, 1, 1, 0, 1],
-    [1, 0, 0, 0, 1, 0, 0],
-    [1, 1, 1, 0, 0, 0, 2],
+// 0 = open, 1 = firewall (#), 2 = $ AUTH_TOKEN, 3 = pulsing gate (%), 4 = KEY_A, 5 = KEY_B
+const MAZE: [[u8; 11]; 11] = [
+    [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1],
+    [1, 0, 1, 0, 1, 0, 1, 0, 1, 5, 0],
+    [0, 0, 0, 0, 1, 0, 0, 3, 1, 1, 0],
+    [0, 1, 1, 0, 1, 1, 1, 0, 0, 0, 0],
+    [0, 1, 0, 0, 0, 0, 1, 1, 1, 0, 1],
+    [0, 1, 0, 1, 1, 0, 0, 0, 1, 0, 0],
+    [0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0],
+    [1, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0],
+    [0, 0, 0, 1, 0, 0, 3, 0, 1, 1, 0],
+    [0, 4, 1, 1, 1, 0, 1, 0, 0, 3, 0],
+    [0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 2],
 ];
 
 #[derive(Component)]
@@ -22,6 +27,11 @@ pub struct CityScooter {
     pub speed: f32,
     pub paid: bool,
     pub occupied: bool,
+}
+
+#[derive(Component)]
+pub struct CityMike {
+    pub smoke_cooldown: f32,
 }
 
 #[derive(Component)]
@@ -47,14 +57,26 @@ pub struct PhoneMazeState {
     pub px: usize,
     pub py: usize,
     pub moves: u32,
+    pub key_a: bool,
+    pub key_b: bool,
+    pub gate_open: bool,
+    pub gate_timer: f32,
+    pub visited: [[bool; 11]; 11],
 }
 
 impl Default for PhoneMazeState {
     fn default() -> Self {
+        let mut visited = [[false; 11]; 11];
+        visited[0][0] = true;
         Self {
             px: 0,
             py: 0,
             moves: 0,
+            key_a: false,
+            key_b: false,
+            gate_open: true,
+            gate_timer: 0.0,
+            visited,
         }
     }
 }
@@ -113,25 +135,21 @@ pub fn spawn_city_scooters(
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
             .with_children(|s| {
-                // Deck
                 s.spawn((
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(deck_mat.clone()),
                     Transform::from_xyz(0.0, 0.24, 0.0).with_scale(Vec3::new(0.36, 0.08, 1.45)),
                 ));
-                // Lime trim
                 s.spawn((
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(lime_mat.clone()),
                     Transform::from_xyz(0.0, 0.25, 0.0).with_scale(Vec3::new(0.40, 0.05, 1.38)),
                 ));
-                // Stem
                 s.spawn((
                     Mesh3d(unit_cyl.clone()),
                     MeshMaterial3d(lime_mat.clone()),
                     Transform::from_xyz(0.0, 0.88, 0.56).with_scale(Vec3::new(0.045, 1.22, 0.045)),
                 ));
-                // Handlebars
                 s.spawn((
                     Mesh3d(unit_cyl.clone()),
                     MeshMaterial3d(deck_mat.clone()),
@@ -139,7 +157,6 @@ pub fn spawn_city_scooters(
                         .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
                         .with_scale(Vec3::new(0.04, 0.62, 0.04)),
                 ));
-                // Wheels
                 for wz in [0.62_f32, -0.62_f32] {
                     s.spawn((
                         Mesh3d(unit_cyl.clone()),
@@ -149,7 +166,6 @@ pub fn spawn_city_scooters(
                             .with_scale(Vec3::new(0.18, 0.10, 0.18)),
                     ));
                 }
-                // Subtle cyan beacon ring on ground
                 s.spawn((
                     Mesh3d(unit_cyl.clone()),
                     MeshMaterial3d(glow_mat.clone()),
@@ -157,6 +173,119 @@ pub fn spawn_city_scooters(
                 ));
             });
     }
+}
+
+pub fn spawn_city_mike(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    seed: u64,
+) {
+    let alley_spots = [
+        Vec3::new(-23.0, 0.0, 56.0),
+        Vec3::new(23.0, 0.0, 34.0),
+        Vec3::new(-23.0, 0.0, 11.0),
+        Vec3::new(23.0, 0.0, -11.0),
+        Vec3::new(-23.0, 0.0, -34.0),
+        Vec3::new(11.0, 0.0, 58.0),
+    ];
+    let pos = alley_spots[(seed as usize) % alley_spots.len()];
+
+    let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
+    let unit_sphere = meshes.add(Sphere::new(1.0));
+
+    let skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.90, 0.74, 0.62),
+        ..default()
+    });
+    let beard = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.14, 0.09),
+        ..default()
+    });
+    let wrestling_tee = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.08, 0.10),
+        ..default()
+    });
+    let belt_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.80, 0.16),
+        emissive: LinearRgba::new(0.45, 0.32, 0.04, 1.0),
+        ..default()
+    });
+    let cap_red = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.76, 0.12, 0.14),
+        ..default()
+    });
+    let jeans = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.24, 0.42),
+        ..default()
+    });
+    let weed_ring = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.22, 0.92, 0.36, 0.35),
+        emissive: LinearRgba::new(0.12, 0.8, 0.22, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            CityMike {
+                smoke_cooldown: 0.0,
+            },
+            Transform::from_translation(pos),
+        ))
+        .with_children(|m| {
+            // Legs
+            for sx in [-0.14_f32, 0.14_f32] {
+                m.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(jeans.clone()),
+                    Transform::from_xyz(sx, 0.48, 0.0).with_scale(Vec3::new(0.20, 0.96, 0.22)),
+                ));
+            }
+            // Black wrestling t-shirt torso + gold championship belt graphic
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(wrestling_tee.clone()),
+                Transform::from_xyz(0.0, 1.28, 0.0).with_scale(Vec3::new(0.62, 0.72, 0.34)),
+            ));
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(belt_gold.clone()),
+                Transform::from_xyz(0.0, 1.32, 0.18).with_scale(Vec3::new(0.42, 0.20, 0.04)),
+            ));
+            // Head + Beard
+            m.spawn((
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.86, 0.0).with_scale(Vec3::splat(0.24)),
+            ));
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(beard.clone()),
+                Transform::from_xyz(0.0, 1.75, 0.11).with_scale(Vec3::new(0.28, 0.20, 0.20)),
+            ));
+            // Baseball Cap (crown + front brim)
+            m.spawn((
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(cap_red.clone()),
+                Transform::from_xyz(0.0, 2.02, 0.0).with_scale(Vec3::new(0.25, 0.14, 0.25)),
+            ));
+            m.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(cap_red.clone()),
+                Transform::from_xyz(0.0, 1.98, 0.22).with_scale(Vec3::new(0.32, 0.04, 0.24)),
+            ));
+            // Alley weed aura ring
+            m.spawn((
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(weed_ring),
+                Transform::from_xyz(0.0, 0.04, 0.0).with_scale(Vec3::new(1.5, 0.03, 1.5)),
+            ));
+        });
 }
 
 fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
@@ -171,17 +300,16 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.02, 0.03, 0.52)),
+            BackgroundColor(Color::srgba(0.0, 0.02, 0.03, 0.58)),
         ))
         .with_children(|root| {
-            // Smartphone bezel
             root.spawn((
                 Node {
-                    width: Val::Px(320.0),
+                    width: Val::Px(340.0),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    padding: UiRect::all(Val::Px(14.0)),
-                    row_gap: Val::Px(8.0),
+                    padding: UiRect::all(Val::Px(12.0)),
+                    row_gap: Val::Px(6.0),
                     border: UiRect::all(Val::Px(3.0)),
                     ..default()
                 },
@@ -191,74 +319,70 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
             ))
             .with_children(|phone| {
                 phone.spawn((
-                    Text::new("SCOOTR.OS // 0x7F_AUTH_PROXY"),
+                    Text::new("SCOOTR.OS // 0x7F_KERNEL_MAZE"),
                     TextFont {
-                        font_size: 13.5,
+                        font_size: 13.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.18, 0.98, 0.62)),
                 ));
                 phone.spawn((
                     PhoneMazeStatusText,
-                    Text::new(format!(
-                        "SIG: 0xDEADBEEF | PKT ({},{}) -> $TOKEN",
-                        maze.px, maze.py
-                    )),
+                    Text::new("KEYS: 0/2 [K1,K2] | GATE: OPEN | PKT (0,0)"),
                     TextFont {
-                        font_size: 11.0,
+                        font_size: 10.5,
                         ..default()
                     },
                     TextColor(Color::srgb(0.55, 0.92, 0.86)),
                 ));
                 phone.spawn((
-                    Text::new("ROUTE [@] TO [$] THROUGH FIREWALL"),
+                    Text::new("GRAB K1 & K2 BEFORE [$] | AVOID BLOCKED [%] GATES"),
                     TextFont {
-                        font_size: 10.5,
+                        font_size: 9.5,
                         ..default()
                     },
                     TextColor(Color::srgb(0.75, 0.85, 0.78)),
                 ));
 
-                // 7x7 Obscure Maze Grid
                 phone
                     .spawn((
                         Node {
                             flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(3.0),
-                            padding: UiRect::all(Val::Px(6.0)),
+                            row_gap: Val::Px(2.0),
+                            padding: UiRect::all(Val::Px(5.0)),
                             ..default()
                         },
                         BackgroundColor(Color::srgb(0.02, 0.03, 0.04)),
                         BorderRadius::all(Val::Px(8.0)),
                     ))
                     .with_children(|grid| {
-                        for y in 0..7_usize {
+                        for y in 0..11_usize {
                             grid.spawn(Node {
                                 flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(3.0),
+                                column_gap: Val::Px(2.0),
                                 ..default()
                             })
                             .with_children(|row| {
-                                for x in 0..7_usize {
+                                for x in 0..11_usize {
                                     let (bg, fg, sym) = cell_visual(x, y, maze);
                                     row.spawn((
                                         PhoneMazeCell { x, y },
                                         Node {
-                                            width: Val::Px(34.0),
-                                            height: Val::Px(34.0),
+                                            width: Val::Px(24.0),
+                                            height: Val::Px(24.0),
                                             justify_content: JustifyContent::Center,
                                             align_items: AlignItems::Center,
                                             ..default()
                                         },
                                         BackgroundColor(bg),
-                                        BorderRadius::all(Val::Px(4.0)),
+                                        BorderRadius::all(Val::Px(3.0)),
                                     ))
                                     .with_children(|cell| {
                                         cell.spawn((
                                             PhoneMazeCellText { x, y },
                                             Text::new(sym),
                                             TextFont {
-                                                font_size: 13.0,
+                                                font_size: 10.5,
                                                 ..default()
                                             },
                                             TextColor(fg),
@@ -270,9 +394,9 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
                     });
 
                 phone.spawn((
-                    Text::new("[WASD / ARROWS] Route  |  [P / ESC] Close\nCOST AFTER UNLOCK: 12 TENDY CREDITS"),
+                    Text::new("[WASD / ARROWS] Route | [P / ESC] Close | Cost: 12 Credits"),
                     TextFont {
-                        font_size: 10.5,
+                        font_size: 10.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.95, 0.82, 0.28)),
@@ -283,29 +407,76 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
 
 fn cell_visual(x: usize, y: usize, maze: &PhoneMazeState) -> (Color, Color, &'static str) {
     if x == maze.px && y == maze.py {
-        (
+        return (
             Color::srgb(0.08, 0.45, 0.55),
             Color::srgb(0.4, 1.0, 1.0),
             "@",
-        )
-    } else if MAZE[y][x] == 1 {
-        (
+        );
+    }
+    let dist = x.abs_diff(maze.px) + y.abs_diff(maze.py);
+    let cell = MAZE[y][x];
+    if dist > 3 && !maze.visited[y][x] && cell != 2 {
+        return (
+            Color::srgb(0.04, 0.05, 0.06),
+            Color::srgb(0.18, 0.26, 0.24),
+            "?",
+        );
+    }
+    match cell {
+        1 => (
             Color::srgb(0.24, 0.06, 0.08),
             Color::srgb(0.75, 0.22, 0.25),
             "#",
-        )
-    } else if MAZE[y][x] == 2 {
-        (
-            Color::srgb(0.32, 0.25, 0.05),
-            Color::srgb(1.0, 0.88, 0.22),
-            "$",
-        )
-    } else {
-        (
+        ),
+        2 => {
+            if maze.key_a && maze.key_b {
+                (
+                    Color::srgb(0.32, 0.25, 0.05),
+                    Color::srgb(1.0, 0.92, 0.25),
+                    "$",
+                )
+            } else {
+                (
+                    Color::srgb(0.20, 0.14, 0.06),
+                    Color::srgb(0.8, 0.48, 0.20),
+                    "X",
+                )
+            }
+        }
+        3 => {
+            if maze.gate_open {
+                (
+                    Color::srgb(0.08, 0.22, 0.28),
+                    Color::srgb(0.35, 0.95, 1.0),
+                    "%",
+                )
+            } else {
+                (
+                    Color::srgb(0.35, 0.08, 0.16),
+                    Color::srgb(1.0, 0.35, 0.45),
+                    "%",
+                )
+            }
+        }
+        4 => {
+            if maze.key_a {
+                (Color::srgb(0.05, 0.11, 0.08), Color::srgb(0.22, 0.65, 0.42), ".")
+            } else {
+                (Color::srgb(0.14, 0.28, 0.08), Color::srgb(0.65, 1.0, 0.35), "K1")
+            }
+        }
+        5 => {
+            if maze.key_b {
+                (Color::srgb(0.05, 0.11, 0.08), Color::srgb(0.22, 0.65, 0.42), ".")
+            } else {
+                (Color::srgb(0.14, 0.28, 0.08), Color::srgb(0.65, 1.0, 0.35), "K2")
+            }
+        }
+        _ => (
             Color::srgb(0.05, 0.11, 0.08),
             Color::srgb(0.22, 0.65, 0.42),
             ".",
-        )
+        ),
     }
 }
 
@@ -316,16 +487,26 @@ pub fn update_city_scooter_and_phone(
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
     mut maze: ResMut<PhoneMazeState>,
-    mut player_q: Query<(&mut Transform, &mut Player), (Without<CityScooter>, Without<PlatformBox>)>,
-    mut scooter_q: Query<(Entity, &mut Transform, &mut CityScooter), (Without<Player>, Without<PlatformBox>)>,
-    platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<CityScooter>)>,
+    mut player_q: Query<
+        (&mut Transform, &mut Player),
+        (Without<CityScooter>, Without<PlatformBox>, Without<CityMike>),
+    >,
+    mut scooter_q: Query<
+        (Entity, &mut Transform, &mut CityScooter),
+        (Without<Player>, Without<PlatformBox>, Without<CityMike>),
+    >,
+    mut mike_q: Query<
+        (&Transform, &mut CityMike),
+        (Without<Player>, Without<CityScooter>, Without<PlatformBox>),
+    >,
+    platform_q: Query<
+        (&Transform, &PlatformBox),
+        (Without<Player>, Without<CityScooter>, Without<CityMike>),
+    >,
     phone_ui_q: Query<Entity, With<PhoneMazeUi>>,
     mut cell_bg_q: Query<(&PhoneMazeCell, &mut BackgroundColor)>,
     mut cell_txt_q: Query<(&PhoneMazeCellText, &mut Text, &mut TextColor)>,
-    mut status_txt_q: Query<
-        &mut Text,
-        (With<PhoneMazeStatusText>, Without<PhoneMazeCellText>),
-    >,
+    mut status_txt_q: Query<&mut Text, (With<PhoneMazeStatusText>, Without<PhoneMazeCellText>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
@@ -361,6 +542,14 @@ pub fn update_city_scooter_and_phone(
             return;
         }
 
+        maze.gate_timer += dt;
+        let mut gate_toggled = false;
+        if maze.gate_timer >= 2.0 {
+            maze.gate_timer -= 2.0;
+            maze.gate_open = !maze.gate_open;
+            gate_toggled = true;
+        }
+
         let mut dx: isize = 0;
         let mut dy: isize = 0;
         if keys.just_pressed(KeyCode::KeyW) || keys.just_pressed(KeyCode::ArrowUp) {
@@ -373,33 +562,55 @@ pub fn update_city_scooter_and_phone(
             dx = 1;
         }
 
+        let mut moved = false;
         if dx != 0 || dy != 0 {
             let nx = maze.px as isize + dx;
             let ny = maze.py as isize + dy;
-            if nx >= 0 && nx < 7 && ny >= 0 && ny < 7 && MAZE[ny as usize][nx as usize] != 1 {
-                maze.px = nx as usize;
-                maze.py = ny as usize;
-                maze.moves += 1;
+            let valid_bounds = nx >= 0 && nx < 11 && ny >= 0 && ny < 11;
+            let cell = if valid_bounds { MAZE[ny as usize][nx as usize] } else { 1 };
+            let passable = valid_bounds && cell != 1 && (cell != 3 || maze.gate_open);
 
-                if MAZE[maze.py][maze.px] == 2 {
-                    stats.scooter_app_unlocked = true;
-                    stats.phone_open = false;
-                    for e in &phone_ui_q {
-                        commands.entity(e).despawn_recursive();
-                    }
+            if passable {
+                let mx = nx as usize;
+                let my = ny as usize;
+                maze.px = mx;
+                maze.py = my;
+                maze.moves += 1;
+                maze.visited[my][mx] = true;
+                moved = true;
+
+                if cell == 4 {
+                    maze.key_a = true;
                     play_sfx("hack_success");
-                    play_bgm();
-                    stats.hint_text = format!(
-                        "SCOOTR APP HACKED! Press [F/E] near a Scooter ({} Tendy Credits)!",
-                        SCOOTER_RENT_COST
-                    );
-                    return;
+                } else if cell == 5 {
+                    maze.key_b = true;
+                    play_sfx("hack_success");
+                } else if cell == 2 {
+                    if maze.key_a && maze.key_b {
+                        stats.scooter_app_unlocked = true;
+                        stats.phone_open = false;
+                        for e in &phone_ui_q {
+                            commands.entity(e).despawn_recursive();
+                        }
+                        play_sfx("hack_success");
+                        play_bgm();
+                        stats.hint_text = format!(
+                            "SCOOTR APP HACKED! Press [F/E] near a Scooter ({} Tendy Credits)!",
+                            SCOOTER_RENT_COST
+                        );
+                        return;
+                    } else {
+                        play_sfx("hack_deny");
+                    }
+                } else {
+                    play_sfx("hack_blip");
                 }
-                play_sfx("hack_blip");
             } else {
                 play_sfx("hack_deny");
             }
+        }
 
+        if moved || gate_toggled {
             for (cell, mut bg) in &mut cell_bg_q {
                 let (new_bg, _, _) = cell_visual(cell.x, cell.y, &maze);
                 bg.0 = new_bg;
@@ -410,9 +621,11 @@ pub fn update_city_scooter_and_phone(
                 tc.0 = new_fg;
             }
             if let Ok(mut st) = status_txt_q.get_single_mut() {
+                let kc = maze.key_a as u8 + maze.key_b as u8;
                 st.0 = format!(
-                    "SIG: 0x{:04X} | PKT ({},{}) -> $TOKEN",
-                    0xDEAD_u16.wrapping_add(maze.moves as u16 * 17),
+                    "KEYS: {}/2 | GATE: {} | PKT ({},{})",
+                    kc,
+                    if maze.gate_open { "OPEN" } else { "LOCKED" },
                     maze.px,
                     maze.py
                 );
@@ -422,6 +635,32 @@ pub fn update_city_scooter_and_phone(
     }
 
     let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
+
+    // Check Mike in alleyway (beard, baseball cap, wrestling shirt)
+    for (m_tf, mut mike) in &mut mike_q {
+        if mike.smoke_cooldown > 0.0 {
+            mike.smoke_cooldown = (mike.smoke_cooldown - dt).max(0.0);
+        }
+        let d = Vec2::new(
+            m_tf.translation.x - p_tf.translation.x,
+            m_tf.translation.z - p_tf.translation.z,
+        )
+        .length();
+        if d < 3.4 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+            if interact && mike.smoke_cooldown <= 0.0 {
+                mike.smoke_cooldown = 12.0;
+                stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
+                stats.dash_energy = 100.0;
+                stats.high_timer = 25.0;
+                play_sfx("smoke_puff");
+                speak_voice("Yo Stan... hit this in the alley real quick, bro.", "tj");
+                stats.hint_text =
+                    "SMOKED WITH MIKE! (+2 Hearts, Full Stamina, Extra Woozy!)".to_string();
+            } else if mike.smoke_cooldown <= 0.0 {
+                stats.hint_text = "[F / E] Smoke Weed with Mike in the Alley".to_string();
+            }
+        }
+    }
 
     // On foot: check nearby scooter
     if stats.riding_scooter.is_none() {
@@ -491,7 +730,6 @@ pub fn update_city_scooter_and_phone(
         return;
     };
 
-    // Dismount scooter
     if interact {
         if let Ok((_, stf, mut sc)) = scooter_q.get_mut(se) {
             sc.occupied = false;
@@ -504,7 +742,6 @@ pub fn update_city_scooter_and_phone(
         return;
     }
 
-    // Active scooter riding physics
     if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
         let mut throttle = 0.0_f32;
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
@@ -545,7 +782,6 @@ pub fn update_city_scooter_and_phone(
         stf.translation.z = (stf.translation.z + fwd.y * sc.speed * dt).clamp(-126.0, 126.0);
         stf.translation.y = 0.0;
 
-        // Skyscraper collision
         let wall_r = 0.82;
         for (b_tf, b_box) in &platform_q {
             if b_tf.translation.y - b_box.half_extents.y > 2.0 {

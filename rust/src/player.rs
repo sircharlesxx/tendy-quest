@@ -197,6 +197,9 @@ pub fn player_movement(
     if stats.estus_drink_timer > 0.0 {
         stats.estus_drink_timer = (stats.estus_drink_timer - dt).max(0.0);
     }
+    if stats.high_timer > 0.0 {
+        stats.high_timer = (stats.high_timer - dt).max(0.0);
+    }
     if stats.stamina_regen_delay > 0.0 {
         stats.stamina_regen_delay = (stats.stamina_regen_delay - dt).max(0.0);
     } else {
@@ -542,9 +545,9 @@ pub fn update_camera(
             Without<PlatformBox>,
         ),
     >,
-    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
-    let (Ok(p_tf), Ok(mut c_tf)) = (player_q.get_single(), cam_q.get_single_mut()) else {
+    let (Ok(p_tf), Ok((mut c_tf, mut proj))) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
     if stats.lock_on_active && stats.driving_car.is_none() {
@@ -720,8 +723,34 @@ pub fn update_camera(
     let look_target = p_tf.translation
         + Vec3::new(0.0, anchor_y * 0.88, 0.0)
         - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * look_fwd;
-    c_tf.translation = cam_pos;
-    c_tf.look_at(look_target, Vec3::Y);
+    let mut final_cam_pos = cam_pos;
+    let mut final_look = look_target;
+    if stats.in_city {
+        let t = time.elapsed_secs();
+        let drunk_amp = if stats.high_timer > 0.0 { 1.0 } else { 0.45 };
+        final_cam_pos += Vec3::new(
+            (t * 1.65).sin() * 0.28 * drunk_amp,
+            (t * 2.35).cos() * 0.16 * drunk_amp,
+            (t * 1.25).cos() * 0.22 * drunk_amp,
+        );
+        final_look += Vec3::new(
+            (t * 1.4).cos() * 0.24 * drunk_amp,
+            (t * 1.9).sin() * 0.14 * drunk_amp,
+            0.0,
+        );
+        c_tf.translation = final_cam_pos;
+        c_tf.look_at(final_look, Vec3::Y);
+        c_tf.rotate_local_z((t * 1.35).sin() * 0.065 * drunk_amp);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4 + (t * 2.05).sin() * 0.075 * drunk_amp;
+        }
+    } else {
+        c_tf.translation = final_cam_pos;
+        c_tf.look_at(final_look, Vec3::Y);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
+    }
 }
 
 pub fn animate_and_collect_pickups(

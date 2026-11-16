@@ -64,6 +64,7 @@ pub struct PlayerStats {
     pub scooter_app_unlocked: bool,
     pub riding_scooter: Option<Entity>,
     pub phone_open: bool,
+    pub high_timer: f32,
 }
 
 impl Default for PlayerStats {
@@ -115,6 +116,7 @@ impl Default for PlayerStats {
             scooter_app_unlocked: false,
             riding_scooter: None,
             phone_open: false,
+            high_timer: 0.0,
         }
     }
 }

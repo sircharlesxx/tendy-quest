@@ -11,6 +11,25 @@
   <link data-trunk rel="copy-dir" href="../assets/audio" data-target-path="assets/audio" />
   <link data-trunk rel="copy-dir" href="../assets/sprites" data-target-path="assets/sprites" />
   <script>
+    window.tendySave = {
+      saveCheckpoint(json) {
+        try {
+          localStorage.setItem("tendy_quest_save_v1", String(json || ""));
+        } catch (_) {}
+      },
+      loadCheckpoint() {
+        try {
+          return localStorage.getItem("tendy_quest_save_v1") || "";
+        } catch (_) {
+          return "";
+        }
+      },
+      clearCheckpoint() {
+        try {
+          localStorage.removeItem("tendy_quest_save_v1");
+        } catch (_) {}
+      },
+    };
     window.tendyAudio = (() => {
       const SFX_NAMES = [
         "jump", "double_jump", "dash", "tendy", "powerup",
@@ -187,6 +206,11 @@
         if (name === "hack_success") {
           mkOsc("square", 523, 1046, 0.16, 0.22);
           setTimeout(() => mkOsc("sine", 784, 1568, 0.22, 0.22), 90);
+          return true;
+        }
+        if (name === "smoke_puff") {
+          mkNoise(0.45, 0.16, 650);
+          mkOsc("sine", 240, 360, 0.35, 0.12);
           return true;
         }
         if (name === "headphone_crunch") {

@@ -84,6 +84,15 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCutsceneStartTime)]
         fn js_take_cutscene_start_time() -> f32;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCheckpoint)]
+        fn js_save_checkpoint(json: &str);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = loadCheckpoint)]
+        fn js_load_checkpoint() -> String;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearCheckpoint)]
+        fn js_clear_checkpoint();
     }
 
     pub fn play_bgm() {
@@ -193,6 +202,19 @@ mod imp {
     pub fn take_cutscene_start_time() -> f32 {
         js_take_cutscene_start_time()
     }
+
+    pub fn save_checkpoint(data: &str) {
+        js_save_checkpoint(data);
+    }
+
+    pub fn load_checkpoint() -> String {
+        js_load_checkpoint()
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_checkpoint() {
+        js_clear_checkpoint();
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -280,13 +302,22 @@ mod imp {
     pub fn take_cutscene_start_time() -> f32 {
         -1.0
     }
+
+    pub fn save_checkpoint(_data: &str) {}
+
+    pub fn load_checkpoint() -> String {
+        String::new()
+    }
+
+    #[allow(dead_code)]
+    pub fn clear_checkpoint() {}
 }
 
 pub use imp::{
-    init_test_mode, is_muted, is_voice_speaking, play_bgm, play_boss_music, play_cutscene_music,
-    play_hacking_music, play_headphone_music, play_sfx, play_viking_chant_music, set_touch_boss_mode,
-    set_touch_playing, set_tutorial_visible, set_uzumaki_mode, speak_voice,
-    take_cutscene_start_time, take_touch_action_tap, take_touch_attack, take_touch_dash,
+    init_test_mode, is_muted, is_voice_speaking, load_checkpoint, play_bgm, play_boss_music,
+    play_cutscene_music, play_hacking_music, play_headphone_music, play_sfx,
+    play_viking_chant_music, save_checkpoint, set_touch_boss_mode, set_touch_playing,
+    set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time, take_touch_action_tap, take_touch_attack, take_touch_dash,
     take_touch_help, take_touch_jump, take_touch_look_dx, take_touch_look_dy,
     take_touch_zoom_delta, toggle_mute, touch_move_x, touch_move_y,
 };

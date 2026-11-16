@@ -1246,6 +1246,10 @@ fn spawn_50_city_tendies(
         step += 1;
     }
     crate::scooter::spawn_city_scooters(commands, meshes, materials);
+    let mut mike_seed_bytes = [0u8; 8];
+    let _ = getrandom::getrandom(&mut mike_seed_bytes);
+    let mike_seed = u64::from_le_bytes(mike_seed_bytes);
+    crate::scooter::spawn_city_mike(commands, meshes, materials, mike_seed);
 
     for (i, pos) in spots.into_iter().enumerate() {
         commands
@@ -1858,6 +1862,7 @@ pub fn enter_city_play(
     stats.total_tendies = 50;
     stats.wave = 4;
 
+    crate::ui::save_game_checkpoint("city", &stats);
     if resuming_from_tj {
         stats.hint_text =
             "TJ JOINED YOUR QUEST! Collect 50 Tendies & take down Lexie together!".to_string();
@@ -2736,6 +2741,7 @@ pub fn update_city_pickups(
             stats.tendies += 1;
             stats.tendy_credits += 1;
             stats.score += 200;
+            crate::ui::save_game_checkpoint("city", &stats);
             play_sfx("tendy");
             if stats.tendies >= stats.total_tendies {
                 stats.score += 5000;

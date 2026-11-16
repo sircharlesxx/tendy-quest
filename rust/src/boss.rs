@@ -3230,6 +3230,7 @@ pub fn enter_boss_fight(
     stats.boss_hp = init_hp;
     if !resuming_from_headphone {
         stats.estus_flasks = stats.max_estus_flasks;
+        crate::ui::save_game_checkpoint("boss", &stats);
     }
     stats.mom_quote = MOM_QUOTES[0].to_string();
     stats.hint_text =

@@ -17,6 +17,22 @@ pub struct EndOverlay;
 pub struct StartButton;
 
 #[derive(Component)]
+pub struct ContinueButton;
+
+pub fn save_game_checkpoint(stage: &str, stats: &PlayerStats) {
+    let data = format!(
+        "{}|{}|{}|{}|{}|{}",
+        stage,
+        stats.score,
+        stats.tendies,
+        stats.tendy_credits,
+        stats.tj_recruited as u8,
+        stats.scooter_app_unlocked as u8,
+    );
+    crate::audio::save_checkpoint(&data);
+}
+
+#[derive(Component)]
 pub struct RestartButton;
 
 #[derive(Component)]
@@ -221,6 +237,11 @@ pub fn update_hud(
         }
         if stats.in_city {
             tags.push(format!("CREDITS: {}", stats.tendy_credits));
+            if stats.high_timer > 0.0 {
+                tags.push(format!("HIGH+DRUNK {:.0}s", stats.high_timer));
+            } else {
+                tags.push("DRUNK".to_string());
+            }
             if stats.riding_scooter.is_some() {
                 tags.push("SCOOTER".to_string());
             } else if stats.scooter_app_unlocked {
@@ -341,6 +362,35 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                         TextColor(Color::WHITE),
                     ));
                 });
+                let saved = crate::audio::load_checkpoint();
+                if let Some(stage) = saved.split('|').next().filter(|s| *s == "city" || *s == "boss") {
+                    let label = if stage == "city" {
+                        "CONTINUE CHECKPOINT: NYC [C] (SKIP MOM)"
+                    } else {
+                        "CONTINUE CHECKPOINT: MOM BOSS [C]"
+                    };
+                    card.spawn((
+                        ContinueButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(18.0), Val::Px(8.0)),
+                            margin: UiRect::top(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.14, 0.58, 0.28)),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(label),
+                            TextFont {
+                                font_size: 14.5,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
             });
         });
 }
@@ -500,9 +550,10 @@ pub fn check_url_test_mode(
 pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
-    stats: Res<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     mut next_state: ResMut<NextState<GameState>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
+    cont_q: Query<&Interaction, (Changed<Interaction>, With<ContinueButton>)>,
 ) {
     if keys.just_pressed(KeyCode::KeyK) {
         next_state.set(GameState::Cutscene);
@@ -511,6 +562,37 @@ pub fn handle_tutorial_input(
     if keys.just_pressed(KeyCode::KeyB) {
         next_state.set(GameState::BossFight);
         return;
+    }
+    let cont_clicked = cont_q.iter().any(|i| *i == Interaction::Pressed);
+    if cont_clicked || keys.just_pressed(KeyCode::KeyC) {
+        let saved = crate::audio::load_checkpoint();
+        let parts: Vec<&str> = saved.split('|').collect();
+        if let Some(&stage) = parts.first() {
+            if let Some(s) = parts.get(1).and_then(|v| v.parse::<u32>().ok()) {
+                stats.score = s;
+            }
+            if let Some(c) = parts.get(3).and_then(|v| v.parse::<u32>().ok()) {
+                stats.tendy_credits = c;
+            }
+            if parts.get(4).copied() == Some("1") {
+                stats.tj_recruited = true;
+            }
+            if parts.get(5).copied() == Some("1") {
+                stats.scooter_app_unlocked = true;
+            }
+            if stage == "city" {
+                stats.in_city = true;
+                stats.tendies = 0;
+                stats.total_tendies = 50;
+                stats.player_scale = 1.8;
+                stats.wave = 4;
+                next_state.set(GameState::CityPlay);
+                return;
+            } else if stage == "boss" {
+                next_state.set(GameState::BossFight);
+                return;
+            }
+        }
     }
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
     if clicked
