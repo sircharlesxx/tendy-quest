@@ -1,3 +1,4 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use crate::audio::{
     is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, speak_voice,
@@ -48,6 +49,30 @@ pub struct DerekClashSpark {
 pub struct DerekArmPivot {
     pub is_left: bool,
     pub is_stan: bool,
+}
+
+#[derive(Component)]
+pub struct DerekKiAura {
+    pub is_stan: bool,
+}
+
+#[derive(Component)]
+pub struct DerekBeamHalf {
+    pub is_stan: bool,
+}
+
+#[derive(Component)]
+pub struct DerekBeamClashOrb;
+
+#[derive(Component)]
+pub struct DerekShockRing {
+    pub phase: f32,
+}
+
+#[derive(Component)]
+pub struct DerekDbzRock {
+    pub base_pos: Vec3,
+    pub phase: f32,
 }
 
 #[derive(Resource, Default)]
@@ -325,9 +350,9 @@ const DEREK_BEATS: [(&str, &str, &str, &str); 6] = [
         "stan",
     ),
     (
-        "DEREK & STAN (DUEL CLASH!)",
-        "BEAT 3/6  |  ONE LAST EXCHANGE",
-        "Ten years of blood, sweat, and shattered beer towers! Cowabunga was never meant to end like this—TAKE MY SPLINTER-STYLE HAYMAKER!",
+        "DEREK & STAN (KAMEHAMEHA CLASH!)",
+        "BEAT 3/6  |  KA-ME-HA-ME-COWABUNGA!!",
+        "Ten years of shattered beer towers—KA-ME-HA-ME... COWABUNGA!! TAKE MY SPLINTER-STYLE KAMEHAMEHA!",
         "tj",
     ),
     (
@@ -572,7 +597,7 @@ pub fn enter_derek_cutscene(
         ));
     }
 
-    // Anime clash sparks for Beat 2 & 3
+    // Anime clash sparks + DBZ Ki Auras, Kamehameha Beams, Clash Orb, Shockwave Rings & Floating Rocks
     let spark_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.88, 0.25),
         emissive: LinearRgba::new(4.0, 2.8, 0.4, 1.0),
@@ -590,6 +615,121 @@ pub fn enter_derek_cutscene(
             Mesh3d(spark_mesh.clone()),
             MeshMaterial3d(spark_mat.clone()),
             Transform::from_translation(stage + Vec3::new(0.0, 1.35, 0.0)),
+            Visibility::Hidden,
+        ));
+    }
+
+    let derek_ki_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.25, 0.82, 1.0, 0.34),
+        emissive: LinearRgba::new(0.6, 2.4, 4.2, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let stan_ki_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.82, 0.22, 0.34),
+        emissive: LinearRgba::new(3.8, 2.6, 0.35, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    for (is_stan, mat, z_pos) in [
+        (false, derek_ki_mat.clone(), -2.35_f32),
+        (true, stan_ki_mat.clone(), 2.35_f32),
+    ] {
+        commands.spawn((
+            DerekCutsceneEntity,
+            DerekKiAura { is_stan },
+            Mesh3d(meshes.add(Cylinder::new(0.75, 2.75))),
+            MeshMaterial3d(mat),
+            Transform::from_translation(stage + Vec3::new(0.0, 1.38, z_pos)),
+            Visibility::Hidden,
+        ));
+    }
+
+    // Twin Kamehameha energy beams meeting in the center
+    let derek_beam_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.35, 0.92, 1.0, 0.92),
+        emissive: LinearRgba::new(1.2, 4.5, 6.5, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let stan_beam_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.85, 0.38, 1.0, 0.92),
+        emissive: LinearRgba::new(4.2, 1.4, 6.2, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    for (is_stan, mat) in [(false, derek_beam_mat), (true, stan_beam_mat)] {
+        commands.spawn((
+            DerekCutsceneEntity,
+            DerekBeamHalf { is_stan },
+            Mesh3d(meshes.add(Cylinder::new(0.22, 1.0))),
+            MeshMaterial3d(mat),
+            Transform::from_translation(stage + Vec3::new(0.0, 1.28, 0.0))
+                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            Visibility::Hidden,
+        ));
+    }
+
+    // Blazing white/gold Kamehameha clash orb + expanding shockwave rings
+    let clash_orb_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::new(7.0, 6.2, 4.0, 1.0),
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((
+        DerekCutsceneEntity,
+        DerekBeamClashOrb,
+        Mesh3d(meshes.add(Sphere::new(0.45))),
+        MeshMaterial3d(clash_orb_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, 1.28, 0.0)),
+        Visibility::Hidden,
+    ));
+
+    let ring_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.92, 0.55, 0.72),
+        emissive: LinearRgba::new(3.5, 2.8, 1.0, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    for i in 0..3 {
+        commands.spawn((
+            DerekCutsceneEntity,
+            DerekShockRing {
+                phase: i as f32 * 0.33,
+            },
+            Mesh3d(meshes.add(Torus::new(0.04, 0.55))),
+            MeshMaterial3d(ring_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(0.0, 1.28, 0.0))
+                .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            Visibility::Hidden,
+        ));
+    }
+
+    // Floating DBZ pebbles/debris rising around the clash
+    let rock_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.20, 0.24),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    let rock_mesh = meshes.add(Cuboid::new(0.14, 0.11, 0.14));
+    for i in 0..12 {
+        let ang = (i as f32 / 12.0) * std::f32::consts::TAU;
+        let r = 1.6 + (i % 3) as f32 * 0.65;
+        commands.spawn((
+            DerekCutsceneEntity,
+            DerekDbzRock {
+                base_pos: stage + Vec3::new(ang.cos() * r, 0.25, ang.sin() * r),
+                phase: i as f32 * 0.41,
+            },
+            Mesh3d(rock_mesh.clone()),
+            MeshMaterial3d(rock_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(ang.cos() * r, 0.25, ang.sin() * r)),
             Visibility::Hidden,
         ));
     }
@@ -677,6 +817,98 @@ pub fn enter_derek_cutscene(
     speak_voice(line, voice);
 }
 
+#[derive(SystemParam)]
+pub struct DerekVfxQueries<'w, 's> {
+    tear_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility, &'static DerekTearDrop),
+        (Without<DerekCutsceneActor>, Without<DerekArmPivot>, Without<Camera3d>),
+    >,
+    spark_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility, &'static DerekClashSpark),
+        (
+            Without<DerekCutsceneActor>,
+            Without<DerekArmPivot>,
+            Without<DerekTearDrop>,
+            Without<Camera3d>,
+        ),
+    >,
+    ki_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility, &'static DerekKiAura),
+        (
+            Without<DerekCutsceneActor>,
+            Without<DerekArmPivot>,
+            Without<DerekTearDrop>,
+            Without<DerekClashSpark>,
+            Without<Camera3d>,
+        ),
+    >,
+    beam_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility, &'static DerekBeamHalf),
+        (
+            Without<DerekCutsceneActor>,
+            Without<DerekArmPivot>,
+            Without<DerekTearDrop>,
+            Without<DerekClashSpark>,
+            Without<DerekKiAura>,
+            Without<Camera3d>,
+        ),
+    >,
+    orb_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility),
+        (
+            With<DerekBeamClashOrb>,
+            Without<DerekCutsceneActor>,
+            Without<DerekArmPivot>,
+            Without<DerekTearDrop>,
+            Without<DerekClashSpark>,
+            Without<DerekKiAura>,
+            Without<DerekBeamHalf>,
+            Without<Camera3d>,
+        ),
+    >,
+    ring_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility, &'static DerekShockRing),
+        (
+            Without<DerekCutsceneActor>,
+            Without<DerekArmPivot>,
+            Without<DerekTearDrop>,
+            Without<DerekClashSpark>,
+            Without<DerekKiAura>,
+            Without<DerekBeamHalf>,
+            Without<DerekBeamClashOrb>,
+            Without<Camera3d>,
+        ),
+    >,
+    rock_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility, &'static DerekDbzRock),
+        (
+            Without<DerekCutsceneActor>,
+            Without<DerekArmPivot>,
+            Without<DerekTearDrop>,
+            Without<DerekClashSpark>,
+            Without<DerekKiAura>,
+            Without<DerekBeamHalf>,
+            Without<DerekBeamClashOrb>,
+            Without<DerekShockRing>,
+            Without<Camera3d>,
+        ),
+    >,
+}
+
 pub fn update_derek_cutscene(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -685,8 +917,7 @@ pub fn update_derek_cutscene(
     mut next_state: ResMut<NextState<GameState>>,
     mut actor_q: Query<(&mut Transform, &DerekCutsceneActor), Without<Camera3d>>,
     mut arm_q: Query<(&mut Transform, &DerekArmPivot), (Without<DerekCutsceneActor>, Without<Camera3d>)>,
-    mut tear_q: Query<(&mut Transform, &mut Visibility, &DerekTearDrop), (Without<DerekCutsceneActor>, Without<DerekArmPivot>, Without<Camera3d>)>,
-    mut spark_q: Query<(&mut Transform, &mut Visibility, &DerekClashSpark), (Without<DerekCutsceneActor>, Without<DerekArmPivot>, Without<DerekTearDrop>, Without<Camera3d>)>,
+    mut vfx: DerekVfxQueries,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
     mut spk_q: Query<&mut Text, With<DerekSpeakerText>>,
     mut badge_q: Query<&mut Text, (With<DerekBadgeText>, Without<DerekSpeakerText>)>,
@@ -732,15 +963,12 @@ pub fn update_derek_cutscene(
     let bt = d_state.beat_t;
     let stage = Vec3::new(0.0, 0.0, -310.0);
 
-    // Animate actor positions (close clash in beats 2-3, truce stand side-by-side in beat 5)
+    // Animate actor positions (DBZ beam struggle stance at z = ±2.35 in beats 2-3, truce in beat 5)
     for (mut tf, act) in &mut actor_q {
         if beat == 2 || beat == 3 {
-            let clash_z = if beat == 2 {
-                0.55 + (bt * 9.0).sin().abs() * 0.25
-            } else {
-                0.52
-            };
-            tf.translation = stage + Vec3::new(0.0, 0.0, if act.is_stan { clash_z } else { -clash_z });
+            let z = if act.is_stan { 2.35 } else { -2.35 };
+            let recoil = (bt * 16.0).sin() * 0.03;
+            tf.translation = stage + Vec3::new(0.0, 0.0, z + recoil);
             tf.rotation = Quat::from_rotation_y(if act.is_stan { std::f32::consts::PI } else { 0.0 });
         } else if beat == 5 {
             tf.translation = stage + Vec3::new(if act.is_stan { 0.72 } else { -0.72 }, 0.0, 0.4);
@@ -751,20 +979,18 @@ pub fn update_derek_cutscene(
         }
     }
 
-    // Animate fighting arms during beats 2-3
+    // Animate Kamehameha outstretched palms during beats 2-3
     for (mut atf, piv) in &mut arm_q {
-        if beat == 2 {
-            let swing = (bt * 11.0 + if piv.is_left { 0.0 } else { 1.8 }).sin() * 1.15;
-            atf.rotation = Quat::from_rotation_x(-1.1 + swing);
-        } else if beat == 3 {
-            atf.rotation = Quat::from_rotation_x(-1.35 + (bt * 4.0).sin() * 0.12);
+        if beat == 2 || beat == 3 {
+            let side_in = if piv.is_left { -0.18 } else { 0.18 };
+            atf.rotation = Quat::from_euler(EulerRot::XYZ, -1.48, side_in, 0.0);
         } else {
             atf.rotation = Quat::IDENTITY;
         }
     }
 
     // Animate glistening teardrops streaming down cheeks
-    for (mut ttf, mut vis, tear) in &mut tear_q {
+    for (mut ttf, mut vis, tear) in &mut vfx.tear_q {
         if beat >= tear.min_beat && beat != 2 {
             *vis = Visibility::Visible;
             let fall = ((bt * 0.42 + tear.phase) % 1.0) * 0.14;
@@ -774,20 +1000,75 @@ pub fn update_derek_cutscene(
         }
     }
 
-    // Animate clash sparks in beats 2-3
-    for (mut stf, mut vis, sp) in &mut spark_q {
-        if beat == 2 || beat == 3 {
+    // Animate DBZ Kamehameha beam struggle + Ki auras + Clash orb + Shockwaves + Floating rocks
+    let beam_active = beat == 2 || beat == 3;
+    let clash_z = (bt * 2.2).sin() * 0.48;
+    for (mut stf, mut vis, sp) in &mut vfx.spark_q {
+        if beam_active {
             *vis = Visibility::Visible;
-            let pulse = ((bt * 7.5 + sp.angle) % 1.0) * sp.radius;
-            let a = sp.angle + bt * 3.5;
-            stf.translation = stage + Vec3::new(a.cos() * pulse, 1.35 + a.sin() * pulse * 0.7, 0.0);
+            let pulse = ((bt * 8.5 + sp.angle) % 1.0) * (sp.radius + 0.35);
+            let a = sp.angle + bt * 5.0;
+            stf.translation = stage + Vec3::new(a.cos() * pulse, 1.28 + a.sin() * pulse * 0.85, clash_z);
             stf.rotation = Quat::from_rotation_z(a);
         } else {
             *vis = Visibility::Hidden;
         }
     }
+    for (mut ktf, mut vis, ki) in &mut vfx.ki_q {
+        if beam_active {
+            *vis = Visibility::Visible;
+            let pulse = 1.0 + (bt * 18.0 + if ki.is_stan { 1.2 } else { 0.0 }).sin() * 0.18;
+            ktf.translation = stage + Vec3::new(0.0, 1.38, if ki.is_stan { 2.35 } else { -2.35 });
+            ktf.scale = Vec3::new(pulse, 1.0 + (pulse - 1.0) * 0.6, pulse);
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+    for (mut btf, mut vis, bh) in &mut vfx.beam_q {
+        if beam_active {
+            *vis = Visibility::Visible;
+            let origin_z = if bh.is_stan { 1.85 } else { -1.85 };
+            let len = (clash_z - origin_z).abs().max(0.2);
+            let mid_z = (origin_z + clash_z) * 0.5;
+            let rad_pulse = 1.0 + (bt * 22.0).sin() * 0.22;
+            btf.translation = stage + Vec3::new(0.0, 1.28, mid_z);
+            btf.scale = Vec3::new(rad_pulse, len, rad_pulse);
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+    for (mut otf, mut vis) in &mut vfx.orb_q {
+        if beam_active {
+            *vis = Visibility::Visible;
+            let s = 1.0 + (bt * 20.0).sin() * 0.28;
+            otf.translation = stage + Vec3::new(0.0, 1.28, clash_z);
+            otf.scale = Vec3::splat(s);
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+    for (mut rtf, mut vis, ring) in &mut vfx.ring_q {
+        if beam_active {
+            *vis = Visibility::Visible;
+            let prog = (bt * 1.8 + ring.phase) % 1.0;
+            rtf.translation = stage + Vec3::new(0.0, 1.28, clash_z);
+            rtf.scale = Vec3::splat(0.4 + prog * 2.6);
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
+    for (mut rktf, mut vis, rk) in &mut vfx.rock_q {
+        if beam_active {
+            *vis = Visibility::Visible;
+            let lift = ((bt * 0.55 + rk.phase) % 1.0) * 2.4;
+            rktf.translation = rk.base_pos + Vec3::Y * lift;
+            rktf.rotation = Quat::from_euler(EulerRot::XYZ, bt * 2.0 + rk.phase, bt * 1.5, 0.0);
+        } else {
+            *vis = Visibility::Hidden;
+        }
+    }
 
-    // Dramatic close-up & fighting camera angles
+    // Dramatic close-up & DBZ Kamehameha camera angles
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         let push = (bt / 5.0).min(1.0);
         match beat {
@@ -808,22 +1089,22 @@ pub fn update_derek_cutscene(
                 }
             }
             2 => {
-                // Dynamic fighting orbit & close action cuts
-                let ang = 0.75 + bt * 0.85;
-                let dist = 1.95 + (bt * 4.0).sin() * 0.22;
-                c_tf.translation = stage + Vec3::new(ang.sin() * dist, 1.55 + (bt * 3.2).cos() * 0.25, ang.cos() * dist);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.45, 0.0), Vec3::Y);
-                c_tf.rotate_local_z((bt * 5.0).sin() * 0.06);
+                // Wide/low sweeping DBZ Kamehameha beam-clash angle!
+                let ang = 1.25 + (bt * 0.65).sin() * 0.55;
+                let dist = 3.35 - push * 0.45;
+                c_tf.translation = stage + Vec3::new(ang.sin() * dist, 1.35 + (bt * 2.4).cos() * 0.18, ang.cos() * dist);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.35, clash_z), Vec3::Y);
+                c_tf.rotate_local_z((bt * 4.5).sin() * 0.045);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.68;
+                    p.fov = 0.74;
                 }
             }
             3 => {
-                // Ultra-tight nose-to-nose lock-up close-up
-                c_tf.translation = stage + Vec3::new(1.05 - push * 0.18, 1.74, 0.12);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.73, 0.0), Vec3::Y);
+                // Dramatic DBZ over-the-beam close-up looking past the clash orb at Stan & Derek!
+                c_tf.translation = stage + Vec3::new(1.55 - push * 0.25, 1.62, clash_z + 0.45);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.55, -0.35), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.52;
+                    p.fov = 0.62;
                 }
             }
             4 => {

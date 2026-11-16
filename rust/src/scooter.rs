@@ -631,13 +631,13 @@ pub fn update_city_scooter_and_phone(
     let pub_s = crate::city::pub217_scale(stats.player_scale);
     for (mut m_tf, mut mike) in &mut mike_q {
         m_tf.scale = Vec3::splat(pub_s);
-        m_tf.translation = crate::city::PUB217_ANCHOR + Vec3::new(-4.45, 0.0, -1.2) * pub_s;
+        m_tf.translation = crate::city::PUB217_ANCHOR + Vec3::new(-4.5, 0.0, 4.3) * pub_s;
         let d = Vec2::new(
             m_tf.translation.x - p_tf.translation.x,
             m_tf.translation.z - p_tf.translation.z,
         )
         .length();
-        let trigger_r = 2.6 * pub_s.sqrt();
+        let trigger_r = 1.85 * pub_s.sqrt();
         if d > 3.6 * pub_s.sqrt() {
             mike.was_inside = false;
         }

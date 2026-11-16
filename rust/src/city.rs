@@ -17,7 +17,7 @@ const LEXIE_TERRACE_POS: Vec3 = Vec3::new(0.0, 38.0, -75.5);
 pub const PUB217_ANCHOR: Vec3 = Vec3::new(-11.75, 0.0, 34.0);
 
 pub fn pub217_scale(player_scale: f32) -> f32 {
-    (player_scale / 1.8).max(1.0)
+    (player_scale / 1.8).max(1.0) * 1.45
 }
 
 pub fn is_in_pub217(pos: Vec3, player_scale: f32) -> bool {
@@ -1062,6 +1062,45 @@ pub fn spawn_nyc_world_if_needed(
                 MeshMaterial3d(pub_sign_mat.clone()),
                 Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_ANCHOR)
                     .with_scale(Vec3::new(1.2, 2.3, 0.52)),
+            ));
+            // Bold "2 1 7" 3D digits on both faces of the blade sign + glowing doorway arch
+            for z_face in [-0.28_f32, 0.28_f32] {
+                let sign_c = Vec3::new(-10.5, 4.2, 37.0 + z_face) - PUB217_ANCHOR;
+                // "2" (top y +0.62)
+                for (dx, dy, sx, sy) in [
+                    (0.0_f32, 0.78_f32, 0.50_f32, 0.11_f32),
+                    (0.20, 0.65, 0.11, 0.22),
+                    (0.0, 0.54, 0.50, 0.11),
+                    (-0.20, 0.43, 0.11, 0.22),
+                    (0.0, 0.32, 0.50, 0.11),
+                    // "1" (middle)
+                    (0.0, -0.02, 0.12, 0.44),
+                    // "7" (bottom y -0.60)
+                    (0.0, -0.44, 0.50, 0.11),
+                    (0.18, -0.64, 0.11, 0.42),
+                ] {
+                    pub_root.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(pub_black_mat.clone()),
+                        Transform::from_translation(sign_c + Vec3::new(dx, dy, 0.0))
+                            .with_scale(Vec3::new(sx, sy, 0.06)),
+                    ));
+                }
+            }
+            // Glowing doorway frame pillars + header bar so the entrance pops at night
+            for dz in [-2.35_f32, 2.35_f32] {
+                pub_root.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(pub_sign_mat.clone()),
+                    Transform::from_translation(Vec3::new(-11.42, 2.2, 34.0 + dz) - PUB217_ANCHOR)
+                        .with_scale(Vec3::new(0.18, 4.4, 0.18)),
+                ));
+            }
+            pub_root.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(pub_sign_mat.clone()),
+                Transform::from_translation(Vec3::new(-11.42, 4.45, 34.0) - PUB217_ANCHOR)
+                    .with_scale(Vec3::new(0.22, 0.22, 4.9)),
             ));
             // L-shaped mahogany bar counter + 4 tall wooden barstools
             pub_root.spawn((
