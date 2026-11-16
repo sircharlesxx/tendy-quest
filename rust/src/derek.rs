@@ -10,6 +10,7 @@ use crate::state::{GameState, LevelEntity, PlayerStats};
 #[derive(Component)]
 pub struct CityDerek {
     pub was_inside: bool,
+    pub recruited: bool,
 }
 
 #[derive(Component)]
@@ -291,7 +292,10 @@ pub fn spawn_city_derek(
         .spawn((
             LevelEntity,
             CityWorldMarker,
-            CityDerek { was_inside: false },
+            CityDerek {
+                was_inside: false,
+                recruited: false,
+            },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(0.65)),
             Visibility::default(),
         ))
@@ -301,18 +305,45 @@ pub fn spawn_city_derek(
 }
 
 pub fn update_city_derek(
+    time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     stats: Res<PlayerStats>,
-    player_q: Query<&Transform, (With<Player>, Without<CityDerek>)>,
+    player_q: Query<(&Transform, &Player), Without<CityDerek>>,
     mut derek_q: Query<(&mut Transform, &mut CityDerek), Without<Player>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut d_state: ResMut<DerekCutsceneState>,
 ) {
-    let Ok(p_tf) = player_q.get_single() else {
+    let Ok((p_tf, player)) = player_q.get_single() else {
         return;
     };
+    let dt = time.delta_secs().min(0.05);
     let pub_s = pub217_scale(stats.player_scale);
     for (mut d_tf, mut derek) in &mut derek_q {
+        if derek.recruited {
+            let s = stats.player_scale.max(1.8);
+            d_tf.scale = Vec3::splat(s);
+            let fwd = Vec3::new(player.facing_yaw.sin(), 0.0, player.facing_yaw.cos());
+            let right = Vec3::new(fwd.z, 0.0, -fwd.x);
+            let target = p_tf.translation + right * (1.8 * s) - fwd * (1.9 * s);
+            let delta = Vec3::new(target.x - d_tf.translation.x, 0.0, target.z - d_tf.translation.z);
+            let dist = delta.length();
+            if dist > 32.0 {
+                d_tf.translation = Vec3::new(target.x, 0.0, target.z);
+            } else if dist > 0.35 {
+                let speed = (10.0 + s * 2.4).max(14.0) * if dist > 7.0 { 1.6 } else { 1.0 };
+                let step = (speed * dt).min(dist);
+                let dir = delta / dist;
+                d_tf.translation.x += dir.x * step;
+                d_tf.translation.z += dir.z * step;
+                d_tf.translation.y = (time.elapsed_secs() * 11.0).sin().abs() * 0.08 * s;
+                d_tf.rotation = Quat::from_rotation_y(dir.x.atan2(dir.z));
+            } else {
+                d_tf.translation.y = 0.0;
+                d_tf.rotation = Quat::from_rotation_y(player.facing_yaw);
+            }
+            continue;
+        }
+
         d_tf.translation = PUB217_ANCHOR + Vec3::new(-9.6, 0.0, -3.4) * pub_s;
         d_tf.scale = Vec3::splat(pub_s);
         let to_p = p_tf.translation - d_tf.translation;
@@ -1159,6 +1190,7 @@ pub fn update_derek_cutscene(
 pub fn exit_derek_cutscene(
     mut commands: Commands,
     mut stats: ResMut<PlayerStats>,
+    mut derek_q: Query<&mut CityDerek>,
     ent_q: Query<Entity, With<DerekCutsceneEntity>>,
     ov_q: Query<Entity, With<DerekCutsceneOverlay>>,
     mut cam_q: Query<&mut Projection, With<Camera3d>>,
@@ -1174,9 +1206,12 @@ pub fn exit_derek_cutscene(
             p.fov = std::f32::consts::FRAC_PI_4;
         }
     }
+    for mut d in &mut derek_q {
+        d.recruited = true;
+    }
     stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.tendy_credits += 25;
-    stats.hint_text = "DEREK'S BEER TOWER TRUCE! +2 HEARTS & +25 CREDITS!".to_string();
+    stats.hint_text = "DEREK JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Beer Tower Truce!)".to_string();
     play_viking_chant_music();
 }
