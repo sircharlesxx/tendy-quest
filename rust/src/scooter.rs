@@ -35,7 +35,9 @@ pub struct CityScooter {
 }
 
 #[derive(Component)]
-pub struct CityMike;
+pub struct CityMike {
+    pub was_inside: bool,
+}
 
 #[derive(Component)]
 pub struct PhoneMazeUi;
@@ -139,7 +141,7 @@ pub fn spawn_city_scooters(
     });
 
     let spots = [
-        (Vec3::new(22.5, 0.0, 44.0), 0.25_f32),
+        (Vec3::new(-1.8, 0.0, 40.0), 0.25_f32),
         (Vec3::new(-4.5, 0.0, 46.0), -0.4),
         (Vec3::new(42.0, 0.0, 42.0), 1.2),
         (Vec3::new(-42.0, 0.0, 42.0), -1.1),
@@ -209,8 +211,8 @@ pub fn spawn_city_mike(
     materials: &mut Assets<StandardMaterial>,
     _seed: u64,
 ) {
-    // Mike hangs out in the alley right next to Pub 217 (217 3rd Ave SE)
-    let pos = Vec3::new(28.5, 0.0, 32.0);
+    // Mike hangs out in the alley right next to Pub 217 (217 3rd St SE)
+    let pos = Vec3::new(-14.5, 0.0, 22.0);
 
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
@@ -221,11 +223,19 @@ pub fn spawn_city_mike(
         ..default()
     });
     let beard = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.22, 0.14, 0.09),
+        base_color: Color::srgb(0.46, 0.34, 0.24),
         ..default()
     });
     let wrestling_tee = materials.add(StandardMaterial {
         base_color: Color::srgb(0.08, 0.08, 0.10),
+        ..default()
+    });
+    let eye_white = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        ..default()
+    });
+    let eye_pupil = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.04, 0.04, 0.05),
         ..default()
     });
     let belt_gold = materials.add(StandardMaterial {
@@ -253,7 +263,7 @@ pub fn spawn_city_mike(
         .spawn((
             LevelEntity,
             CityWorldMarker,
-            CityMike,
+            CityMike { was_inside: false },
             Transform::from_translation(pos),
         ))
         .with_children(|m| {
@@ -276,7 +286,7 @@ pub fn spawn_city_mike(
                 MeshMaterial3d(belt_gold.clone()),
                 Transform::from_xyz(0.0, 1.32, 0.18).with_scale(Vec3::new(0.42, 0.20, 0.04)),
             ));
-            // Head + Beard
+            // Head + Light Short Trimmed Beard
             m.spawn((
                 Mesh3d(unit_sphere.clone()),
                 MeshMaterial3d(skin.clone()),
@@ -285,7 +295,7 @@ pub fn spawn_city_mike(
             m.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(beard.clone()),
-                Transform::from_xyz(0.0, 1.75, 0.11).with_scale(Vec3::new(0.28, 0.20, 0.20)),
+                Transform::from_xyz(0.0, 1.74, 0.12).with_scale(Vec3::new(0.22, 0.10, 0.14)),
             ));
             // Baseball Cap (crown + front brim)
             m.spawn((
@@ -658,21 +668,31 @@ pub fn update_city_scooter_and_phone(
     let scoot_btn_clicked = scoot_ui.btn_q.iter().any(|i| *i == Interaction::Pressed);
     let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE) || scoot_btn_clicked;
 
-    // Check Mike in alleyway (beard, baseball cap, wrestling shirt) — triggers trippy cutscene on every interaction!
-    for (m_tf, _mike) in &mut mike_q {
+    // Check Mike in alleyway beside Pub 217 — bumping into him automatically triggers the Uzumaki cutscene!
+    for (m_tf, mut mike) in &mut mike_q {
         let d = Vec2::new(
             m_tf.translation.x - p_tf.translation.x,
             m_tf.translation.z - p_tf.translation.z,
         )
         .length();
-        if d < 3.4 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+        if d > 3.6 {
+            mike.was_inside = false;
+        }
+        if d < 2.6 && !mike.was_inside && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+            mike.was_inside = true;
+            stats.saved_city_pos = p_tf.translation;
+            stats.mike_return_city = true;
+            next_state.set(GameState::MikeCutscene);
+            return;
+        } else if d < 4.2 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
             if interact {
+                mike.was_inside = true;
                 stats.saved_city_pos = p_tf.translation;
                 stats.mike_return_city = true;
                 next_state.set(GameState::MikeCutscene);
                 return;
             } else {
-                stats.hint_text = "[F / E] Talk & Smoke Weed with Mike in the Alley".to_string();
+                stats.hint_text = "Bump Mike or press [F / E] for Uzumaki Alley Wisdom!".to_string();
             }
         }
     }
@@ -1044,11 +1064,19 @@ pub fn enter_mike_cutscene(
         ..default()
     });
     let beard = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.22, 0.14, 0.09),
+        base_color: Color::srgb(0.46, 0.34, 0.24),
         ..default()
     });
     let wrestling_tee = materials.add(StandardMaterial {
         base_color: Color::srgb(0.08, 0.08, 0.10),
+        ..default()
+    });
+    let eye_white = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        ..default()
+    });
+    let eye_pupil = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.04, 0.04, 0.05),
         ..default()
     });
     let belt_gold = materials.add(StandardMaterial {
@@ -1098,10 +1126,28 @@ pub fn enter_mike_cutscene(
                 MeshMaterial3d(skin.clone()),
                 Transform::from_xyz(0.0, 1.88, 0.0).with_scale(Vec3::splat(0.26)),
             ));
+            // Eyes + pupils + nose + light short trimmed beard
+            for ex in [-0.09_f32, 0.09_f32] {
+                m.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(eye_white.clone()),
+                    Transform::from_xyz(ex, 1.92, 0.21).with_scale(Vec3::splat(0.055)),
+                ));
+                m.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(eye_pupil.clone()),
+                    Transform::from_xyz(ex, 1.92, 0.25).with_scale(Vec3::splat(0.028)),
+                ));
+            }
+            m.spawn((
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.86, 0.25).with_scale(Vec3::splat(0.045)),
+            ));
             m.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(beard.clone()),
-                Transform::from_xyz(0.0, 1.77, 0.12).with_scale(Vec3::new(0.30, 0.22, 0.22)),
+                Transform::from_xyz(0.0, 1.75, 0.13).with_scale(Vec3::new(0.23, 0.10, 0.15)),
             ));
             m.spawn((
                 Mesh3d(unit_cyl.clone()),
@@ -1278,16 +1324,27 @@ pub fn update_mike_cutscene(
         stf.translation.z = sm.base_pos.z + (t * 1.1 + sm.phase).cos() * 0.45;
     }
 
-    // Trippy spiral + kaleidoscope FOV camera
+    // Uzumaki face-focused close-up on Mike (eyes, baseball cap, light short beard) -> Stan reaction
     let stage = Vec3::new(0.0, 0.0, -210.0);
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        let angle = 0.55 + t * 0.35;
-        let dist = 3.8 + (t * 1.3).sin() * 0.55;
-        c_tf.translation = stage + Vec3::new(angle.sin() * dist, 1.9 + (t * 1.6).sin() * 0.35, angle.cos() * dist);
-        c_tf.look_at(stage + Vec3::new(0.0, 1.55, if stats.cutscene_beat == 0 { -1.1 } else { 0.8 }), Vec3::Y);
-        c_tf.rotate_local_z((t * 1.75).sin() * 0.12);
-        if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = std::f32::consts::FRAC_PI_4 + (t * 2.4).sin() * 0.14;
+        if stats.cutscene_beat == 0 {
+            let sway_x = (t * 1.1).sin() * 0.16;
+            let sway_y = (t * 1.5).cos() * 0.06;
+            c_tf.translation = stage + Vec3::new(sway_x, 1.92 + sway_y, -0.38);
+            c_tf.look_at(stage + Vec3::new(0.0, 1.88, -1.55), Vec3::Y);
+            c_tf.rotate_local_z((t * 1.65).sin() * 0.10);
+            if let Projection::Perspective(ref mut p) = *proj {
+                p.fov = 0.56 + (t * 2.2).sin() * 0.08;
+            }
+        } else {
+            let angle = 0.55 + t * 0.35;
+            let dist = 3.2 + (t * 1.3).sin() * 0.4;
+            c_tf.translation = stage + Vec3::new(angle.sin() * dist, 1.95, angle.cos() * dist);
+            c_tf.look_at(stage + Vec3::new(0.0, 1.72, 0.9), Vec3::Y);
+            c_tf.rotate_local_z((t * 1.75).sin() * 0.10);
+            if let Projection::Perspective(ref mut p) = *proj {
+                p.fov = std::f32::consts::FRAC_PI_4 + (t * 2.4).sin() * 0.10;
+            }
         }
     }
     let _ = mike_line;

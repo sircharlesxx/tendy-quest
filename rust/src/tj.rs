@@ -268,7 +268,7 @@ pub fn update_city_tj(
     let t = time.elapsed_secs();
 
     if tj_q.is_empty() {
-        let spawn_pos = Vec3::new(11.0, 0.0, 44.0);
+        let spawn_pos = Vec3::new(3.5, 0.0, 38.0);
         let tj_ent = spawn_tj_character(
             &mut commands,
             &mut meshes,
