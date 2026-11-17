@@ -218,15 +218,20 @@ fn spawn_nate_rig(
         Transform::from_xyz(0.0, 1.74, 0.27),
     ));
     for sx in [-0.092_f32, 0.092] {
+        let is_lazy = sx > 0.0;
+        let eye_r = if is_lazy { 0.046 } else { 0.038 };
+        let pupil_x = if is_lazy { sx + 0.030 } else { sx };
+        let pupil_y = if is_lazy { 1.768 } else { 1.79 };
+        let pupil_z = if is_lazy { 0.248 } else { 0.255 };
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.038))),
+            Mesh3d(meshes.add(Sphere::new(eye_r))),
             MeshMaterial3d(mats.eye_white.clone()),
             Transform::from_xyz(sx, 1.79, 0.232),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.021))),
+            Mesh3d(meshes.add(Sphere::new(0.022))),
             MeshMaterial3d(mats.eye_pupil.clone()),
-            Transform::from_xyz(sx, 1.79, 0.255),
+            Transform::from_xyz(pupil_x, pupil_y, pupil_z),
         ));
         // Glasses lens + frame rim
         parent.spawn((
