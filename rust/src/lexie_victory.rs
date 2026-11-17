@@ -76,6 +76,7 @@ const GROSS_BEATS: [(&str, &str, &str); 4] = [
 
 pub fn enter_lexie_victory_cutscene(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut v_state: ResMut<LexieVictoryState>,
@@ -187,20 +188,29 @@ pub fn enter_lexie_victory_cutscene(
         Transform::from_translation(stage + Vec3::new(0.0, 0.06, -2.2)),
     ));
 
-    // Maniacal Lexie with bulging colored Uzumaki spiral eyes, gaping jaw, wild hair & pulsing boils
+    // Maniacal Lexie (real pink-hoodie, denim-shorts, blonde-hair model + colored Uzumaki spiral eyes & boils!)
     let lexie_skin = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.74, 0.84, 0.48),
-        perceptual_roughness: 0.35,
+        base_color: Color::srgb(0.84, 0.86, 0.56),
+        perceptual_roughness: 0.42,
         ..default()
     });
-    let lexie_dress = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.62, 0.12, 0.46),
-        perceptual_roughness: 0.5,
+    let pink_hoodie = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.24, 0.58),
+        perceptual_roughness: 0.55,
         ..default()
     });
-    let lexie_hair = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.14, 0.06, 0.16),
-        perceptual_roughness: 0.7,
+    let denim_shorts = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.18, 0.34, 0.62),
+        perceptual_roughness: 0.75,
+        ..default()
+    });
+    let blonde_hair = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.94, 0.78, 0.30),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let sneaker = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.92, 0.94),
         ..default()
     });
     let eye_white = materials.add(StandardMaterial {
@@ -227,277 +237,159 @@ pub fn enter_lexie_victory_cutscene(
         .spawn((
             LexieVictoryEntity,
             LexieMeltedActor,
-            Transform::from_translation(stage + Vec3::new(0.0, 0.1, -2.2)),
+            Transform::from_translation(stage + Vec3::new(0.0, 0.0, -2.2)).with_scale(Vec3::splat(0.62)),
             Visibility::default(),
         ))
         .with_children(|lx| {
-            // Torso & flailing arms
-            lx.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.85, 1.25))),
-                MeshMaterial3d(lexie_dress.clone()),
-                Transform::from_xyz(0.0, 0.65, 0.0),
-            ));
-            for sx in [-0.95_f32, 0.95] {
+            // Sneakers, legs, denim shorts, pink hoodie torso
+            for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(meshes.add(Capsule3d::new(0.18, 0.75))),
+                    Mesh3d(meshes.add(Cuboid::new(0.46, 0.36, 0.68))),
+                    MeshMaterial3d(sneaker.clone()),
+                    Transform::from_xyz(sx * 0.46, 0.18, 0.10),
+                ));
+                lx.spawn((
+                    Mesh3d(meshes.add(Cylinder::new(0.16, 1.25))),
                     MeshMaterial3d(lexie_skin.clone()),
-                    Transform::from_xyz(sx, 1.15, 0.25)
-                        .with_rotation(Quat::from_euler(EulerRot::XYZ, -0.9, 0.0, sx * 0.4)),
+                    Transform::from_xyz(sx * 0.46, 0.88, 0.0),
+                ));
+                lx.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.32))),
+                    MeshMaterial3d(denim_shorts.clone()),
+                    Transform::from_xyz(sx * 0.44, 1.56, 0.0),
+                ));
+                lx.spawn((
+                    Mesh3d(meshes.add(Capsule3d::new(0.16, 0.72))),
+                    MeshMaterial3d(pink_hoodie.clone()),
+                    Transform::from_xyz(sx * 0.95, 2.55, 0.25)
+                        .with_rotation(Quat::from_euler(EulerRot::XYZ, -0.85, 0.0, sx * 0.35)),
                 ));
             }
-            // Head
             lx.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.58))),
-                MeshMaterial3d(lexie_skin.clone()),
-                Transform::from_xyz(0.0, 1.72, 0.05),
+                Mesh3d(meshes.add(Sphere::new(0.65))),
+                MeshMaterial3d(denim_shorts),
+                Transform::from_xyz(0.0, 1.82, 0.04).with_scale(Vec3::new(1.3, 0.7, 1.1)),
             ));
-            // Wild flared hair spikes
-            for (hx, hy, hz, rz) in [
-                (-0.48_f32, 2.02_f32, -0.08_f32, 0.55_f32),
-                (0.48, 2.02, -0.08, -0.55),
-                (0.0, 2.25, -0.14, 0.0),
-                (-0.56, 1.72, -0.18, 0.85),
-                (0.56, 1.72, -0.18, -0.85),
-            ] {
+            lx.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.88))),
+                MeshMaterial3d(pink_hoodie.clone()),
+                Transform::from_xyz(0.0, 2.55, 0.10).with_scale(Vec3::new(1.15, 0.95, 0.98)),
+            ));
+            // Head + double chin
+            lx.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.62))),
+                MeshMaterial3d(lexie_skin.clone()),
+                Transform::from_xyz(0.0, 3.85, 0.06),
+            ));
+            lx.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.42))),
+                MeshMaterial3d(lexie_skin),
+                Transform::from_xyz(0.0, 3.48, 0.20).with_scale(Vec3::new(1.1, 0.55, 0.9)),
+            ));
+            // Blonde cascading hair + messy bun
+            lx.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.68))),
+                MeshMaterial3d(blonde_hair.clone()),
+                Transform::from_xyz(0.0, 4.15, -0.06).with_scale(Vec3::new(1.08, 0.82, 1.02)),
+            ));
+            lx.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.75))),
+                MeshMaterial3d(blonde_hair.clone()),
+                Transform::from_xyz(0.0, 3.55, -0.35).with_scale(Vec3::new(1.15, 1.15, 0.65)),
+            ));
+            lx.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.36))),
+                MeshMaterial3d(blonde_hair.clone()),
+                Transform::from_xyz(0.0, 4.72, -0.14),
+            ));
+            for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(meshes.add(Cone::new(0.24, 0.65))),
-                    MeshMaterial3d(lexie_hair.clone()),
-                    Transform::from_xyz(hx, hy, hz).with_rotation(Quat::from_rotation_z(rz)),
+                    Mesh3d(meshes.add(Sphere::new(0.36))),
+                    MeshMaterial3d(blonde_hair.clone()),
+                    Transform::from_xyz(sx * 0.52, 3.60, 0.02).with_scale(Vec3::new(0.75, 1.65, 0.85)),
                 ));
             }
             // Asymmetrical bulging maniacal spiral eyes!
-            for (idx, ex) in [-0.20_f32, 0.20].iter().enumerate() {
+            for (idx, ex) in [-0.22_f32, 0.22].iter().enumerate() {
                 let eye_sc = if idx == 0 { 1.25 } else { 0.92 };
                 lx.spawn((
                     Mesh3d(meshes.add(Sphere::new(0.13 * eye_sc))),
                     MeshMaterial3d(eye_white.clone()),
-                    Transform::from_xyz(*ex, 1.84, 0.52),
+                    Transform::from_xyz(*ex, 3.96, 0.56),
                 ));
                 lx.spawn((
                     Mesh3d(meshes.add(Torus::new(0.025, 0.075 * eye_sc))),
                     MeshMaterial3d(iris_spiral.clone()),
-                    Transform::from_xyz(*ex, 1.84, 0.60)
+                    Transform::from_xyz(*ex, 3.96, 0.65)
                         .with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
                 ));
                 lx.spawn((
                     Mesh3d(meshes.add(Sphere::new(0.036))),
                     MeshMaterial3d(pupil_mat.clone()),
-                    Transform::from_xyz(*ex, 1.84, 0.63),
+                    Transform::from_xyz(*ex, 3.96, 0.68),
                 ));
             }
             // Unhinged gaping mouth spewing slime
             lx.spawn((
                 Mesh3d(meshes.add(Sphere::new(0.24))),
                 MeshMaterial3d(mouth_dark),
-                Transform::from_xyz(0.0, 1.50, 0.52).with_scale(Vec3::new(1.15, 1.35, 0.65)),
+                Transform::from_xyz(0.0, 3.62, 0.56).with_scale(Vec3::new(1.15, 1.35, 0.65)),
             ));
-            // Pulsing disgusting boils on the sides of her cheeks & forehead (never blocking her spiral eyes)
+            // Pulsing disgusting boils on cheeks & forehead
             for (i, (bx, by, bz)) in [
-                (-0.42_f32, 1.62_f32, 0.34_f32),
-                (0.42, 1.64, 0.34),
-                (-0.22, 2.08, 0.38),
-                (0.24, 2.06, 0.38),
+                (-0.46_f32, 3.74_f32, 0.36_f32),
+                (0.46, 3.76, 0.36),
+                (-0.24, 4.18, 0.40),
+                (0.26, 4.16, 0.40),
             ]
             .iter()
             .enumerate()
             {
                 lx.spawn((
                     LexieBoil {
-                        base_scale: 0.06 + (i % 2) as f32 * 0.02,
+                        base_scale: 0.07 + (i % 2) as f32 * 0.02,
                         phase: i as f32 * 1.1,
                     },
                     Mesh3d(meshes.add(Sphere::new(1.0))),
                     MeshMaterial3d(boil_mat.clone()),
-                    Transform::from_xyz(*bx, *by, *bz).with_scale(Vec3::splat(0.07)),
+                    Transform::from_xyz(*bx, *by, *bz).with_scale(Vec3::splat(0.08)),
                 ));
             }
         });
 
-    // Shared materials for Stan, TJ & Derek standing together facing Lexie!
-    let skin_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.92, 0.76, 0.66),
-        perceptual_roughness: 0.65,
-        ..default()
-    });
-    let stan_plaid = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.75, 0.14, 0.16),
-        ..default()
-    });
-    let stan_gold = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.98, 0.82, 0.22),
-        metallic: 0.6,
-        ..default()
-    });
-    let dark_beard = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.11, 0.08, 0.06),
-        ..default()
-    });
-    let tj_hoodie = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.18, 0.34, 0.62),
-        ..default()
-    });
-    let derek_hoodie = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.24, 0.25, 0.28),
-        ..default()
-    });
-    let pants_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.12, 0.14, 0.20),
-        ..default()
-    });
-    let clean_white = materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        ..default()
-    });
+    // 1. REAL STAN (`models/plaid_hero.glb#Scene0`) at center, facing Lexie (-Z)
+    let hero_scene: Handle<Scene> = asset_server.load("models/plaid_hero.glb#Scene0");
+    commands.spawn((
+        LexieVictoryEntity,
+        SceneRoot(hero_scene),
+        Transform::from_translation(stage + Vec3::new(0.0, 0.0, 2.5)).with_scale(Vec3::splat(1.25)),
+    ));
 
-    // 1. STAN (center, z = +2.4, facing Lexie at -Z)
+    // 2. REAL DEREK (full dark-grey hoodie, drawstrings, back bun, beard, brows, boots)
+    let derek_mats = crate::derek::make_derek_materials(&mut materials);
     commands
         .spawn((
             LexieVictoryEntity,
-            Transform::from_translation(stage + Vec3::new(0.0, 0.0, 2.4))
-                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
-            Visibility::default(),
-        ))
-        .with_children(|st| {
-            for sx in [-0.14_f32, 0.14] {
-                st.spawn((
-                    Mesh3d(meshes.add(Capsule3d::new(0.11, 0.45))),
-                    MeshMaterial3d(stan_plaid.clone()),
-                    Transform::from_xyz(sx, 0.36, 0.0),
-                ));
-            }
-            st.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.35, 0.80))),
-                MeshMaterial3d(stan_plaid.clone()),
-                Transform::from_xyz(0.0, 1.04, 0.0),
-            ));
-            st.spawn((
-                Mesh3d(meshes.add(Cylinder::new(0.365, 0.12))),
-                MeshMaterial3d(stan_gold),
-                Transform::from_xyz(0.0, 0.82, 0.0),
-            ));
-            st.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.27))),
-                MeshMaterial3d(skin_mat.clone()),
-                Transform::from_xyz(0.0, 1.72, 0.0),
-            ));
-            st.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.25))),
-                MeshMaterial3d(dark_beard.clone()),
-                Transform::from_xyz(0.0, 1.60, 0.07).with_scale(Vec3::new(0.95, 0.88, 0.85)),
-            ));
-            st.spawn((
-                Mesh3d(meshes.add(Cone::new(0.24, 0.36))),
-                MeshMaterial3d(stan_plaid.clone()),
-                Transform::from_xyz(0.0, 2.02, -0.02),
-            ));
-            for ex in [-0.09_f32, 0.09] {
-                st.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.042))),
-                    MeshMaterial3d(clean_white.clone()),
-                    Transform::from_xyz(ex, 1.76, 0.235),
-                ));
-                st.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.022))),
-                    MeshMaterial3d(pupil_mat.clone()),
-                    Transform::from_xyz(ex, 1.76, 0.258),
-                ));
-            }
-        });
-
-    // 2. DEREK (left of Stan, x = -1.25, z = +2.55 — dark grey hoodie, back bun, thick beard)
-    commands
-        .spawn((
-            LexieVictoryEntity,
-            Transform::from_translation(stage + Vec3::new(-1.25, 0.0, 2.55))
-                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI - 0.18)),
+            Transform::from_translation(stage + Vec3::new(-1.35, 0.0, 2.65))
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI - 0.18))
+                .with_scale(Vec3::splat(1.08)),
             Visibility::default(),
         ))
         .with_children(|dk| {
-            for sx in [-0.14_f32, 0.14] {
-                dk.spawn((
-                    Mesh3d(meshes.add(Capsule3d::new(0.11, 0.45))),
-                    MeshMaterial3d(pants_mat.clone()),
-                    Transform::from_xyz(sx, 0.36, 0.0),
-                ));
-            }
-            dk.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.66, 0.80, 0.38))),
-                MeshMaterial3d(derek_hoodie),
-                Transform::from_xyz(0.0, 1.04, 0.0),
-            ));
-            dk.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.28))),
-                MeshMaterial3d(skin_mat.clone()),
-                Transform::from_xyz(0.0, 1.76, 0.0),
-            ));
-            dk.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.27))),
-                MeshMaterial3d(dark_beard.clone()),
-                Transform::from_xyz(0.0, 1.62, 0.07).with_scale(Vec3::new(0.96, 0.92, 0.88)),
-            ));
-            dk.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.11))),
-                MeshMaterial3d(dark_beard.clone()),
-                Transform::from_xyz(0.0, 1.80, -0.30),
-            ));
-            for ex in [-0.095_f32, 0.095] {
-                dk.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.042))),
-                    MeshMaterial3d(clean_white.clone()),
-                    Transform::from_xyz(ex, 1.80, 0.242),
-                ));
-                dk.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.022))),
-                    MeshMaterial3d(pupil_mat.clone()),
-                    Transform::from_xyz(ex, 1.80, 0.268),
-                ));
-            }
+            crate::derek::spawn_derek_rig(dk, &mut meshes, &derek_mats, false);
         });
 
-    // 3. TJ (right of Stan, x = +1.25, z = +2.55 — blue hoodie, dark beard, glasses)
-    commands
-        .spawn((
-            LexieVictoryEntity,
-            Transform::from_translation(stage + Vec3::new(1.25, 0.0, 2.55))
-                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI + 0.18)),
-            Visibility::default(),
-        ))
-        .with_children(|tj| {
-            for sx in [-0.14_f32, 0.14] {
-                tj.spawn((
-                    Mesh3d(meshes.add(Capsule3d::new(0.11, 0.45))),
-                    MeshMaterial3d(pants_mat.clone()),
-                    Transform::from_xyz(sx, 0.36, 0.0),
-                ));
-            }
-            tj.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.62, 0.78, 0.36))),
-                MeshMaterial3d(tj_hoodie),
-                Transform::from_xyz(0.0, 1.04, 0.0),
-            ));
-            tj.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.26))),
-                MeshMaterial3d(skin_mat.clone()),
-                Transform::from_xyz(0.0, 1.72, 0.0),
-            ));
-            tj.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.24))),
-                MeshMaterial3d(dark_beard.clone()),
-                Transform::from_xyz(0.0, 1.59, 0.07).with_scale(Vec3::new(0.92, 0.88, 0.85)),
-            ));
-            for ex in [-0.09_f32, 0.09] {
-                tj.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.04))),
-                    MeshMaterial3d(clean_white.clone()),
-                    Transform::from_xyz(ex, 1.76, 0.23),
-                ));
-                tj.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.022))),
-                    MeshMaterial3d(pupil_mat.clone()),
-                    Transform::from_xyz(ex, 1.76, 0.255),
-                ));
-            }
-        });
+    // 3. REAL TJ (blue hoodie, crutches, glasses, beard, hair via `spawn_tj_character`)
+    let tj_ent = crate::tj::spawn_tj_character(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        stage + Vec3::new(1.35, 0.0, 2.65),
+        std::f32::consts::PI + 0.18,
+        1.08,
+        false,
+    );
+    commands.entity(tj_ent).insert(LexieVictoryEntity);
 
     // Erupting disgusting slime & garlic chunk geyser blobs strictly around Lexie (never hitting camera or Stan/Derek/TJ)
     let blob_mesh = meshes.add(Sphere::new(0.10));
@@ -512,13 +404,13 @@ pub fn enter_lexie_victory_cutscene(
         commands.spawn((
             LexieVictoryEntity,
             LexieGrossBlob {
-                base_pos: stage + Vec3::new(0.0, 1.45, -2.1),
-                vel: Vec3::new(ang.cos() * spd, 3.2 + (i % 3) as f32 * 0.85, ang.sin() * spd * 0.6),
+                base_pos: stage + Vec3::new(0.0, 2.20, -2.05),
+                vel: Vec3::new(ang.cos() * spd, 2.6 + (i % 3) as f32 * 0.85, ang.sin() * spd * 0.6),
                 phase: (i as f32) * 0.21,
             },
             Mesh3d(blob_mesh.clone()),
             MeshMaterial3d(mat),
-            Transform::from_translation(stage + Vec3::new(0.0, 1.45, -2.1)),
+            Transform::from_translation(stage + Vec3::new(0.0, 2.20, -2.05)),
         ));
     }
 
@@ -540,8 +432,8 @@ pub fn enter_lexie_victory_cutscene(
     }
 
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        c_tf.translation = stage + Vec3::new(0.45, 1.85, 0.85);
-        c_tf.look_at(stage + Vec3::new(0.0, 1.65, -2.2), Vec3::Y);
+        c_tf.translation = stage + Vec3::new(0.45, 2.35, 0.85);
+        c_tf.look_at(stage + Vec3::new(0.0, 2.35, -2.2), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
             p.fov = 0.70;
         }
@@ -710,11 +602,11 @@ pub fn update_lexie_victory_cutscene(
     for mut ltf in &mut lexie_q {
         if v_state.beat < 2 {
             let shake = (t * 24.0).sin() * 0.04;
-            ltf.translation = stage + Vec3::new(shake, 0.1, -2.2);
-            ltf.scale = Vec3::splat(1.0 + (t * 5.0).sin() * 0.04);
+            ltf.translation = stage + Vec3::new(shake, 0.0, -2.2);
+            ltf.scale = Vec3::splat(0.62 * (1.0 + (t * 5.0).sin() * 0.04));
         } else {
             let melt = (1.0 - ((v_state.beat - 2) as f32 * 0.42 + bt * 0.10)).clamp(0.16, 1.0);
-            ltf.scale = Vec3::new(1.0 + (1.0 - melt) * 1.3, melt, 1.0 + (1.0 - melt) * 1.3);
+            ltf.scale = Vec3::new(0.62 * (1.0 + (1.0 - melt) * 1.3), 0.62 * melt, 0.62 * (1.0 + (1.0 - melt) * 1.3));
         }
     }
 
@@ -722,9 +614,9 @@ pub fn update_lexie_victory_cutscene(
         let push = (bt / 5.0).min(1.0);
         match v_state.beat {
             0 => {
-                // Close-up on maniacal Lexie + spinning colored Uzumaki spirals!
-                c_tf.translation = stage + Vec3::new(0.45 - push * 0.20, 1.85, 0.85 - push * 0.25);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.65, -2.2), Vec3::Y);
+                // Close-up on maniacal Lexie's face + spinning colored Uzumaki spirals!
+                c_tf.translation = stage + Vec3::new(0.45 - push * 0.20, 2.35, 0.85 - push * 0.25);
+                c_tf.look_at(stage + Vec3::new(0.0, 2.35, -2.2), Vec3::Y);
                 c_tf.rotate_local_z((t * 1.4).sin() * 0.035);
                 if let Projection::Perspective(ref mut p) = *proj {
                     p.fov = 0.70 - push * 0.06;

@@ -83,7 +83,7 @@ pub struct DerekCutsceneState {
     pub fight_sfx_played: bool,
 }
 
-struct DerekMaterials {
+pub struct DerekMaterials {
     skin: Handle<StandardMaterial>,
     hoodie: Handle<StandardMaterial>,
     hoodie_dark: Handle<StandardMaterial>,
@@ -96,7 +96,7 @@ struct DerekMaterials {
     tear: Handle<StandardMaterial>,
 }
 
-fn make_derek_materials(materials: &mut Assets<StandardMaterial>) -> DerekMaterials {
+pub fn make_derek_materials(materials: &mut Assets<StandardMaterial>) -> DerekMaterials {
     DerekMaterials {
         skin: materials.add(StandardMaterial {
             base_color: Color::srgb(0.92, 0.76, 0.66),
@@ -153,7 +153,7 @@ fn make_derek_materials(materials: &mut Assets<StandardMaterial>) -> DerekMateri
     }
 }
 
-fn spawn_derek_rig(
+pub fn spawn_derek_rig(
     parent: &mut ChildBuilder,
     meshes: &mut Assets<Mesh>,
     mats: &DerekMaterials,
