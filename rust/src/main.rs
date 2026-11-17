@@ -5,6 +5,7 @@ mod derek;
 mod enemies;
 mod level;
 mod lexie_victory;
+mod nate;
 mod player;
 mod scooter;
 mod state;
@@ -37,6 +38,10 @@ use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level}
 use lexie_victory::{
     LexieVictoryState, enter_lexie_victory_cutscene, exit_lexie_victory_cutscene,
     update_lexie_victory_cutscene,
+};
+use nate::{
+    NateCutsceneState, enter_nate_cutscene, exit_nate_cutscene, update_city_nate,
+    update_nate_cutscene,
 };
 use player::{
     animate_and_collect_pickups, animate_player_limbs, camera_mouse_look, player_movement,
@@ -79,6 +84,7 @@ fn main() {
         .init_resource::<MikeCutsceneDialog>()
         .init_resource::<DerekCutsceneState>()
         .init_resource::<LexieVictoryState>()
+        .init_resource::<NateCutsceneState>()
         .init_resource::<stunts::StuntState>()
         .add_systems(
             Startup,
@@ -219,6 +225,7 @@ fn main() {
                 update_city_npcs,
                 update_city_tj,
                 update_city_derek,
+                update_city_nate,
                 update_city_pickups,
                 update_city_lexie,
                 update_city_minimap,
@@ -254,6 +261,12 @@ fn main() {
         .add_systems(
             Update,
             update_derek_cutscene.run_if(in_state(GameState::DerekCutscene)),
+        )
+        .add_systems(OnEnter(GameState::NateCutscene), enter_nate_cutscene)
+        .add_systems(OnExit(GameState::NateCutscene), exit_nate_cutscene)
+        .add_systems(
+            Update,
+            update_nate_cutscene.run_if(in_state(GameState::NateCutscene)),
         )
         .add_systems(OnEnter(GameState::LexieVictoryCutscene), enter_lexie_victory_cutscene)
         .add_systems(OnExit(GameState::LexieVictoryCutscene), exit_lexie_victory_cutscene)

@@ -1718,6 +1718,7 @@ fn spawn_50_city_tendies(
     let mike_seed = u64::from_le_bytes(mike_seed_bytes);
     crate::scooter::spawn_city_mike(commands, meshes, materials, mike_seed);
     crate::derek::spawn_city_derek(commands, meshes, materials);
+    crate::nate::spawn_city_nate(commands, meshes, materials);
 
     for (i, pos) in spots.into_iter().enumerate() {
         commands
@@ -2337,12 +2338,14 @@ pub fn enter_city_play(
         brightness: 440.0,
     });
 
-    let resuming_from_tj = stats.tj_return_city || stats.mike_return_city || stats.derek_return_city;
+    let resuming_from_tj = stats.tj_return_city || stats.mike_return_city || stats.derek_return_city || stats.nate_return_city;
     let from_mike = stats.mike_return_city;
     let from_derek = stats.derek_return_city;
+    let from_nate = stats.nate_return_city;
     stats.tj_return_city = false;
     stats.mike_return_city = false;
     stats.derek_return_city = false;
+    stats.nate_return_city = false;
     let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
     stats.boss_mode = true;
@@ -2358,8 +2361,11 @@ pub fn enter_city_play(
         } else if from_derek {
             "DEREK JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Beer Tower Truce!)"
                 .to_string()
+        } else if from_nate {
+            "NATE JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Jobless Kung-Fu Wins!)"
+                .to_string()
         } else {
-            "TJ JOINED YOUR QUEST! Collect 50 Tendies & take down Lexie together!".to_string()
+            "TJ JOINED YOUR SQUAD! Collect 50 Tendies & take down Lexie together!".to_string()
         };
     } else {
         stats.boss_hp = 300.0;
