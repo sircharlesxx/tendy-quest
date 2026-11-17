@@ -391,6 +391,34 @@ pub fn enter_lexie_victory_cutscene(
     );
     commands.entity(tj_ent).insert(LexieVictoryEntity);
 
+    // 4. REAL NATE (glasses, prominent lazy eye, beard, sports baseball cap)
+    let nate_mats = crate::nate::make_nate_materials(&mut materials);
+    commands
+        .spawn((
+            LexieVictoryEntity,
+            Transform::from_translation(stage + Vec3::new(-2.45, 0.0, 2.90))
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI - 0.28))
+                .with_scale(Vec3::splat(1.08)),
+            Visibility::default(),
+        ))
+        .with_children(|nt| {
+            crate::nate::spawn_nate_rig(nt, &mut meshes, &nate_mats, false);
+        });
+
+    // 5. REAL GLENN (muscular build, long curly black hair, black tank)
+    let glenn_mats = crate::glenn::make_glenn_materials(&mut materials);
+    commands
+        .spawn((
+            LexieVictoryEntity,
+            Transform::from_translation(stage + Vec3::new(2.45, 0.0, 2.90))
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI + 0.28))
+                .with_scale(Vec3::splat(1.08)),
+            Visibility::default(),
+        ))
+        .with_children(|gl| {
+            crate::glenn::spawn_glenn_rig(gl, &mut meshes, &glenn_mats);
+        });
+
     // Erupting disgusting slime & garlic chunk geyser blobs strictly around Lexie (never hitting camera or Stan/Derek/TJ)
     let blob_mesh = meshes.add(Sphere::new(0.10));
     for i in 0..24 {
@@ -623,15 +651,15 @@ pub fn update_lexie_victory_cutscene(
                 }
             }
             1 => {
-                // Close-up framing Stan, Derek & TJ together reacting in disgust!
-                c_tf.translation = stage + Vec3::new(0.0, 1.80, -0.45 + push * 0.20);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.60, 2.5), Vec3::Y);
+                // Wide reaction shot framing Nate, Derek, Stan, TJ & Glenn reacting in disgust!
+                c_tf.translation = stage + Vec3::new(0.0, 1.95, -1.25 + push * 0.25);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.55, 2.75), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.78;
+                    p.fov = 0.88;
                 }
             }
             2 => {
-                // Wide 3/4 view of Lexie melting into the bubbling green puddle while Derek & TJ watch!
+                // Wide 3/4 view of Lexie melting into the bubbling green puddle while the crew watches!
                 c_tf.translation = stage + Vec3::new(3.8, 2.5, 1.8 - push * 0.35);
                 c_tf.look_at(stage + Vec3::new(0.0, 1.0, -1.6), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
@@ -639,9 +667,9 @@ pub fn update_lexie_victory_cutscene(
                 }
             }
             _ => {
-                // 3/4 group shot showing Stan, Derek & TJ's faces alongside the melted Lexie puddle & spirals
-                c_tf.translation = stage + Vec3::new(3.4 - push * 0.4, 2.2, 0.35);
-                c_tf.look_at(stage + Vec3::new(-0.3, 1.45, 0.8), Vec3::Y);
+                // 3/4 group shot showing Nate, Derek, Stan, TJ & Glenn alongside the melted Lexie puddle & spirals
+                c_tf.translation = stage + Vec3::new(4.4 - push * 0.4, 2.5, 0.55);
+                c_tf.look_at(stage + Vec3::new(-0.15, 1.45, 0.95), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
                     p.fov = 0.74;
                 }

@@ -54,7 +54,7 @@ pub struct NateCutsceneState {
     pub beat_t: f32,
 }
 
-struct NateMaterials {
+pub struct NateMaterials {
     skin: Handle<StandardMaterial>,
     jacket: Handle<StandardMaterial>,
     jacket_trim: Handle<StandardMaterial>,
@@ -69,7 +69,7 @@ struct NateMaterials {
     eye_pupil: Handle<StandardMaterial>,
 }
 
-fn make_nate_materials(materials: &mut Assets<StandardMaterial>) -> NateMaterials {
+pub fn make_nate_materials(materials: &mut Assets<StandardMaterial>) -> NateMaterials {
     NateMaterials {
         skin: materials.add(StandardMaterial {
             base_color: Color::srgb(0.91, 0.75, 0.64),
@@ -134,7 +134,7 @@ fn make_nate_materials(materials: &mut Assets<StandardMaterial>) -> NateMaterial
     }
 }
 
-fn spawn_nate_rig(
+pub fn spawn_nate_rig(
     parent: &mut ChildBuilder,
     meshes: &mut Assets<Mesh>,
     mats: &NateMaterials,

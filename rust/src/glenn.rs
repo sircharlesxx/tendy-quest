@@ -79,7 +79,7 @@ pub struct GlennCutsceneState {
     pub fight_taunt_done: bool,
 }
 
-struct GlennMaterials {
+pub struct GlennMaterials {
     skin: Handle<StandardMaterial>,
     tank: Handle<StandardMaterial>,
     hair: Handle<StandardMaterial>,
@@ -90,7 +90,7 @@ struct GlennMaterials {
     tear: Handle<StandardMaterial>,
 }
 
-fn make_glenn_materials(materials: &mut Assets<StandardMaterial>) -> GlennMaterials {
+pub fn make_glenn_materials(materials: &mut Assets<StandardMaterial>) -> GlennMaterials {
     GlennMaterials {
         skin: materials.add(StandardMaterial {
             base_color: Color::srgb(0.88, 0.70, 0.58),
@@ -134,7 +134,7 @@ fn make_glenn_materials(materials: &mut Assets<StandardMaterial>) -> GlennMateri
     }
 }
 
-fn spawn_glenn_rig(
+pub fn spawn_glenn_rig(
     parent: &mut ChildBuilder,
     meshes: &mut Assets<Mesh>,
     mats: &GlennMaterials,
