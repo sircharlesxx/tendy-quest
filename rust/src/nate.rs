@@ -730,20 +730,20 @@ pub fn update_nate_cutscene(
                 }
             }
             1 => {
-                // Reverse close-up on Stan
-                c_tf.translation = stage + Vec3::new(-0.42 + push * 0.10, 1.75, 0.72 - push * 0.12);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.70, 1.55), Vec3::Y);
+                // Reverse close-up on Stan's face (HeroHead scaled 1.20 sits around y = 1.82..2.55)
+                c_tf.translation = stage + Vec3::new(-0.46 + push * 0.12, 2.16, 0.25 - push * 0.12);
+                c_tf.look_at(stage + Vec3::new(0.0, 2.14, 1.55), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.56;
+                    p.fov = 0.54;
                 }
             }
             3 => {
-                // Extreme Dutch-angle snap close-up on Stan for "So?"
-                c_tf.translation = stage + Vec3::new(-0.28, 1.72, 0.85 - push * 0.15);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.72, 1.55), Vec3::Y);
+                // Extreme Dutch-angle snap close-up on Stan's face for "So?"
+                c_tf.translation = stage + Vec3::new(-0.32, 2.15, 0.38 - push * 0.14);
+                c_tf.look_at(stage + Vec3::new(0.0, 2.14, 1.55), Vec3::Y);
                 c_tf.rotate_local_z(0.09);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.44;
+                    p.fov = 0.48;
                 }
             }
             4 => {
