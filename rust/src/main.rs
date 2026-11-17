@@ -3,6 +3,7 @@ mod boss;
 mod city;
 mod derek;
 mod enemies;
+mod glenn;
 mod level;
 mod lexie_victory;
 mod nate;
@@ -32,6 +33,10 @@ use city::{
 use derek::{
     DerekCutsceneState, enter_derek_cutscene, exit_derek_cutscene, update_city_derek,
     update_derek_cutscene,
+};
+use glenn::{
+    GlennCutsceneState, enter_glenn_cutscene, exit_glenn_cutscene, update_city_glenn,
+    update_glenn_cutscene,
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
@@ -85,6 +90,7 @@ fn main() {
         .init_resource::<DerekCutsceneState>()
         .init_resource::<LexieVictoryState>()
         .init_resource::<NateCutsceneState>()
+        .init_resource::<GlennCutsceneState>()
         .init_resource::<stunts::StuntState>()
         .add_systems(
             Startup,
@@ -226,6 +232,7 @@ fn main() {
                 update_city_tj,
                 update_city_derek,
                 update_city_nate,
+                update_city_glenn,
                 update_city_pickups,
                 update_city_lexie,
                 update_city_minimap,
@@ -267,6 +274,12 @@ fn main() {
         .add_systems(
             Update,
             update_nate_cutscene.run_if(in_state(GameState::NateCutscene)),
+        )
+        .add_systems(OnEnter(GameState::GlennCutscene), enter_glenn_cutscene)
+        .add_systems(OnExit(GameState::GlennCutscene), exit_glenn_cutscene)
+        .add_systems(
+            Update,
+            update_glenn_cutscene.run_if(in_state(GameState::GlennCutscene)),
         )
         .add_systems(OnEnter(GameState::LexieVictoryCutscene), enter_lexie_victory_cutscene)
         .add_systems(OnExit(GameState::LexieVictoryCutscene), exit_lexie_victory_cutscene)
