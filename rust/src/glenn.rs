@@ -554,15 +554,15 @@ pub fn enter_glenn_cutscene(
 
     // DBZ Super Ki Auras, Teleport Sonic Rings & Flying Building Rubble
     let glenn_aura = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.25, 0.20, 0.34),
-        emissive: LinearRgba::new(4.5, 0.9, 0.3, 1.0),
+        base_color: Color::srgba(1.0, 0.25, 0.20, 0.11),
+        emissive: LinearRgba::new(0.85, 0.20, 0.08, 1.0),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
     });
     let stan_aura = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.85, 0.20, 0.34),
-        emissive: LinearRgba::new(4.2, 3.0, 0.3, 1.0),
+        base_color: Color::srgba(1.0, 0.85, 0.20, 0.11),
+        emissive: LinearRgba::new(0.85, 0.62, 0.08, 1.0),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
