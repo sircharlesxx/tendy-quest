@@ -76,6 +76,7 @@ pub struct GlennCutsceneState {
     pub beat: u8,
     pub beat_t: f32,
     pub tp_sfx_timer: f32,
+    pub fight_taunt_done: bool,
 }
 
 struct GlennMaterials {
@@ -784,7 +785,19 @@ pub fn update_glenn_cutscene(
     let dt = time.delta_secs().min(0.05);
     g_state.beat_t += dt;
 
-    if g_state.beat_t >= 4.0 && (!is_voice_speaking() || g_state.beat_t >= 18.0) {
+    if g_state.beat == 4 && !g_state.fight_taunt_done && g_state.beat_t >= 6.5 {
+        g_state.fight_taunt_done = true;
+        play_sfx("thunder");
+        play_sfx("car_crash");
+        let mid_line = "MAXIMUM GAINZ OVERDRIVE!! *KRAKOOM* THE WHOLE SKYLINE IS COLLAPSING!!";
+        speak_voice(mid_line, "stan");
+        if let Ok(mut sub) = sub_q.get_single_mut() {
+            sub.0 = format!("\"{}\"", mid_line);
+        }
+    }
+
+    let min_t = if g_state.beat == 4 { 13.5 } else { 4.0 };
+    if g_state.beat_t >= min_t && (!is_voice_speaking() || g_state.beat_t >= 22.0) {
         if g_state.beat + 1 >= GLENN_BEATS.len() as u8 {
             next_state.set(GameState::CityPlay);
             return;
@@ -869,7 +882,7 @@ pub fn update_glenn_cutscene(
 
     for (mut tf, act) in &mut actor_q {
         if beat == 4 {
-            let z_off = if act.is_stan { 1.15 } else { -1.15 };
+            let z_off = if act.is_stan { 2.05 } else { -2.05 };
             tf.translation = fight_center + Vec3::new(0.0, 0.0, z_off);
             tf.rotation = Quat::IDENTITY;
         } else if beat == 5 {
@@ -895,7 +908,7 @@ pub fn update_glenn_cutscene(
         if beat >= 3 && beat <= 5 {
             *vis = Visibility::Visible;
             let z_off = if beat == 4 {
-                if aura.is_stan { 1.15 } else { -1.15 }
+                if aura.is_stan { 2.05 } else { -2.05 }
             } else if beat == 5 {
                 if aura.is_stan { 1.5 } else { -1.5 }
             } else if aura.is_stan {
@@ -954,10 +967,11 @@ pub fn update_glenn_cutscene(
         let push = (bt / 5.0).min(1.0);
         match beat {
             0 | 2 => {
-                c_tf.translation = stage + Vec3::new(-0.55 + push * 0.15, 1.72, 0.65 - push * 0.20);
-                c_tf.look_at(stage + Vec3::new(0.0, 1.45, 0.2), Vec3::Y);
+                // Wide side shot showing BOTH Stan & Glenn clearly with the Beer Tower between them!
+                c_tf.translation = stage + Vec3::new(4.8 - push * 0.4, 2.25, 0.3);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.35, 0.0), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.64;
+                    p.fov = 0.72;
                 }
             }
             1 | 3 => {
@@ -970,14 +984,14 @@ pub fn update_glenn_cutscene(
                 }
             }
             4 => {
-                // Fast DBZ teleport tracking angle with destroyed skyline behind them!
-                let ang = 0.8 + bt * 1.4;
-                let dist = 4.6;
-                c_tf.translation = fight_center + Vec3::new(ang.sin() * dist, 1.8, ang.cos() * dist);
-                c_tf.look_at(fight_center + Vec3::Y * 1.3, Vec3::Y);
-                c_tf.rotate_local_z((bt * 6.5).sin() * 0.07);
+                // Zoomed-out high-speed DBZ teleport tracking angle showing both fighters & collapsing buildings!
+                let ang = 0.8 + bt * 0.95;
+                let dist = 8.4;
+                c_tf.translation = fight_center + Vec3::new(ang.sin() * dist, 2.6, ang.cos() * dist);
+                c_tf.look_at(fight_center + Vec3::Y * 1.4, Vec3::Y);
+                c_tf.rotate_local_z((bt * 4.5).sin() * 0.05);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.78;
+                    p.fov = 0.80;
                 }
             }
             5 => {
