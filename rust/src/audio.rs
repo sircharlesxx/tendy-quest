@@ -155,6 +155,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = hasDefeatedMom)]
         fn js_has_defeated_mom() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearAllProgress)]
+        fn js_clear_all_progress();
+
         #[wasm_bindgen(js_namespace = ["window", "tendyBoot"], js_name = ready)]
         fn js_boot_ready();
 
@@ -378,6 +381,11 @@ mod imp {
         js_has_defeated_mom()
     }
 
+    /// Pause-menu Clear save: drops both localStorage keys (checkpoint + Mom-defeated).
+    pub fn clear_all_progress() {
+        js_clear_all_progress();
+    }
+
     /// Startup scenes are loaded: lets `index.html` fade its loading screen out.
     pub fn notify_boot_ready() {
         js_boot_ready();
@@ -555,6 +563,8 @@ mod imp {
         false
     }
 
+    pub fn clear_all_progress() {}
+
     pub fn notify_boot_ready() {}
 
     pub fn update_telemetry(
@@ -580,6 +590,6 @@ pub use imp::{
     touch_move_y, update_telemetry,
 };
 // Pause menu / controls strip bridge (controls.rs).
-pub use imp::{last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
+pub use imp::{clear_all_progress, last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
 // Debug start at the Pub 217 beer tower (beer_fx.rs).
 pub use imp::debug_at_beer;

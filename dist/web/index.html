@@ -41,6 +41,12 @@
           return false;
         }
       },
+      clearAllProgress() {
+        try {
+          localStorage.removeItem("tendy_quest_save_v1");
+          localStorage.removeItem("tendy_quest_mom_defeated_v1");
+        } catch (_) {}
+      },
     };
     window.tendyTelemetry = {
       state: "Tutorial",
@@ -1748,7 +1754,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-e9039de287c8e9e2.js" crossorigin="anonymous" integrity="sha384-7QAQR+bnsEjZffRjkGmPG9eD318CVExp5MAyRRxyBnyNtMCI9qBqaikASOJu8IBv"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-86769a3003f70d46_bg.wasm" crossorigin="anonymous" integrity="sha384-CFaYX/FVHeRL8aokn2nF18b0TdrQKZwYyv3PBCHyW+4wwejy/9RDm8US1GPUBjgL" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-cf626babaadf2c41.js" crossorigin="anonymous" integrity="sha384-CXGDiZY2/YhIakEYkvDVS4/Xcrmw/fAjAH4n0TUw6R26Nm4zEcsXP0WjClR9AEAn"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-817f389ad25e8b12_bg.wasm" crossorigin="anonymous" integrity="sha384-X6IjMVplOH647dgPCsMqUgrD07KU6qf8WSUiIH/r5bqnSxX+Hte+Q3mEak7Qbmw4" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -2611,8 +2617,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-e9039de287c8e9e2.js';
-const wasm = await init({ module_or_path: './tendy-quest-86769a3003f70d46_bg.wasm' });
+import init, * as bindings from './tendy-quest-cf626babaadf2c41.js';
+const wasm = await init({ module_or_path: './tendy-quest-817f389ad25e8b12_bg.wasm' });
 
 
 window.wasmBindings = bindings;

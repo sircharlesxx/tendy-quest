@@ -620,7 +620,14 @@ pub fn update_hud(
             }
             HudField::Tier => format!("{} | {}cm", stats.size_tier(), stats.height_cm()),
             HudField::Flask => format!("FLASK [Q] {}/{}", stats.estus_flasks, stats.max_estus_flasks),
-            HudField::Credits => format!("CREDITS {}", stats.tendy_credits),
+            // The license is saved with the checkpoint, so show when Stan is carrying it.
+            HudField::Credits => {
+                if stats.in_city && stats.has_license {
+                    format!("CREDITS {} | LICENSE", stats.tendy_credits)
+                } else {
+                    format!("CREDITS {}", stats.tendy_credits)
+                }
+            }
             HudField::App => {
                 if stats.scooter_app_unlocked {
                     "SCOOTER APP OK".to_string()
