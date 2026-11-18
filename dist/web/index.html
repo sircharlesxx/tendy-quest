@@ -56,6 +56,17 @@
       bossHp: 100,
       credits: 0,
       inCity: false,
+      // Ferris wheel debug line (debug=1 runs with city_start=wheel or wheel_demo only).
+      wheel: "",
+      setWheel(line) {
+        this.wheel = line;
+      },
+      // Skate park debug demos (?debug=1&park_demo=...) append per-frame state lines here.
+      parkLog(line) {
+        const log = (window.tendyParkLog = window.tendyParkLog || []);
+        log.push(line);
+        if (log.length > 20000) log.shift();
+      },
       update(state, hearts, tendies, stamina, bossHp, credits, inCity) {
         this.state = state;
         this.hearts = hearts;
@@ -399,6 +410,16 @@
           mkOsc("sawtooth", 620, 75, 0.34, 0.34);
           mkOsc("square", 1180, 140, 0.26, 0.28);
           mkOsc("triangle", 290, 48, 0.42, 0.30);
+          return true;
+        }
+        if (name === "grind") {
+          mkNoise(0.15, 0.10, 3400);
+          mkOsc("sawtooth", 1850, 1650, 0.13, 0.025);
+          return true;
+        }
+        if (name === "grind_lock") {
+          mkOsc("square", 1500, 620, 0.09, 0.16);
+          mkNoise(0.10, 0.20, 2600);
           return true;
         }
         if (name === "rage_swell") {
@@ -1754,7 +1775,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-cf626babaadf2c41.js" crossorigin="anonymous" integrity="sha384-CXGDiZY2/YhIakEYkvDVS4/Xcrmw/fAjAH4n0TUw6R26Nm4zEcsXP0WjClR9AEAn"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-817f389ad25e8b12_bg.wasm" crossorigin="anonymous" integrity="sha384-X6IjMVplOH647dgPCsMqUgrD07KU6qf8WSUiIH/r5bqnSxX+Hte+Q3mEak7Qbmw4" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-8496e26187e156cd.js" crossorigin="anonymous" integrity="sha384-TGb2Havf+CxPseEvnvFBDLCbRPVC0KbrDaJeaj7B/Nx4kDwNTP5jkSZSZ7+Xxtm1"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-b41a18e77d2517fc_bg.wasm" crossorigin="anonymous" integrity="sha384-8S6yAVvhNhbQOcQ62LKMEQJpWZGJPUprX85rXmwcPgTXbI0440LYfWgv433dZtbr" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1810,6 +1831,8 @@
       let lookDY = 0.0;
       let zoomDelta = 0.0;
       let jumpQueued = false;
+      // Touch JUMP still held (skate park backflips need a hold; taps stay queued above).
+      let jumpTouchHeld = false;
       let dashQueued = false;
       let attackQueued = false;
       // SABER held (touch) / RB or RT held (gamepad): boss-mode heavy charge. Tap = light swing.
@@ -2105,6 +2128,11 @@
       }
 
       bindActionBtn(btnJump, () => { jumpQueued = true; });
+      if (btnJump) {
+        btnJump.addEventListener("touchstart", () => { jumpTouchHeld = true; }, { passive: true });
+        btnJump.addEventListener("touchend", () => { jumpTouchHeld = false; }, { passive: true });
+        btnJump.addEventListener("touchcancel", () => { jumpTouchHeld = false; }, { passive: true });
+      }
       bindActionBtn(btnDash, () => { dashQueued = true; });
       // SABER: the press queues the swing and the finger staying down charges a heavy.
       if (btnAttack) {
@@ -2557,6 +2585,7 @@
         takeLookDY() { pollGamepad(); const v = lookDY; lookDY = 0.0; return v; },
         takeZoomDelta() { const v = zoomDelta; zoomDelta = 0.0; return v; },
         takeJump() { const v = jumpQueued; jumpQueued = false; return v; },
+        jumpHeld() { return jumpTouchHeld; },
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
         takeAttack() { const v = attackQueued; attackQueued = false; return v; },
         blockHeld() { return blockHeld; },
@@ -2576,7 +2605,7 @@
           const m = window.location.search.match(/[?&]combat_demo=([A-Za-z0-9.:_-]+)/);
           return m ? m[1] : "";
         },
-        // Debug: ?debug=1&city_start=pub (or pubin, door, sky, crew) drops Stan there on a fresh city entry.
+        // Debug: ?debug=1&city_start=pub (or pubin, door, sky, crew, wheel, wheelst, wheelfar, wheelriver) drops Stan there on a fresh city entry.
         cityStart() {
           if (!debugKeysEnabled) return "";
           const m = window.location.search.match(/[?&]city_start=([a-z]+)/);
@@ -2586,6 +2615,12 @@
         skipHeld() { pollGamepad(); return skipTouchHeld || gpStartHeld; },
         skipTouchUi,
         setCutsceneSkip,
+        // Debug: ?debug=1&park_demo=pipe (or ramp, grind, line, circuit, walk, giant) runs a scripted skate park ride.
+        parkDemo() {
+          if (!debugKeysEnabled) return "";
+          const m = window.location.search.match(/[?&]park_demo=([a-z]+)/);
+          return m ? m[1] : "";
+        },
         // Debug: ?debug=1&autoskip=1 skips each cutscene a few seconds in (headless tests).
         autoSkip() { return autoSkipEnabled; },
         // Pause menu: -1 up, 1 down, 3 back (B), 0 nothing; polls the pad itself because
@@ -2594,6 +2629,12 @@
         usingGamepad() { return lastInputPad; },
         takePointerLockLost() { const v = pointerLockLost; pointerLockLost = false; return v; },
         takeDebugPause() { const v = debugPausePending; debugPausePending = false; return v; },
+        // Debug: ?debug=1&wheel_demo=ride (or fast, exit, spin, titan) drives the Ferris wheel.
+        wheelDemo() {
+          if (!debugKeysEnabled) return "";
+          const m = window.location.search.match(/[?&]wheel_demo=([a-z]+)/);
+          return m ? m[1] : "";
+        },
         // Debug: ?debug=1&at_beer=1 starts Stan inside Pub 217 facing the beer tower.
         atBeer() { return debugKeysEnabled && /[?&]at_beer=1(?:&|$)/.test(window.location.search); },
       };
@@ -2615,10 +2656,631 @@
     });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
   </script>
+  <!-- ===== BEGIN experimental free-roam multiplayer (window.tendyNet) =====
+       Inert unless the URL has mp=1, mp=tabs or mp=rtc: without it only the stub below exists
+       (no DOM, no BroadcastChannel, no RTCPeerConnection, no network traffic).
+       Rust side: rust/src/net.rs. Design and limits: docs/MULTIPLAYER.md. -->
+  <script>
+    window.tendyNet = (() => {
+      "use strict";
+      const STUB = {
+        enabled() { return false; },
+        publish() {},
+        event() {},
+        drain() { return new Float64Array(0); },
+        telemetry() {},
+      };
+      let params;
+      try { params = new URLSearchParams(window.location.search); } catch (_) { return STUB; }
+      const mpParam = (params.get("mp") || "").toLowerCase();
+      if (!["1", "tabs", "rtc"].includes(mpParam)) return STUB;
+
+      // ---- Constants (keep in sync with net.rs) ----
+      const VER = 1;
+      const T_STATE = 1, T_HELLO = 2, T_BYE = 3, T_EVENT = 4;
+      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20 };
+      const MAX_MSG = 64;          // bytes; anything bigger is dropped unread
+      const MAX_REMOTES = 5;       // 6 players in total
+      const REC_W = 19;            // drain() record width
+      const INBOX_CAP = 600;       // records queued for the game (drops oldest)
+      const PEER_TIMEOUT_MS = 10000; // long frames (asset loads, slow phones) block timers
+      const KEEPALIVE_MS = 1000;
+      const RATE_PER_S = 30, RATE_BURST = 30;
+      const CITY_HALF = 135, Y_MIN = -2, Y_MAX = 60;
+      const SLOT_COLORS = { 2: "#ff8c1a", 3: "#f24dd9", 4: "#66f259", 5: "#ffe633", 6: "#ff5252" };
+
+      // Optional STUN server for internet tests (?mp_stun=stun:host:port). Off by default so
+      // nothing off-device is contacted; there is no TURN, so some networks will never connect.
+      const stunRaw = params.get("mp_stun") || "";
+      const stunUrl = /^stuns?:[A-Za-z0-9.-]{1,120}(:\d{1,5})?$/.test(stunRaw) ? stunRaw : "";
+      const roomFromUrl = (params.get("mp_room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+
+      const rnd = new Uint32Array(1);
+      crypto.getRandomValues(rnd);
+      const myId = (rnd[0] || 1) >>> 0;
+
+      const net = {
+        transport: null,   // { kind, send(buf, reliable), close(), ... }
+        transportKind: mpParam === "rtc" ? "rtc" : "tabs",
+        room: "",
+        status: "Not connected",
+        peers: new Map(),  // remote id -> { slot, last, tokens, fill, conn }
+        inbox: [],         // Float64Array records for drain()
+        seq: 0,
+        lastState: null,   // Float32Array copy of the last published state
+        lastBuf: null,     // its encoded message, re-sent unchanged as the keepalive
+        lastSendAt: 0,
+        stats: { sent: 0, recv: 0, dropped: 0, relayed: 0 },
+        game: null,        // last telemetry object from Rust
+      };
+
+      // ---- Wire format (little endian) ----
+      // header: u8 version, u8 type, u16 seq, u32 sender id, u32 sender time (ms, wraps)
+      // STATE (44 B): f32 x,y,z | i16 qx,qy,qz,qw (x32767) | i16 vx,vy,vz (cm/s) | u16 scale x1000
+      //               | u8 mode | u8 flags | u8 action x255 | u8 reserved
+      // HELLO / BYE (12 B): header only.   EVENT (20 B): u8 code, 3 pad, u32 value.
+      function header(type, len) {
+        const buf = new ArrayBuffer(len);
+        const v = new DataView(buf);
+        net.seq = (net.seq + 1) & 0xffff;
+        v.setUint8(0, VER);
+        v.setUint8(1, type);
+        v.setUint16(2, net.seq, true);
+        v.setUint32(4, myId, true);
+        v.setUint32(8, Math.floor(performance.now()) >>> 0, true);
+        return [buf, v];
+      }
+      const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+      const i16 = (x, k) => clamp(Math.round((Number.isFinite(x) ? x : 0) * k), -32767, 32767);
+      function encodeState(s) {
+        const [buf, v] = header(T_STATE, LEN[T_STATE]);
+        v.setFloat32(12, clamp(s[0], -CITY_HALF, CITY_HALF), true);
+        v.setFloat32(16, clamp(s[1], Y_MIN, Y_MAX), true);
+        v.setFloat32(20, clamp(s[2], -CITY_HALF, CITY_HALF), true);
+        for (let i = 0; i < 4; i++) v.setInt16(24 + i * 2, i16(s[3 + i], 32767), true);
+        for (let i = 0; i < 3; i++) v.setInt16(32 + i * 2, i16(s[7 + i], 100), true);
+        v.setUint16(38, clamp(Math.round(s[10] * 1000), 0, 65535), true);
+        v.setUint8(40, clamp(s[11] | 0, 0, 255));
+        v.setUint8(41, clamp(s[12] | 0, 0, 255));
+        v.setUint8(42, clamp(Math.round(s[13] * 255), 0, 255));
+        return buf;
+      }
+
+      // ---- Receiving: every message is untrusted ----
+      function drop() { net.stats.dropped++; }
+      function pushRecord(rec) {
+        net.inbox.push(rec);
+        if (net.inbox.length > INBOX_CAP) net.inbox.splice(0, net.inbox.length - INBOX_CAP);
+      }
+      function freeSlot() {
+        const used = new Set([...net.peers.values()].map((p) => p.slot));
+        for (let s = 2; s <= 6; s++) if (!used.has(s)) return s;
+        return 0;
+      }
+      function removePeer(id) {
+        const p = net.peers.get(id);
+        if (!p) return;
+        net.peers.delete(id);
+        const rec = new Float64Array(REC_W);
+        rec[0] = 2; rec[1] = p.slot;
+        pushRecord(rec);
+        // As WebRTC host, tell the other guests this one left.
+        if (net.transport && net.transport.isHost) {
+          const [buf, v] = header(T_BYE, LEN[T_BYE]);
+          v.setUint32(4, id, true);
+          net.transport.send(buf, true, p.conn);
+        }
+        refreshPanel();
+      }
+      function onWire(data, conn, reliable) {
+        // 1. Shape: binary, small, known version / type with its exact length, a real sender id.
+        if (!(data instanceof ArrayBuffer) || data.byteLength < 12 || data.byteLength > MAX_MSG) return drop();
+        const v = new DataView(data);
+        const ver = v.getUint8(0), type = v.getUint8(1);
+        if (ver !== VER || LEN[type] !== data.byteLength) return drop();
+        const id = v.getUint32(4, true);
+        if (id === 0 || id === myId) return drop();
+        // A WebRTC guest may only speak for itself: bind each guest connection to its first id.
+        // On a guest, the first message on the ordered "ev" channel is the host's own hello
+        // (relayed hellos follow it), so that binds the host's id.
+        if (conn && !conn.boundId && (conn.bindsId || reliable)) conn.boundId = id;
+        if (conn && conn.bindsId && conn.boundId !== id) return drop();
+        // 2. Content: finite numbers inside the city, known enums. Checked before the sender is
+        //    registered, so junk never takes a player slot.
+        let rec = null;
+        if (type === T_STATE) {
+          const x = v.getFloat32(12, true), y = v.getFloat32(16, true), z = v.getFloat32(20, true);
+          if (![x, y, z].every(Number.isFinite)) return drop();
+          if (Math.abs(x) > CITY_HALF + 1 || Math.abs(z) > CITY_HALF + 1 || y < Y_MIN - 1 || y > Y_MAX + 1) return drop();
+          const mode = v.getUint8(40), flags = v.getUint8(41);
+          if (mode > 4 || flags > 127) return drop();
+          rec = new Float64Array(REC_W);
+          rec[0] = 1; rec[2] = v.getUint16(2, true); rec[3] = v.getUint32(8, true);
+          rec[5] = x; rec[6] = y; rec[7] = z;
+          for (let i = 0; i < 4; i++) rec[8 + i] = v.getInt16(24 + i * 2, true) / 32767;
+          for (let i = 0; i < 3; i++) rec[12 + i] = v.getInt16(32 + i * 2, true) / 100;
+          rec[15] = v.getUint16(38, true) / 1000;
+          rec[16] = mode; rec[17] = flags; rec[18] = v.getUint8(42) / 255;
+        } else if (type === T_EVENT) {
+          const code = v.getUint8(12), value = v.getUint32(16, true);
+          if (code < 1 || code > 2 || value > 1000000) return drop();
+          rec = new Float64Array(REC_W);
+          rec[0] = 3; rec[2] = code; rec[3] = value;
+        }
+        let peer = net.peers.get(id);
+        if (type === T_BYE) {
+          if (conn && !conn.bindsId && conn.boundId === id) {
+            // The WebRTC host left: the star is gone, so the whole session ends here.
+            leave();
+            return setStatus("The host left. Ask for a new invite to play again.");
+          }
+          if (peer) removePeer(id);
+          return;
+        }
+        // 3. Sender: known, or a newcomer while there is a free slot (6 players at most).
+        if (!peer) {
+          if (net.peers.size >= MAX_REMOTES) return drop();
+          const slot = freeSlot();
+          if (!slot) return drop();
+          peer = { slot, last: 0, tokens: RATE_BURST, fill: performance.now(), conn };
+          net.peers.set(id, peer);
+          // Introduce ourselves to a newcomer (once: we now know it, so its reply won't loop).
+          sendHello();
+          if (net.lastBuf) sendBuf(net.lastBuf, false);
+          refreshPanel();
+        }
+        // 4. Rate: token bucket per sender.
+        const now = performance.now();
+        peer.tokens = Math.min(RATE_BURST, peer.tokens + ((now - peer.fill) / 1000) * RATE_PER_S);
+        peer.fill = now;
+        if (peer.tokens < 1) return drop();
+        peer.tokens -= 1;
+        peer.last = now;
+        net.stats.recv++;
+        if (rec) {
+          rec[1] = peer.slot;
+          if (rec[0] === 1) rec[4] = now;
+          pushRecord(rec);
+        }
+        // WebRTC host relays guests to each other (star topology), unchanged.
+        if (net.transport && net.transport.isHost) {
+          net.stats.relayed += net.transport.send(data, type !== T_STATE, conn);
+        }
+      }
+
+      // ---- Sending ----
+      function sendBuf(buf, reliable) {
+        if (!net.transport) return;
+        net.transport.send(buf, reliable, null);
+        net.stats.sent++;
+      }
+      function sendHello() { sendBuf(header(T_HELLO, LEN[T_HELLO])[0], true); }
+      function sendBye() { if (net.transport) sendBuf(header(T_BYE, LEN[T_BYE])[0], true); }
+
+      // ---- Transport 1: BroadcastChannel (tabs of one browser, same origin; no network) ----
+      function tabsTransport(room) {
+        const ch = new BroadcastChannel("tendy-mp-v1:" + room);
+        ch.onmessage = (e) => onWire(e.data, null);
+        return {
+          kind: "tabs",
+          isHost: false,
+          send(buf) { ch.postMessage(buf); },
+          close() { ch.close(); },
+          connCount() { return 1; },
+        };
+      }
+
+      // ---- Transport 2: WebRTC data channels, manual copy/paste signaling ----
+      // Each connection has an unreliable unordered "st" channel for state and a reliable "ev"
+      // channel for hello/bye/events. The host connects to each guest; guests relay through it.
+      function rtcTransport(isHost) {
+        const conns = [];
+        const t = {
+          kind: "rtc",
+          isHost,
+          conns,
+          pending: null,
+          send(buf, reliable, except) {
+            let n = 0;
+            for (const c of conns) {
+              if (c === except || !c.open) continue;
+              const ch = reliable || c.st.readyState !== "open" ? c.ev : c.st;
+              try { if (ch.readyState === "open") { ch.send(buf); n++; } } catch (_) {}
+            }
+            return n;
+          },
+          close() {
+            for (const c of conns) { try { c.pc.close(); } catch (_) {} }
+            conns.length = 0;
+          },
+          connCount() { return conns.filter((c) => c.open).length; },
+          newConn() {
+            const pc = new RTCPeerConnection({ iceServers: stunUrl ? [{ urls: stunUrl }] : [] });
+            const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+            const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
+            const c = { pc, st, ev, open: false, bindsId: isHost, boundId: 0 };
+            for (const ch of [st, ev]) {
+              ch.binaryType = "arraybuffer";
+              ch.onmessage = (e) => onWire(e.data, c, ch === ev);
+            }
+            ev.onopen = () => {
+              c.open = true;
+              setStatus("Connected (WebRTC)");
+              if (ui.panel) togglePanel(false); // out of the way; the MP pill reopens it
+              sendHello();
+              if (net.lastBuf) sendBuf(net.lastBuf, false);
+            };
+            const closed = () => {
+              if (!c.open && conns.indexOf(c) < 0) return;
+              c.open = false;
+              if (net.transport !== t) return; // already left this session
+              const i = conns.indexOf(c);
+              if (i >= 0) conns.splice(i, 1);
+              for (const [id, p] of [...net.peers]) if (p.conn === c || !isHost) removePeer(id);
+              setStatus(conns.length ? "Connected (WebRTC)" : "Connection closed");
+            };
+            ev.onclose = closed;
+            pc.onconnectionstatechange = () => {
+              if (pc.connectionState === "failed") setStatus("WebRTC failed (no route between the two devices; see notes)");
+              if (pc.connectionState === "failed" || pc.connectionState === "closed") closed();
+            };
+            conns.push(c);
+            return c;
+          },
+        };
+        return t;
+      }
+      function iceGathered(pc) {
+        if (pc.iceGatheringState === "complete") return Promise.resolve();
+        return new Promise((res) => {
+          const done = () => { if (pc.iceGatheringState === "complete") { clearTimeout(timer); res(); } };
+          const timer = setTimeout(res, 5000);
+          pc.addEventListener("icegatheringstatechange", done);
+        });
+      }
+
+      // Signaling codes: "TQ1." + base64url(deflate-raw(JSON)) or "TQ0." + base64url(JSON).
+      const b64u = (bytes) => {
+        let s = "";
+        for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      };
+      const unb64u = (s) => {
+        const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+      };
+      async function pipeBytes(bytes, stream, cap) {
+        const reader = new Blob([bytes]).stream().pipeThrough(stream).getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          total += value.length;
+          if (total > cap) { try { reader.cancel(); } catch (_) {} throw new Error("code too large"); }
+          chunks.push(value);
+        }
+        const out = new Uint8Array(total);
+        let o = 0;
+        for (const c of chunks) { out.set(c, o); o += c.length; }
+        return out;
+      }
+      async function encodeCode(kind, sdp) {
+        const json = new TextEncoder().encode(JSON.stringify({ v: 1, t: kind, s: sdp }));
+        if (typeof CompressionStream === "function") {
+          try { return "TQ1." + b64u(await pipeBytes(json, new CompressionStream("deflate-raw"), 65536)); } catch (_) {}
+        }
+        return "TQ0." + b64u(json);
+      }
+      async function decodeCode(text, kind) {
+        const code = String(text || "").replace(/\s+/g, "");
+        const m = /^TQ([01])\.([A-Za-z0-9_-]{16,12000})$/.exec(code);
+        if (!m) throw new Error("That does not look like a game code.");
+        let bytes = unb64u(m[2]);
+        if (m[1] === "1") {
+          if (typeof DecompressionStream !== "function") throw new Error("This browser cannot read compressed codes.");
+          bytes = await pipeBytes(bytes, new DecompressionStream("deflate-raw"), 32768);
+        }
+        let obj;
+        try { obj = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch (_) { throw new Error("Code is damaged."); }
+        if (!obj || typeof obj !== "object" || obj.v !== 1 || typeof obj.s !== "string" || obj.s.length > 20000 || !obj.s.startsWith("v=0")) {
+          throw new Error("Code is damaged.");
+        }
+        if (obj.t !== kind) throw new Error(kind === "o" ? "That is a reply code; paste the invite code." : "That is an invite code; paste the reply code.");
+        return obj.s;
+      }
+
+      // ---- Session control ----
+      function leave() {
+        sendBye();
+        if (net.transport) { try { net.transport.close(); } catch (_) {} }
+        net.transport = null;
+        for (const id of [...net.peers.keys()]) removePeer(id);
+        net.room = "";
+        setStatus("Not connected");
+      }
+      function joinTabs(room) {
+        leave();
+        room = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) || "MAIN";
+        if (typeof BroadcastChannel !== "function") return setStatus("This browser has no BroadcastChannel.");
+        net.transportKind = "tabs";
+        net.room = room;
+        net.transport = tabsTransport(room);
+        setStatus("Tabs room " + room + ": open this page in another tab of this browser");
+        sendHello();
+      }
+      async function rtcCreateInvite() {
+        if (!net.transport || net.transport.kind !== "rtc" || !net.transport.isHost) {
+          leave();
+          net.transportKind = "rtc";
+          net.transport = rtcTransport(true);
+        }
+        const t = net.transport;
+        if (t.conns.length >= MAX_REMOTES) return setStatus("Room is full (6 players).");
+        if (t.pending && !t.pending.open) { try { t.pending.pc.close(); } catch (_) {} t.conns.splice(t.conns.indexOf(t.pending), 1); }
+        const c = t.newConn();
+        t.pending = c;
+        setStatus("Creating invite...");
+        try {
+          await c.pc.setLocalDescription(await c.pc.createOffer());
+          await iceGathered(c.pc);
+          ui.offerOut.value = await encodeCode("o", c.pc.localDescription.sdp);
+          setStatus("Invite ready: send it to the other player, then paste their reply below.");
+        } catch (e) {
+          setStatus("Could not create invite: " + (e && e.message ? e.message : e));
+        }
+      }
+      async function rtcAcceptReply() {
+        const t = net.transport;
+        if (!t || t.kind !== "rtc" || !t.isHost || !t.pending) return setStatus("Create an invite first.");
+        try {
+          const sdp = await decodeCode(ui.answerIn.value, "a");
+          await t.pending.pc.setRemoteDescription({ type: "answer", sdp });
+          t.pending = null;
+          ui.answerIn.value = "";
+          setStatus("Connecting...");
+        } catch (e) {
+          setStatus(e && e.message ? e.message : "Could not use that reply code.");
+        }
+      }
+      async function rtcMakeReply() {
+        let sdp;
+        try { sdp = await decodeCode(ui.offerIn.value, "o"); } catch (e) { return setStatus(e.message); }
+        leave();
+        net.transportKind = "rtc";
+        net.transport = rtcTransport(false);
+        const c = net.transport.newConn();
+        setStatus("Making reply...");
+        try {
+          await c.pc.setRemoteDescription({ type: "offer", sdp });
+          await c.pc.setLocalDescription(await c.pc.createAnswer());
+          await iceGathered(c.pc);
+          ui.answerOut.value = await encodeCode("a", c.pc.localDescription.sdp);
+          setStatus("Reply ready: send it back to the host. It connects once they paste it.");
+        } catch (e) {
+          setStatus("Could not make reply: " + (e && e.message ? e.message : e));
+        }
+      }
+
+      // Keepalive and peer timeouts. A hidden tab stops rendering (so stops publishing) but its
+      // timers still tick about once a second: re-send the last state message byte for byte
+      // (same sequence number and timestamp), which receivers count as presence only, never as
+      // a new position sample.
+      setInterval(() => {
+        const now = performance.now();
+        if (net.transport && net.lastBuf && now - net.lastSendAt > KEEPALIVE_MS - 100) {
+          sendBuf(net.lastBuf, false);
+          net.lastSendAt = now;
+        }
+        for (const [id, p] of [...net.peers]) if (now - p.last > PEER_TIMEOUT_MS) removePeer(id);
+        updateTelemetry();
+      }, KEEPALIVE_MS);
+      window.addEventListener("pagehide", sendBye);
+
+      // ---- Panel (DOM overlay; buttons work with mouse and touch) ----
+      const ui = {};
+      function el(tag, props, kids) {
+        const e = document.createElement(tag);
+        for (const k in props || {}) {
+          if (k === "text") e.textContent = props[k];
+          else if (k === "onclick") e.addEventListener("click", props[k]);
+          else e.setAttribute(k, props[k]);
+        }
+        for (const c of kids || []) e.appendChild(c);
+        return e;
+      }
+      function copyFrom(area) {
+        const v = area.value;
+        if (!v) return;
+        const done = () => setStatus("Copied. Send it to the other player.");
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(v).then(done, () => { area.select(); try { document.execCommand("copy"); done(); } catch (_) {} });
+        } else {
+          area.select();
+          try { document.execCommand("copy"); done(); } catch (_) {}
+        }
+      }
+      function setStatus(s) {
+        net.status = s;
+        refreshPanel();
+        updateTelemetry();
+      }
+      function refreshPanel() {
+        if (!ui.panel) return;
+        const n = net.peers.size + 1;
+        ui.status.textContent = net.status;
+        ui.pillText.textContent = net.transport ? "MP: " + n + (n === 1 ? " player" : " players") : "MP";
+        ui.peers.textContent = "";
+        ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:#2ef5ff", text: "P1 (you)" }));
+        for (const p of [...net.peers.values()].sort((a, b) => a.slot - b.slot)) {
+          ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + (SLOT_COLORS[p.slot] || "#aaa"), text: "P" + p.slot }));
+        }
+        const rtc = net.transportKind === "rtc";
+        ui.tabsBox.style.display = rtc ? "none" : "";
+        ui.rtcBox.style.display = rtc ? "" : "none";
+        ui.btnTabs.classList.toggle("on", !rtc);
+        ui.btnRtc.classList.toggle("on", rtc);
+        ui.btnLeave.disabled = !net.transport;
+      }
+      function buildPanel() {
+        const style = el("style", {});
+        style.textContent = `
+          #mp-pill{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:41;font:600 12px system-ui,sans-serif;
+            color:#e8f1ff;background:rgba(8,12,22,.9);border:1px solid #4ac8ff;border-radius:14px;padding:5px 12px;cursor:pointer}
+          #mp-panel{position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:41;box-sizing:border-box;
+            width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 56px);overflow:auto;padding:10px 12px;
+            font:13px/1.35 system-ui,sans-serif;color:#e8f1ff;background:rgba(8,12,22,.95);border:1px solid #4ac8ff;border-radius:10px}
+          #mp-panel h2{font-size:14px;margin:0 0 8px}
+          #mp-panel .mp-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}
+          #mp-panel button{font:600 12px system-ui,sans-serif;color:#e8f1ff;background:#1b2a44;border:1px solid #4a6a99;
+            border-radius:6px;padding:6px 10px;min-height:32px;cursor:pointer}
+          #mp-panel button.on{background:#2b5a8f;border-color:#8fd3ff}
+          #mp-panel button:disabled{opacity:.45}
+          #mp-panel input,#mp-panel textarea{box-sizing:border-box;font:12px ui-monospace,monospace;color:#e8f1ff;
+            background:#0d1626;border:1px solid #4a6a99;border-radius:6px;padding:5px}
+          #mp-panel textarea{width:100%;height:52px;resize:vertical;word-break:break-all}
+          #mp-panel label{display:block;margin-top:8px;font-weight:600}
+          #mp-panel .mp-note{font-size:11px;opacity:.8;margin-top:8px}
+          #mp-panel .mp-chip{display:inline-block;border:2px solid;border-radius:10px;padding:0 7px;margin-right:4px}
+          #mp-status{margin-top:8px;padding:5px 7px;background:#0d1626;border-radius:6px;min-height:18px}`;
+        document.head.appendChild(style);
+
+        ui.pillText = el("span", { text: "MP" });
+        ui.pill = el("button", { id: "mp-pill", type: "button", "aria-expanded": "true", "aria-controls": "mp-panel" }, [ui.pillText]);
+        ui.btnTabs = el("button", { id: "mp-use-tabs", type: "button", text: "Same browser (tabs)", onclick: () => { net.transportKind = "tabs"; refreshPanel(); } });
+        ui.btnRtc = el("button", { id: "mp-use-rtc", type: "button", text: "WebRTC (copy/paste)", onclick: () => { net.transportKind = "rtc"; refreshPanel(); } });
+        ui.room = el("input", { id: "mp-room", type: "text", maxlength: "12", size: "8", autocomplete: "off", "aria-label": "Room code", value: roomFromUrl || "MAIN" });
+        ui.tabsBox = el("div", {}, [
+          el("div", { class: "mp-row" }, [
+            el("span", { text: "Room" }), ui.room,
+            el("button", { id: "mp-tabs-join", type: "button", text: "Join room", onclick: () => joinTabs(ui.room.value) }),
+          ]),
+          el("div", { class: "mp-note", text: "Open this same page in another tab or window of this browser and join the same room. Nothing leaves this computer." }),
+        ]);
+        ui.offerOut = el("textarea", { id: "mp-offer-out", readonly: "", placeholder: "Invite code appears here", "aria-label": "Invite code" });
+        ui.answerIn = el("textarea", { id: "mp-answer-in", placeholder: "Paste the reply code here", "aria-label": "Reply code from guest" });
+        ui.offerIn = el("textarea", { id: "mp-offer-in", placeholder: "Paste the invite code here", "aria-label": "Invite code from host" });
+        ui.answerOut = el("textarea", { id: "mp-answer-out", readonly: "", placeholder: "Reply code appears here", "aria-label": "Reply code" });
+        ui.rtcBox = el("div", {}, [
+          el("label", { text: "Host: 1. create an invite and send it" }),
+          el("div", { class: "mp-row" }, [
+            el("button", { id: "mp-rtc-host", type: "button", text: "Create invite", onclick: rtcCreateInvite }),
+            el("button", { type: "button", text: "Copy invite", onclick: () => copyFrom(ui.offerOut) }),
+          ]),
+          ui.offerOut,
+          el("label", { text: "Host: 2. paste the guest's reply" }),
+          ui.answerIn,
+          el("div", { class: "mp-row" }, [el("button", { id: "mp-rtc-connect", type: "button", text: "Connect", onclick: rtcAcceptReply })]),
+          el("label", { text: "Guest: paste the host's invite, send back the reply" }),
+          ui.offerIn,
+          el("div", { class: "mp-row" }, [
+            el("button", { id: "mp-rtc-reply", type: "button", text: "Make reply", onclick: rtcMakeReply }),
+            el("button", { type: "button", text: "Copy reply", onclick: () => copyFrom(ui.answerOut) }),
+          ]),
+          ui.answerOut,
+          el("div", { class: "mp-note", text: "WebRTC connects the two browsers directly, so each player learns the other's IP address: only play with people you know. Without a STUN server (default) it works on the same computer or local network; across the internet add ?mp_stun=stun:<server>:<port>, and some networks still cannot connect (no relay server)." }),
+        ]);
+        ui.status = el("div", { id: "mp-status", role: "status", "aria-live": "polite" });
+        ui.peers = el("div", { id: "mp-peers", class: "mp-row" });
+        ui.btnLeave = el("button", { id: "mp-leave", type: "button", text: "Leave", onclick: leave });
+        ui.panel = el("div", { id: "mp-panel", role: "dialog", "aria-label": "Multiplayer (experimental)" }, [
+          el("h2", { text: "Multiplayer (experimental)" }),
+          el("div", { class: "mp-row" }, [ui.btnTabs, ui.btnRtc]),
+          ui.tabsBox, ui.rtcBox, ui.status, ui.peers,
+          el("div", { class: "mp-row" }, [
+            ui.btnLeave,
+            el("button", { type: "button", text: "Hide panel", onclick: () => togglePanel(false) }),
+          ]),
+          el("div", { class: "mp-note", text: "Free roam only (beat the game and choose Continue, or use ?free_roam=1). Other players are shown as tinted heroes with a P2..P6 label; they cannot collide or interact." }),
+        ]);
+        ui.pill.addEventListener("click", () => togglePanel(ui.panel.style.display === "none"));
+        // Keep panel input away from the game's window-level touch / wheel / key handlers.
+        for (const node of [ui.pill, ui.panel]) {
+          for (const type of ["touchstart", "touchmove", "touchend", "touchcancel", "pointerdown", "mousedown", "wheel", "keydown", "keyup"]) {
+            node.addEventListener(type, (e) => e.stopPropagation(), { passive: true });
+          }
+          document.body.appendChild(node);
+        }
+        refreshPanel();
+        // The instant two-tab trial starts collapsed (pill only) so the view stays clear.
+        if (mpParam === "tabs") togglePanel(false);
+      }
+      function togglePanel(show) {
+        ui.panel.style.display = show ? "" : "none";
+        ui.pill.setAttribute("aria-expanded", show ? "true" : "false");
+      }
+      function updateTelemetry() {
+        const t = window.tendyTelemetry;
+        if (!t) return;
+        t.mp = Object.assign({ remote: [], local: null }, net.game || {}, {
+          enabled: true,
+          transport: net.transport ? net.transport.kind : "",
+          room: net.room,
+          status: net.status,
+          peers: net.peers.size,
+          connections: net.transport ? net.transport.connCount() : 0,
+          sent: net.stats.sent,
+          recv: net.stats.recv,
+          dropped: net.stats.dropped,
+          relayed: net.stats.relayed,
+          t: Date.now(),
+        });
+      }
+
+      if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);
+      else buildPanel();
+      if (mpParam === "tabs") {
+        // Instant two-tab trial: ?free_roam=1&mp=tabs joins room MAIN (or ?mp_room=XYZ).
+        joinTabs(roomFromUrl || "MAIN");
+      } else {
+        setStatus("Not connected: pick a transport");
+      }
+
+      // ---- Bridge used by rust/src/audio.rs (net.rs) ----
+      return {
+        enabled() { return true; },
+        // state: Float32Array view into wasm memory [x,y,z, qx,qy,qz,qw, vx,vy,vz, scale, mode, flags, action]
+        publish(state) {
+          if (!state || state.length !== 14) return;
+          net.lastState = Float32Array.from(state);
+          net.lastBuf = encodeState(net.lastState);
+          if (!net.transport) return;
+          sendBuf(net.lastBuf, false);
+          net.lastSendAt = performance.now();
+        },
+        event(code, value) {
+          if (!net.transport) return;
+          const [buf, v] = header(T_EVENT, LEN[T_EVENT]);
+          v.setUint8(12, code & 255);
+          v.setUint32(16, Math.min(value >>> 0, 1000000), true);
+          sendBuf(buf, true);
+        },
+        // [now_ms, peers, n, n records of REC_W]; see net.rs `parse_sample`.
+        drain() {
+          const n = net.inbox.length;
+          const out = new Float64Array(3 + n * REC_W);
+          out[0] = performance.now();
+          out[1] = net.peers.size;
+          out[2] = n;
+          for (let i = 0; i < n; i++) out.set(net.inbox[i], 3 + i * REC_W);
+          net.inbox.length = 0;
+          return out;
+        },
+        telemetry(json) {
+          try { net.game = JSON.parse(json); } catch (_) { net.game = null; }
+          if (net.game) net.game.gameT = Date.now();
+          updateTelemetry();
+        },
+      };
+    })();
+  </script>
+  <!-- ===== END experimental free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-cf626babaadf2c41.js';
-const wasm = await init({ module_or_path: './tendy-quest-817f389ad25e8b12_bg.wasm' });
+import init, * as bindings from './tendy-quest-8496e26187e156cd.js';
+const wasm = await init({ module_or_path: './tendy-quest-b41a18e77d2517fc_bg.wasm' });
 
 
 window.wasmBindings = bindings;

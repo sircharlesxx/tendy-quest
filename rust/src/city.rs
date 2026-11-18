@@ -12,7 +12,7 @@ use crate::ui::HudOverlay;
 // Cedar Rapids uses a 4x4 city block grid spaced every 46m (`ROAD_COORDS` = avenues,
 // `BLOCK_COORDS` = building block centers), with Lexie's Citadel anchoring the north end
 // of the central x = 0 avenue.
-const CITY_HALF_EXTENT: f32 = 135.0;
+pub(crate) const CITY_HALF_EXTENT: f32 = 135.0;
 const ROAD_COORDS: [f32; 5] = [-92.0, -46.0, 0.0, 46.0, 92.0];
 const BLOCK_COORDS: [f32; 4] = [-69.0, -23.0, 23.0, 69.0];
 const CITADEL_POS: Vec3 = Vec3::new(0.0, 0.0, -82.0);
@@ -1024,6 +1024,10 @@ pub fn exit_mom_victory_cutscene(
 // =========================================================================
 
 fn is_clear_of_skyscrapers(x: f32, z: f32, margin: f32) -> bool {
+    // The riverfront Ferris wheel's plaza and kiosks (ferris.rs).
+    if crate::ferris::blocks_spot(x, z, margin) {
+        return false;
+    }
     // Pub 217 (its own low building on the (-23, 23) block)
     let (pmin_x, pmax_x, pmin_z, pmax_z) = pub217_rect();
     if x > pmin_x - margin && x < pmax_x + margin && z > pmin_z - margin && z < pmax_z + margin {
@@ -1248,11 +1252,6 @@ pub fn spawn_nyc_world_if_needed(
         perceptual_roughness: 0.18,
         ..default()
     }, crate::gfx::CityTex::Water));
-    let park_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
-        base_color: Color::srgb(0.10, 0.34, 0.16),
-        perceptual_roughness: 0.85,
-        ..default()
-    }, crate::gfx::CityTex::Grass));
     let pub_brick_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.38, 0.14, 0.12),
         perceptual_roughness: 0.78,
@@ -1668,7 +1667,6 @@ pub fn spawn_nyc_world_if_needed(
         },
     ));
 
-    let park_mesh = tiled_unit(meshes, Vec3::new(26.5, 0.12, 26.5), 4.0);
     let block_walk_mesh = tiled_unit(meshes, Vec3::new(26.5, 0.08, 26.5), 3.0);
     let kerb_ring = meshes.add(crate::gfx::kerb_ring_mesh(26.54, 0.32, 0.11, 1.5));
     let kerb_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
@@ -1713,15 +1711,13 @@ pub fn spawn_nyc_world_if_needed(
                 ));
                 continue;
             }
-            // Greene Square Park at (69, 69)
-            if (bx - 69.0).abs() < 1.0 && (bz - 69.0).abs() < 1.0 {
-                commands.spawn((
-                    LevelEntity,
-                    CityWorldMarker,
-                    Mesh3d(park_mesh.clone()),
-                    MeshMaterial3d(park_mat.clone()),
-                    Transform::from_xyz(bx, 0.06, bz).with_scale(Vec3::new(26.5, 0.12, 26.5)),
-                ));
+            // Greene Square (69, 69) and the lot south of it (69, 114) are the skate park:
+            // `skatepark::spawn_skate_park` builds their ground, pieces and greenery. The lot still
+            // takes its turn in the tower sequence so every other tower keeps its height and look.
+            if crate::skatepark::is_park_block(bx, bz) {
+                if (bz - crate::skatepark::LOT.y).abs() < 1.0 {
+                    b_idx += 1;
+                }
                 continue;
             }
             let is_outer = bx.abs() > 90.0 || bz.abs() > 90.0;
@@ -1829,6 +1825,9 @@ pub fn spawn_nyc_world_if_needed(
         }
     }
 
+    // Skate park: Greene Square plaza + the transition lot across 9th St (see skatepark.rs).
+    crate::skatepark::spawn_skate_park(commands, meshes, materials);
+
     // Iconic Tiered EMPIRE CITADEL TOWER at (0, 0, -82)
     let citadel_stone = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.74, 0.72, 0.68),
@@ -1906,6 +1905,9 @@ pub fn spawn_nyc_world_if_needed(
                 Transform::from_xyz(0.0, 22.0, 0.0).with_scale(Vec3::new(1.5, 11.0, 1.5)),
             ));
         });
+
+    // Riverfront pier with the rideable RIVER STAR Ferris wheel in the river corner (ferris.rs).
+    crate::ferris::spawn_ferris_wheel(commands, meshes, materials);
 
     // Spawn Colossal Overweight Blonde LEXIE atop Empire Citadel Tower Terrace!
     spawn_lexie_boss(
@@ -3492,6 +3494,7 @@ pub fn enter_city_play(
 /// Debug only (`?debug=1&city_start=...`): drops Stan somewhere useful for screenshots on a fresh
 /// city entry. `pub` = outside the pub door facing it, `pubin` = inside the pub, `door` = on the doorstep, `sky` = high
 /// view from the pub roof over its block, `crew` = 9 m from Derek's waiting spot (inside his call-out range).
+/// `park`, `parksky`, `lot`, `pipe`, `plaza` = skate park views (`skatepark::debug_start_pose`).
 fn debug_city_start(
     stats: &mut PlayerStats,
     orbit: &mut CameraOrbit,
@@ -3511,6 +3514,18 @@ fn debug_city_start(
         "door" => (PUB217_ANCHOR + Vec3::new(1.8, 0.0, 0.0), Vec3::NEG_X),
         // On the pub roof (the camera clamps only apply inside), looking west over the block.
         "sky" => (PUB217_ANCHOR + Vec3::new(-10.0, 10.5, 0.0), Vec3::NEG_X),
+        // `wheel`, `wheelst`, `wheelfar`, `wheelriver`: at / near the Ferris wheel (ferris.rs).
+        m if m.starts_with("wheel") => match crate::ferris::debug_start_pose(m) {
+            Some((pos, face, cam)) => {
+                if let Some((pitch, dist)) = cam {
+                    orbit.pitch = pitch;
+                    orbit.distance = dist;
+                    orbit.current_dist = dist;
+                }
+                (pos, face)
+            }
+            None => return,
+        },
         "crew" => {
             // With this flag the world used `DEBUG_CREW_SEED`, so the spots are known here:
             // stand 9 m out in the street in front of Derek, looking at him.
@@ -3518,7 +3533,10 @@ fn debug_city_start(
             let out = Vec3::new(yaw.sin(), 0.0, yaw.cos());
             (spot + out * 9.0, -out)
         }
-        _ => return,
+        m => match crate::skatepark::debug_start_pose(m) {
+            Some((pos, face, _, _)) => (pos, face),
+            None => return,
+        },
     };
     p_tf.translation = pos;
     // Stan's forward is -Z at yaw 0; the orbit camera sits behind him at the same yaw.
@@ -3530,6 +3548,11 @@ fn debug_city_start(
         orbit.pitch = 1.2;
         orbit.distance = 40.0;
         orbit.current_dist = orbit.distance;
+    }
+    if let Some((_, _, pitch, dist)) = crate::skatepark::debug_start_pose(&mode) {
+        orbit.pitch = pitch;
+        orbit.distance = dist;
+        orbit.current_dist = dist;
     }
     stats.hint_text = format!("DEBUG: city_start={}", mode);
 }
@@ -3561,6 +3584,7 @@ pub fn exit_city_play(
     }
     stats.driving_car = None;
     stats.riding_scooter = None;
+    stats.riding_wheel = false;
     stats.phone_open = false;
     if let Ok(mut vis) = player_q.get_single_mut() {
         *vis = Visibility::Visible;
@@ -3671,7 +3695,7 @@ pub fn update_city_driving(
         || std::mem::take(&mut stats.car_prompt_tap);
 
     // 1. If currently on foot, check for nearby hijackable car
-    if stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+    if stats.driving_car.is_none() && stats.riding_scooter.is_none() && !stats.riding_wheel {
         if stats.player_scale >= 6.0 {
             return;
         }
@@ -4438,7 +4462,8 @@ pub fn update_city_lexie(
             lx_tf.rotation = Quat::from_rotation_y(yaw);
         }
 
-        if !lexie.on_tower && dist > 16.0 {
+        // She waits while the hero rides the Ferris wheel (he is out of reach up there).
+        if !lexie.on_tower && dist > 16.0 && !stats.riding_wheel {
             let dir = flat.normalize_or_zero();
             let next_pos = lx_tf.translation + dir * 7.5 * dt;
             if is_clear_of_skyscrapers(next_pos.x, next_pos.z, 3.5) {
@@ -4471,7 +4496,7 @@ pub fn update_city_lexie(
         }
 
         // Throw Pickled Garlic Clove volley toward Stan!
-        if lexie.throw_cooldown <= 0.0 {
+        if lexie.throw_cooldown <= 0.0 && !stats.riding_wheel {
             lexie.throw_cooldown = if lexie.on_tower { 3.6 } else { 2.8 };
             lexie.chew_timer = 0.85;
             play_sfx("garlic_throw");
@@ -5355,6 +5380,8 @@ pub fn refuse_no_license(stats: &mut PlayerStats) {
 pub enum PropAction {
     Beer,
     Car,
+    /// The Ferris wheel (board / hop off); label and meaning come from `ferris::WheelPrompt`.
+    Wheel,
 }
 
 /// Beer tower and parked car interaction (CityPlay, normal play and free roam). Both use the city
@@ -5385,6 +5412,7 @@ pub fn update_city_props(
     prompt_q: Query<Entity, With<PropPromptUi>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<PropPromptButton>)>,
     mut text_q: Query<&mut Text, With<PropPromptText>>,
+    mut wheel: ResMut<crate::ferris::WheelPrompt>,
     mut last: Local<Option<PropAction>>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -5415,7 +5443,9 @@ pub fn update_city_props(
         && parked_q
             .iter()
             .any(|(t, c)| !c.occupied && flat(t.translation) < PARKED_CAR_REACH);
-    let action = if near_beer {
+    let action = if wheel.label.is_some() {
+        Some(PropAction::Wheel)
+    } else if near_beer {
         Some(PropAction::Beer)
     } else if near_car {
         Some(PropAction::Car)
@@ -5447,6 +5477,7 @@ pub fn update_city_props(
         }
         PropAction::Beer => "DRINK A BEER [F/E]".to_string(),
         PropAction::Car => "DRIVE [F/E]".to_string(),
+        PropAction::Wheel => wheel.label.clone().unwrap_or_default(),
     };
     if prompt_q.is_empty() {
         commands
@@ -5532,6 +5563,8 @@ pub fn update_city_props(
                 stats.car_prompt_tap = true;
             }
         }
+        // `ferris::ferris_ride_update` decides what the press means this frame.
+        PropAction::Wheel => wheel.pressed = true,
     }
 }
 

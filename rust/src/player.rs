@@ -393,6 +393,11 @@ pub fn crew_follow_target(
     follower_scale: f32,
     orbit_yaw: f32,
 ) -> Vec3 {
+    // While the hero rides the Ferris wheel the crew wait in formation by its plaza instead.
+    let (stan_pos, stan_scale, orbit_yaw) = match crate::ferris::crew_wait_anchor() {
+        Some((pos, yaw)) => (pos, 1.8, yaw),
+        None => (stan_pos, stan_scale, orbit_yaw),
+    };
     let cam_fwd = Vec3::new(-orbit_yaw.sin(), 0.0, -orbit_yaw.cos());
     let cam_right = Vec3::new(orbit_yaw.cos(), 0.0, -orbit_yaw.sin());
     // Clear Stan's half width plus the follower's own, with a little air between them.
@@ -808,7 +813,7 @@ pub fn player_movement(
     // Damage blink (~7 Hz) while the post-hit invulnerability lasts. Vehicles own the hero's
     // visibility (the car hides them), so the blink stands down there.
     player.hurt_blink = (player.hurt_blink - dt).max(0.0);
-    let in_vehicle = stats.driving_car.is_some() || stats.riding_scooter.is_some();
+    let in_vehicle = stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.riding_wheel;
     if in_vehicle {
         if player.blink_hidden {
             player.blink_hidden = false;
@@ -824,7 +829,8 @@ pub fn player_movement(
         }
     }
 
-    if stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.phone_open {
+    // Vehicles (and the Ferris wheel, which carries the hero itself) own his position.
+    if stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.riding_wheel || stats.phone_open {
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
         player.jump_buffer = 0.0;

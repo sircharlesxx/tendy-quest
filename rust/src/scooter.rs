@@ -50,6 +50,9 @@ pub struct CityScooter {
     pub on_car: bool,
     /// This hop passed over a car: the landing scores a small stunt bonus.
     pub car_hop: bool,
+    /// The skate park (`skatepark.rs`) is driving this scooter: on a park piece, airborne from
+    /// one, grinding, or in the park's lot. Street driving and street stunts stand down.
+    pub park: bool,
 }
 
 impl CityScooter {
@@ -77,6 +80,7 @@ impl CityScooter {
             flat_hop: false,
             on_car: false,
             car_hop: false,
+            park: false,
         }
     }
 
@@ -92,6 +96,7 @@ impl CityScooter {
         self.flat_hop = false;
         self.on_car = false;
         self.car_hop = false;
+        self.park = false;
     }
 }
 
@@ -1009,6 +1014,8 @@ pub fn update_city_scooter_and_phone(
             stf.rotation = Quat::from_rotation_y(sc.yaw);
             stf.scale = Vec3::ONE;
             p_tf.translation = Vec3::new(stf.translation.x + 1.4, 0.0, stf.translation.z);
+            // In the skate park: leave the scooter on the surface, the hero on a walkable spot.
+            crate::skatepark::settle_dismount(&mut stf, &mut sc, &mut p_tf.translation);
             p_tf.rotation = Quat::from_rotation_y(sc.yaw + std::f32::consts::PI);
         }
         stats.riding_scooter = None;
@@ -1023,6 +1030,10 @@ pub fn update_city_scooter_and_phone(
     }
 
     if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
+        if sc.park {
+            // The skate park drives it (`skatepark::update_park_ride`).
+            return;
+        }
         let mut throttle = touch_move_y();
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
             throttle += 1.0;
@@ -1065,6 +1076,7 @@ pub fn update_city_scooter_and_phone(
         } else {
             30.0
         };
+        let max_spd = crate::skatepark::zone_speed_cap(stf.translation, max_spd, boosting);
         let accel = if boosting { 95.0 } else { 36.0 };
         if throttle > 0.05 {
             if sc.speed > max_spd {

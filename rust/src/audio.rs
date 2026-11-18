@@ -137,6 +137,12 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeDebugPause)]
         fn js_take_debug_pause() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = wheelDemo)]
+        fn js_wheel_demo() -> String;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = setWheel)]
+        fn js_set_wheel_telemetry(line: &str);
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = atBeer)]
         fn js_at_beer() -> bool;
 
@@ -160,6 +166,15 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendyBoot"], js_name = ready)]
         fn js_boot_ready();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = parkDemo)]
+        fn js_park_demo() -> String;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = jumpHeld)]
+        fn js_jump_held() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = parkLog)]
+        fn js_park_log(line: &str);
 
         #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = update)]
         fn js_update_telemetry(
@@ -260,6 +275,16 @@ mod imp {
         js_at_beer()
     }
 
+    /// `?debug=1&wheel_demo=...` (ride, fast, exit, spin, titan): Ferris wheel debug driver.
+    pub fn debug_wheel_demo() -> String {
+        js_wheel_demo()
+    }
+
+    /// Debug ride state for headless checks (`window.tendyTelemetry.wheel`).
+    pub fn set_wheel_telemetry(line: &str) {
+        js_set_wheel_telemetry(line);
+    }
+
     pub fn play_sfx(name: &str) {
         js_play_sfx(name);
     }
@@ -326,6 +351,21 @@ mod imp {
     /// `city_start=` URL value (empty unless `debug=1`): where a fresh city entry drops Stan.
     pub fn debug_city_start() -> String {
         js_city_start()
+    }
+
+    /// `park_demo=` URL value (empty unless `debug=1`): scripted skate park run (skatepark.rs).
+    pub fn debug_park_demo() -> String {
+        js_park_demo()
+    }
+
+    /// Touch JUMP button is held down (backflips on the skate park need a hold).
+    pub fn touch_jump_held() -> bool {
+        js_jump_held()
+    }
+
+    /// Appends a line to `window.tendyParkLog` (debug telemetry for the skate park demos).
+    pub fn park_log(line: &str) {
+        js_park_log(line);
     }
 
     pub fn take_touch_help() -> bool {
@@ -402,6 +442,50 @@ mod imp {
     ) {
         js_update_telemetry(state, hearts, tendies, stamina, boss_hp, credits, in_city);
     }
+
+    // Experimental free-roam multiplayer (`window.tendyNet`, net.rs, docs/MULTIPLAYER.md).
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = enabled)]
+        fn js_net_enabled() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = publish)]
+        fn js_net_publish(state: &[f32]);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = event)]
+        fn js_net_event(code: u32, value: u32);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = drain)]
+        fn js_net_drain() -> Vec<f64>;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = telemetry)]
+        fn js_net_telemetry(json: &str);
+    }
+
+    /// The page URL has `mp=1|tabs|rtc`; false for every normal player.
+    pub fn net_enabled() -> bool {
+        js_net_enabled()
+    }
+
+    /// Local hero state for the wire (see net.rs `publish_local_state` for the field order).
+    pub fn net_publish(state: &[f32]) {
+        js_net_publish(state);
+    }
+
+    /// One-off event for peers (1 trick landed with points, 2 drank a beer).
+    pub fn net_event(code: u32, value: u32) {
+        js_net_event(code, value);
+    }
+
+    /// `[now_ms, peers, n, n records of 19]` received since the last call (validated in JS).
+    pub fn net_drain() -> Vec<f64> {
+        js_net_drain()
+    }
+
+    /// Remote avatar positions as drawn, for headless checks (`window.tendyTelemetry.mp`).
+    pub fn net_telemetry(json: &str) {
+        js_net_telemetry(json);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -461,6 +545,12 @@ mod imp {
     pub fn debug_at_beer() -> bool {
         false
     }
+
+    pub fn debug_wheel_demo() -> String {
+        String::new()
+    }
+
+    pub fn set_wheel_telemetry(_line: &str) {}
 
     pub fn play_sfx(_name: &str) {}
 
@@ -524,6 +614,16 @@ mod imp {
         String::new()
     }
 
+    pub fn debug_park_demo() -> String {
+        String::new()
+    }
+
+    pub fn touch_jump_held() -> bool {
+        false
+    }
+
+    pub fn park_log(_line: &str) {}
+
     pub fn take_touch_help() -> bool {
         false
     }
@@ -577,6 +677,20 @@ mod imp {
         _in_city: bool,
     ) {
     }
+
+    pub fn net_enabled() -> bool {
+        false
+    }
+
+    pub fn net_publish(_state: &[f32]) {}
+
+    pub fn net_event(_code: u32, _value: u32) {}
+
+    pub fn net_drain() -> Vec<f64> {
+        Vec::new()
+    }
+
+    pub fn net_telemetry(_json: &str) {}
 }
 
 pub use imp::{
@@ -593,3 +707,9 @@ pub use imp::{
 pub use imp::{clear_all_progress, last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
 // Debug start at the Pub 217 beer tower (beer_fx.rs).
 pub use imp::debug_at_beer;
+// Skate park demo driver, touch jump hold and park telemetry (skatepark.rs).
+pub use imp::{debug_park_demo, park_log, touch_jump_held};
+// Ferris wheel debug driver and telemetry (ferris.rs).
+pub use imp::{debug_wheel_demo, set_wheel_telemetry};
+// Experimental free-roam multiplayer bridge (net.rs).
+pub use imp::{net_drain, net_enabled, net_event, net_publish, net_telemetry};

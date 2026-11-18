@@ -5,14 +5,17 @@ mod city;
 mod controls;
 mod derek;
 mod enemies;
+mod ferris;
 mod gfx;
 mod glenn;
 mod level;
 mod lexie_victory;
 mod nate;
+mod net;
 mod player;
 mod scooter;
 mod shapes;
+mod skatepark;
 mod skip;
 mod state;
 mod stunts;
@@ -102,6 +105,12 @@ fn main() {
         .add_plugins(skip::CutsceneSkipPlugin)
         // Bottom-left controls strip + Esc / H / Start pause menu (see controls.rs).
         .add_plugins(controls::ControlsPlugin)
+        // Riverfront Ferris wheel: spin, ride, ride camera (see ferris.rs).
+        .add_plugins(ferris::FerrisPlugin)
+        // Experimental free-roam multiplayer, inert unless the URL has `mp=` (see net.rs).
+        .add_plugins(net::NetPlugin)
+        // Skate park on Greene Square + the lot south of it: pieces, ride physics, grinds (skatepark.rs).
+        .add_plugins(skatepark::SkateParkPlugin)
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
@@ -294,9 +303,15 @@ fn main() {
             (
                 ensure_hero_vikings_gear,
                 camera_mouse_look.in_set(CameraSet::Look),
-                (player_movement, update_city_driving, update_city_scooter_and_phone)
+                (
+                    player_movement,
+                    update_city_driving,
+                    // No phone or scooter while riding the Ferris wheel.
+                    update_city_scooter_and_phone.run_if(ferris::not_riding_wheel),
+                )
                     .in_set(CameraSet::Motion),
-                animate_player_limbs,
+                // After the skate park's on-foot pass so the hero's grounded pose is final.
+                animate_player_limbs.after(skatepark::ParkWalkSet),
                 update_camera.in_set(CameraSet::Follow),
                 (update_city_crew_gate, update_pub217_door, city::update_crew_callouts),
                 update_city_traffic,

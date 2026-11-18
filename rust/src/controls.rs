@@ -28,6 +28,7 @@ pub enum ControlContext {
     CityFoot,
     Scooter,
     Car,
+    Wheel,
 }
 
 impl ControlContext {
@@ -36,6 +37,7 @@ impl ControlContext {
             GameState::Playing if stats.boss_mode => Some(Self::Saber),
             GameState::Playing => Some(Self::Level1),
             GameState::BossFight => Some(Self::Saber),
+            GameState::CityPlay if stats.riding_wheel => Some(Self::Wheel),
             GameState::CityPlay if stats.riding_scooter.is_some() => Some(Self::Scooter),
             GameState::CityPlay if stats.driving_car.is_some() => Some(Self::Car),
             GameState::CityPlay => Some(Self::CityFoot),
@@ -50,6 +52,7 @@ impl ControlContext {
             Self::CityFoot => "Cedar Rapids on foot",
             Self::Scooter => "Riding a scooter",
             Self::Car => "Driving a car",
+            Self::Wheel => "Riding the Ferris wheel",
         }
     }
 }
@@ -91,7 +94,7 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
                 bind("SHIFT", "B", "Roll", true),
             ];
             if ctx == ControlContext::CityFoot {
-                v.push(bind("F", "X", "Ride / drive / drink", true));
+                v.push(bind("F", "X", "Ride / drive / drink / wheel", true));
                 v.push(bind("P", "LB", "Phone", true));
             }
             v.extend([
@@ -108,10 +111,14 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
         ControlContext::Scooter => vec![
             bind("WASD", "L-STICK", "Steer", true),
             bind("SHIFT", "B", "Turbo", true),
-            bind("SPACE", "A", "Jump (air: hold to flip)", true),
+            bind("SPACE", "A", "Jump / grind (air: hold to flip)", true),
             bind("F", "X", "Hop off", true),
             PAUSE,
             LOOK,
+            // Skate park extras (skatepark.rs), listed in the pause menu.
+            bind("SPACE", "A", "Park air: tap for a tailwhip", false),
+            bind("A / D", "L-STICK", "Park: air spin, grind balance", false),
+            bind("W", "L-STICK", "Park: hold dropping in to pump", false),
         ],
         ControlContext::Car => vec![
             bind("WASD", "L-STICK", "Drive", true),
@@ -120,6 +127,12 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             bind("F", "X", "Exit car", true),
             PAUSE,
             LOOK,
+        ],
+        ControlContext::Wheel => vec![
+            bind("MOUSE", "R-STICK", "Look around", true),
+            bind("F", "X", "Hop off at the bottom", true),
+            bind("WHEEL", "", "Gondola / outside view", true),
+            PAUSE,
         ],
     }
 }
