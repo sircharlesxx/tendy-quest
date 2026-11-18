@@ -89,6 +89,8 @@ pub fn enter_lexie_victory_cutscene(
         *hv = Visibility::Hidden;
     }
     clear_col.0 = Color::srgb(0.03, 0.01, 0.06);
+    // Isolated finale stage at z = -420 (well outside the ±135m city) paired with
+    // `set_uzumaki_mode(2)` which renders the colored HTML5 spiral distortion overlay.
     let stage = Vec3::new(0.0, 0.0, -420.0);
 
     // Bright dramatic lighting so the entire horror stage pops in vivid sickly color
@@ -595,6 +597,8 @@ pub fn update_lexie_victory_cutscene(
 
     let bt = v_state.beat_t;
     let t = time.elapsed_secs();
+    // Isolated finale stage at z = -420 (well outside the ±135m city) paired with
+    // `set_uzumaki_mode(2)` which renders the colored HTML5 spiral distortion overlay.
     let stage = Vec3::new(0.0, 0.0, -420.0);
 
     // Spin colored Uzumaki spirals flat-facing the camera behind Lexie

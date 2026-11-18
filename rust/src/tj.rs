@@ -7,6 +7,9 @@ use crate::player::Player;
 use crate::state::{GameState, PlayerStats};
 use crate::ui::HudOverlay;
 
+/// City TJ actor: triggers `GameState::TjCutscene` once when Stan approaches, then follows
+/// Stan around Cedar Rapids (`tj_recruited = true`). `spawn_tj_character` is also reused
+/// by `lexie_victory.rs` so TJ's model stays identical in the finale.
 #[derive(Component)]
 pub struct TjCityActor;
 

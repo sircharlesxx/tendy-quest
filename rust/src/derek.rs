@@ -7,6 +7,9 @@ use crate::city::{pub217_scale, CityWorldMarker, PUB217_ANCHOR};
 use crate::player::Player;
 use crate::state::{GameState, LevelEntity, PlayerStats};
 
+/// Pub 217 Derek NPC. `was_inside` edge-triggers `DerekCutscene` once on approach;
+/// `derek_return_city` restores `saved_city_pos` on return from the isolated `z = -310` stage
+/// and `recruited` switches Derek to follow Stan across Cedar Rapids.
 #[derive(Component)]
 pub struct CityDerek {
     pub was_inside: bool,

@@ -1,5 +1,11 @@
 use bevy::prelude::*;
 
+/// Top-level state machine separating Level 1 (Apartment), Level 2 (Cedar Rapids / Pub 217),
+/// boss fights, and isolated cutscene stages.
+///
+/// Cutscenes intentionally live in their own states rather than pausing `Playing`/`CityPlay`
+/// so each cutscene can hijack `Camera3d` cleanly and despawn its own `Entity` marker on exit
+/// without interfering with gameplay camera/physics systems.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GameState {
     #[default]
@@ -55,6 +61,8 @@ pub struct PlayerStats {
     pub rage_swell_ticks: u32,
     pub rage_pulse_flash: f32,
     pub rage_cooldown_timer: f32,
+    /// Set before transitioning from a cutscene back to `CityPlay` so `enter_city` restores
+    /// `saved_city_pos` and skips resetting city pickups, vehicles, and already-triggered NPCs.
     pub tj_recruited: bool,
     pub tj_return_city: bool,
     pub mike_return_city: bool,
@@ -139,6 +147,13 @@ impl Default for PlayerStats {
 }
 
 impl PlayerStats {
+    /// Computes Stan's target world scale from tendies eaten.
+    ///
+    /// - Level 2 (`in_city`): scales from `1.8` (180cm adult) up to `18.0` (65m skyscraper kaiju)
+    ///   with a slight `powf(1.08)` curve so late-game growth feels dramatic.
+    /// - Level 1 (Apartment): uses a piecewise linear curve (`0.55` -> `6.0`) because early
+    ///   tendies need gentle increments around small counter props while the final 4 tendies
+    ///   must rapidly vault Stan to adult height (`6.0`) to reach the refrigerator handle.
     pub fn target_scale(&self) -> f32 {
         if self.in_city {
             let t = self.tendies.min(50) as f32 / 50.0;
@@ -233,11 +248,14 @@ impl Default for CameraOrbit {
     }
 }
 
+/// Axis-aligned bounding box used for custom floor/counter/ramp landing without a full physics crate.
+/// `half_extents` are measured from the entity's `Transform.translation` center.
 #[derive(Component, Clone, Copy)]
 pub struct PlatformBox {
     pub half_extents: Vec3,
 }
 
+/// Marker for Level 1 entities so `GameOver` / `StageClear` / transitions can despawn the apartment cleanly.
 #[derive(Component)]
 pub struct LevelEntity;
 
@@ -262,6 +280,8 @@ pub struct PowerupPickup {
     pub phase: f32,
 }
 
+/// Tracks transient `.glb` load failures on WebAssembly/GitHub Pages so `main.rs` can retry
+/// fetching the `Scene` handle a few times before giving up.
 #[derive(Component, Clone, Copy)]
 pub struct SceneRetryPath {
     pub path: &'static str,

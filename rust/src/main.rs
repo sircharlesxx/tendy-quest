@@ -71,13 +71,17 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Tendy Quest — Giant Kitchen".into(),
+                        // Fill the responsive 100dvh container in index.html across desktop & mobile
                         fit_canvas_to_parent: true,
+                        // Prevent Space/Arrow keys and touch drags from scrolling the browser page
                         prevent_default_event_handling: true,
                         ..default()
                     }),
                     ..default()
                 })
                 .set(AssetPlugin {
+                    // Static GitHub Pages hosting has no .meta sidecar files; skip .meta HTTP checks
+                    // so every .glb/.mp3/.wav load doesn't trigger extra 404 requests.
                     meta_check: AssetMetaCheck::Never,
                     ..default()
                 }),
@@ -105,6 +109,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                // Retries GLB loads if transient network hiccups occur on WASM
                 retry_failed_scenes,
                 toggle_audio_hotkey,
                 update_enraged_visuals,
@@ -242,6 +247,8 @@ fn main() {
         )
         .add_systems(
             Update,
+            // Stunt ramps, boost rings, and backflips adjust scooter transform/velocity after
+            // base scooter driving runs so stunts aren't overwritten by ground clamping.
             stunts::update_scooter_stunts
                 .after(update_city_scooter_and_phone)
                 .run_if(in_state(GameState::CityPlay)),

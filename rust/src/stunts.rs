@@ -40,6 +40,8 @@ pub struct BoostPad {
 #[derive(Component)]
 pub struct ScooterBoostFlame;
 
+// Each of the 3 Cedar Rapids stunt circuits has 6 sequential boost rings (`bit` 0..5).
+// `StuntState.collected` stores a bitmask per circuit so hitting all 6 awards a circuit bonus.
 pub const CIRCUIT_RING_COUNTS: [u32; 3] = [6, 6, 6];
 pub const CIRCUIT_NAMES: [&str; 3] = [
     "3RD ST SE GAUNTLET",

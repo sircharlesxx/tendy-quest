@@ -1,3 +1,10 @@
+//! Browser JS bridge (`window.tendyAudio`, `window.tendyInput`, `window.tendySave`, `window.tendyTelemetry`).
+//!
+//! Audio, Web Speech TTS, mobile touch, W3C Gamepad polling, and `localStorage` checkpoints live
+//! in `rust/index.html` rather than Bevy plugins so WebAudio unlocks reliably on the first
+//! click/tap/button press and HTML overlays (Uzumaki spirals, touch controls) stay crisp at native
+//! browser DPI. Non-`wasm32` targets use no-op stubs below so native `cargo check` compiles cleanly.
+
 #[cfg(target_arch = "wasm32")]
 mod imp {
     use wasm_bindgen::prelude::*;

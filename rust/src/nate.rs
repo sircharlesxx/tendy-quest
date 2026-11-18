@@ -420,6 +420,9 @@ pub fn enter_nate_cutscene(
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
 ) {
     *n_state = NateCutsceneState::default();
+    // Spawn cutscene stage far outside Cedar Rapids (±135m) at z = -520 so city geometry
+    // never clips into the shot. Procedural `spawn_nate_rig` faces +Z, while `plaid_hero.glb`
+    // faces -Z at Quat::IDENTITY, so they naturally face each other across z = ±1.55.
     let stage = Vec3::new(0.0, 0.0, -520.0);
     let mats = make_nate_materials(&mut materials);
 
@@ -654,6 +657,9 @@ pub fn update_nate_cutscene(
 
     let beat = n_state.beat;
     let bt = n_state.beat_t;
+    // Spawn cutscene stage far outside Cedar Rapids (±135m) at z = -520 so city geometry
+    // never clips into the shot. Procedural `spawn_nate_rig` faces +Z, while `plaid_hero.glb`
+    // faces -Z at Quat::IDENTITY, so they naturally face each other across z = ±1.55.
     let stage = Vec3::new(0.0, 0.0, -520.0);
 
     // Animate actor stances (kung-fu leaps & spinning kicks in beat 4, defeated kneel in beat 5)

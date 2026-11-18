@@ -19,6 +19,8 @@ pub struct StartButton;
 #[derive(Component)]
 pub struct ContinueButton;
 
+/// Serializes progress as a compact pipe-delimited string for `window.tendySave` (`localStorage`)
+/// rather than pulling `serde`/`serde_json` into the WASM binary.
 pub fn save_game_checkpoint(stage: &str, stats: &PlayerStats) {
     let data = format!(
         "{}|{}|{}|{}|{}|{}",

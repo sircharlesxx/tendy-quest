@@ -23,6 +23,9 @@ pub struct CutsceneEsxiLed(pub f32);
 #[derive(Component)]
 pub struct CutsceneEyeReflection;
 
+/// Marker attached once Stan's Viking helmet/axe/shield have been parented onto `plaid_hero.glb`.
+/// Checked every frame by `ensure_hero_vikings_gear` because GLTF `SceneRoot` children spawn
+/// asynchronously after `spawn_player`.
 #[derive(Component)]
 pub struct HeroCosmetic;
 

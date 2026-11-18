@@ -9,6 +9,9 @@ use crate::player::Player;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats, TendyPickup};
 use crate::ui::HudOverlay;
 
+// Cedar Rapids uses a 4x4 city block grid spaced every 46m (`ROAD_COORDS` = avenues,
+// `BLOCK_COORDS` = building block centers), with Lexie's Citadel anchoring the north end
+// of the central x = 0 avenue.
 const CITY_HALF_EXTENT: f32 = 135.0;
 const ROAD_COORDS: [f32; 5] = [-92.0, -46.0, 0.0, 46.0, 92.0];
 const BLOCK_COORDS: [f32; 4] = [-69.0, -23.0, 23.0, 69.0];
@@ -16,6 +19,8 @@ const CITADEL_POS: Vec3 = Vec3::new(0.0, 0.0, -82.0);
 const LEXIE_TERRACE_POS: Vec3 = Vec3::new(0.0, 38.0, -75.5);
 pub const PUB217_ANCHOR: Vec3 = Vec3::new(-11.75, 0.0, 34.0);
 
+/// Scales Pub 217 dynamically with Stan's Katamari growth (`1.45x` baseline at 180cm) so he
+/// can still enter the bar and trigger/revisit TJ, Derek, Nate, and Glenn at Kaiju sizes.
 pub fn pub217_scale(player_scale: f32) -> f32 {
     (player_scale / 1.8).max(1.0) * 1.45
 }

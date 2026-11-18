@@ -553,6 +553,9 @@ pub fn enter_glenn_cutscene(
     }
 
     // DBZ Super Ki Auras, Teleport Sonic Rings & Flying Building Rubble
+    // Keep aura alpha (0.11) and HDR emissive (0.85) restrained: in Bevy's AlphaMode::Blend,
+    // high emissive values (>1.0) multiply with alpha and saturate into an opaque cylinder
+    // that hides the characters inside.
     let glenn_aura = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.25, 0.20, 0.11),
         emissive: LinearRgba::new(0.85, 0.20, 0.08, 1.0),

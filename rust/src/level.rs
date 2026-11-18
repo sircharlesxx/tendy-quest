@@ -6,6 +6,8 @@ use crate::state::{
     SceneRetryPath, TendyPickup,
 };
 
+/// Minimal LCG PRNG seeded from browser `crypto.getRandomValues` via `getrandom`, avoiding a
+/// full `rand` dependency in the WASM bundle while randomizing Level 1 floor clutter each run.
 struct SimpleRng(u64);
 
 impl SimpleRng {
@@ -52,6 +54,7 @@ impl SimpleRng {
     }
 }
 
+/// Retries `.glb` scene loads up to 4 times if transient static-host/network errors occur on WASM.
 pub fn retry_failed_scenes(
     asset_server: Res<AssetServer>,
     mut query: Query<(&mut SceneRoot, &mut SceneRetryPath)>,

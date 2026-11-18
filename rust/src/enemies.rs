@@ -9,6 +9,8 @@ pub enum EnemyKind {
     KaleSlime,
 }
 
+/// Carrot Lancers cycle through Patrol -> Telegraph (0.8s windup) -> Lunge -> Stunned
+/// so players have a readable window to jump or dodge before the high-speed fork charge.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CarrotState {
     Patrol,

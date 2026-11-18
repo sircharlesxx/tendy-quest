@@ -378,6 +378,8 @@ pub fn player_movement(
     }
 
     if dir.length_squared() > 0.01 {
+        // `plaid_hero.glb` is authored facing -Z at Quat::IDENTITY, so negate both components
+        // to align the model's front (-Z) with the world movement vector `dir`.
         let target_yaw = (-dir.x).atan2(-dir.z);
         let diff = (target_yaw - player.facing_yaw + std::f32::consts::PI)
             .rem_euclid(std::f32::consts::TAU)
@@ -578,12 +580,14 @@ pub fn update_camera(
         0.55 + stats.player_scale * 0.92
     };
     let anchor = p_tf.translation + Vec3::Y * anchor_y;
+    // Widen camera distance slightly on narrow portrait viewports (mobile) so Stan stays framed.
     let aspect_mul = if let Ok(win) = window_q.get_single() {
         let aspect = win.width() / win.height().max(1.0);
         1.0 + (1.0 - aspect).clamp(0.0, 0.55) * 0.35
     } else {
         1.0
     };
+    // Scale camera pullback with Stan's Katamari growth (linear in city up to 18x kaiju, sqrt in apartment).
     let cam_scale_mul = if stats.driving_car.is_some() {
         0.92
     } else if stats.in_city {
@@ -594,6 +598,7 @@ pub fn update_camera(
     let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_tf.translation, stats.player_scale);
     let pub_s = crate::city::pub217_scale(stats.player_scale);
     let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
+    // Clamp distance & pitch inside Pub 217 so the bar ceiling/walls don't occlude the player.
     if in_pub217 {
         desired_dist = desired_dist.min(4.2 * pub_s);
     }

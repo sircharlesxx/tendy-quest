@@ -9,8 +9,12 @@ use crate::player::Player;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
 use crate::ui::HudOverlay;
 
+/// Retained from the original rental gate; scooters are now unlocked via the Veo phone app (`P`).
 pub const SCOOTER_RENT_COST: u32 = 12;
 
+/// Rideable Veo-style electric scooter. Vertical stunt state (`y`, `vy`, `ground_h`, `flip`,
+/// `boost_t`) is stored directly on the scooter so `stunts.rs` can layer ramp launches and
+/// backflips cleanly after `update_city_scooter_and_phone`.
 #[derive(Component)]
 pub struct CityScooter {
     pub yaw: f32,
