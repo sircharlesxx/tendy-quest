@@ -300,7 +300,7 @@ pub fn update_city_glenn(
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityGlenn>>,
     mut glenn_q: Query<(&mut Transform, &mut CityGlenn), Without<Player>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut g_state: ResMut<GlennCutsceneState>,
 ) {
     let Ok((p_tf, player)) = player_q.get_single() else {
@@ -777,7 +777,7 @@ pub struct GlennVfxQueries<'w, 's> {
 pub fn update_glenn_cutscene(
     time: Res<Time>,
     mut g_state: ResMut<GlennCutsceneState>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut actor_q: Query<(&mut Transform, &GlennCutsceneActor), Without<Camera3d>>,
     mut vfx: GlennVfxQueries,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,

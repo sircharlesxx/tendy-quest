@@ -472,7 +472,7 @@ pub fn enter_mom_victory_cutscene(
 pub fn update_mom_victory_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<AnimeSakuraPetal>)>,
     mut petal_q: Query<(&mut Transform, &mut AnimeSakuraPetal), Without<Camera3d>>,
 ) {
@@ -1022,6 +1022,7 @@ pub fn spawn_nyc_world_if_needed(
             LevelEntity,
             CityWorldMarker,
             Pub217Root,
+            crate::gfx::CityOccluderGroup,
             Transform::from_translation(PUB217_ANCHOR),
         ))
         .with_children(|pub_root| {
@@ -1292,6 +1293,7 @@ pub fn spawn_nyc_world_if_needed(
                     LevelEntity,
                     CityWorldMarker,
                     Mesh3d(meshes.add(Cuboid::new(footprint, height, footprint))),
+                    crate::gfx::CityBuilding,
                     MeshMaterial3d(b_mat.clone()),
                     Transform::from_xyz(bx, height * 0.5, bz),
                     PlatformBox {
@@ -1321,12 +1323,14 @@ pub fn spawn_nyc_world_if_needed(
                         b.spawn((
                             Mesh3d(unit_box.clone()),
                             MeshMaterial3d(window_glow.clone()),
+                            crate::gfx::CityWindowBand,
                             Transform::from_xyz(0.0, ly, 0.0)
                                 .with_scale(Vec3::new(footprint + 0.22, 1.35, footprint * 0.84)),
                         ));
                         b.spawn((
                             Mesh3d(unit_box.clone()),
                             MeshMaterial3d(window_glow.clone()),
+                            crate::gfx::CityWindowBand,
                             Transform::from_xyz(0.0, ly, 0.0)
                                 .with_scale(Vec3::new(footprint * 0.84, 1.35, footprint + 0.22)),
                         ));
@@ -1363,6 +1367,7 @@ pub fn spawn_nyc_world_if_needed(
         LevelEntity,
         CityWorldMarker,
         Mesh3d(meshes.add(Cuboid::new(22.0, 16.0, 22.0))),
+        crate::gfx::CityBuilding,
         MeshMaterial3d(citadel_stone.clone()),
         Transform::from_xyz(CITADEL_POS.x, 8.0, CITADEL_POS.z),
         PlatformBox {
@@ -1374,6 +1379,7 @@ pub fn spawn_nyc_world_if_needed(
         LevelEntity,
         CityWorldMarker,
         Mesh3d(meshes.add(Cuboid::new(18.0, 22.0, 18.0))),
+        crate::gfx::CityBuilding,
         MeshMaterial3d(citadel_stone.clone()),
         Transform::from_xyz(CITADEL_POS.x, 27.0, CITADEL_POS.z),
         PlatformBox {
@@ -1386,6 +1392,7 @@ pub fn spawn_nyc_world_if_needed(
             LevelEntity,
             CityWorldMarker,
             Mesh3d(meshes.add(Cuboid::new(9.5, 24.0, 9.5))),
+            crate::gfx::CityBuilding,
             MeshMaterial3d(citadel_stone),
             Transform::from_xyz(CITADEL_POS.x, 50.0, CITADEL_POS.z - 4.0),
         ))
@@ -2160,7 +2167,7 @@ pub fn enter_city_intro_cutscene(
 pub fn update_city_intro_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut cam_q: Query<&mut Transform, With<Camera3d>>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -2368,7 +2375,7 @@ pub fn enter_city_play(
     crate::ui::save_game_checkpoint("city", &stats);
     if resuming_from_tj {
         stats.hint_text = if from_mike {
-            "TRIPPY ALLEY ENCOUNTER COMPLETE! (+2 Hearts, Full Stamina, Extra Woozy!)"
+            "TRIPPY ALLEY ENCOUNTER COMPLETE! (+3 Hearts, Full Stamina, Extra Woozy!)"
                 .to_string()
         } else if from_derek {
             "DEREK JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Beer Tower Truce!)"
@@ -2417,18 +2424,28 @@ pub fn enter_city_play(
         };
         p_tf.scale = Vec3::splat(stats.player_scale);
         player.velocity = Vec3::ZERO;
-        player.facing_yaw = 0.0;
-        p_tf.rotation = Quat::from_rotation_y(0.0);
+        // Resuming from a city cutscene keeps the facing the hero had before it (recorded by
+        // `record_city_facing`); a fresh city entry faces north.
+        player.facing_yaw = if resuming_from_tj { orbit.saved_city_facing } else { 0.0 };
+        p_tf.rotation = Quat::from_rotation_y(player.facing_yaw);
     }
 
-    orbit.yaw = if is_titan_preview { -0.24 } else { 0.0 };
-    orbit.pitch = if is_titan_preview { 0.42 } else { 0.36 };
-    orbit.distance = if is_titan_preview { 15.5 } else { 11.2 };
-    orbit.current_dist = orbit.distance;
+    // Only a fresh city entry resets the orbit; resumes keep the player's camera framing.
+    if !resuming_from_tj {
+        orbit.yaw = if is_titan_preview { -0.24 } else { 0.0 };
+        orbit.pitch = if is_titan_preview { 0.42 } else { 0.36 };
+        orbit.distance = if is_titan_preview { 15.5 } else { 11.2 };
+        orbit.current_dist = orbit.distance;
+    }
 
     set_touch_playing(true);
     set_touch_boss_mode(true);
-    play_viking_chant_music();
+    // The Mike/Derek/Nate/Glenn cutscene exits already restart the chant in this same
+    // StateTransition; starting it again here would restart the track twice in one frame.
+    // TJ's exit doesn't touch music, so a TJ resume (and any fresh entry) starts it here.
+    if !(from_mike || from_derek || from_nate || from_glenn) {
+        play_viking_chant_music();
+    }
 
     // Spawn Lexie Top-Center Boss Bar + Corner NYC Tendy Radar Minimap
     commands
@@ -2616,6 +2633,14 @@ pub fn enter_city_play(
                     ));
                 });
         });
+}
+
+/// OnExit(CityPlay): remember the hero's facing so a cutscene resume can restore it
+/// (cutscene stages re-pose the hero and reset `facing_yaw`).
+pub fn record_city_facing(mut orbit: ResMut<CameraOrbit>, player_q: Query<&Player>) {
+    if let Ok(player) = player_q.get_single() {
+        orbit.saved_city_facing = player.facing_yaw;
+    }
 }
 
 pub fn exit_city_play(
@@ -3035,7 +3060,9 @@ pub fn update_city_driving(
         if car.velocity.length() > 2.5 && !mouse_buttons.pressed(MouseButton::Right) {
             let target_cam_yaw = wrap_angle(car.yaw + std::f32::consts::PI);
             let diff = wrap_angle(target_cam_yaw - orbit.yaw);
-            orbit.yaw = wrap_angle(orbit.yaw + diff * (dt * 2.8).min(1.0));
+            // Paused for ~1.5 s after manual look input, then eases back in.
+            let align = (1.0 - (-2.8 * dt).exp()) * orbit.auto_align_weight();
+            orbit.yaw = wrap_angle(orbit.yaw + diff * align);
         }
 
         driven_pos = car_tf.translation;
@@ -3112,7 +3139,14 @@ pub fn update_city_driving(
             let ld = Vec2::new(l_tf.translation.x - driven_pos.x, l_tf.translation.z - driven_pos.z).length();
             if ld < 4.5 && lexie.hit_flash <= 0.0 {
                 let dmg = 14.0 + my_speed * 0.35;
-                stats.boss_hp = (stats.boss_hp - dmg).max(0.0);
+                // Applied to Lexie's own HP exactly like a saber hit: chip damage can't take her
+                // below 75 until all 50 tendies are eaten, and `update_city_lexie` handles defeat.
+                lexie.hp = if stats.tendies < 50 {
+                    (lexie.hp - dmg).max(75.0)
+                } else {
+                    lexie.hp - dmg
+                };
+                stats.boss_hp = lexie.hp.max(0.0);
                 stats.score += 350;
                 lexie.hit_flash = 0.45;
                 play_sfx("car_crash");
@@ -3132,12 +3166,12 @@ pub fn update_city_traffic(
     time: Res<Time>,
     state: Res<State<GameState>>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut car_q: Query<(&mut Transform, &mut CityCar), Without<Player>>,
 ) {
     let dt = time.delta_secs().min(0.05);
-    let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
+    let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
         return;
     };
     let in_active_play = *state.get() == GameState::CityPlay;
@@ -3211,9 +3245,11 @@ pub fn update_city_traffic(
             let knock = (p_tf.translation - car_tf.translation)
                 .with_y(0.0)
                 .normalize_or_zero();
-            p_tf.translation += knock * 2.2;
             player.velocity.y = 4.5;
             player.invuln_timer = 1.1;
+            // Same 2.2-unit shove as before, delivered as a decaying knockback impulse.
+            let hurt = !stats.has_ranch_shield;
+            crate::player::hit_reaction(&mut player, &mut stats, knock, 2.2, hurt);
 
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
@@ -3283,7 +3319,8 @@ pub fn update_city_pickups(
 
         let d = (p_tf.translation + Vec3::Y * mid_y).distance(tf.translation);
         if d < pickup_r {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).remove::<(TendyPickup, CityTendy)>();
+            crate::player::start_pickup_pop(&mut commands, entity, tf.scale);
             stats.tendies = (stats.tendies + 2).min(stats.total_tendies);
             stats.tendy_credits += 2;
             stats.score += 400;
@@ -3318,7 +3355,7 @@ pub fn update_city_lexie(
     mut materials: ResMut<Assets<StandardMaterial>>,
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut lexie_q: Query<
         (Entity, &mut Transform, &mut LexieBoss, &Children),
@@ -3503,20 +3540,21 @@ pub fn update_city_lexie(
                 stats.score += 1200;
             }
             stats.boss_hp = lexie.hp.max(0.0);
+        }
 
-            if lexie.hp <= 0.0 {
-                stats.score += 15000;
-                stats.lexie_defeated = true;
-                stats.hint_text = "LEXIE DEFEATED! NEW YORK CITY SAVED!".to_string();
-                play_sfx("win");
-                speak_voice(
-                    "Oh no! My pickled garlic empire! You win, giant Viking Stan!",
-                    "lexie",
-                );
-                commands.entity(lexie_ent).despawn_recursive();
-                next_state.set(GameState::LexieVictoryCutscene);
-                return;
-            }
+        // Defeat check runs every frame so a finishing car ram (update_city_driving) counts too.
+        if lexie.hp <= 0.0 && !stats.lexie_defeated {
+            stats.score += 15000;
+            stats.lexie_defeated = true;
+            stats.hint_text = "LEXIE DEFEATED! NEW YORK CITY SAVED!".to_string();
+            play_sfx("win");
+            speak_voice(
+                "Oh no! My pickled garlic empire! You win, giant Viking Stan!",
+                "lexie",
+            );
+            commands.entity(lexie_ent).despawn_recursive();
+            next_state.set(GameState::LexieVictoryCutscene);
+            return;
         }
 
         // Update Top-Center Boss HP UI
@@ -3555,6 +3593,8 @@ pub fn update_city_lexie(
 
         if !stats.phone_open && !in_pub217 && hit_stan && player.roll_timer <= 0.0 && player.invuln_timer <= 0.0 {
             player.invuln_timer = 1.0;
+            let hurt = !stats.has_ranch_shield;
+            crate::player::hit_reaction(&mut player, &mut stats, Vec3::ZERO, 0.0, hurt);
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
             } else {
@@ -3629,6 +3669,8 @@ pub fn update_city_lexie(
         {
             cloud.damage_tick = 1.45;
             player.invuln_timer = 0.85;
+            let hurt = !stats.has_ranch_shield;
+            crate::player::hit_reaction(&mut player, &mut stats, Vec3::ZERO, 0.0, hurt);
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
             } else {

@@ -92,6 +92,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = initMode)]
         fn js_init_mode() -> u32;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = debugKeys)]
+        fn js_debug_keys() -> bool;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCutsceneStartTime)]
         fn js_take_cutscene_start_time() -> f32;
 
@@ -109,6 +112,9 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = hasDefeatedMom)]
         fn js_has_defeated_mom() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyBoot"], js_name = ready)]
+        fn js_boot_ready();
 
         #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = update)]
         fn js_update_telemetry(
@@ -230,6 +236,10 @@ mod imp {
         js_init_mode()
     }
 
+    pub fn debug_keys_enabled() -> bool {
+        js_debug_keys()
+    }
+
     pub fn take_cutscene_start_time() -> f32 {
         js_take_cutscene_start_time()
     }
@@ -253,6 +263,11 @@ mod imp {
 
     pub fn has_defeated_mom() -> bool {
         js_has_defeated_mom()
+    }
+
+    /// Startup scenes are loaded: lets `index.html` fade its loading screen out.
+    pub fn notify_boot_ready() {
+        js_boot_ready();
     }
 
     pub fn update_telemetry(
@@ -352,6 +367,10 @@ mod imp {
         0
     }
 
+    pub fn debug_keys_enabled() -> bool {
+        false
+    }
+
     pub fn take_cutscene_start_time() -> f32 {
         -1.0
     }
@@ -371,6 +390,8 @@ mod imp {
         false
     }
 
+    pub fn notify_boot_ready() {}
+
     pub fn update_telemetry(
         _state: &str,
         _hearts: i32,
@@ -384,8 +405,8 @@ mod imp {
 }
 
 pub use imp::{
-    has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
-    mark_mom_defeated, play_bgm, play_boss_music, play_cutscene_music, play_hacking_music,
+    debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
+    mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_cutscene_music, play_hacking_music,
     play_headphone_music, play_scooter_music, play_sfx, play_viking_chant_music, save_checkpoint,
     set_touch_boss_mode, set_touch_playing,
     set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time,

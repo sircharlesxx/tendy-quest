@@ -559,7 +559,7 @@ pub fn enter_lexie_victory_cutscene(
 pub fn update_lexie_victory_cutscene(
     time: Res<Time>,
     mut v_state: ResMut<LexieVictoryState>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut blob_q: Query<(&mut Transform, &LexieGrossBlob), Without<Camera3d>>,
     mut cloud_q: Query<(&mut Transform, &LexieStinkCloud), (Without<LexieGrossBlob>, Without<Camera3d>)>,
     mut spiral_q: Query<(&mut Transform, &LexieSpiralRing), (Without<LexieGrossBlob>, Without<LexieStinkCloud>, Without<Camera3d>)>,

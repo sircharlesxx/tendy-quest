@@ -1,0 +1,1 @@
+export function tq_gfx_query() { try { return String(window.location.search || ''); } catch (e) { return ''; } }

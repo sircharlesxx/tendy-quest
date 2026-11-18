@@ -552,7 +552,7 @@ pub fn update_city_scooter_and_phone(
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
     mut maze: ResMut<PhoneMazeState>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<
         (&mut Transform, &mut Player),
         (Without<CityScooter>, Without<PlatformBox>, Without<CityMike>),
@@ -950,41 +950,53 @@ pub fn update_city_scooter_and_phone(
         sc.yaw += steer * 3.1 * turn_scale * dt;
 
         let fwd = Vec2::new(sc.yaw.sin(), sc.yaw.cos());
-        stf.translation.x = (stf.translation.x + fwd.x * sc.speed * dt).clamp(-126.0, 126.0);
-        stf.translation.z = (stf.translation.z + fwd.y * sc.speed * dt).clamp(-126.0, 126.0);
         stf.translation.y = sc.y;
 
+        // Sub-stepped move + wall push-out: at boost speed (~58 m/s) one frame can travel several
+        // times the 0.82 collision radius, and the shallowest-axis push-out would then pop the
+        // scooter out the far side of a thin wall. Steps stay under half the radius.
         let wall_r = 0.82;
-        for (b_tf, b_box) in &platform_q {
-            let top_y = b_tf.translation.y + b_box.half_extents.y;
-            let bot_y = b_tf.translation.y - b_box.half_extents.y;
-            if top_y <= 0.25 || top_y < sc.y + 0.1 || bot_y > sc.y + 2.0 {
-                continue;
-            }
-            let min_x = b_tf.translation.x - b_box.half_extents.x - wall_r;
-            let max_x = b_tf.translation.x + b_box.half_extents.x + wall_r;
-            let min_z = b_tf.translation.z - b_box.half_extents.z - wall_r;
-            let max_z = b_tf.translation.z + b_box.half_extents.z + wall_r;
-            if stf.translation.x > min_x
-                && stf.translation.x < max_x
-                && stf.translation.z > min_z
-                && stf.translation.z < max_z
-            {
-                let dx_l = stf.translation.x - min_x;
-                let dx_r = max_x - stf.translation.x;
-                let dz_b = stf.translation.z - min_z;
-                let dz_f = max_z - stf.translation.z;
-                let m = dx_l.min(dx_r).min(dz_b).min(dz_f);
-                if (m - dx_l).abs() < 0.001 {
-                    stf.translation.x = min_x;
-                } else if (m - dx_r).abs() < 0.001 {
-                    stf.translation.x = max_x;
-                } else if (m - dz_b).abs() < 0.001 {
-                    stf.translation.z = min_z;
-                } else {
-                    stf.translation.z = max_z;
+        let substeps = ((sc.speed.abs() * dt / (wall_r * 0.5)).ceil() as u32).clamp(1, 16);
+        let sub_dt = dt / substeps as f32;
+        let mut bumped = false;
+        for _ in 0..substeps {
+            stf.translation.x = (stf.translation.x + fwd.x * sc.speed * sub_dt).clamp(-126.0, 126.0);
+            stf.translation.z = (stf.translation.z + fwd.y * sc.speed * sub_dt).clamp(-126.0, 126.0);
+            for (b_tf, b_box) in &platform_q {
+                let top_y = b_tf.translation.y + b_box.half_extents.y;
+                let bot_y = b_tf.translation.y - b_box.half_extents.y;
+                if top_y <= 0.25 || top_y < sc.y + 0.1 || bot_y > sc.y + 2.0 {
+                    continue;
                 }
-                sc.speed *= 0.35;
+                let min_x = b_tf.translation.x - b_box.half_extents.x - wall_r;
+                let max_x = b_tf.translation.x + b_box.half_extents.x + wall_r;
+                let min_z = b_tf.translation.z - b_box.half_extents.z - wall_r;
+                let max_z = b_tf.translation.z + b_box.half_extents.z + wall_r;
+                if stf.translation.x > min_x
+                    && stf.translation.x < max_x
+                    && stf.translation.z > min_z
+                    && stf.translation.z < max_z
+                {
+                    let dx_l = stf.translation.x - min_x;
+                    let dx_r = max_x - stf.translation.x;
+                    let dz_b = stf.translation.z - min_z;
+                    let dz_f = max_z - stf.translation.z;
+                    let m = dx_l.min(dx_r).min(dz_b).min(dz_f);
+                    if (m - dx_l).abs() < 0.001 {
+                        stf.translation.x = min_x;
+                    } else if (m - dx_r).abs() < 0.001 {
+                        stf.translation.x = max_x;
+                    } else if (m - dz_b).abs() < 0.001 {
+                        stf.translation.z = min_z;
+                    } else {
+                        stf.translation.z = max_z;
+                    }
+                    // Same 0.35x speed loss per wall contact as before, applied once per frame.
+                    if !bumped {
+                        sc.speed *= 0.35;
+                        bumped = true;
+                    }
+                }
             }
         }
 
@@ -1002,7 +1014,8 @@ pub fn update_city_scooter_and_phone(
             } else if diff < -std::f32::consts::PI {
                 diff += std::f32::consts::TAU;
             }
-            orbit.yaw += diff * (dt * 3.0).min(1.0);
+            // Paused for ~1.5 s after manual look input, then eases back in.
+            orbit.yaw += diff * (1.0 - (-3.0 * dt).exp()) * orbit.auto_align_weight();
         }
     }
 }
@@ -1341,7 +1354,7 @@ pub fn update_mike_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
     dialog: Res<MikeCutsceneDialog>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut smoke_q: Query<(&mut Transform, &MikeCutsceneSmoke), Without<Camera3d>>,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
     mut speaker_q: Query<&mut Text, With<MikeCutsceneSpeakerText>>,

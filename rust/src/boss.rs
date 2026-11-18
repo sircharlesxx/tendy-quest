@@ -1567,7 +1567,7 @@ fn cutscene_beat_script(beat: u8) -> (&'static str, &'static str, &'static str, 
 pub fn update_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player), With<Player>>,
     mut mailman_q: Query<
         &mut Transform,
@@ -2460,7 +2460,7 @@ pub fn enter_headphone_cutscene(
 pub fn update_headphone_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<
         &mut Transform,
         (With<Player>, Without<Camera3d>, Without<HeadphoneUzumakiVortex>),
@@ -3440,7 +3440,8 @@ pub fn update_boss_healing_tendies(
             stats.score += 250;
             stats.hint_text = msg.to_string();
             crate::audio::play_sfx("tendy");
-            commands.entity(t_ent).despawn_recursive();
+            commands.entity(t_ent).remove::<BossHealingTendy>();
+            crate::player::start_pickup_pop(&mut commands, t_ent, t_tf.scale);
         } else {
             active_tendies += 1;
         }
@@ -3478,7 +3479,7 @@ pub fn update_boss_fight(
     time: Res<Time>,
     asset_server: Res<AssetServer>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut mom_q: Query<(Entity, &mut Transform, &mut MomBoss, &Children), Without<Player>>,
     mut enemy_q: Query<(Entity, &mut Transform, &mut Enemy), (Without<Player>, Without<MomBoss>)>,
@@ -3501,7 +3502,7 @@ pub fn update_boss_fight(
         hud_node.top = Val::Px(if narrow { 150.0 } else { 12.0 });
     }
 
-    let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
+    let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
         return;
     };
     let Ok((mom_ent, mut mom_tf, mut mom, mom_children)) = mom_q.get_single_mut() else {
@@ -3560,7 +3561,8 @@ pub fn update_boss_fight(
                     p_tf.translation.z - mom_tf.translation.z,
                 )
                 .normalize_or_zero();
-                p_tf.translation += push * 1.4;
+                // Parry shove (same 1.4 units as before) as a decaying knockback impulse.
+                crate::player::hit_reaction(&mut player, &mut stats, push, 1.4, false);
                 crate::audio::play_sfx("shield");
                 stats.hint_text =
                     "MOM PARRIED! Use DODGE & ROLL (SHIFT / ROLL) to evade & break her guard!"
@@ -3677,7 +3679,8 @@ pub fn update_boss_fight(
                 } else if player.invuln_timer <= 0.0 {
                     stats.hearts -= 1;
                     player.invuln_timer = 0.9;
-                    p_tf.translation += mom.lunge_dir * 3.6;
+                    // Same 3.6-unit shove as before, delivered as a decaying knockback impulse.
+                    crate::player::hit_reaction(&mut player, &mut stats, mom.lunge_dir, 3.6, true);
                     player.velocity.y = 6.2;
                     stats.hint_text =
                         "SLASHED BY MOM! Press SHIFT / ROLL right as she swings!".to_string();
