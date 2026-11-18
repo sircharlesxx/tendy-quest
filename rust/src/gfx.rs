@@ -185,7 +185,7 @@ pub fn camera_components() -> impl Bundle {
 
 /// `?gfx=low` in the page URL drops bloom and halves the shadow map for weak devices.
 #[cfg(target_arch = "wasm32")]
-fn low_quality_requested() -> bool {
+pub(crate) fn low_quality_requested() -> bool {
     use wasm_bindgen::prelude::*;
     #[wasm_bindgen(inline_js = "export function tq_gfx_query() { try { return String(window.location.search || ''); } catch (e) { return ''; } }")]
     extern "C" {
@@ -198,7 +198,7 @@ fn low_quality_requested() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn low_quality_requested() -> bool {
+pub(crate) fn low_quality_requested() -> bool {
     false
 }
 
@@ -1793,4 +1793,187 @@ fn setup_city_textures(mut images: ResMut<Assets<Image>>) {
         images.insert(tex.handle().id(), img);
     }
     let _ = CITY_TEX_GAIN.set(gains);
+    // Bash Lyte tall-boy labels (always full size: the lettering must stay readable).
+    for way in 0..BEER_CAN_COLOURWAYS {
+        images.insert(beer_can_tex_handle(way).id(), tex_beer_can(way));
+    }
+    images.insert(BEER_GLOW_TEX.id(), tex_soft_glow(64));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Pub 217 beer cans: "Bash Lyte" tall-boy label and the soft glow sprite
+// ---------------------------------------------------------------------------------------------
+
+/// Label colourways baked at startup (same layout, different inks).
+pub const BEER_CAN_COLOURWAYS: usize = 3;
+/// Can texture layout (v = 0 at the top): the label art fills v 0..`BEER_CAN_LABEL_V`, brushed
+/// aluminium sits around `BEER_CAN_METAL_V` and the darker lid grey around `BEER_CAN_LID_V`.
+/// The art repeats every u = 1 (the can mesh wraps it twice around the can).
+pub const BEER_CAN_LABEL_V: f32 = 0.8;
+pub const BEER_CAN_METAL_V: f32 = 0.85;
+pub const BEER_CAN_LID_V: f32 = 0.95;
+/// Radial falloff sprite (rgb and alpha) for additive glows.
+pub const BEER_GLOW_TEX: Handle<Image> = Handle::weak_from_u128(0x6c1f_7e47_a2d9_4b3e_9e15_c17e_beef_0100);
+
+pub const fn beer_can_tex_handle(way: usize) -> Handle<Image> {
+    Handle::weak_from_u128(0x6c1f_7e47_a2d9_4b3e_9e15_c17e_beef_0000 + way as u128)
+}
+
+/// 5x7 block glyphs (one row per byte, bit 4 = leftmost column) for the label lettering.
+fn label_glyph(c: char) -> [u8; 7] {
+    match c {
+        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'B' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+        'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        'G' => [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111],
+        'H' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'I' => [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
+        '$' => [0b00100, 0b01111, 0b10100, 0b01110, 0b00101, 0b11110, 0b00100],
+        '>' => [0b10000, 0b01000, 0b00100, 0b00010, 0b00100, 0b01000, 0b10000],
+        _ => [0; 7],
+    }
+}
+
+/// True when label pixel (x, y) is lit by `text` drawn centred at `cx` with its top at `top`,
+/// `s` pixels per glyph cell.
+fn label_text_hit(text: &str, cx: i32, top: i32, s: i32, x: i32, y: i32) -> bool {
+    let n = text.chars().count() as i32;
+    let left = cx - (n * 6 - 1) * s / 2;
+    if y < top || y >= top + 7 * s || x < left {
+        return false;
+    }
+    let (col, row) = ((x - left) / s, (y - top) / s);
+    let (ci, gx) = (col / 6, col % 6);
+    if ci >= n || gx == 5 {
+        return false;
+    }
+    let g = label_glyph(text.chars().nth(ci as usize).unwrap_or(' '));
+    (g[row as usize] >> (4 - gx)) & 1 == 1
+}
+
+/// "Bash Lyte" tall-boy label (original house brand): CRT scanline ground, chunky pixel
+/// "BASH / LYTE" lettering, a "LIGHT LAGER" line and a terminal-window crest with a `$` prompt
+/// and blinking cursor, flanked by a fading cursor-block stripe. Below the art: brushed
+/// aluminium and lid grey (see `BEER_CAN_LABEL_V`). sRGB with a mip chain.
+pub fn tex_beer_can(way: usize) -> Image {
+    const W: i32 = 128;
+    const H: i32 = 160;
+    // (ground, lettering, accent) per colourway, sRGB.
+    let (bg, fg, acc) = match way % BEER_CAN_COLOURWAYS {
+        0 => (Vec3::new(0.07, 0.10, 0.08), Vec3::new(0.42, 1.0, 0.52), Vec3::new(1.0, 0.72, 0.20)),
+        1 => (Vec3::new(0.98, 0.60, 0.12), Vec3::new(0.13, 0.07, 0.04), Vec3::new(1.0, 0.95, 0.84)),
+        _ => (Vec3::new(0.36, 0.13, 0.44), Vec3::new(1.0, 0.93, 0.80), Vec3::new(0.35, 0.95, 0.95)),
+    };
+    let ink = |x: i32, y: i32| {
+        label_text_hit("LIGHT LAGER", 64, 10, 1, x, y)
+            || label_text_hit("BASH", 64, 21, 5, x, y)
+            || label_text_hit("LYTE", 64, 60, 5, x, y)
+    };
+    let mut data = Vec::with_capacity((W * H * 4) as usize);
+    for y in 0..H {
+        for x in 0..W {
+            let c = if y >= 128 {
+                // Brushed aluminium (horizontal grain), then the darker lid grey.
+                let grain = h01(311, y as i64, x as i64 / 3) * 0.6 + h01(313, y as i64, 0) * 0.4;
+                let base = if y < 144 { 0.80 } else { 0.60 };
+                Vec3::splat(base + (grain - 0.5) * 0.10)
+            } else if y < 4 || y >= 124 {
+                bg * 0.45
+            } else if (4..7).contains(&y) || (121..124).contains(&y) {
+                acc
+            } else if (34..94).contains(&x) && (100..120).contains(&y) {
+                // Terminal-window crest: accent frame, title bar, `$` prompt and a cursor block.
+                let frame = x == 34 || x == 93 || y == 100 || y == 119 || y == 103;
+                if frame {
+                    acc
+                } else if label_text_hit("$", 52, 105, 2, x, y) || label_text_hit(">", 40, 108, 1, x, y) {
+                    fg
+                } else if (62..70).contains(&x) && (105..118).contains(&y) {
+                    acc
+                } else if y < 103 {
+                    acc * 0.55
+                } else {
+                    Vec3::splat(0.03)
+                }
+            } else if (106..114).contains(&y) && (x < 30 || x >= 98) && x % 8 < 4 {
+                // Cursor-block stripe fading away from the crest.
+                let d = if x < 30 { 30 - x } else { x - 97 } as f32;
+                bg.lerp(acc, 1.0 - d / 34.0)
+            } else if ink(x, y) {
+                fg
+            } else if ink(x - 1, y - 1) || ink(x - 2, y - 2) {
+                // Hard drop shadow so the lettering reads at a distance.
+                bg * 0.35
+            } else {
+                // Ground with CRT scanlines and a soft vertical sheen.
+                let scan = if y % 3 == 0 { 0.90 } else { 1.0 };
+                let sheen = 0.94 + 0.06 * (1.0 - ((y as f32 - 64.0) / 64.0).abs());
+                bg * scan * sheen
+            };
+            let c = c.clamp(Vec3::ZERO, Vec3::ONE);
+            data.extend_from_slice(&[
+                (c.x * 255.0 + 0.5) as u8,
+                (c.y * 255.0 + 0.5) as u8,
+                (c.z * 255.0 + 0.5) as u8,
+                255,
+            ]);
+        }
+    }
+    let mut img = Image::new(
+        Extent3d {
+            width: W as u32,
+            height: H as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    if build_mip_chain(&mut img) {
+        let mut sampler = trilinear_sampler(ImageAddressMode::Repeat);
+        if let ImageSampler::Descriptor(d) = &mut sampler {
+            d.address_mode_v = ImageAddressMode::ClampToEdge;
+            d.anisotropy_clamp = 4;
+        }
+        img.sampler = sampler;
+    }
+    img
+}
+
+/// Soft round falloff (rgb = alpha) for additive halo sprites.
+pub fn tex_soft_glow(n: u32) -> Image {
+    let mut data = Vec::with_capacity((n * n * 4) as usize);
+    for y in 0..n {
+        for x in 0..n {
+            let d = Vec2::new(
+                (x as f32 + 0.5) / n as f32 * 2.0 - 1.0,
+                (y as f32 + 0.5) / n as f32 * 2.0 - 1.0,
+            )
+            .length();
+            let f = (1.0 - d).clamp(0.0, 1.0);
+            let v = (f * f * 255.0 + 0.5) as u8;
+            data.extend_from_slice(&[v, v, v, v]);
+        }
+    }
+    let mut img = Image::new(
+        Extent3d {
+            width: n,
+            height: n,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8Unorm,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    if build_mip_chain(&mut img) {
+        img.sampler = trilinear_sampler(ImageAddressMode::ClampToEdge);
+    }
+    img
 }

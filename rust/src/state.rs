@@ -99,6 +99,20 @@ pub struct PlayerStats {
     pub riding_scooter: Option<Entity>,
     pub phone_open: bool,
     pub high_timer: f32,
+    /// Seconds left of being drunk from the Pub 217 beer tower (`city::update_beer_tower`).
+    pub drunk_timer: f32,
+    /// Seconds until the beer tower pours another beer.
+    pub beer_cooldown: f32,
+    /// Driver's license found (city pickup). Until then no car can be driven. Persisted as
+    /// checkpoint field 8 and kept across city retries and into free roam.
+    pub has_license: bool,
+    /// A car has refused Stan at least once this run: the radar then shows the license card.
+    pub license_refused: bool,
+    /// Cooldown on the "no license" refusal so mashing F does not spam it.
+    pub license_deny_cd: f32,
+    /// The on-screen DRIVE button was tapped next to the parked car: `update_city_driving`
+    /// treats it as an interact press this frame (keyboard / gamepad go there directly).
+    pub car_prompt_tap: bool,
     pub wanted_stars: u8,
     pub wanted_decay_timer: f32,
     /// Red screen-edge damage flash, 1 on a hit and decaying to 0 (drawn by `ui::update_hurt_flash`).
@@ -178,6 +192,12 @@ impl Default for PlayerStats {
             riding_scooter: None,
             phone_open: false,
             high_timer: 0.0,
+            drunk_timer: 0.0,
+            beer_cooldown: 0.0,
+            has_license: false,
+            license_refused: false,
+            license_deny_cd: 0.0,
+            car_prompt_tap: false,
             wanted_stars: 0,
             wanted_decay_timer: 0.0,
             hurt_flash: 0.0,
@@ -395,6 +415,8 @@ pub struct CameraOrbit {
     pub snap_follow: bool,
     /// Smoothed "drunk" sway amplitude (0 = perfectly steady camera).
     pub wobble_amp: f32,
+    /// Smoothed beer sway amplitude (slower, rollier than the high sway).
+    pub beer_amp: f32,
     /// Seconds since the player last gave look input (mouse/touch/stick).
     /// Vehicle chase cams pause auto-align while this is small.
     pub since_look: f32,
@@ -440,6 +462,7 @@ impl Default for CameraOrbit {
             last_player_pos: Vec3::ZERO,
             snap_follow: true,
             wobble_amp: 0.0,
+            beer_amp: 0.0,
             since_look: 99.0,
             blend_request: false,
             blend_t: CAMERA_BLEND_SECS,

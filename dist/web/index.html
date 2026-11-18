@@ -1748,7 +1748,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-f6db74bfaf8e7994.js" crossorigin="anonymous" integrity="sha384-e/ckOeXs2YrGNnR7RUszgv7QrhgaQXnJ6ynMuDxnQ4KOHrh4L3VaC8oJW1egT1+r"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-a594f5552acaa07a_bg.wasm" crossorigin="anonymous" integrity="sha384-iqVDQsIrU2MjkzxD4O4LyKM1csrdqqOPRhWEQRgR1Yay/0FUh142addDTGJrivNc" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-e9039de287c8e9e2.js" crossorigin="anonymous" integrity="sha384-7QAQR+bnsEjZffRjkGmPG9eD318CVExp5MAyRRxyBnyNtMCI9qBqaikASOJu8IBv"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-86769a3003f70d46_bg.wasm" crossorigin="anonymous" integrity="sha384-CFaYX/FVHeRL8aokn2nF18b0TdrQKZwYyv3PBCHyW+4wwejy/9RDm8US1GPUBjgL" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -2570,6 +2570,12 @@
           const m = window.location.search.match(/[?&]combat_demo=([A-Za-z0-9.:_-]+)/);
           return m ? m[1] : "";
         },
+        // Debug: ?debug=1&city_start=pub (or pubin, door, sky, crew) drops Stan there on a fresh city entry.
+        cityStart() {
+          if (!debugKeysEnabled) return "";
+          const m = window.location.search.match(/[?&]city_start=([a-z]+)/);
+          return m ? m[1] : "";
+        },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
         skipHeld() { pollGamepad(); return skipTouchHeld || gpStartHeld; },
         skipTouchUi,
@@ -2582,6 +2588,8 @@
         usingGamepad() { return lastInputPad; },
         takePointerLockLost() { const v = pointerLockLost; pointerLockLost = false; return v; },
         takeDebugPause() { const v = debugPausePending; debugPausePending = false; return v; },
+        // Debug: ?debug=1&at_beer=1 starts Stan inside Pub 217 facing the beer tower.
+        atBeer() { return debugKeysEnabled && /[?&]at_beer=1(?:&|$)/.test(window.location.search); },
       };
     })();
   </script>
@@ -2603,8 +2611,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-f6db74bfaf8e7994.js';
-const wasm = await init({ module_or_path: './tendy-quest-a594f5552acaa07a_bg.wasm' });
+import init, * as bindings from './tendy-quest-e9039de287c8e9e2.js';
+const wasm = await init({ module_or_path: './tendy-quest-86769a3003f70d46_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -17,7 +17,17 @@ const ROAD_COORDS: [f32; 5] = [-92.0, -46.0, 0.0, 46.0, 92.0];
 const BLOCK_COORDS: [f32; 4] = [-69.0, -23.0, 23.0, 69.0];
 const CITADEL_POS: Vec3 = Vec3::new(0.0, 0.0, -82.0);
 const LEXIE_TERRACE_POS: Vec3 = Vec3::new(0.0, 38.0, -75.5);
-pub const PUB217_ANCHOR: Vec3 = Vec3::new(-11.75, 0.0, 34.0);
+/// Pub 217's east doorway, the point the whole pub is built and scaled around. The pub sits on
+/// the (-23, 23) block (sidewalk x -36.25..-9.75, z 9.75..36.25) with its door facing 3rd St SE
+/// (x = 0): footprint x -32.6..-12.3, z 12.85..33.15, about 2.5-3.7 m of sidewalk on every side.
+pub const PUB217_ANCHOR: Vec3 = Vec3::new(-13.0, 0.0, 23.0);
+/// The pub's interior layout (walls, bar, stools, beer tower) is authored in a fixed design frame
+/// whose doorway is here; pieces are placed at `(design_pos - PUB217_LAYOUT_ORIGIN)` under the
+/// pub root, so moving `PUB217_ANCHOR` moves the whole building.
+const PUB217_LAYOUT_ORIGIN: Vec3 = Vec3::new(-11.75, 0.0, 34.0);
+/// Where a fresh city entry drops Stan: the brick walk on the west side of 3rd St SE, just
+/// south of the pub block, facing north with Pub 217's door about 17 m ahead on his left.
+const CITY_START_POS: Vec3 = Vec3::new(-8.4, 0.0, 39.0);
 
 /// Pub 217 is built at a fixed `1.45x` around `PUB217_ANCHOR` (its east doorway). It no longer
 /// grows with Stan: the crew gate keeps him at 180cm until TJ, Derek, Nate and Glenn are all
@@ -48,6 +58,251 @@ pub struct Pub217Root;
 /// Invisible collider across the pub doorway, active only once Stan has outgrown the door.
 #[derive(Component)]
 pub struct Pub217DoorPlug;
+
+// ---------------------------------------------------------------------------------------------
+// Scattered crew: TJ, Derek, Nate and Glenn each wait somewhere in Cedar Rapids (Mike stays in
+// Pub 217). In post-game free roam all four hang out in the pub instead.
+// ---------------------------------------------------------------------------------------------
+
+/// Crew indices shared by `CrewSpots`, the radar and the call-outs.
+pub const CREW_TJ: usize = 0;
+pub const CREW_DEREK: usize = 1;
+pub const CREW_NATE: usize = 2;
+pub const CREW_GLENN: usize = 3;
+const CREW_NAMES: [&str; 4] = ["TJ", "DEREK", "NATE", "GLENN"];
+/// A waiting crew member calls out (and shows on the radar) once Stan is this close; their
+/// floating marker is only drawn inside the same range.
+pub const CREW_REVEAL_RANGE: f32 = 35.0;
+
+/// This build's waiting spot (position, yaw facing the street) per crew member, re-rolled every
+/// time the city world is built, and whether each has called out to Stan yet.
+#[derive(Resource)]
+pub struct CrewSpots {
+    pub spots: [(Vec3, f32); 4],
+    pub revealed: [bool; 4],
+}
+
+/// Free-roam hangout spots inside Pub 217, as pre-scale offsets from `PUB217_ANCHOR` (TJ by the
+/// door, Derek, Nate and Glenn at their old bar spots).
+const CREW_PUB_OFFSETS: [Vec3; 4] = [
+    Vec3::new(-3.0, 0.0, -4.6),
+    Vec3::new(-9.6, 0.0, -3.4),
+    Vec3::new(-7.4, 0.0, -4.4),
+    Vec3::new(-11.2, 0.0, 2.2),
+];
+
+/// Mike's spot at the bar (pre-scale offset from `PUB217_ANCHOR`).
+pub fn mike_pub_spot() -> Vec3 {
+    PUB217_ANCHOR + Vec3::new(-4.5, 0.0, 4.3) * PUB217_SCALE
+}
+
+/// Where crew member `i` stands while not following Stan and which way they face: inside Pub 217
+/// in free roam (facing Stan), otherwise at this build's scattered spot, facing the street until
+/// Stan is close, then turning to him.
+pub fn crew_wait_pose(i: usize, stats: &PlayerStats, spots: Option<&CrewSpots>, stan: Vec3) -> (Vec3, Quat) {
+    let (pos, street_yaw, in_pub) = match spots {
+        Some(c) if !stats.free_roam => (c.spots[i].0, c.spots[i].1, false),
+        _ => (PUB217_ANCHOR + CREW_PUB_OFFSETS[i] * PUB217_SCALE, 0.0, true),
+    };
+    let to_p = Vec2::new(stan.x - pos.x, stan.z - pos.z);
+    let d = to_p.length();
+    let yaw = if d > 0.1 && (in_pub || d < 12.0) { to_p.x.atan2(to_p.y) } else { street_yaw };
+    (pos, Quat::from_rotation_y(yaw))
+}
+
+/// Curated waiting spots: each on a block sidewalk 11 m out from the block centre (2-2.5 m in
+/// front of the facade, 12 m from the road centre, so clear of every lane and the parking line),
+/// facing the street (yaw), away from the stunt circuits, Greene Square, Pub 217 and the
+/// sidewalk NPC patrols.
+/// (x, z, yaw)
+const CREW_SPOT_CANDIDATES: [(f32, f32, f32); 16] = [
+    (-80.0, -23.0, -std::f32::consts::FRAC_PI_2),
+    (-69.0, 34.0, 0.0),
+    (-23.0, -34.0, std::f32::consts::PI),
+    (34.0, -27.0, std::f32::consts::FRAC_PI_2),
+    (34.0, 23.0, std::f32::consts::FRAC_PI_2),
+    (58.0, -69.0, -std::f32::consts::FRAC_PI_2),
+    (69.0, -12.0, 0.0),
+    (-23.0, 80.0, 0.0),
+    (34.0, 69.0, std::f32::consts::FRAC_PI_2),
+    (-80.0, -69.0, -std::f32::consts::FRAC_PI_2),
+    (103.0, 23.0, -std::f32::consts::FRAC_PI_2),
+    (-23.0, -58.0, 0.0),
+    (69.0, 34.0, 0.0),
+    (12.0, -69.0, -std::f32::consts::FRAC_PI_2),
+    (-69.0, 58.0, std::f32::consts::PI),
+    (23.0, 103.0, std::f32::consts::PI),
+];
+
+/// Picks four waiting spots from `CREW_SPOT_CANDIDATES`: shuffled by `seed`, then taken greedily
+/// so each sits in a different district (3 x 3 split of the map), 45 m+ from the others, and at
+/// most one within 45 m of Stan's start. Falls back to looser spacing if a shuffle can't fit.
+fn pick_crew_spots(seed: u64) -> [(Vec3, f32); 4] {
+    let flat_d = |a: Vec3, b: Vec3| Vec2::new(a.x - b.x, a.z - b.z).length();
+    let stunt = crate::stunts::stunt_tendy_spots();
+    let mut cands: Vec<(Vec3, f32)> = CREW_SPOT_CANDIDATES
+        .iter()
+        .map(|&(x, z, yaw)| (Vec3::new(x, 0.0, z), yaw))
+        .filter(|(p, _)| {
+            is_clear_of_skyscrapers(p.x, p.z, 1.5)
+                && is_clear_of_skyscrapers(p.x, p.z, 0.0)
+                && flat_d(*p, Vec3::new(69.0, 0.0, 69.0)) > 22.0
+                && stunt.iter().all(|&q| flat_d(*p, q) > 10.0)
+        })
+        .collect();
+    let mut s = seed | 1;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    for i in (1..cands.len()).rev() {
+        let j = (next() % (i as u64 + 1)) as usize;
+        cands.swap(i, j);
+    }
+    let district = |p: Vec3| {
+        let cell = |v: f32| if v < -35.0 { 0 } else if v > 35.0 { 2 } else { 1 };
+        (cell(p.x), cell(p.z))
+    };
+    for (min_d, distinct) in [(45.0_f32, true), (30.0, true), (20.0, false)] {
+        let mut picked: Vec<(Vec3, f32)> = Vec::with_capacity(4);
+        for &(p, yaw) in &cands {
+            if picked.len() == 4 {
+                break;
+            }
+            let near_start = flat_d(p, CITY_START_POS) < 45.0;
+            if near_start && picked.iter().any(|(q, _)| flat_d(*q, CITY_START_POS) < 45.0) {
+                continue;
+            }
+            if picked
+                .iter()
+                .any(|(q, _)| flat_d(*q, p) < min_d || (distinct && district(*q) == district(p)))
+            {
+                continue;
+            }
+            picked.push((p, yaw));
+        }
+        if picked.len() == 4 {
+            return [picked[0], picked[1], picked[2], picked[3]];
+        }
+    }
+    let c = |i: usize| (Vec3::new(CREW_SPOT_CANDIDATES[i].0, 0.0, CREW_SPOT_CANDIDATES[i].1), CREW_SPOT_CANDIDATES[i].2);
+    [c(0), c(4), c(9), c(12)]
+}
+
+/// Fixed scatter seed for the `city_start=crew` debug view.
+const DEBUG_CREW_SEED: u64 = 217;
+
+/// Small floating chevron + ground ring over a waiting crew member, shown only within
+/// `CREW_REVEAL_RANGE` so it helps at street level without giving them away across the map.
+#[derive(Component)]
+pub struct CrewWaitTell(pub usize);
+
+fn spawn_crew_tells(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    spots: &[(Vec3, f32); 4],
+) {
+    let glow = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.45, 1.0, 0.55),
+        emissive: LinearRgba::rgb(0.9, 3.2, 1.2),
+        unlit: true,
+        ..default()
+    });
+    let ring_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.45, 1.0, 0.55, 0.45),
+        emissive: LinearRgba::rgb(0.5, 1.8, 0.7),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let cone = meshes.add(Cone::new(0.26, 0.5));
+    let ring = meshes.add(Torus::new(1.15, 1.3));
+    for (i, &(pos, _)) in spots.iter().enumerate() {
+        commands
+            .spawn((
+                LevelEntity,
+                CityWorldMarker,
+                CrewWaitTell(i),
+                Transform::from_translation(pos),
+                Visibility::Hidden,
+            ))
+            .with_children(|t| {
+                t.spawn((
+                    Mesh3d(cone.clone()),
+                    MeshMaterial3d(glow.clone()),
+                    Transform::from_xyz(0.0, 4.5, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
+                ));
+                t.spawn((
+                    Mesh3d(ring.clone()),
+                    MeshMaterial3d(ring_mat.clone()),
+                    Transform::from_xyz(0.0, 0.1, 0.0).with_scale(Vec3::new(1.0, 0.3, 1.0)),
+                ));
+            });
+    }
+}
+
+fn crew_recruited(stats: &PlayerStats, i: usize) -> bool {
+    match i {
+        CREW_TJ => stats.tj_recruited,
+        CREW_DEREK => stats.derek_recruited,
+        CREW_NATE => stats.nate_recruited,
+        _ => stats.glenn_recruited,
+    }
+}
+
+/// Waiting crew call out once Stan gets within `CREW_REVEAL_RANGE` (hint toast, chime, spoken
+/// line; from then on their radar marker shows) and their floating marker is drawn in range.
+pub fn update_crew_callouts(
+    time: Res<Time>,
+    mut stats: ResMut<PlayerStats>,
+    spots: Option<ResMut<CrewSpots>>,
+    player_q: Query<&Transform, With<Player>>,
+    mut tell_q: Query<(&CrewWaitTell, &mut Transform, &mut Visibility), Without<Player>>,
+) {
+    let (Some(mut spots), Ok(p_tf)) = (spots, player_q.get_single()) else {
+        return;
+    };
+    let p = p_tf.translation;
+    let t = time.elapsed_secs();
+    for (tell, mut tf, mut vis) in &mut tell_q {
+        let i = tell.0.min(3);
+        let pos = spots.spots[i].0;
+        let waiting = !stats.free_roam && !crew_recruited(&stats, i);
+        let d = Vec2::new(p.x - pos.x, p.z - pos.z).length();
+        let want = if waiting && d < CREW_REVEAL_RANGE { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        tf.translation = pos + Vec3::Y * (t * 2.4 + i as f32).sin() * 0.18;
+        tf.rotation = Quat::from_rotation_y(t * 1.6);
+    }
+    if stats.free_roam {
+        return;
+    }
+    for i in 0..4 {
+        if spots.revealed[i] || crew_recruited(&stats, i) {
+            continue;
+        }
+        let pos = spots.spots[i].0;
+        if Vec2::new(p.x - pos.x, p.z - pos.z).length() >= CREW_REVEAL_RANGE {
+            continue;
+        }
+        spots.revealed[i] = true;
+        let (line, spoken, role) = match i {
+            CREW_TJ => ("Stan! Over here, by the curb!", "Stan! Over here!", "tj"),
+            CREW_DEREK => ("Yo, Stan! Over here, champ!", "Yo, Stan! Over here!", "derek"),
+            CREW_NATE => ("Stan? Stan! Over here, man!", "Stan! Over here, man!", "nate"),
+            _ => ("Bro! Over here! Come say hi!", "Bro! Over here!", "glenn"),
+        };
+        stats.hint_text = format!("{}: \"{}\" ({} is on your radar.)", CREW_NAMES[i], line, CREW_NAMES[i]);
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        play_sfx("hack_success");
+        speak_voice(spoken, role);
+    }
+}
 
 /// Crew-gate look of the city tendies: `lit` is the look currently applied by
 /// `update_city_crew_gate` (`None` right after a world spawn, so it is applied once).
@@ -122,8 +377,8 @@ pub struct CityMinimapBossDot;
 #[derive(Component)]
 pub struct CityMinimapTendyDot;
 
-/// Radar marker for a gate step still to do: 0 = TJ (out front), 1 = Pub 217 (Derek, Nate,
-/// Glenn and Mike share one marker since they stand a few meters apart inside the bar).
+/// Radar marker: 0-3 = TJ, Derek, Nate, Glenn (`CREW_*`; only after they have called out to
+/// Stan), 4 = Pub 217 (Mike, until the smoke break), 5 = the driver's license card.
 #[derive(Component)]
 pub struct CityMinimapCrewDot(pub u8);
 
@@ -149,6 +404,93 @@ pub struct CityCar {
     pub knock_vel: Vec2,
     pub drift_sfx_cooldown: f32,
     pub car_hp: f32,
+    /// Height of the highest part of the roof: `CAR_ROOF_TOP`, or `CAR_CAB_SIGN_TOP` for cabs.
+    pub roof_h: f32,
+}
+
+// Car dimensions as built by `car_meshes` (cars spawn at scale 1, origin on the road):
+// body 2.15 x 4.45 (4.66 with bumpers), hood/trunk top 1.13 m, glass cabin + roof over
+// z = -1.275..0.975 topping out at 1.72 m, cab roof signs at 1.89 m.
+pub const CAR_HALF_W: f32 = 1.075;
+pub const CAR_HALF_L: f32 = 2.33;
+pub const CAR_BODY_TOP: f32 = 1.13;
+pub const CAR_ROOF_TOP: f32 = 1.72;
+pub const CAR_CAB_SIGN_TOP: f32 = 1.89;
+const CAR_CABIN_Z: (f32, f32) = (-1.275, 0.975);
+/// How far below a car surface something can be and still count as on top of it (snaps up).
+/// Covers one frame of fall plus the car sliding sideways under a descending scooter.
+pub const CAR_TOP_STEP: f32 = 0.45;
+
+/// Where a point (a scooter's wheel line) sits relative to a car.
+#[derive(Clone, Copy, PartialEq)]
+pub enum CarContact {
+    /// Outside the car's footprint (grown by `pad`).
+    Clear,
+    /// Over the car and high enough to ride on it: world height of the surface below.
+    Over(f32),
+    /// Inside the car's body: a collision.
+    Inside,
+}
+
+/// Height-aware contact between `p` and a car: the hood/trunk is `CAR_BODY_TOP` high, the
+/// cabin strip `roof_h`. A point within `CAR_TOP_STEP` below a surface counts as on top of it.
+pub fn city_car_contact(car_tf: &Transform, car: &CityCar, p: Vec3, pad: f32) -> CarContact {
+    let local = car_tf.rotation.inverse() * (p - car_tf.translation);
+    if local.x.abs() > CAR_HALF_W + pad || local.z.abs() > CAR_HALF_L + pad {
+        return CarContact::Clear;
+    }
+    let base = car_tf.translation.y;
+    let in_cabin = local.z > CAR_CABIN_Z.0 - pad && local.z < CAR_CABIN_Z.1 + pad;
+    if in_cabin && local.y >= car.roof_h - CAR_TOP_STEP {
+        CarContact::Over(base + car.roof_h)
+    } else if local.y >= CAR_BODY_TOP - CAR_TOP_STEP {
+        // Below the cabin top in the cabin strip only happens when riding off the hood into
+        // the windscreen; ride along at hood height rather than popping onto the roof.
+        CarContact::Over(base + CAR_BODY_TOP)
+    } else {
+        CarContact::Inside
+    }
+}
+
+/// World XZ rect of Pub 217's shell (outer wall faces), shared by traffic and drivable cars.
+fn pub217_rect() -> (f32, f32, f32, f32) {
+    let s = PUB217_SCALE;
+    (
+        PUB217_ANCHOR.x - 13.5 * s,
+        PUB217_ANCHOR.x + 0.5 * s,
+        PUB217_ANCHOR.z - 7.0 * s,
+        PUB217_ANCHOR.z + 7.0 * s,
+    )
+}
+
+/// Pushes a car's footprint out of Pub 217 along the shallowest axis (cars never enter the
+/// bar, doorway included). Returns the outward normal when it had to push. The pub sits on its
+/// own block clear of every lane, so this is only a safety net for cars Stan drives (or that
+/// get knocked) onto the sidewalk.
+fn push_car_out_of_pub217(car_tf: &mut Transform, yaw: f32) -> Option<Vec2> {
+    let (min_x, max_x, min_z, max_z) = pub217_rect();
+    let (s, c) = (yaw.sin().abs(), yaw.cos().abs());
+    let hx = s * CAR_HALF_L + c * CAR_HALF_W + 0.2;
+    let hz = c * CAR_HALF_L + s * CAR_HALF_W + 0.2;
+    let p = car_tf.translation;
+    let (l, r, b, f) = (p.x - (min_x - hx), (max_x + hx) - p.x, p.z - (min_z - hz), (max_z + hz) - p.z);
+    if l <= 0.0 || r <= 0.0 || b <= 0.0 || f <= 0.0 {
+        return None;
+    }
+    let m = l.min(r).min(b).min(f);
+    Some(if m == l {
+        car_tf.translation.x = min_x - hx;
+        Vec2::NEG_X
+    } else if m == r {
+        car_tf.translation.x = max_x + hx;
+        Vec2::X
+    } else if m == b {
+        car_tf.translation.z = min_z - hz;
+        Vec2::NEG_Y
+    } else {
+        car_tf.translation.z = max_z + hz;
+        Vec2::Y
+    })
 }
 
 #[derive(Component)]
@@ -682,6 +1024,11 @@ pub fn exit_mom_victory_cutscene(
 // =========================================================================
 
 fn is_clear_of_skyscrapers(x: f32, z: f32, margin: f32) -> bool {
+    // Pub 217 (its own low building on the (-23, 23) block)
+    let (pmin_x, pmax_x, pmin_z, pmax_z) = pub217_rect();
+    if x > pmin_x - margin && x < pmax_x + margin && z > pmin_z - margin && z < pmax_z + margin {
+        return false;
+    }
     // Empire Citadel Tower footprint: 21x21 centered at (0, -82)
     if (x - CITADEL_POS.x).abs() < 11.2 + margin && (z - CITADEL_POS.z).abs() < 11.2 + margin {
         return false;
@@ -1007,8 +1354,8 @@ pub fn spawn_nyc_world_if_needed(
         }
     }
 
-    // Walk-In Pub 217 (217 3rd St SE) on the LEFT of 3rd St SE (-25..-11.5, z = 27..41)
-    // Open doorway on East face (x = -11.5, z = 34.0) so Stan walks straight inside to find Mike!
+    // Walk-In Pub 217 (217 3rd St SE) on its own block west of 3rd St SE (see `PUB217_ANCHOR`).
+    // Open doorway on the East face, onto the 3rd St SE sidewalk, so Stan walks straight in to find Mike!
     let pub_cream_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.84, 0.80, 0.72),
         perceptual_roughness: 0.78,
@@ -1049,19 +1396,13 @@ pub fn spawn_nyc_world_if_needed(
         emissive: LinearRgba::rgb(2.4, 1.8, 0.8),
         ..default()
     });
-    let beer_amber_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.68, 0.14),
-        emissive: LinearRgba::rgb(0.75, 0.45, 0.06),
-        metallic: 0.25,
-        perceptual_roughness: 0.25,
-        ..default()
-    });
 
     // Warm streetlights & Pub 217 entrance + interior lights so 217 pops clearly at night
+    let pa = PUB217_ANCHOR;
     for (lx, ly, lz, intensity, range) in [
-        (-10.2_f32, 4.5_f32, 34.0_f32, 42000.0_f32, 24.0_f32),
-        (-18.5, 5.2, 34.0, 52000.0, 26.0),
-        (0.0, 7.5, 38.0, 38000.0, 32.0),
+        (pa.x + 1.55, 4.5_f32, pa.z, 42000.0_f32, 24.0_f32),
+        (pa.x - 6.75, 5.2, pa.z, 52000.0, 26.0),
+        (0.0, 7.5, pa.z + 4.0, 38000.0, 32.0),
     ] {
         commands.spawn((
             LevelEntity,
@@ -1077,6 +1418,14 @@ pub fn spawn_nyc_world_if_needed(
     }
 
     let pub_floor_mesh = tiled_unit(meshes, Vec3::new(13.5, 0.08, 14.0), 2.0);
+    let beer_glow_mesh = meshes.add(Torus::new(1.5, 1.75));
+    let beer_glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.72, 0.18, 0.55),
+        emissive: LinearRgba::rgb(2.2, 1.4, 0.25),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
     // Pub 217 Visual Root (scales around East doorway anchor PUB217_ANCHOR so Stan always fits inside!)
     commands
         .spawn((
@@ -1091,7 +1440,7 @@ pub fn spawn_nyc_world_if_needed(
             pub_root.spawn((
                 Mesh3d(pub_floor_mesh),
                 MeshMaterial3d(pub_floor_mat),
-                Transform::from_translation(Vec3::new(-18.25, 0.04, 34.0) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-18.25, 0.04, 34.0) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(13.5, 0.08, 14.0)),
             ));
             // Shell Walls (West, North, South, East-North, East-South leaving open front door at z = 34)
@@ -1107,7 +1456,7 @@ pub fn spawn_nyc_world_if_needed(
                 pub_root.spawn((
                     Mesh3d(tiled_unit(meshes, Vec3::new(sx, sy, sz), 1.2)),
                     MeshMaterial3d(mat),
-                    Transform::from_translation(Vec3::new(wx, wy, wz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(wx, wy, wz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::new(sx, sy, sz)),
                 ));
             }
@@ -1115,24 +1464,24 @@ pub fn spawn_nyc_world_if_needed(
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_cream_mat),
-                Transform::from_translation(Vec3::new(-11.42, 1.8, 38.5) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-11.42, 1.8, 38.5) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(0.16, 3.4, 4.2)),
             ));
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_black_mat.clone()),
-                Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(1.6, 2.8, 0.45)),
             ));
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_sign_mat.clone()),
-                Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-10.5, 4.2, 37.0) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(1.2, 2.3, 0.52)),
             ));
             // Bold "2 1 7" 3D digits on both faces of the blade sign + glowing doorway arch
             for z_face in [-0.28_f32, 0.28_f32] {
-                let sign_c = Vec3::new(-10.5, 4.2, 37.0 + z_face) - PUB217_ANCHOR;
+                let sign_c = Vec3::new(-10.5, 4.2, 37.0 + z_face) - PUB217_LAYOUT_ORIGIN;
                 // "2" (top y +0.62)
                 for (dx, dy, sx, sy) in [
                     (0.0_f32, 0.78_f32, 0.50_f32, 0.11_f32),
@@ -1159,32 +1508,32 @@ pub fn spawn_nyc_world_if_needed(
                 pub_root.spawn((
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(pub_sign_mat.clone()),
-                    Transform::from_translation(Vec3::new(-11.42, 2.2, 34.0 + dz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(-11.42, 2.2, 34.0 + dz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::new(0.18, 4.4, 0.18)),
                 ));
             }
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_sign_mat.clone()),
-                Transform::from_translation(Vec3::new(-11.42, 4.45, 34.0) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-11.42, 4.45, 34.0) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(0.22, 0.22, 4.9)),
             ));
             // L-shaped mahogany bar counter + 4 tall wooden barstools
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_wood_mat.clone()),
-                Transform::from_translation(Vec3::new(-19.5, 0.62, 32.5) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-19.5, 0.62, 32.5) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(1.1, 1.24, 6.4)),
             ));
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_wood_mat.clone()),
-                Transform::from_translation(Vec3::new(-21.2, 0.62, 35.2) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-21.2, 0.62, 35.2) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(3.8, 1.24, 1.1)),
             ));
             for sz in [30.2_f32, 31.6, 33.0, 34.4] {
                 pub_root
-                    .spawn(Transform::from_translation(Vec3::new(-18.3, 0.0, sz) - PUB217_ANCHOR))
+                    .spawn(Transform::from_translation(Vec3::new(-18.3, 0.0, sz) - PUB217_LAYOUT_ORIGIN))
                     .with_children(|s| {
                         s.spawn((
                             Mesh3d(unit_box.clone()),
@@ -1210,19 +1559,19 @@ pub fn spawn_nyc_world_if_needed(
                 pub_root.spawn((
                     Mesh3d(unit_cyl.clone()),
                     MeshMaterial3d(pub_black_mat.clone()),
-                    Transform::from_translation(Vec3::new(-18.6, 5.2, pz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(-18.6, 5.2, pz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::new(0.03, 2.2, 0.03)),
                 ));
                 pub_root.spawn((
                     Mesh3d(unit_cone.clone()),
                     MeshMaterial3d(pub_black_mat.clone()),
-                    Transform::from_translation(Vec3::new(-18.6, 4.0, pz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(-18.6, 4.0, pz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::new(0.45, 0.45, 0.45)),
                 ));
                 pub_root.spawn((
                     Mesh3d(unit_sphere.clone()),
                     MeshMaterial3d(pendant_glow_mat.clone()),
-                    Transform::from_translation(Vec3::new(-18.6, 3.78, pz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(-18.6, 3.78, pz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::splat(0.14)),
                 ));
             }
@@ -1231,57 +1580,57 @@ pub fn spawn_nyc_world_if_needed(
                 pub_root.spawn((
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(cooler_glow_mat.clone()),
-                    Transform::from_translation(Vec3::new(-24.2, 1.35, cz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(-24.2, 1.35, cz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::new(0.55, 2.1, 2.2)),
                 ));
                 pub_root.spawn((
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(tv_glow_mat.clone()),
-                    Transform::from_translation(Vec3::new(-24.3, 3.35, cz) - PUB217_ANCHOR)
+                    Transform::from_translation(Vec3::new(-24.3, 3.35, cz) - PUB217_LAYOUT_ORIGIN)
                         .with_scale(Vec3::new(0.16, 1.15, 2.0)),
                 ));
             }
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(tv_glow_mat),
-                Transform::from_translation(Vec3::new(-24.3, 3.35, 31.4) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-24.3, 3.35, 31.4) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(0.16, 0.95, 1.5)),
             ));
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(sidewalk_mat.clone()),
-                Transform::from_translation(Vec3::new(-22.2, 1.45, 31.4) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-22.2, 1.45, 31.4) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(0.28, 0.65, 1.8)),
             ));
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(cooler_glow_mat),
-                Transform::from_translation(Vec3::new(-20.6, 1.55, 34.4) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-20.6, 1.55, 34.4) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(0.18, 0.42, 0.55)),
             ));
             // Left corner: Table with 7-tier Beer Tower Pyramid reaching nearly to the ceiling!
             pub_root.spawn((
                 Mesh3d(unit_box.clone()),
                 MeshMaterial3d(pub_wood_mat.clone()),
-                Transform::from_translation(Vec3::new(-22.6, 0.55, 38.6) - PUB217_ANCHOR)
+                Transform::from_translation(Vec3::new(-22.6, 0.55, 38.6) - PUB217_LAYOUT_ORIGIN)
                     .with_scale(Vec3::new(2.2, 1.1, 2.2)),
             ));
-            for tier in 0..7_usize {
-                let count = 7 - tier;
-                let y = 1.42 + tier as f32 * 0.68;
-                let spread = (count as f32 - 1.0) * 0.24;
-                for j in 0..count {
-                    let off = -spread * 0.5 + j as f32 * 0.24;
-                    pub_root.spawn((
-                        Mesh3d(unit_cyl.clone()),
-                        MeshMaterial3d(beer_amber_mat.clone()),
-                        Transform::from_translation(
-                            Vec3::new(-22.6 + off * 0.5, y, 38.6 + off * 0.5) - PUB217_ANCHOR,
-                        )
-                        .with_scale(Vec3::new(0.13, 0.64, 0.13)),
-                    ));
-                }
-            }
+            // Stacked pyramid of "Bash Lyte" tall boys on the table top, plus the hero can.
+            crate::beer_fx::spawn_pub_beer_tower(
+                pub_root,
+                meshes,
+                materials,
+                Vec3::new(-22.6, 1.1, 38.6) - PUB217_LAYOUT_ORIGIN,
+            );
+            // Amber floor ring around the beer tower table while Stan can drink there.
+            pub_root.spawn((
+                BeerTowerGlow,
+                Mesh3d(beer_glow_mesh),
+                MeshMaterial3d(beer_glow_mat),
+                Transform::from_translation(BEER_TOWER_PUB_POS + Vec3::Y * 0.06 - PUB217_LAYOUT_ORIGIN)
+                    .with_scale(Vec3::new(1.0, 0.15, 1.0)),
+                Visibility::Hidden,
+            ));
         });
 
     // PlatformBox colliders for Pub 217 walls, bar, and beer-pyramid table (fixed pub scale)
@@ -1297,7 +1646,7 @@ pub fn spawn_nyc_world_if_needed(
         (-21.2, 0.62, 35.2, 3.8, 1.24, 1.1),
         (-22.6, 0.55, 38.6, 2.2, 1.1, 2.2),
     ] {
-        let base_local = Vec3::new(wx, wy, wz) - PUB217_ANCHOR;
+        let base_local = Vec3::new(wx, wy, wz) - PUB217_LAYOUT_ORIGIN;
         let base_half = Vec3::new(sx * 0.5, sy * 0.5, sz * 0.5);
         commands.spawn((
             LevelEntity,
@@ -1346,8 +1695,22 @@ pub fn spawn_nyc_world_if_needed(
             if bx < -100.0 && bz.abs() > 1.0 {
                 continue;
             }
-            // Skip block (-23, 23) so Pub 217 + Mike's Alley on the West side of 3rd St SE stay open!
+            // Block (-23, 23) is Pub 217's block: sidewalk and kerb like any other, no tower.
             if (bx + 23.0).abs() < 1.0 && (bz - 23.0).abs() < 1.0 {
+                commands.spawn((
+                    LevelEntity,
+                    CityWorldMarker,
+                    Mesh3d(block_walk_mesh.clone()),
+                    MeshMaterial3d(sidewalk_mat.clone()),
+                    Transform::from_xyz(bx, 0.04, bz).with_scale(Vec3::new(26.5, 0.08, 26.5)),
+                ));
+                commands.spawn((
+                    LevelEntity,
+                    CityWorldMarker,
+                    Mesh3d(kerb_ring.clone()),
+                    MeshMaterial3d(kerb_mat.clone()),
+                    Transform::from_xyz(bx, 0.0, bz),
+                ));
                 continue;
             }
             // Greene Square Park at (69, 69)
@@ -1994,17 +2357,38 @@ fn spawn_50_city_tendies(
     }
     crate::scooter::spawn_city_scooters(commands, meshes, materials);
     crate::stunts::spawn_stunt_course(commands, meshes, materials);
-    spots.extend(crate::stunts::stunt_tendy_spots());
     // Never put a tendy inside Pub 217: Stan must not be able to grow while in the bar.
     spots.retain(|p| !is_in_pub217(*p, 1.8));
+    let mut stunt_spots = crate::stunts::stunt_tendy_spots();
+    stunt_spots.retain(|p| !is_in_pub217(*p, 1.8));
+    // About 70 on the map in total (50 grow Stan to full kaiju): the stunt trails stay whole and
+    // the street ones are thinned evenly.
+    let street_keep = CITY_TENDY_TOTAL.saturating_sub(stunt_spots.len()).max(30);
+    thin_street_tendies(&mut spots, &stunt_spots, street_keep);
+    spots.extend(stunt_spots);
     commands.insert_resource(CityTendyLook { lit: None });
     let mut mike_seed_bytes = [0u8; 8];
     let _ = getrandom::getrandom(&mut mike_seed_bytes);
     let mike_seed = u64::from_le_bytes(mike_seed_bytes);
     crate::scooter::spawn_city_mike(commands, meshes, materials, mike_seed);
-    crate::derek::spawn_city_derek(commands, meshes, materials);
-    crate::nate::spawn_city_nate(commands, meshes, materials);
-    crate::glenn::spawn_city_glenn(commands, meshes, materials);
+    // TJ, Derek, Nate and Glenn wait at fresh random spots every time the city is built (a
+    // death retry or reload re-scatters whoever is still unrecruited).
+    let crew_seed = if crate::audio::debug_city_start() == "crew" {
+        DEBUG_CREW_SEED
+    } else {
+        mike_seed.rotate_left(17) ^ 0x9E37_79B9_7F4A_7C15
+    };
+    let crew_spots = pick_crew_spots(crew_seed);
+    commands.insert_resource(CrewSpots {
+        spots: crew_spots,
+        revealed: [false; 4],
+    });
+    spawn_crew_tells(commands, meshes, materials, &crew_spots);
+    crate::derek::spawn_city_derek(commands, meshes, materials, crew_spots[CREW_DEREK].0);
+    crate::nate::spawn_city_nate(commands, meshes, materials, crew_spots[CREW_NATE].0);
+    crate::glenn::spawn_city_glenn(commands, meshes, materials, crew_spots[CREW_GLENN].0);
+    let crew_pos = crew_spots.map(|(p, _)| p);
+    spawn_parked_car(commands, meshes, materials, &spots, &crew_pos);
 
     for (i, pos) in spots.into_iter().enumerate() {
         commands
@@ -2170,6 +2554,7 @@ fn spawn_city_traffic(
                     knock_vel: Vec2::ZERO,
                     drift_sfx_cooldown: 0.0,
                     car_hp: 100.0,
+                    roof_h: if i % body_colors.len() < 2 { CAR_CAB_SIGN_TOP } else { CAR_ROOF_TOP },
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
@@ -2319,6 +2704,15 @@ fn spawn_city_npcs(
             2 => Vec3::new(bx, 0.08, bz + offset),
             _ => Vec3::new(bx, 0.08, bz - offset),
         };
+        // The (-23, 23) block is Pub 217's: every patrol there would walk through its walls.
+        let (pmin_x, pmax_x, pmin_z, pmax_z) = pub217_rect();
+        if home.x + 2.2 + 0.5 > pmin_x
+            && home.x - 2.2 - 0.5 < pmax_x
+            && home.z + 4.8 + 0.5 > pmin_z
+            && home.z - 4.8 - 0.5 < pmax_z
+        {
+            continue;
+        }
         let coat = coats[i % coats.len()].clone();
 
         commands
@@ -2815,7 +3209,7 @@ pub fn enter_city_play(
             // restart/retry inside free roam): normal size, crew at their spots, no Lexie.
             stats.prepare_free_roam();
             stats.hint_text =
-                "FREE ROAM! Lexie is gone for good. Scoot around Cedar Rapids, hit the stunt gates and say hi to the crew."
+                "FREE ROAM! Lexie is gone for good. Scoot around Cedar Rapids, hit the stunt gates and say hi to the crew in Pub 217."
                     .to_string();
         } else if let Some(preset_tendies) = stats.test_crew_preset.take() {
             // `city_crew=1` / `city_crew_kaiju=1` test links: whole gate already done.
@@ -2837,7 +3231,7 @@ pub fn enter_city_play(
                     "BACK IN CEDAR RAPIDS! Your crew is with you: eat 50 tendies and take down Lexie!"
                         .to_string()
                 } else {
-                    "PUB 217 AT NIGHT! Before the tendies: recruit TJ (out front), Derek, Nate & Glenn (inside Pub 217), and smoke with Mike."
+                    "CEDAR RAPIDS AT NIGHT! Before the tendies: find TJ, Derek, Nate & Glenn somewhere in the city (they shout when you get close), and smoke with Mike in Pub 217."
                         .to_string()
                 };
         }
@@ -2849,12 +3243,10 @@ pub fn enter_city_play(
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
         p_tf.translation = if resuming_from_tj {
             stats.saved_city_pos
+        } else if is_titan_preview {
+            Vec3::new(4.2, 0.0, -18.0)
         } else {
-            Vec3::new(
-                if is_titan_preview { 4.2 } else { -4.5 },
-                0.0,
-                if is_titan_preview { -18.0 } else { 40.0 },
-            )
+            CITY_START_POS
         };
         p_tf.scale = Vec3::splat(stats.player_scale);
         player.velocity = Vec3::ZERO;
@@ -2870,6 +3262,9 @@ pub fn enter_city_play(
         orbit.pitch = if is_titan_preview { 0.42 } else { 0.36 };
         orbit.distance = if is_titan_preview { 15.5 } else { 11.2 };
         orbit.current_dist = orbit.distance;
+        if !is_titan_preview {
+            debug_city_start(&mut stats, &mut orbit, &mut player_q);
+        }
     }
 
     set_touch_playing(true);
@@ -3036,8 +3431,10 @@ pub fn enter_city_play(
                         ));
                     }
 
-                    // Green crew markers (TJ, Pub 217) shown while crew members are missing
-                    for idx in 0..2_u8 {
+                    // Green crew markers (TJ, Derek, Nate, Glenn once they have called out),
+                    // amber Pub 217 marker (Mike), marker 5 is the driver's license card
+                    // (after a car first refuses Stan).
+                    for idx in 0..6_u8 {
                         radar.spawn((
                             CityMinimapCrewDot(idx),
                             Node {
@@ -3090,6 +3487,51 @@ pub fn enter_city_play(
                     ));
                 });
         });
+}
+
+/// Debug only (`?debug=1&city_start=...`): drops Stan somewhere useful for screenshots on a fresh
+/// city entry. `pub` = outside the pub door facing it, `pubin` = inside the pub, `door` = on the doorstep, `sky` = high
+/// view from the pub roof over its block, `crew` = 9 m from Derek's waiting spot (inside his call-out range).
+fn debug_city_start(
+    stats: &mut PlayerStats,
+    orbit: &mut CameraOrbit,
+    player_q: &mut Query<(&mut Transform, &mut Player)>,
+) {
+    let mode = crate::audio::debug_city_start();
+    if mode.is_empty() {
+        return;
+    }
+    let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
+        return;
+    };
+    // (position, facing direction)
+    let (pos, face) = match mode.as_str() {
+        "pub" => (PUB217_ANCHOR + Vec3::new(9.0, 0.0, 4.0), Vec3::new(-1.0, 0.0, -0.45)),
+        "pubin" => (PUB217_ANCHOR + Vec3::new(-1.6, 0.0, 0.0), Vec3::NEG_X),
+        "door" => (PUB217_ANCHOR + Vec3::new(1.8, 0.0, 0.0), Vec3::NEG_X),
+        // On the pub roof (the camera clamps only apply inside), looking west over the block.
+        "sky" => (PUB217_ANCHOR + Vec3::new(-10.0, 10.5, 0.0), Vec3::NEG_X),
+        "crew" => {
+            // With this flag the world used `DEBUG_CREW_SEED`, so the spots are known here:
+            // stand 9 m out in the street in front of Derek, looking at him.
+            let (spot, yaw) = pick_crew_spots(DEBUG_CREW_SEED)[CREW_DEREK];
+            let out = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+            (spot + out * 9.0, -out)
+        }
+        _ => return,
+    };
+    p_tf.translation = pos;
+    // Stan's forward is -Z at yaw 0; the orbit camera sits behind him at the same yaw.
+    let yaw = (-face.x).atan2(-face.z);
+    player.facing_yaw = yaw;
+    p_tf.rotation = Quat::from_rotation_y(yaw);
+    orbit.yaw = yaw;
+    if mode == "sky" {
+        orbit.pitch = 1.2;
+        orbit.distance = 40.0;
+        orbit.current_dist = orbit.distance;
+    }
+    stats.hint_text = format!("DEBUG: city_start={}", mode);
 }
 
 /// OnExit(CityPlay): remember the hero's facing so a cutscene resume can restore it
@@ -3224,7 +3666,9 @@ pub fn update_city_driving(
         return;
     };
 
-    let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
+    let interact = keys.just_pressed(KeyCode::KeyF)
+        || keys.just_pressed(KeyCode::KeyE)
+        || std::mem::take(&mut stats.car_prompt_tap);
 
     // 1. If currently on foot, check for nearby hijackable car
     if stats.driving_car.is_none() && stats.riding_scooter.is_none() {
@@ -3243,7 +3687,10 @@ pub fn update_city_driving(
             }
         }
         if let Some((car_e, _)) = nearest {
-            if interact {
+            if interact && !stats.has_license {
+                // No car can be driven until the license card is found (`update_city_props`).
+                refuse_no_license(&mut stats);
+            } else if interact {
                 if let Ok((_, mut car_tf, mut car, _)) = car_q.get_mut(car_e) {
                     car.occupied = true;
                     car.parked = false;
@@ -3435,6 +3882,12 @@ pub fn update_city_driving(
                 if b_tf.translation.y - b_box.half_extents.y > 2.2 {
                     continue;
                 }
+                // Only boxes that rise above the road are walls. Without this the city ground
+                // slab (top at y = 0, covering the whole map) counted as a building the car was
+                // inside, and the push-out threw every driven car to the edge of the map.
+                if b_tf.translation.y + b_box.half_extents.y <= car_tf.translation.y + 0.3 {
+                    continue;
+                }
                 let min_x = b_tf.translation.x - b_box.half_extents.x - wall_r;
                 let max_x = b_tf.translation.x + b_box.half_extents.x + wall_r;
                 let min_z = b_tf.translation.z - b_box.half_extents.z - wall_r;
@@ -3474,6 +3927,12 @@ pub fn update_city_driving(
                     }
                 }
             }
+        }
+        // The pub walls stop the car like any building; this also shuts the 6.5 m doorway
+        // (walk-in only), so no car ends up in the bar among the crew.
+        if let Some(n) = push_car_out_of_pub217(&mut car_tf, car.yaw) {
+            let into = car.velocity.dot(n).min(0.0);
+            car.velocity -= n * into * 1.28;
         }
 
         car_tf.rotation = Quat::from_rotation_y(car.yaw)
@@ -3637,6 +4096,10 @@ pub fn update_city_traffic(
         if car.parked {
             car_tf.translation.x = (car_tf.translation.x + car.velocity.x * dt).clamp(-132.0, 132.0);
             car_tf.translation.z = (car_tf.translation.z + car.velocity.y * dt).clamp(-132.0, 132.0);
+            if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some() {
+                car.velocity = Vec2::ZERO;
+                car.knock_vel = Vec2::ZERO;
+            }
             car.velocity *= (1.0 - 2.2 * dt).max(0.0);
             car.pitch_lean *= (1.0 - 6.0 * dt).max(0.0);
             car.roll_lean *= (1.0 - 6.0 * dt).max(0.0);
@@ -3661,6 +4124,10 @@ pub fn update_city_traffic(
                 car_tf.translation.z = CITY_HALF_EXTENT;
             }
         }
+        // Backstop for knockback shoving a lane car sideways into Pub 217 (no lane runs through it).
+        if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some() {
+            car.knock_vel = Vec2::ZERO;
+        }
         car_tf.rotation = Quat::from_rotation_y(car.yaw);
 
         if is_driving {
@@ -3668,15 +4135,23 @@ pub fn update_city_traffic(
         }
 
         // Check car impact with Stan (flying above street height clears cars cleanly!)
-        let vertical_gap = (p_tf.translation.y - car_tf.translation.y).abs();
-        let flat_dist = Vec2::new(
-            p_tf.translation.x - car_tf.translation.x,
-            p_tf.translation.z - car_tf.translation.z,
-        )
-        .length();
+        let touching = if stats.riding_scooter.is_some() {
+            // On the scooter the car's real body counts: wheels above the hood/roof (a hop, or
+            // riding on top) pass cleanly; only running into the body hits. The rider sits
+            // 0.25 m above the deck origin (`update_scooter_stunts`).
+            let wheels = p_tf.translation - Vec3::Y * 0.25;
+            city_car_contact(&car_tf, &car, wheels, 0.45) == CarContact::Inside
+        } else {
+            let vertical_gap = (p_tf.translation.y - car_tf.translation.y).abs();
+            let flat_dist = Vec2::new(
+                p_tf.translation.x - car_tf.translation.x,
+                p_tf.translation.z - car_tf.translation.z,
+            )
+            .length();
+            flat_dist < hit_radius && vertical_gap < (1.6 + stats.player_scale * 0.35)
+        };
         if in_active_play
-            && flat_dist < hit_radius
-            && vertical_gap < (1.6 + stats.player_scale * 0.35)
+            && touching
             && player.roll_timer <= 0.0
             && player.invuln_timer <= 0.0
         {
@@ -4262,9 +4737,11 @@ pub fn update_city_lexie(
 pub fn update_city_minimap(
     time: Res<Time>,
     stats: Res<PlayerStats>,
+    crew_spots: Option<Res<CrewSpots>>,
     player_q: Query<&Transform, With<Player>>,
     lexie_q: Query<&Transform, (With<LexieBoss>, Without<Player>)>,
     tendy_q: Query<&Transform, (With<CityTendy>, Without<Player>, Without<LexieBoss>)>,
+    license_q: Query<&Transform, (With<LicenseCard>, Without<Player>, Without<LexieBoss>, Without<CityTendy>)>,
     mut p_dot_q: Query<&mut Node, With<CityMinimapPlayerDot>>,
     mut b_dot_q: Query<(&mut Node, &mut Visibility), (With<CityMinimapBossDot>, Without<CityMinimapPlayerDot>)>,
     mut t_dot_q: Query<
@@ -4325,24 +4802,45 @@ pub fn update_city_minimap(
     // Missing-crew markers pulse so they read as the current goal.
     let pulse = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
     for (mut c_node, mut c_vis, mut c_border, dot) in &mut c_dot_q {
-        let (pos, missing) = if dot.0 == 0 {
-            (crate::tj::TJ_CITY_SPAWN, !stats.tj_recruited)
+        if dot.0 == 5 {
+            let card = license_q.iter().next().filter(|_| stats.license_refused && !stats.has_license);
+            let want = if card.is_some() { Visibility::Visible } else { Visibility::Hidden };
+            if *c_vis != want {
+                *c_vis = want;
+            }
+            if let Some(t) = card {
+                c_node.left = Val::Percent(to_pct(t.translation.x));
+                c_node.top = Val::Percent(to_pct(t.translation.z));
+            }
+            c_border.0 = Color::srgba(0.35, 0.85, 1.0, pulse);
+            continue;
+        }
+        // Crew only show once they have called out (the search is the point); the pub marker
+        // stays up for Mike until the smoke break.
+        let i = usize::from(dot.0);
+        let (pos, missing, color) = if i < 4 {
+            match crew_spots.as_deref() {
+                Some(c) => (
+                    c.spots[i].0,
+                    c.revealed[i] && !crew_recruited(&stats, i),
+                    Color::srgba(0.35, 1.0, 0.55, pulse),
+                ),
+                None => (Vec3::ZERO, false, Color::NONE),
+            }
         } else {
             (
                 PUB217_ANCHOR + Vec3::new(-6.5, 0.0, 0.0) * PUB217_SCALE,
-                !(stats.derek_recruited
-                    && stats.nate_recruited
-                    && stats.glenn_recruited
-                    && stats.mike_smoked),
+                !stats.mike_smoked,
+                Color::srgba(1.0, 0.78, 0.25, pulse),
             )
         };
-        let want = if missing && !unlocked { Visibility::Visible } else { Visibility::Hidden };
+        let want = if missing && !unlocked && !stats.free_roam { Visibility::Visible } else { Visibility::Hidden };
         if *c_vis != want {
             *c_vis = want;
         }
         c_node.left = Val::Percent(to_pct(pos.x));
         c_node.top = Val::Percent(to_pct(pos.z));
-        c_border.0 = Color::srgba(0.35, 1.0, 0.55, pulse);
+        c_border.0 = color;
     }
 }
 
@@ -4485,5 +4983,561 @@ pub fn animate_city_intro_lexie(
         if d_tf.translation.y <= 0.4 || deb.age > 5.0 {
             commands.entity(d_ent).despawn_recursive();
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Street tendy count, the Pub 217 beer tower and the parked "no license" car
+// ---------------------------------------------------------------------------------------------
+
+/// Tendies on the city map in total, stunt trails included (50 of them grow Stan to full size).
+const CITY_TENDY_TOTAL: usize = 70;
+
+/// Drops street tendies until `keep` remain, each time removing the one whose nearest neighbour
+/// (street or `fixed`) is closest, so crowded stretches thin out first and every district keeps
+/// some. Deterministic, so the map is the same every run.
+fn thin_street_tendies(spots: &mut Vec<Vec3>, fixed: &[Vec3], keep: usize) {
+    let flat_d2 = |a: Vec3, b: Vec3| (a.x - b.x).powi(2) + (a.z - b.z).powi(2);
+    while spots.len() > keep {
+        let mut worst = (0_usize, f32::MAX);
+        for (i, &p) in spots.iter().enumerate() {
+            let nearest = spots
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, &q)| flat_d2(p, q))
+                .chain(fixed.iter().map(|&q| flat_d2(p, q)))
+                .fold(f32::MAX, f32::min);
+            if nearest < worst.1 {
+                worst = (i, nearest);
+            }
+        }
+        spots.remove(worst.0);
+    }
+}
+
+/// Floor ring around the beer-tower table, shown while Stan can drink there.
+#[derive(Component)]
+pub struct BeerTowerGlow;
+
+/// The one parked car: a normal `CityCar` spawned with `parked: true`, so traffic leaves it
+/// where it is (see the parked branch of `update_city_traffic`) and `update_city_driving` can
+/// take it over once Stan has the license. Left anywhere, it parks again like any taken car.
+#[derive(Component)]
+pub struct ParkedCar;
+
+/// Solid box that follows the parked car while nobody is driving it (`sync_parked_car_collider`).
+/// `armed` is false right after Stan leaves it, so the box only switches back on once he has
+/// stepped clear and never pops him out.
+#[derive(Component)]
+pub struct ParkedCarCollider {
+    car: Entity,
+    armed: bool,
+}
+
+const PARKED_COLLIDER_OFF: Vec3 = Vec3::new(0.0, -60.0, 0.0);
+
+/// Shared on-screen button for the beer tower and the parked car (tappable on touch).
+#[derive(Component)]
+pub struct PropPromptUi;
+
+#[derive(Component)]
+pub struct PropPromptButton;
+
+#[derive(Component)]
+pub struct PropPromptText;
+
+/// The beer-tower table, in the same pre-scale pub coordinates the pub builder uses.
+const BEER_TOWER_PUB_POS: Vec3 = Vec3::new(-22.6, 0.0, 38.6);
+const BEER_HEARTS: i32 = 3;
+const BEER_DRUNK_SECS: f32 = 20.0;
+const BEER_DRUNK_CAP_SECS: f32 = 45.0;
+const BEER_COOLDOWN_SECS: f32 = 4.0;
+/// Reach from the table centre (the table is about 1.6 m half-width at pub scale).
+const BEER_REACH: f32 = 3.4;
+/// Stan only fits at the bar around normal size (180 cm is scale 1.8).
+const BEER_MAX_SCALE: f32 = 2.6;
+const PARKED_CAR_REACH: f32 = 4.0;
+
+fn beer_tower_world_pos() -> Vec3 {
+    PUB217_ANCHOR + (BEER_TOWER_PUB_POS - PUB217_LAYOUT_ORIGIN) * PUB217_SCALE
+}
+
+/// Spawns one parked car and the driver's license card at two different random kerbside spots:
+/// mid-block, outside the traffic lanes (lanes are 3.6 m off the road centre, these sit at 7 m),
+/// clear of buildings, Pub 217 and its front, Greene Square, the stunt trails, the tendies and
+/// the scattered crew.
+/// The car is solid via a `PlatformBox`; the card is a street-level walk-in pickup.
+fn spawn_parked_car(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    tendy_spots: &[Vec3],
+    crew_spots: &[Vec3],
+) {
+    let stunt = crate::stunts::stunt_tendy_spots();
+    let flat_d2 = |a: Vec3, b: Vec3| (a.x - b.x).powi(2) + (a.z - b.z).powi(2);
+    let pub_front = PUB217_ANCHOR + Vec3::new(4.0, 0.0, 0.0);
+    let mut candidates: Vec<(Vec3, bool)> = Vec::new();
+    for &r in &ROAD_COORDS {
+        // 3rd St SE (x = 0) has the bike lanes, trees and the north stunt circuit.
+        if r == 0.0 {
+            continue;
+        }
+        for &b in &BLOCK_COORDS {
+            for side in [-7.0_f32, 7.0] {
+                // (position, runs along z)
+                for (p, along_z) in [(Vec3::new(r + side, 0.0, b), true), (Vec3::new(b, 0.0, r + side), false)] {
+                    let ok = is_clear_of_skyscrapers(p.x, p.z, 2.5)
+                        && !is_in_pub217(p, 1.8)
+                        && flat_d2(p, pub_front) > 26.0 * 26.0
+                        && flat_d2(p, Vec3::new(69.0, 0.0, 69.0)) > 32.0 * 32.0
+                        && stunt.iter().all(|&q| flat_d2(p, q) > 12.0 * 12.0)
+                        && tendy_spots.iter().all(|&q| flat_d2(p, q) > 5.0 * 5.0)
+                        && crew_spots.iter().all(|&q| flat_d2(p, q) > 9.0 * 9.0);
+                    if ok {
+                        candidates.push((p, along_z));
+                    }
+                }
+            }
+        }
+    }
+    let mut seed = [0u8; 8];
+    let _ = getrandom::getrandom(&mut seed);
+    let seed = u64::from_le_bytes(seed);
+    let n = candidates.len();
+    if n < 2 {
+        return;
+    }
+    let car_i = (seed % n as u64) as usize;
+    let card_i = (car_i + 1 + ((seed >> 32) % (n as u64 - 1)) as usize) % n;
+    spawn_license_card(commands, meshes, materials, candidates[card_i].0);
+    let (pos, along_z) = candidates[car_i];
+    let yaw = if along_z { 0.0 } else { std::f32::consts::FRAC_PI_2 };
+
+    let paint = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.30, 0.10, 0.42),
+        perceptual_roughness: 0.22,
+        metallic: 0.55,
+        ..default()
+    });
+    let glass = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.14, 0.22, 0.32),
+        metallic: 0.6,
+        perceptual_roughness: 0.15,
+        ..default()
+    });
+    let tire = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.09, 0.09, 0.11),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let trim = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.12, 0.12, 0.14),
+        perceptual_roughness: 0.55,
+        metallic: 0.2,
+        ..default()
+    });
+    let hub = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.72, 0.74, 0.78),
+        perceptual_roughness: 0.3,
+        metallic: 0.8,
+        ..default()
+    });
+    // Lights off: it is parked.
+    let lamp_off = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.55, 0.52, 0.45),
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+    let cm = car_meshes(meshes);
+    let car_e = commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            ParkedCar,
+            CityCar {
+                axis_x: !along_z,
+                dir: 1.0,
+                speed: 15.0,
+                horn_cooldown: 0.0,
+                occupied: false,
+                parked: true,
+                yaw,
+                velocity: Vec2::ZERO,
+                pitch_lean: 0.0,
+                roll_lean: 0.0,
+                steer_input: 0.0,
+                knock_vel: Vec2::ZERO,
+                drift_sfx_cooldown: 0.0,
+                car_hp: 100.0,
+                roof_h: CAR_ROOF_TOP,
+            },
+            Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
+            Visibility::default(),
+        ))
+        .with_children(|car| {
+            car.spawn((Mesh3d(cm.body.clone()), MeshMaterial3d(paint.clone()), Transform::from_xyz(0.0, 0.72, 0.0)));
+            car.spawn((Mesh3d(cm.cabin.clone()), MeshMaterial3d(glass), Transform::from_xyz(0.0, 1.38, -0.15)));
+            car.spawn((Mesh3d(cm.roof.clone()), MeshMaterial3d(paint), Transform::from_xyz(0.0, 1.665, -0.26)));
+            car.spawn((Mesh3d(cm.trim.clone()), MeshMaterial3d(trim), Transform::default()));
+            car.spawn((Mesh3d(cm.headlights.clone()), MeshMaterial3d(lamp_off.clone()), Transform::default()));
+            car.spawn((Mesh3d(cm.taillights.clone()), MeshMaterial3d(lamp_off), Transform::default()));
+            for (wx, wz) in [(-1.05_f32, 1.32_f32), (1.05, 1.32), (-1.05, -1.32), (1.05, -1.32)] {
+                car.spawn((
+                    CityCarWheel { is_front: wz > 0.0 },
+                    Mesh3d(cm.tyre.clone()),
+                    MeshMaterial3d(tire.clone()),
+                    Transform::from_xyz(wx, 0.36, wz)
+                        .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
+                        .with_scale(Vec3::new(0.36, 0.28, 0.36)),
+                ))
+                .with_children(|w| {
+                    w.spawn((Mesh3d(cm.hub.clone()), MeshMaterial3d(hub.clone()), Transform::default()));
+                });
+            }
+        })
+        .id();
+    // Solid like a building for Stan and the scooters while parked (placed each frame).
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        ParkedCarCollider { car: car_e, armed: true },
+        Transform::from_translation(PARKED_COLLIDER_OFF),
+        PlatformBox { half_extents: Vec3::splat(0.1) },
+    ));
+}
+
+/// Keeps the parked car's `PlatformBox` on it while nobody drives it (an AABB around its yaw,
+/// so it also follows wherever Stan leaves it or anything pushes it), and parks the box far
+/// below the street while it is driven so the car never hits its own collider. Runs before
+/// `update_city_driving`.
+pub fn sync_parked_car_collider(
+    mut commands: Commands,
+    stats: Res<PlayerStats>,
+    car_q: Query<(&Transform, &CityCar), With<ParkedCar>>,
+    player_q: Query<&Transform, (With<Player>, Without<ParkedCarCollider>)>,
+    mut box_q: Query<(Entity, &mut Transform, &mut PlatformBox, &mut ParkedCarCollider), Without<ParkedCar>>,
+) {
+    let p = player_q.get_single().ok().map(|t| t.translation);
+    for (box_e, mut b_tf, mut pbox, mut col) in &mut box_q {
+        let Ok((c_tf, car)) = car_q.get(col.car) else {
+            // The car is gone (world rebuilt): drop its collider too, never leave a ghost wall.
+            commands.entity(box_e).despawn();
+            continue;
+        };
+        let driven = car.occupied || stats.driving_car == Some(col.car);
+        if driven {
+            col.armed = false;
+        } else if !col.armed {
+            let clear = p.is_none_or(|p| {
+                Vec2::new(p.x - c_tf.translation.x, p.z - c_tf.translation.z).length() > 4.0
+            });
+            col.armed = clear;
+        }
+        if driven || !col.armed {
+            if b_tf.translation != PARKED_COLLIDER_OFF {
+                b_tf.translation = PARKED_COLLIDER_OFF;
+                pbox.half_extents = Vec3::splat(0.1);
+            }
+            continue;
+        }
+        let (s, c) = car.yaw.sin_cos();
+        let (hx, hz) = (1.12_f32, 2.3_f32);
+        let half = Vec3::new(c.abs() * hx + s.abs() * hz, 0.95, s.abs() * hx + c.abs() * hz);
+        b_tf.translation = Vec3::new(c_tf.translation.x, 0.95, c_tf.translation.z);
+        pbox.half_extents = half;
+    }
+}
+
+/// The driver's license pickup (`update_license_card`); never respawns once taken (it is only
+/// spawned with the city and despawned as soon as `has_license` is set).
+#[derive(Component)]
+pub struct LicenseCard;
+
+fn spawn_license_card(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+) {
+    let card_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 0.93, 1.0),
+        emissive: LinearRgba::rgb(0.35, 0.55, 0.9),
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+    let stripe_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.12, 0.30, 0.75),
+        emissive: LinearRgba::rgb(0.1, 0.25, 0.8),
+        ..default()
+    });
+    let beacon_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.35, 0.80, 1.0, 0.28),
+        emissive: LinearRgba::rgb(0.3, 0.9, 1.5),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let card = meshes.add(Cuboid::new(0.95, 0.62, 0.05));
+    let stripe = meshes.add(Cuboid::new(0.97, 0.12, 0.06));
+    let photo = meshes.add(Cuboid::new(0.26, 0.32, 0.06));
+    let beacon = meshes.add(Cylinder::new(0.22, 10.0));
+    commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            LicenseCard,
+            Transform::from_translation(pos + Vec3::Y * 1.1),
+            Visibility::default(),
+        ))
+        .with_children(|c| {
+            c.spawn((Mesh3d(card), MeshMaterial3d(card_mat), Transform::default()));
+            c.spawn((Mesh3d(stripe), MeshMaterial3d(stripe_mat.clone()), Transform::from_xyz(0.0, 0.2, 0.0)));
+            c.spawn((Mesh3d(photo), MeshMaterial3d(stripe_mat), Transform::from_xyz(-0.28, -0.08, 0.0)));
+            c.spawn((Mesh3d(beacon), MeshMaterial3d(beacon_mat), Transform::from_xyz(0.0, 4.6, 0.0)));
+        });
+}
+
+/// Spins and bobs the license card and picks it up when Stan walks into it.
+pub fn update_license_card(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut stats: ResMut<PlayerStats>,
+    player_q: Query<&Transform, With<Player>>,
+    mut card_q: Query<(Entity, &mut Transform), (With<LicenseCard>, Without<Player>)>,
+) {
+    if stats.has_license {
+        for (e, _) in &card_q {
+            commands.entity(e).despawn_recursive();
+        }
+        return;
+    }
+    let Ok(p_tf) = player_q.get_single() else {
+        return;
+    };
+    let t = time.elapsed_secs();
+    for (e, mut c_tf) in &mut card_q {
+        c_tf.rotation = Quat::from_rotation_y(t * 2.2);
+        c_tf.translation.y = 1.1 + (t * 2.6).sin() * 0.15;
+        let d = Vec2::new(c_tf.translation.x - p_tf.translation.x, c_tf.translation.z - p_tf.translation.z).length();
+        // Walk-in pickup at street level, at any size up to a big Stan stepping on it.
+        if d < 1.6 + stats.player_scale * 0.3 && p_tf.translation.y < 3.0 + stats.player_scale {
+            commands.entity(e).despawn_recursive();
+            stats.has_license = true;
+            play_sfx("powerup");
+            stats.hint_text = "Driver's license found! You can drive cars now.".to_string();
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            speak_voice("Driver's license found! You can drive cars now.", "narrator");
+            crate::ui::save_game_checkpoint("city", &stats);
+        }
+    }
+}
+
+/// Refuses a car while Stan has no license (traffic hijack in `update_city_driving` and the
+/// parked car). Rate limited by `license_deny_cd`; the first refusal turns on the radar marker.
+pub fn refuse_no_license(stats: &mut PlayerStats) {
+    if stats.license_deny_cd > 0.0 {
+        return;
+    }
+    stats.license_deny_cd = 2.5;
+    stats.license_refused = true;
+    play_sfx("hack_deny");
+    stats.hint_text =
+        "Sorry, you don't have a license. One is hidden somewhere in Cedar Rapids (blue marker on the radar)."
+            .to_string();
+    stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    speak_voice("Sorry, you don't have a license.", "narrator");
+}
+
+/// What the shared prompt is offering this frame.
+#[derive(Clone, Copy, PartialEq)]
+pub enum PropAction {
+    Beer,
+    Car,
+}
+
+/// Beer tower and parked car interaction (CityPlay, normal play and free roam). Both use the city
+/// interact input (F / E, gamepad X via index.html, or the on-screen button). Runs after the crew
+/// systems so its hint wins a same-frame press, and before `update_city_driving` so a DRIVE tap
+/// reaches it the same frame. The beer is open from the start of the city; it only shuts within
+/// Mike's interact reach so it can never get in front of his smoke-break cutscene.
+#[allow(clippy::too_many_arguments)]
+pub fn update_city_props(
+    mut commands: Commands,
+    time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut stats: ResMut<PlayerStats>,
+    player_q: Query<&Transform, With<Player>>,
+    parked_q: Query<(&Transform, &CityCar), (With<ParkedCar>, Without<Player>)>,
+    car_q: Query<&Transform, (With<CityCar>, Without<Player>, Without<ParkedCar>)>,
+    scooter_q: Query<&Transform, (With<crate::scooter::CityScooter>, Without<Player>)>,
+    mut glow_q: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<BeerTowerGlow>,
+            Without<Player>,
+            Without<ParkedCar>,
+            Without<CityCar>,
+            Without<crate::scooter::CityScooter>,
+        ),
+    >,
+    prompt_q: Query<Entity, With<PropPromptUi>>,
+    btn_q: Query<&Interaction, (Changed<Interaction>, With<PropPromptButton>)>,
+    mut text_q: Query<&mut Text, With<PropPromptText>>,
+    mut last: Local<Option<PropAction>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    stats.license_deny_cd = (stats.license_deny_cd - dt).max(0.0);
+    let Ok(p_tf) = player_q.get_single() else {
+        return;
+    };
+    let p = p_tf.translation;
+    let flat = |a: Vec3| Vec2::new(a.x - p.x, a.z - p.z).length();
+    let on_foot = stats.driving_car.is_none()
+        && stats.riding_scooter.is_none()
+        && !stats.phone_open
+        && p.y < 4.0;
+
+    // Open from the start; only shut while Stan stands where Mike's own [F / E] could fire
+    // (Mike is about 9 m from the tower, so in practice never).
+    let near_mike = !stats.free_roam && !stats.mike_smoked && flat(mike_pub_spot()) < 4.8;
+    let beer_open = !near_mike;
+    let beer_size_ok = stats.player_scale <= BEER_MAX_SCALE;
+    let tower = beer_tower_world_pos();
+    let near_beer = on_foot && beer_open && beer_size_ok && flat(tower) < BEER_REACH;
+    // Don't fight the scooter / hijack prompts for the same key.
+    let other_vehicle_near = scooter_q.iter().any(|t| flat(t.translation) < 5.2)
+        || car_q.iter().any(|t| flat(t.translation) < 5.4);
+    let near_car = on_foot
+        && stats.player_scale < 6.0
+        && !other_vehicle_near
+        && parked_q
+            .iter()
+            .any(|(t, c)| !c.occupied && flat(t.translation) < PARKED_CAR_REACH);
+    let action = if near_beer {
+        Some(PropAction::Beer)
+    } else if near_car {
+        Some(PropAction::Car)
+    } else {
+        None
+    };
+
+    let t = time.elapsed_secs();
+    for (mut g_tf, mut vis) in &mut glow_q {
+        let want = if beer_size_ok { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        let k = 1.0 + (t * 3.0).sin() * if near_beer { 0.07 } else { 0.03 };
+        g_tf.scale = Vec3::new(k, 0.15, k);
+    }
+
+    let Some(action) = action else {
+        for e in &prompt_q {
+            commands.entity(e).despawn_recursive();
+        }
+        *last = None;
+        return;
+    };
+
+    let label = match action {
+        PropAction::Beer if stats.beer_cooldown > 0.0 => {
+            format!("POURING... {:.0}s", stats.beer_cooldown.ceil())
+        }
+        PropAction::Beer => "DRINK A BEER [F/E]".to_string(),
+        PropAction::Car => "DRIVE [F/E]".to_string(),
+    };
+    if prompt_q.is_empty() {
+        commands
+            .spawn((
+                PropPromptUi,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(74.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+            ))
+            .with_children(|root| {
+                root.spawn((
+                    PropPromptButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.62, 0.38, 0.06)),
+                    BorderColor(Color::srgb(1.0, 0.82, 0.35)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        PropPromptText,
+                        Text::new(label.clone()),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            });
+    } else if let Ok(mut txt) = text_q.get_single_mut() {
+        if txt.0 != label {
+            txt.0 = label;
+        }
+    }
+
+    // Approach hint once per arrival.
+    if *last != Some(action) {
+        *last = Some(action);
+        if action == PropAction::Beer {
+            stats.hint_text = format!(
+                "BEER TOWER! [F / E] Drink a beer: +{} hearts, but you'll be drunk for a bit.",
+                BEER_HEARTS
+            );
+        }
+    }
+
+    let tapped = btn_q.iter().any(|i| *i == Interaction::Pressed);
+    let pressed = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE) || tapped;
+    if !pressed {
+        return;
+    }
+    match action {
+        PropAction::Beer => {
+            if stats.beer_cooldown > 0.0 || stats.estus_drink_timer > 0.0 {
+                return;
+            }
+            stats.beer_cooldown = BEER_COOLDOWN_SECS;
+            // Same sip pause as the estus flask (slows Stan while it runs).
+            stats.estus_drink_timer = 0.9;
+            stats.hearts = (stats.hearts + BEER_HEARTS).min(stats.max_hearts);
+            stats.drunk_timer = (stats.drunk_timer + BEER_DRUNK_SECS).min(BEER_DRUNK_CAP_SECS);
+            play_sfx("estus_drink");
+            stats.hint_text = format!(
+                "CHEERS! +{} Hearts. The room is starting to sway... (DRUNK {:.0}s)",
+                BEER_HEARTS,
+                stats.drunk_timer.ceil()
+            );
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        }
+        // The parked car is a real `CityCar`: `update_city_driving` mounts it (or refuses it
+        // without a license) on F / E itself; a tap on the DRIVE button is forwarded there.
+        PropAction::Car => {
+            if tapped {
+                stats.car_prompt_tap = true;
+            }
+        }
+    }
+}
+
+/// OnExit(CityPlay): the prop prompt must not linger over cutscenes.
+pub fn despawn_prop_prompt(mut commands: Commands, prompt_q: Query<Entity, With<PropPromptUi>>) {
+    for e in &prompt_q {
+        commands.entity(e).despawn_recursive();
     }
 }

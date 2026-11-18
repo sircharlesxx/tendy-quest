@@ -83,6 +83,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = combatDemo)]
         fn js_combat_demo() -> String;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = cityStart)]
+        fn js_city_start() -> String;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeActionTap)]
         fn js_take_action_tap() -> bool;
 
@@ -133,6 +136,9 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeDebugPause)]
         fn js_take_debug_pause() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = atBeer)]
+        fn js_at_beer() -> bool;
 
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCheckpoint)]
         fn js_save_checkpoint(json: &str);
@@ -246,6 +252,11 @@ mod imp {
         js_take_debug_pause()
     }
 
+    /// `?debug=1&at_beer=1`: start Stan inside Pub 217 facing the beer tower (headless shots).
+    pub fn debug_at_beer() -> bool {
+        js_at_beer()
+    }
+
     pub fn play_sfx(name: &str) {
         js_play_sfx(name);
     }
@@ -307,6 +318,11 @@ mod imp {
     /// `combat_demo=` URL value (empty unless `debug=1`), for the debug combat motion demo.
     pub fn debug_combat_demo() -> String {
         js_combat_demo()
+    }
+
+    /// `city_start=` URL value (empty unless `debug=1`): where a fresh city entry drops Stan.
+    pub fn debug_city_start() -> String {
+        js_city_start()
     }
 
     pub fn take_touch_help() -> bool {
@@ -434,6 +450,10 @@ mod imp {
         false
     }
 
+    pub fn debug_at_beer() -> bool {
+        false
+    }
+
     pub fn play_sfx(_name: &str) {}
 
     pub fn toggle_mute() -> bool {
@@ -492,6 +512,10 @@ mod imp {
         String::new()
     }
 
+    pub fn debug_city_start() -> String {
+        String::new()
+    }
+
     pub fn take_touch_help() -> bool {
         false
     }
@@ -546,7 +570,7 @@ mod imp {
 }
 
 pub use imp::{
-    debug_autoskip_enabled, debug_combat_demo, debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
+    debug_autoskip_enabled, debug_city_start, debug_combat_demo, debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
     mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_cutscene_music, play_hacking_music,
     play_headphone_music, play_scooter_music, play_sfx, play_viking_chant_music, save_checkpoint,
     set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
@@ -557,3 +581,5 @@ pub use imp::{
 };
 // Pause menu / controls strip bridge (controls.rs).
 pub use imp::{last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
+// Debug start at the Pub 217 beer tower (beer_fx.rs).
+pub use imp::debug_at_beer;

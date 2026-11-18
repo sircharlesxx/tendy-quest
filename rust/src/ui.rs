@@ -31,12 +31,13 @@ pub fn saved_game_beaten(saved: &str) -> bool {
 /// Serializes progress as a compact pipe-delimited string for `window.tendySave` (`localStorage`)
 /// rather than pulling `serde`/`serde_json` into the WASM binary.
 pub fn save_game_checkpoint(stage: &str, stats: &PlayerStats) {
-    // Field 6 (gate mask: 1 TJ, 2 Derek, 4 Nate, 8 Glenn, 16 Mike) and field 7 (Lexie beaten)
-    // were appended later; older saves still load (see `handle_tutorial_input`). The beaten
-    // flag is sticky: once a save has it, later saves from a fresh run keep it.
+    // Field 6 (gate mask: 1 TJ, 2 Derek, 4 Nate, 8 Glenn, 16 Mike), field 7 (Lexie beaten) and
+    // field 8 (driver's license found) were appended later; older saves still load (see
+    // `handle_tutorial_input`). The beaten flag is sticky: once a save has it, later saves from
+    // a fresh run keep it.
     let beaten = stats.game_beaten || saved_game_beaten(&crate::audio::load_checkpoint());
     let data = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}",
         stage,
         stats.score,
         stats.tendies,
@@ -45,6 +46,7 @@ pub fn save_game_checkpoint(stage: &str, stats: &PlayerStats) {
         stats.scooter_app_unlocked as u8,
         stats.gate_mask(),
         beaten as u8,
+        stats.has_license as u8,
     );
     crate::audio::save_checkpoint(&data);
 }
@@ -482,26 +484,20 @@ pub fn update_hurt_flash(
 fn objective_line(stats: &PlayerStats) -> String {
     if stats.in_city {
         if stats.free_roam {
-            return "> FREE ROAM: scoot, hit the stunt gates, visit the crew".to_string();
+            return "> FREE ROAM: scoot, hit the stunt gates, visit the crew in Pub 217".to_string();
         }
         if stats.lexie_defeated {
             return "LEXIE DEFEATED!".to_string();
         }
         if !stats.city_tendies_unlocked() {
+            // TJ, Derek, Nate and Glenn are scattered around the city; Mike is in Pub 217.
             let mut steps = Vec::new();
-            if !stats.tj_recruited {
-                steps.push("meet TJ out front".to_string());
-            }
-            let pub_crew: Vec<&str> = stats
-                .missing_crew()
-                .into_iter()
-                .filter(|n| *n != "TJ")
-                .collect();
-            if !pub_crew.is_empty() {
-                steps.push(format!("find {} in Pub 217", pub_crew.join(", ")));
+            let crew = stats.missing_crew();
+            if !crew.is_empty() {
+                steps.push(format!("find {} around the city", crew.join(", ")));
             }
             if !stats.mike_smoked {
-                steps.push("smoke with Mike".to_string());
+                steps.push("smoke with Mike in Pub 217".to_string());
             }
             return format!(
                 "> UNLOCK TENDIES {}/5: {}",
@@ -545,7 +541,10 @@ fn status_tags(stats: &PlayerStats) -> Vec<String> {
     }
     if stats.in_city {
         if stats.high_timer > 0.0 {
-            tags.push(format!("HIGH+DRUNK {:.0}s", stats.high_timer.ceil()));
+            tags.push(format!("HIGH {:.0}s", stats.high_timer.ceil()));
+        }
+        if stats.drunk_timer > 0.0 {
+            tags.push(format!("DRUNK {:.0}s", stats.drunk_timer.ceil()));
         }
         if stats.wanted_stars > 0 {
             tags.push(format!("WANTED {}", "*".repeat(stats.wanted_stars as usize)));
@@ -1120,6 +1119,9 @@ pub fn handle_tutorial_input(
             if parts.get(5).copied() == Some("1") {
                 stats.scooter_app_unlocked = true;
             }
+            if parts.get(8).copied() == Some("1") {
+                stats.has_license = true;
+            }
             if mom_defeated && saved_game_beaten(&saved) {
                 // Lexie already beaten: continue straight into post-game free roam.
                 stats.prepare_free_roam();
@@ -1571,9 +1573,12 @@ pub(crate) fn reset_world_for_restart(
     let keep_roam = retry_city && stats.free_roam;
     let roam_score = stats.score;
     let beaten = stats.game_beaten;
+    let license = stats.has_license;
     *stats = PlayerStats::default();
     stats.audio_muted = was_muted;
     stats.game_beaten = beaten;
+    // A found driver's license survives city retries (and free roam restarts).
+    stats.has_license = retry_city && license;
     *orbit = CameraOrbit::default();
     crate::audio::set_touch_boss_mode(false);
     crate::audio::set_uzumaki_mode(0);

@@ -91,7 +91,7 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
                 bind("SHIFT", "B", "Roll", true),
             ];
             if ctx == ControlContext::CityFoot {
-                v.push(bind("F", "X", "Ride / drive", true));
+                v.push(bind("F", "X", "Ride / drive / drink", true));
                 v.push(bind("P", "LB", "Phone", true));
             }
             v.extend([

@@ -44,6 +44,12 @@ pub struct CityScooter {
     /// Squash & stretch spring for the hop crouch and landing bounce.
     pub squash: f32,
     pub squash_vel: f32,
+    /// This airtime is a flat-ground hop (softer rise gravity, no flips, no trick score).
+    pub flat_hop: bool,
+    /// Riding on a car's hood or roof (`ground_h` came from a car, not a ramp).
+    pub on_car: bool,
+    /// This hop passed over a car: the landing scores a small stunt bonus.
+    pub car_hop: bool,
 }
 
 impl CityScooter {
@@ -68,6 +74,9 @@ impl CityScooter {
             jump_lock: 0.0,
             squash: 0.0,
             squash_vel: 0.0,
+            flat_hop: false,
+            on_car: false,
+            car_hop: false,
         }
     }
 
@@ -80,6 +89,9 @@ impl CityScooter {
         self.jump_lock = 0.25;
         self.squash = 0.0;
         self.squash_vel = 0.0;
+        self.flat_hop = false;
+        self.on_car = false;
+        self.car_hop = false;
     }
 }
 
@@ -449,7 +461,7 @@ pub fn spawn_city_mike(
     _seed: u64,
 ) {
     // Mike is inside Pub 217 at the bar!
-    let pos = Vec3::new(-16.2, 0.0, 32.8);
+    let pos = crate::city::mike_pub_spot();
 
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
@@ -818,7 +830,7 @@ pub fn update_city_scooter_and_phone(
     let pub_s = crate::city::PUB217_SCALE;
     for (mut m_tf, mut mike) in &mut mike_q {
         m_tf.scale = Vec3::splat(pub_s);
-        m_tf.translation = crate::city::PUB217_ANCHOR + Vec3::new(-4.5, 0.0, 4.3) * pub_s;
+        m_tf.translation = crate::city::mike_pub_spot();
         let d = Vec2::new(
             m_tf.translation.x - p_tf.translation.x,
             m_tf.translation.z - p_tf.translation.z,
@@ -1025,6 +1037,10 @@ pub fn update_city_scooter_and_phone(
         }
         if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
             steer -= 1.0;
+        }
+        if stats.drunk_timer > 0.0 && throttle.abs() > 0.1 {
+            // Beer: a gentle wandering bias you have to steer against.
+            steer += crate::player::drunk_steer_drift(time.elapsed_secs(), stats.drunk_timer) * 0.22;
         }
         steer = steer.clamp(-1.0, 1.0);
 
