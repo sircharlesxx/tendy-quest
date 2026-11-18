@@ -33,6 +33,379 @@ pub struct Player {
     /// Squash (+) / stretch (-) spring state applied as a scale multiplier.
     pub squash: f32,
     pub squash_vel: f32,
+    /// Saber guard is up this frame (boss mode, block input held, not swinging or rolling).
+    pub block_active: bool,
+    /// Seconds since the guard went up; a hit inside `PERFECT_BLOCK_SECS` is a perfect block.
+    pub block_time: f32,
+    /// Seconds the guard has been down; the perfect window only re-arms after `BLOCK_REARM_SECS`
+    /// so mashing block can't keep it open.
+    pub block_down_time: f32,
+    /// Guard-break lockout: the guard can't be raised again until this runs out.
+    pub block_lockout: f32,
+    /// Pending block spark burst for `update_saber_fx` (0 none, 1 block, 2 perfect block).
+    pub block_spark: u8,
+    /// Short recoil of the guard pose after a blocked hit (1 -> 0).
+    pub block_recoil: f32,
+    /// Which way the current light swing travels (+1 forehand right-to-left, -1 backhand).
+    pub swing_side: f32,
+    /// Light swings started while this is running alternate sides (a combo).
+    pub combo_timer: f32,
+    /// Bumped at the start of every saber swing; targets remember the last swing that hit them so
+    /// each swing lands at most once per target.
+    pub swing_id: u32,
+    /// Pending saber hit spark (contact point) for `update_saber_fx`.
+    pub hit_spark: Option<Vec3>,
+    /// Pending hit-stop request in real seconds, consumed by `update_hit_stop`.
+    pub hit_stop: f32,
+    /// Strafe mode this frame (boss mode: lock-on, block held or the strafe key).
+    pub strafing: bool,
+    /// Attack button hold (boss mode): a tap is a light swing, a held charge releases a heavy.
+    pub attack_hold: AttackHold,
+}
+
+/// Attack button state for the tap / hold-to-charge saber trigger.
+#[derive(Clone, Copy, PartialEq, Default, Debug)]
+pub enum AttackHold {
+    /// No tracked press.
+    #[default]
+    Idle,
+    /// Button down; seconds held (counted only while no swing is playing).
+    Held(f32),
+    /// The press was used up or cancelled; waits for the button to be released.
+    Spent,
+}
+
+/// Released before this (seconds held) the press is a tap: a light swing fires on release.
+pub const ATTACK_TAP_SECS: f32 = 0.18;
+/// Held at least this long, a release unleashes the heavy swing (between the two: light).
+pub const HEAVY_CHARGE_SECS: f32 = 0.45;
+/// A full charge held this long releases on its own.
+const CHARGE_AUTO_RELEASE_SECS: f32 = 2.5;
+/// Walking speed while charging.
+const CHARGE_MOVE_MUL: f32 = 0.5;
+
+impl Player {
+    /// Heavy charge level while Stan is visibly charging: 0 at the tap threshold, 1 once a release
+    /// would unleash the heavy. None when not charging.
+    pub fn charge_level(&self) -> Option<f32> {
+        match self.attack_hold {
+            AttackHold::Held(t)
+                if t >= ATTACK_TAP_SECS
+                    && self.attack_timer <= 0.0
+                    && self.roll_timer <= 0.0
+                    && !self.block_active =>
+            {
+                Some(((t - ATTACK_TAP_SECS) / (HEAVY_CHARGE_SECS - ATTACK_TAP_SECS)).clamp(0.0, 1.0))
+            }
+            _ => None,
+        }
+    }
+
+    /// Drop a press in progress (no swing); the button must be released before it counts again.
+    pub fn cancel_charge(&mut self) {
+        if matches!(self.attack_hold, AttackHold::Held(_)) {
+            self.attack_hold = AttackHold::Spent;
+        }
+    }
+}
+
+/// Dodge roll length in seconds (shared by the roll input and the tumble animation).
+pub const ROLL_SECS: f32 = 0.45;
+/// Light / heavy saber swing lengths (`attack_timer` at the start of the swing).
+pub const LIGHT_SWING_SECS: f32 = 0.28;
+pub const HEAVY_SWING_SECS: f32 = 0.40;
+/// Saber block tuning. The guard covers a 120 degree arc in front of Stan.
+const BLOCK_ARC_COS: f32 = 0.5;
+pub const PERFECT_BLOCK_SECS: f32 = 0.18;
+const BLOCK_REARM_SECS: f32 = 0.30;
+const BLOCK_STAMINA_COST: f32 = 14.0;
+const BLOCK_KNOCKBACK: f32 = 0.7;
+/// Brief invulnerability after a block so contact damage (veggies, cars) can't drain the guard
+/// every frame while overlapping.
+const BLOCK_INVULN_SECS: f32 = 0.35;
+const GUARD_BREAK_LOCKOUT_SECS: f32 = 0.7;
+const BLOCK_MOVE_MUL: f32 = 0.45;
+/// Strafing (facing locked) walks a little slower than free movement.
+const STRAFE_MOVE_MUL: f32 = 0.85;
+
+/// Saber reach from Stan's centre, in hero model units (times `player_scale`): shoulder 0.35 +
+/// arm 0.55 + blade tip 1.66 (`HeroSaberBlade`), rounded up a little so the glow counts.
+const SABER_REACH: f32 = 2.4;
+/// The heavy chop's deep lunge pose reaches a bit further.
+const HEAVY_REACH_BONUS: f32 = 0.35;
+/// Half-arc of the swing (cosine). The light slash sweeps from Stan's right across the front to
+/// his left (about 110 degrees each side); the heavy chop comes down in front (about 70).
+const LIGHT_ARC_COS: f32 = -0.34;
+const HEAVY_ARC_COS: f32 = 0.34;
+/// Swing progress (0..1) in which the blade can land: from just after the wind-up through the
+/// visible strike (light crosses the front at 30 to 45 percent, heavy lands near 42 percent).
+const LIGHT_ACTIVE: (f32, f32) = (0.10, 0.70);
+const HEAVY_ACTIVE: (f32, f32) = (0.20, 0.78);
+/// Attack assist looks this much (model units) past the reach for a target to turn to.
+const ASSIST_EXTRA: f32 = 0.8;
+
+/// A saber target as a vertical cylinder: feet position, radius and height (world units).
+#[derive(Clone, Copy)]
+pub struct SaberTarget {
+    pub pos: Vec3,
+    pub radius: f32,
+    pub height: f32,
+}
+
+impl SaberTarget {
+    /// Mom (`spawn_mom_mesh_hierarchy`, about 0.42 wide and 1.95 tall before scaling).
+    pub fn mom(tf: &Transform) -> Self {
+        Self { pos: tf.translation, radius: 0.42 * tf.scale.x, height: 1.95 * tf.scale.y }
+    }
+
+    /// Lexie (hips about 1.1 wide, about 4.4 tall before her 5.8 scale).
+    pub fn lexie(tf: &Transform) -> Self {
+        Self { pos: tf.translation, radius: 1.1 * tf.scale.x, height: 4.4 * tf.scale.y }
+    }
+
+    /// Veggie minions, sized from their glTF bounds.
+    pub fn veggie(tf: &Transform, kind: crate::enemies::EnemyKind) -> Self {
+        use crate::enemies::EnemyKind;
+        let (r, h) = match kind {
+            EnemyKind::BroccoliBrute => (0.9, 2.1),
+            EnemyKind::CarrotLancer => (0.4, 1.8),
+            EnemyKind::KaleSlime => (1.15, 0.8),
+        };
+        Self { pos: tf.translation, radius: r * tf.scale.x, height: h * tf.scale.y }
+    }
+}
+
+fn saber_reach(stats: &PlayerStats, heavy: bool) -> f32 {
+    (SABER_REACH + if heavy { HEAVY_REACH_BONUS } else { 0.0 }) * stats.player_scale.max(0.55)
+}
+
+/// Geometry part of the saber test: the target's surface is within `reach`, its body overlaps
+/// the blade's vertical band (feet to well above the head), and some of it lies inside the arc.
+/// Returns (gap to the surface, flat direction to the target).
+fn saber_covers(
+    fwd: Vec3,
+    hero_pos: Vec3,
+    scale: f32,
+    target: &SaberTarget,
+    reach: f32,
+    arc_cos: f32,
+) -> Option<(f32, Vec3)> {
+    let lo = hero_pos.y - 0.3 * scale;
+    let hi = hero_pos.y + 3.2 * scale;
+    if target.pos.y > hi || target.pos.y + target.height < lo {
+        return None;
+    }
+    let to = Vec3::new(target.pos.x - hero_pos.x, 0.0, target.pos.z - hero_pos.z);
+    let d = to.length();
+    let gap = d - target.radius;
+    if gap > reach {
+        return None;
+    }
+    let dir = if d > 1e-3 { to / d } else { fwd };
+    if gap <= 0.35 * scale {
+        // Touching (or inside): the swing can't miss.
+        return Some((gap, dir));
+    }
+    // Widen the arc by the target's angular half-size, so the edge of a wide body counts.
+    let ang = fwd.dot(dir).clamp(-1.0, 1.0).acos() - (target.radius / d).min(1.0).asin();
+    if ang > arc_cos.clamp(-1.0, 1.0).acos() {
+        return None;
+    }
+    Some((gap, dir))
+}
+
+/// Saber hit test shared by every target. Returns the contact point when the active part of the
+/// current swing covers `target`. Callers still apply the hit only once per `player.swing_id`.
+pub fn saber_contact(player: &Player, stats: &PlayerStats, hero_pos: Vec3, target: &SaberTarget) -> Option<Vec3> {
+    if !stats.boss_mode || player.attack_timer <= 0.0 {
+        return None;
+    }
+    let heavy = stats.heavy_attack;
+    let total = if heavy { HEAVY_SWING_SECS } else { LIGHT_SWING_SECS };
+    let p = 1.0 - player.attack_timer / total;
+    let (a, b) = if heavy { HEAVY_ACTIVE } else { LIGHT_ACTIVE };
+    if p < a || p > b {
+        return None;
+    }
+    let scale = stats.player_scale.max(0.55);
+    let arc = if heavy { HEAVY_ARC_COS } else { LIGHT_ARC_COS };
+    let (_, dir) = saber_covers(hero_forward(player), hero_pos, scale, target, saber_reach(stats, heavy), arc)?;
+    let y = (hero_pos.y + 1.3 * scale).clamp(target.pos.y, target.pos.y + target.height);
+    let surf = target.pos - dir * target.radius;
+    Some(Vec3::new(surf.x, y, surf.z))
+}
+
+/// Hit confirmation for a landed saber hit: spark at the contact point, a few frames of
+/// hit-stop and a small shake (the caller plays the hit sound as before).
+pub fn register_saber_hit(player: &mut Player, stats: &mut PlayerStats, contact: Vec3) {
+    let heavy = stats.heavy_attack;
+    player.hit_spark = Some(contact);
+    player.hit_stop = player.hit_stop.max(if heavy { 0.09 } else { 0.055 });
+    stats.shake_request = stats.shake_request.max(if heavy { 0.35 } else { 0.18 });
+}
+
+/// Nearest lock-on candidate (same rule the lock-on camera uses).
+fn pick_lock_target(hero_pos: Vec3, candidates: impl Iterator<Item = Vec3>) -> Option<Vec3> {
+    let mut best: Option<Vec3> = None;
+    let mut best_dist = 70.0_f32;
+    for pos in candidates {
+        let d = hero_pos.distance(pos);
+        if d > 0.5 && d < best_dist {
+            best_dist = d;
+            best = Some(pos);
+        }
+    }
+    best
+}
+
+/// Attack assist at swing start: turn Stan to the best target in reach (roughly in front of him
+/// or the camera, or the lock-on target) and step in a little. Returns the remaining gap.
+fn attack_assist(
+    player: &mut Player,
+    tf: &mut Transform,
+    stats: &PlayerStats,
+    cam_fwd: Vec3,
+    lock: Option<Vec3>,
+    targets: &[SaberTarget],
+    heavy: bool,
+) -> Option<f32> {
+    let scale = stats.player_scale.max(0.55);
+    let reach = saber_reach(stats, heavy);
+    let fwd = hero_forward(player);
+    let mut best: Option<(f32, f32, Vec3)> = None;
+    for t in targets {
+        let is_lock = lock.is_some_and(|l| l.distance(t.pos) < 0.01);
+        let Some((gap, dir)) = saber_covers(fwd, tf.translation, scale, t, reach + ASSIST_EXTRA * scale, -1.0) else {
+            continue;
+        };
+        let facing_dot = dir.dot(fwd);
+        if !(is_lock || facing_dot >= -0.05 || dir.dot(cam_fwd) >= 0.2) {
+            continue;
+        }
+        let score = gap / reach + (1.0 - facing_dot) * 0.5 - if is_lock { 10.0 } else { 0.0 };
+        if best.map_or(true, |(s, _, _)| score < s) {
+            best = Some((score, gap, dir));
+        }
+    }
+    let (_, gap, dir) = best?;
+    player.facing_yaw = (-dir.x).atan2(-dir.z);
+    tf.rotation = Quat::from_rotation_y(player.facing_yaw);
+    let step = (gap - 0.55 * reach).clamp(0.0, 0.35 * scale);
+    tf.translation += dir * step;
+    Some(gap - step)
+}
+
+/// Result of an attack meeting Stan's saber guard.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BlockOutcome {
+    /// Not blocked (no guard, hit from behind, or guard broken): apply the hit as normal.
+    None,
+    /// Blocked: no heart loss, small shove, stamina spent.
+    Blocked,
+    /// Perfect block (guard raised just in time): free, and staggers / deflects the attacker.
+    Perfect,
+}
+
+impl BlockOutcome {
+    pub fn blocked(self) -> bool {
+        self != BlockOutcome::None
+    }
+}
+
+fn hero_forward(player: &Player) -> Vec3 {
+    Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos())
+}
+
+/// True when the raised guard faces `source_pos` (within the front arc). Costs nothing.
+pub fn guard_covers(player: &Player, stats: &PlayerStats, hero_pos: Vec3, source_pos: Vec3) -> bool {
+    if !stats.boss_mode || !player.block_active {
+        return false;
+    }
+    let to_src = Vec3::new(source_pos.x - hero_pos.x, 0.0, source_pos.z - hero_pos.z);
+    if to_src.length_squared() < 1e-4 {
+        return true;
+    }
+    to_src.normalize().dot(hero_forward(player)) >= BLOCK_ARC_COS
+}
+
+/// Resolve an incoming hit against the saber guard. Call it where a hit would cost a heart; if it
+/// returns `BlockOutcome::None` apply the hit exactly as before. On a block this already applies
+/// the shove, stamina, invulnerability, sound, shake and spark request; the caller only adds
+/// attacker-specific reactions (stagger, deflect).
+pub fn try_block(
+    player: &mut Player,
+    stats: &mut PlayerStats,
+    hero_pos: Vec3,
+    source_pos: Vec3,
+) -> BlockOutcome {
+    if !guard_covers(player, stats, hero_pos, source_pos) {
+        return BlockOutcome::None;
+    }
+    let perfect = player.block_time < PERFECT_BLOCK_SECS;
+    if !perfect {
+        if stats.dash_energy < BLOCK_STAMINA_COST {
+            // Guard break: the hit goes through and the guard stays down for a moment.
+            player.block_active = false;
+            player.block_lockout = GUARD_BREAK_LOCKOUT_SECS;
+            crate::audio::play_sfx("guard_break");
+            stats.hint_text = "GUARD BROKEN! Out of stamina, ROLL instead!".to_string();
+            return BlockOutcome::None;
+        }
+        stats.dash_energy -= BLOCK_STAMINA_COST;
+        stats.stamina_regen_delay = stats.stamina_regen_delay.max(0.5);
+    }
+    let push = Vec3::new(hero_pos.x - source_pos.x, 0.0, hero_pos.z - source_pos.z);
+    let push = if push.length_squared() > 1e-4 { push } else { -hero_forward(player) };
+    hit_reaction(player, stats, push, if perfect { BLOCK_KNOCKBACK * 0.5 } else { BLOCK_KNOCKBACK }, false);
+    player.invuln_timer = player.invuln_timer.max(BLOCK_INVULN_SECS);
+    player.block_recoil = 1.0;
+    if perfect {
+        player.block_spark = 2;
+        stats.shake_request = stats.shake_request.max(0.4);
+        crate::audio::play_sfx("saber_parry");
+        stats.hint_text = "PERFECT BLOCK!".to_string();
+        BlockOutcome::Perfect
+    } else {
+        player.block_spark = player.block_spark.max(1);
+        crate::audio::play_sfx("saber_block");
+        stats.hint_text = "BLOCKED! (stamina drained)".to_string();
+        BlockOutcome::Blocked
+    }
+}
+
+/// Crew follow slots in Level 2: each companion flanks Stan instead of trailing him, so at
+/// kaiju scale nobody stands between Stan and the camera.
+#[derive(Clone, Copy)]
+pub enum CrewSlot {
+    RightInner,
+    LeftInner,
+    RightOuter,
+    LeftOuter,
+}
+
+/// World target for a crew follower. The formation is laid out in the camera's view frame
+/// (camera right / camera forward), so followers stay to Stan's screen sides and slightly ahead
+/// of him whichever way he faces, and never in the camera line behind him.
+pub fn crew_follow_target(
+    slot: CrewSlot,
+    stan_pos: Vec3,
+    stan_scale: f32,
+    follower_scale: f32,
+    orbit_yaw: f32,
+) -> Vec3 {
+    let cam_fwd = Vec3::new(-orbit_yaw.sin(), 0.0, -orbit_yaw.cos());
+    let cam_right = Vec3::new(orbit_yaw.cos(), 0.0, -orbit_yaw.sin());
+    // Clear Stan's half width plus the follower's own, with a little air between them.
+    let inner = 0.75 * stan_scale + 1.0 * follower_scale + 1.0;
+    let outer = inner + 1.9 * follower_scale + 0.5;
+    let (side, lateral, ahead) = match slot {
+        CrewSlot::RightInner => (1.0, inner, 0.35 * stan_scale),
+        CrewSlot::LeftInner => (-1.0, inner, 0.35 * stan_scale),
+        CrewSlot::RightOuter => (1.0, outer, 0.10 * stan_scale),
+        CrewSlot::LeftOuter => (-1.0, outer, 0.10 * stan_scale),
+    };
+    let p = stan_pos + cam_right * (side * lateral) + cam_fwd * ahead;
+    Vec3::new(p.x, 0.0, p.z)
 }
 
 /// How long a jump press is remembered while it can't be used yet.
@@ -57,6 +430,8 @@ pub fn hit_reaction(
     distance: f32,
     hurt: bool,
 ) {
+    // Getting hit (or shoved on a block) drops a heavy charge in progress.
+    player.cancel_charge();
     let flat = Vec3::new(push_dir.x, 0.0, push_dir.z).normalize_or_zero();
     if distance > 0.0 && flat != Vec3::ZERO {
         player.knockback = flat * distance * KNOCKBACK_DECAY;
@@ -81,6 +456,10 @@ pub fn reset_hit_reaction(mut player_q: Query<(&mut Player, &mut Visibility)>) {
         player.hurt_blink = 0.0;
         player.knockback = Vec3::ZERO;
         player.jump_buffer = 0.0;
+        player.block_active = false;
+        player.block_spark = 0;
+        player.block_recoil = 0.0;
+        player.attack_hold = AttackHold::Idle;
     }
 }
 
@@ -147,6 +526,19 @@ impl Default for Player {
             jump_buffer: 0.0,
             squash: 0.0,
             squash_vel: 0.0,
+            block_active: false,
+            block_time: 0.0,
+            block_down_time: 1.0,
+            block_lockout: 0.0,
+            block_spark: 0,
+            block_recoil: 0.0,
+            swing_side: 1.0,
+            combo_timer: 0.0,
+            swing_id: 0,
+            hit_spark: None,
+            hit_stop: 0.0,
+            strafing: false,
+            attack_hold: AttackHold::Idle,
         }
     }
 }
@@ -270,11 +662,31 @@ pub fn player_movement(
     mut stats: ResMut<PlayerStats>,
     mut player_q: Query<(&mut Transform, &mut Player, &mut Visibility)>,
     platform_q: Query<(&Transform, &PlatformBox), Without<Player>>,
+    target_q: Query<
+        (&Transform, Has<crate::boss::MomBoss>, Has<crate::city::LexieBoss>, Option<&crate::enemies::Enemy>),
+        (
+            Or<(
+                With<crate::boss::MomBoss>,
+                With<crate::city::LexieBoss>,
+                With<crate::enemies::Enemy>,
+            )>,
+            Without<Player>,
+        ),
+    >,
+    mut demo: Local<CombatDemo>,
+    frames: Res<bevy::core::FrameCount>,
+    mut last_frame: Local<u32>,
 ) {
     let Ok((mut tf, mut player, mut vis)) = player_q.get_single_mut() else {
         return;
     };
     let dt = time.delta_secs().min(0.05);
+    // A skipped frame means this system was paused (help overlay, fade): drop any charge so the
+    // release on resume can't fire a stale swing.
+    if frames.0 != last_frame.wrapping_add(1) {
+        player.cancel_charge();
+    }
+    *last_frame = frames.0;
 
     // Smoothly grow the hero toward their Katamari target scale (with 0.5s enraged swelling pulses for 10s)
     if stats.enraged && !stats.in_city {
@@ -344,6 +756,9 @@ pub fn player_movement(
     if player.attack_cooldown > 0.0 {
         player.attack_cooldown = (player.attack_cooldown - dt).max(0.0);
     }
+    player.combo_timer = (player.combo_timer - dt).max(0.0);
+    player.block_lockout = (player.block_lockout - dt).max(0.0);
+    player.block_recoil = (player.block_recoil - dt * 5.0).max(0.0);
     if player.invuln_timer > 0.0 {
         player.invuln_timer = (player.invuln_timer - dt).max(0.0);
     }
@@ -361,7 +776,8 @@ pub fn player_movement(
     }
     if stats.stamina_regen_delay > 0.0 {
         stats.stamina_regen_delay = (stats.stamina_regen_delay - dt).max(0.0);
-    } else {
+    } else if !player.block_active && player.charge_level().is_none() {
+        // Holding the saber guard or charging a heavy pauses stamina regeneration.
         let dash_regen = if stats.enraged && !stats.in_city {
             62.0
         } else if stats.boss_mode {
@@ -398,6 +814,8 @@ pub fn player_movement(
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
         player.jump_buffer = 0.0;
+        player.block_active = false;
+        player.cancel_charge();
         return;
     }
 
@@ -450,43 +868,168 @@ pub fn player_movement(
     }
 
     // Dash outside boss mode; Dark Souls Dodge Roll + Light/Heavy Saber Slash in boss mode
-    let shift_pressed = keys.just_pressed(KeyCode::ShiftLeft)
+    // In boss mode right mouse is the saber guard (hold), so the roll is Shift / ROLL only.
+    let mut shift_pressed = keys.just_pressed(KeyCode::ShiftLeft)
         || keys.just_pressed(KeyCode::ShiftRight)
-        || crate::audio::take_touch_dash()
-        || (stats.boss_mode && mouse_buttons.just_pressed(MouseButton::Right));
+        || crate::audio::take_touch_dash();
     let shift_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let touch_atk = crate::audio::take_touch_attack();
+    let touch_block = crate::audio::touch_block_held();
+    // Lock-on target (boss mode): Stan keeps facing it while strafing, and swings prefer it.
+    let lock_target = if stats.boss_mode && stats.lock_on_active {
+        pick_lock_target(tf.translation, target_q.iter().map(|(t, ..)| t.translation))
+    } else {
+        None
+    };
+    let mut strafe_input = false;
     if stats.boss_mode {
+        // One attack button family: tap for a light swing, hold to charge and release a heavy.
+        let ef = !stats.in_city;
+        let mut atk_pressed = mouse_buttons.just_pressed(MouseButton::Left)
+            || keys.just_pressed(KeyCode::KeyJ)
+            || keys.just_pressed(KeyCode::KeyX)
+            || (ef && (keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyF)))
+            || touch_atk;
+        let mut atk_down = mouse_buttons.pressed(MouseButton::Left)
+            || keys.pressed(KeyCode::KeyJ)
+            || keys.pressed(KeyCode::KeyX)
+            || (ef && (keys.pressed(KeyCode::KeyE) || keys.pressed(KeyCode::KeyF)))
+            || crate::audio::touch_attack_held();
+        let mut block_held = mouse_buttons.pressed(MouseButton::Right)
+            || keys.pressed(KeyCode::KeyR)
+            || touch_block;
+        // Debug-only motion demo (`?debug=1&combat_demo=...`) feeds synthetic inputs.
+        let demo_pose = combat_demo_inputs(
+            &mut demo,
+            dt,
+            &mut player,
+            &mut stats,
+            &mut orbit,
+            &mut tf,
+            &mut atk_pressed,
+            &mut atk_down,
+            &mut block_held,
+            &mut shift_pressed,
+        );
+        // Strafe: block held (the guard covers a front arc) or the dedicated key (V, gamepad L3).
+        strafe_input = block_held || keys.pressed(KeyCode::KeyV);
+
         if shift_pressed && player.roll_timer <= 0.0 && stats.dash_energy >= 22.0 {
             stats.dash_energy -= 22.0;
             stats.stamina_regen_delay = 0.50;
-            player.roll_timer = 0.45;
+            player.roll_timer = ROLL_SECS;
             player.invuln_timer = 0.58;
             player.dodge_counter_timer = 2.8;
+            player.block_active = false;
             crate::audio::play_sfx("dodge_roll");
         }
-        let light_btn = mouse_buttons.just_pressed(MouseButton::Left)
-            || keys.just_pressed(KeyCode::KeyJ)
-            || keys.just_pressed(KeyCode::KeyX)
-            || (!stats.in_city && (keys.just_pressed(KeyCode::KeyE) || keys.just_pressed(KeyCode::KeyF)))
-            || touch_atk;
-        let heavy_btn = keys.just_pressed(KeyCode::KeyC);
-        if heavy_btn && player.attack_cooldown <= 0.0 && stats.dash_energy >= 32.0 {
-            stats.dash_energy -= 32.0;
-            stats.stamina_regen_delay = 0.65;
-            stats.heavy_attack = true;
-            player.attack_timer = 0.40;
-            player.attack_cooldown = 0.58;
-            let lunge_fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
-            tf.translation += lunge_fwd * 0.9;
-            crate::audio::play_sfx("saber_swing");
-        } else if light_btn && player.attack_cooldown <= 0.0 && stats.dash_energy >= 16.0 {
-            stats.dash_energy -= 16.0;
-            stats.stamina_regen_delay = 0.42;
-            stats.heavy_attack = false;
-            player.attack_timer = 0.28;
-            player.attack_cooldown = 0.36;
-            crate::audio::play_sfx("saber_swing");
+
+        // Saber guard: held input raises it unless swinging, rolling or guard-broken.
+        let can_guard = block_held
+            && player.roll_timer <= 0.0
+            && player.attack_timer <= 0.0
+            && player.block_lockout <= 0.0
+            && stats.estus_drink_timer <= 0.0;
+        if can_guard {
+            if !player.block_active {
+                player.block_active = true;
+                // Perfect window only re-arms after the guard has been down for a moment.
+                player.block_time = if player.block_down_time >= BLOCK_REARM_SECS {
+                    0.0
+                } else {
+                    PERFECT_BLOCK_SECS
+                };
+            } else {
+                player.block_time += dt;
+            }
+            player.block_down_time = 0.0;
+        } else {
+            player.block_active = false;
+            player.block_down_time += dt;
+        }
+
+        // Attack button: a press starts a hold; releasing before `HEAVY_CHARGE_SECS` is a light
+        // swing (fired on release), releasing after it (or `CHARGE_AUTO_RELEASE_SECS`) a heavy.
+        // Rolling and the guard cancel the hold until the button is let go.
+        let mut fire: Option<bool> = None;
+        if !demo_pose {
+            if player.attack_hold == AttackHold::Spent && !atk_down {
+                player.attack_hold = AttackHold::Idle;
+            }
+            if player.attack_hold == AttackHold::Idle && atk_pressed {
+                player.attack_hold = AttackHold::Held(0.0);
+            }
+            if let AttackHold::Held(held) = player.attack_hold {
+                // Only time held after the current swing counts, so a press during a swing
+                // buffers into a tap instead of skipping the visible wind-up.
+                let held = if player.attack_timer <= 0.0 { held + dt } else { held };
+                player.attack_hold = if player.block_active || player.roll_timer > 0.0 {
+                    AttackHold::Spent
+                } else if !atk_down {
+                    fire = Some(held >= HEAVY_CHARGE_SECS);
+                    AttackHold::Idle
+                } else if held >= CHARGE_AUTO_RELEASE_SECS {
+                    fire = Some(true);
+                    AttackHold::Spent
+                } else {
+                    AttackHold::Held(held)
+                };
+            }
+        }
+        if !player.block_active && !demo_pose {
+            let ready = fire.is_some() && player.attack_cooldown <= 0.0;
+            // Short on stamina for the heavy at release: fall back to a light swing.
+            let starts_heavy = ready && fire == Some(true) && stats.dash_energy >= 32.0;
+            let starts_light = ready && !starts_heavy && stats.dash_energy >= 16.0;
+            // Attack assist: face (and step toward) a target in reach before the swing starts.
+            let assist_gap = if starts_heavy || starts_light {
+                player.swing_id = player.swing_id.wrapping_add(1);
+                let targets: Vec<SaberTarget> = target_q
+                    .iter()
+                    .map(|(t, is_mom, is_lexie, enemy)| {
+                        if is_mom {
+                            SaberTarget::mom(t)
+                        } else if is_lexie {
+                            SaberTarget::lexie(t)
+                        } else if let Some(e) = enemy {
+                            SaberTarget::veggie(t, e.kind)
+                        } else {
+                            SaberTarget { pos: t.translation, radius: 0.5, height: 1.5 }
+                        }
+                    })
+                    .collect();
+                let cam_fwd = Vec3::new(-orbit.yaw.sin(), 0.0, -orbit.yaw.cos());
+                attack_assist(&mut player, &mut tf, &stats, cam_fwd, lock_target, &targets, starts_heavy)
+            } else {
+                None
+            };
+            if starts_heavy {
+                stats.dash_energy -= 32.0;
+                stats.stamina_regen_delay = 0.65;
+                stats.heavy_attack = true;
+                player.attack_timer = HEAVY_SWING_SECS;
+                player.attack_cooldown = 0.58;
+                player.combo_timer = 0.0;
+                let lunge_fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
+                // Lunge scales with Stan's size, but never carries him into an assisted target.
+                let s = stats.player_scale.max(0.55);
+                let mut lunge = (0.28 * s).max(0.9);
+                if let Some(gap) = assist_gap {
+                    lunge = lunge.min((gap - 0.3 * s).max(0.0));
+                }
+                tf.translation += lunge_fwd * lunge;
+                crate::audio::play_sfx("saber_swing");
+            } else if starts_light {
+                stats.dash_energy -= 16.0;
+                stats.stamina_regen_delay = 0.42;
+                stats.heavy_attack = false;
+                player.attack_timer = LIGHT_SWING_SECS;
+                player.attack_cooldown = 0.36;
+                // Chained light swings alternate forehand / backhand.
+                player.swing_side = if player.combo_timer > 0.0 { -player.swing_side } else { 1.0 };
+                player.combo_timer = 0.75;
+                crate::audio::play_sfx("saber_swing");
+            }
         }
     } else if shift_pressed && player.dash_timer <= 0.0 && stats.dash_energy >= 30.0 {
         stats.dash_energy -= 30.0;
@@ -494,6 +1037,10 @@ pub fn player_movement(
         player.dash_timer = 0.22;
         player.invuln_timer = 0.35;
         crate::audio::play_sfx("dash");
+    }
+    if !stats.boss_mode {
+        player.block_active = false;
+        player.attack_hold = AttackHold::Idle;
     }
 
     let sprinting = shift_held && move_mag > 0.15 && player.roll_timer <= 0.0 && stats.dash_energy > 2.0;
@@ -553,6 +1100,15 @@ pub fn player_movement(
     if player.slow_timer > 0.0 {
         speed *= 0.6;
     }
+    // Strafe mode (boss mode only): lock-on, block held or the strafe key. Rolls still steer.
+    player.strafing = stats.boss_mode && (stats.lock_on_active || strafe_input);
+    if player.block_active {
+        speed *= BLOCK_MOVE_MUL;
+    } else if player.charge_level().is_some() {
+        speed *= CHARGE_MOVE_MUL;
+    } else if player.strafing && player.roll_timer <= 0.0 {
+        speed *= STRAFE_MOVE_MUL;
+    }
 
     // Ease toward the input velocity (snappier on the ground than in the air). Dashes and rolls
     // stay instant so their distances are unchanged, and anything above this state's top speed
@@ -582,10 +1138,31 @@ pub fn player_movement(
 
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
     if horiz_speed > 0.25 {
-        player.walk_cycle += horiz_speed * dt * (2.2 / size_ratio.powf(0.28));
+        // Backpedalling while strafing runs the walk cycle in reverse so the legs step backwards.
+        let fwd_v = Vec2::new(-player.facing_yaw.sin(), -player.facing_yaw.cos());
+        let backwards = player.strafing && fwd_v.dot(Vec2::new(player.velocity.x, player.velocity.z)) < -0.3 * horiz_speed;
+        let step = horiz_speed * dt * (2.2 / size_ratio.powf(0.28));
+        player.walk_cycle += if backwards { -step } else { step };
     }
 
-    if dir.length_squared() > 0.01 {
+    if stats.boss_mode && player.attack_timer > 0.0 {
+        // Facing is committed for the swing (set by the attack assist at swing start), so the
+        // blade lands where it was aimed instead of following the stick mid-swing.
+        tf.rotation = Quat::from_rotation_y(player.facing_yaw);
+    } else if player.strafing && player.roll_timer <= 0.0 {
+        // Strafe: face the lock-on target, else the camera's forward; movement doesn't turn Stan.
+        let target_yaw = match lock_target {
+            Some(t) if Vec2::new(t.x - tf.translation.x, t.z - tf.translation.z).length_squared() > 0.01 => {
+                (-(t.x - tf.translation.x)).atan2(-(t.z - tf.translation.z))
+            }
+            _ => orbit.yaw,
+        };
+        let diff = (target_yaw - player.facing_yaw + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
+        player.facing_yaw += diff * (12.0 * dt).min(1.0);
+        tf.rotation = Quat::from_rotation_y(player.facing_yaw);
+    } else if dir.length_squared() > 0.01 {
         // `plaid_hero.glb` is authored facing -Z at Quat::IDENTITY, so negate both components
         // to align the model's front (-Z) with the world movement vector `dir`.
         let target_yaw = (-dir.x).atan2(-dir.z);
@@ -749,6 +1326,138 @@ pub fn player_movement(
             respawn_after_fall(&mut player, &mut orbit);
         }
     }
+
+    // Debug pose freeze holds Stan in place so the held pose can be inspected.
+    if let Some(anchor) = demo.anchor {
+        if demo.freeze.is_some() {
+            tf.translation.x = anchor.x;
+            tf.translation.z = anchor.z;
+            player.knockback = Vec3::ZERO;
+        }
+    }
+}
+
+/// Debug-only combat motion demo, enabled with `?debug=1&combat_demo=<mode>`:
+/// * `loop`: Stan repeats light (tap), light (backhand), charged heavy (hold, release), block,
+///   roll in sequence.
+/// * `light:<p>`, `light2:<p>`, `heavy:<p>`, `charge:<p>`, `roll:<p>`, `block`, `parry`: freeze
+///   that pose at progress `p` (0..1) with Stan pinned in place.
+///
+/// An optional last `:<radians>` swings the camera around Stan (0 = behind, 1.57 = his side).
+#[derive(Default)]
+pub struct CombatDemo {
+    init: bool,
+    loop_mode: bool,
+    freeze: Option<(String, f32)>,
+    cam_offset: Option<f32>,
+    anchor: Option<Vec3>,
+    t: f32,
+    step: usize,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn combat_demo_inputs(
+    demo: &mut CombatDemo,
+    dt: f32,
+    player: &mut Player,
+    stats: &mut PlayerStats,
+    orbit: &mut CameraOrbit,
+    tf: &mut Transform,
+    atk_pressed: &mut bool,
+    atk_down: &mut bool,
+    block_held: &mut bool,
+    shift_pressed: &mut bool,
+) -> bool {
+    if !demo.init {
+        demo.init = true;
+        if crate::audio::debug_keys_enabled() {
+            let spec = crate::audio::debug_combat_demo();
+            let parts: Vec<&str> = spec.split(':').filter(|s| !s.is_empty()).collect();
+            if let Some(&mode) = parts.first() {
+                if mode == "loop" {
+                    demo.loop_mode = true;
+                    demo.cam_offset = parts.get(1).and_then(|s| s.parse().ok());
+                } else {
+                    let p = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.4);
+                    demo.freeze = Some((mode.to_string(), p));
+                    demo.cam_offset = parts.get(2).and_then(|s| s.parse().ok());
+                }
+            }
+        }
+    }
+    if !demo.loop_mode && demo.freeze.is_none() {
+        return false;
+    }
+    // Keep the demo alive: no game over while it runs.
+    stats.hearts = stats.max_hearts;
+    stats.dash_energy = 100.0;
+    if demo.anchor.is_none() {
+        demo.anchor = Some(tf.translation);
+    }
+    if let Some(off) = demo.cam_offset {
+        orbit.yaw = player.facing_yaw + off;
+    }
+    if let Some((mode, p)) = demo.freeze.clone() {
+        let p = p.clamp(0.0, 0.999);
+        match mode.as_str() {
+            "light" | "light2" => {
+                stats.heavy_attack = false;
+                player.swing_side = if mode == "light2" { -1.0 } else { 1.0 };
+                player.attack_timer = LIGHT_SWING_SECS * (1.0 - p);
+                player.attack_cooldown = 1.0;
+            }
+            "heavy" => {
+                stats.heavy_attack = true;
+                player.attack_timer = HEAVY_SWING_SECS * (1.0 - p);
+                player.attack_cooldown = 1.0;
+            }
+            "charge" => {
+                player.attack_timer = 0.0;
+                player.attack_hold =
+                    AttackHold::Held(ATTACK_TAP_SECS + p * (HEAVY_CHARGE_SECS - ATTACK_TAP_SECS));
+            }
+            "roll" => {
+                player.roll_timer = ROLL_SECS * (1.0 - p);
+            }
+            "block" | "parry" => {
+                *block_held = true;
+                if mode == "parry" {
+                    player.block_recoil = 0.6;
+                    demo.t += dt;
+                    if demo.t > 0.5 {
+                        demo.t = 0.0;
+                        player.block_spark = 2;
+                    }
+                }
+            }
+            _ => {}
+        }
+        player.invuln_timer = player.invuln_timer.max(0.5);
+        return true;
+    }
+    // Loop: light tap, light tap (backhand), attack held 0.6 s then released (charged heavy),
+    // guard held for 1.2 s, roll; 4.6 s per cycle.
+    const SCRIPT: [(f32, u8); 6] = [(0.0, 1), (0.45, 1), (0.9, 2), (2.2, 3), (3.4, 4), (4.6, 0)];
+    demo.t += dt;
+    if demo.step >= SCRIPT.len() {
+        demo.step = 0;
+        demo.t = 0.0;
+    }
+    while demo.step < SCRIPT.len() && demo.t >= SCRIPT[demo.step].0 {
+        match SCRIPT[demo.step].1 {
+            1 => *atk_pressed = true,
+            2 => *atk_pressed = true,
+            4 => *shift_pressed = true,
+            _ => {}
+        }
+        demo.step += 1;
+    }
+    // The tap steps press and release in the same frame; the heavy step holds until 1.5 s.
+    *atk_down = demo.t >= 0.9 && demo.t < 1.5;
+    if demo.t >= 2.2 && demo.t < 3.4 {
+        *block_held = true;
+    }
+    false
 }
 
 /// Fell out of the world: cut the camera straight to the respawn point (no long swoop) and give a
@@ -824,18 +1533,12 @@ pub fn update_camera(
 
     // Lock-on yaw steering (disabled in cars and on the scooter, where the chase cam owns yaw).
     if stats.lock_on_active && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
-        let mut best_pos: Option<Vec3> = None;
-        let mut best_dist = 70.0_f32;
-        for t in &lock_q {
-            let d = p_tf.translation.distance(t.translation);
-            if d > 0.5 && d < best_dist {
-                best_dist = d;
-                best_pos = Some(t.translation);
-            }
-        }
-        if let Some(target_pos) = best_pos {
+        if let Some(target_pos) = pick_lock_target(p_tf.translation, lock_q.iter().map(|t| t.translation)) {
             let to_target = target_pos - p_tf.translation;
-            let desired_yaw = (-to_target.x).atan2(-to_target.z) + std::f32::consts::PI;
+            // The camera sits at +(sin yaw, cos yaw) from Stan and looks along -(sin, cos), so
+            // this yaw puts it behind Stan looking at the target (an extra half turn used to put
+            // the camera on the target's side, looking away from it).
+            let desired_yaw = (-to_target.x).atan2(-to_target.z);
             let mut diff = (desired_yaw - orbit.yaw) % std::f32::consts::TAU;
             if diff > std::f32::consts::PI {
                 diff -= std::f32::consts::TAU;
@@ -901,8 +1604,9 @@ pub fn update_camera(
     } else {
         0.82 + stats.player_scale.sqrt() * 0.34
     };
+    // Pub 217 has a fixed size; `is_in_pub217` only counts its interior (not the roof).
     let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_pos, stats.player_scale);
-    let pub_s = crate::city::pub217_scale(stats.player_scale);
+    let pub_s = crate::city::PUB217_SCALE;
     let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
     // Clamp distance & pitch inside Pub 217 so the bar ceiling/walls don't occlude the player.
     if in_pub217 {
@@ -1338,6 +2042,242 @@ pub fn animate_and_collect_pickups(
     }
 }
 
+/// Saber grip (rotation of `HeroSaberBlade` in the right hand) as authored in `boss.rs`.
+fn saber_rest_grip() -> Quat {
+    Quat::from_rotation_x(-1.18)
+}
+
+/// Arm rotation from a heading (`az`, + turns toward Stan's left) and an elevation (`el`, 0 hangs
+/// down, PI/2 points straight ahead, PI straight up). Built from two Euler steps so the arm never
+/// flips its roll the way a shortest-arc rotation can near vertical.
+fn arm_aim(az: f32, el: f32) -> Quat {
+    Quat::from_rotation_y(az) * Quat::from_rotation_x(el)
+}
+
+/// A combat key pose in the chest frame (before the upper-body twist is applied).
+#[derive(Clone, Copy)]
+struct SwingKey {
+    /// Progress (0..1) of the move at which this key is hit.
+    at: f32,
+    /// Upper-body twist (+ turns the chest to Stan's left) and lean (- bends forward).
+    yaw: f32,
+    pitch: f32,
+    /// Right / left arm heading and elevation (see `arm_aim`).
+    r_az: f32,
+    r_el: f32,
+    l_az: f32,
+    l_el: f32,
+    /// Blade direction in the chest frame (-Z ahead, +X Stan's right, +Y up).
+    blade: Vec3,
+    /// Leg swings (+ forward) and body drop.
+    ll: f32,
+    rl: f32,
+    bob: f32,
+}
+
+impl SwingKey {
+    fn lerp(a: &SwingKey, b: &SwingKey, t: f32) -> SwingKey {
+        let m = |x: f32, y: f32| x + (y - x) * t;
+        SwingKey {
+            at: m(a.at, b.at),
+            yaw: m(a.yaw, b.yaw),
+            pitch: m(a.pitch, b.pitch),
+            r_az: m(a.r_az, b.r_az),
+            r_el: m(a.r_el, b.r_el),
+            l_az: m(a.l_az, b.l_az),
+            l_el: m(a.l_el, b.l_el),
+            blade: a.blade.normalize().lerp(b.blade.normalize(), t).normalize_or(Vec3::NEG_Z),
+            ll: m(a.ll, b.ll),
+            rl: m(a.rl, b.rl),
+            bob: m(a.bob, b.bob),
+        }
+    }
+
+    fn mirrored(mut self) -> SwingKey {
+        self.yaw = -self.yaw;
+        self.r_az = -self.r_az;
+        self.blade.x = -self.blade.x;
+        // The free left hand swings out to the left for balance on backhands.
+        self.l_az = 1.15;
+        self.l_el = 0.55;
+        self
+    }
+}
+
+/// Sample a key track at progress `p` with smoothstep easing inside each segment.
+fn sample_keys(keys: &[SwingKey], p: f32) -> SwingKey {
+    if p <= keys[0].at {
+        return keys[0];
+    }
+    for w in keys.windows(2) {
+        if p <= w[1].at {
+            let x = ((p - w[0].at) / (w[1].at - w[0].at).max(1e-4)).clamp(0.0, 1.0);
+            let e = x * x * (3.0 - 2.0 * x);
+            return SwingKey::lerp(&w[0], &w[1], e);
+        }
+    }
+    keys[keys.len() - 1]
+}
+
+#[allow(clippy::too_many_arguments)]
+const fn key(
+    at: f32,
+    yaw: f32,
+    pitch: f32,
+    r_az: f32,
+    r_el: f32,
+    l_az: f32,
+    l_el: f32,
+    blade: Vec3,
+    ll: f32,
+    rl: f32,
+    bob: f32,
+) -> SwingKey {
+    SwingKey { at, yaw, pitch, r_az, r_el, l_az, l_el, blade, ll, rl, bob }
+}
+
+/// Light forehand slash, right to left. Short anticipation (the hit registers on the first
+/// frames), the blade crosses the front around 30 to 45 percent, then follow-through.
+const LIGHT_KEYS: [SwingKey; 5] = [
+    key(0.00, -0.45, 0.05, -1.30, 1.20, 0.60, 0.60, Vec3::new(0.60, 0.45, 0.65), 0.30, -0.25, -0.02),
+    key(0.14, -0.80, 0.08, -1.75, 1.25, 0.70, 0.55, Vec3::new(0.35, 0.55, 0.75), 0.35, -0.30, -0.04),
+    key(0.32, 0.00, -0.14, -0.25, 1.45, 0.90, 0.50, Vec3::new(-0.15, 0.10, -1.00), 0.55, -0.40, -0.09),
+    key(0.50, 0.70, -0.20, 1.10, 1.35, 0.95, 0.45, Vec3::new(-0.95, 0.00, -0.10), 0.60, -0.45, -0.11),
+    key(1.00, 0.85, -0.10, 1.30, 0.90, 0.80, 0.40, Vec3::new(-0.55, -0.45, 0.65), 0.40, -0.30, -0.05),
+];
+
+/// Heavy overhead chop: raise two-handed behind the head, lean back, then drive down into a deep
+/// lunge with the weight on the front foot.
+const HEAVY_KEYS: [SwingKey; 4] = [
+    key(0.00, -0.20, 0.10, 0.10, 2.00, -0.10, 1.90, Vec3::new(0.10, 0.90, 0.30), 0.30, -0.30, 0.00),
+    key(0.20, -0.30, 0.24, 0.15, 2.75, -0.15, 2.65, Vec3::new(0.05, 0.20, 1.00), 0.45, -0.35, 0.03),
+    key(0.42, 0.08, -0.52, 0.20, 1.15, -0.20, 1.20, Vec3::new(0.00, -0.50, -0.87), 0.95, -0.70, -0.16),
+    key(1.00, 0.10, -0.45, 0.15, 0.85, -0.15, 0.85, Vec3::new(0.05, -0.85, -0.50), 0.90, -0.65, -0.17),
+];
+
+/// Saber guard: chest turned slightly, right hand forward at chest height, blade angled up and
+/// across the body, left hand supporting, feet braced.
+const GUARD_KEY: SwingKey =
+    key(0.0, 0.35, -0.08, 0.35, 1.05, -0.35, 1.00, Vec3::new(-0.70, 0.68, -0.20), 0.35, -0.40, -0.07);
+
+/// Full combat pose: limb targets plus upper-body twist, saber grip and the whole-body tumble.
+struct CombatPose {
+    ll: Quat,
+    rl: Quat,
+    la: Quat,
+    ra: Quat,
+    torso: Quat,
+    head: Quat,
+    bob: f32,
+    upper: Quat,
+    grip: Quat,
+    /// Whole-body (scene root) transform for the dodge roll tumble.
+    body: Option<Transform>,
+}
+
+impl CombatPose {
+    fn from_key(k: &SwingKey) -> CombatPose {
+        let ra = arm_aim(k.r_az, k.r_el);
+        let grip = ra.inverse() * Quat::from_rotation_arc(Vec3::Y, k.blade.normalize_or(Vec3::NEG_Z));
+        CombatPose {
+            ll: Quat::from_rotation_x(k.ll),
+            rl: Quat::from_rotation_x(k.rl),
+            la: arm_aim(k.l_az, k.l_el),
+            ra,
+            torso: Quat::IDENTITY,
+            // Head counter-turns so Stan keeps his eyes on the target through the twist.
+            head: Quat::from_rotation_y(-k.yaw * 0.7) * Quat::from_rotation_x(-k.pitch * 0.5),
+            bob: k.bob,
+            upper: Quat::from_rotation_y(k.yaw) * Quat::from_rotation_x(k.pitch),
+            grip,
+            body: None,
+        }
+    }
+}
+
+fn smooth01(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// Dodge roll as a real forward tumble: dive and tuck, one full forward rotation low to the
+/// ground with the body squashed into a ball, then unfurl. `p` is roll progress 0..1.
+fn roll_pose(p: f32) -> CombatPose {
+    let tuck = smooth01(p / 0.14) * (1.0 - smooth01((p - 0.80) / 0.20));
+    let spin_t = ((p - 0.04) / 0.82).clamp(0.0, 1.0);
+    // Smootherstep: quick through the middle, settling at both ends.
+    let spin = spin_t * spin_t * spin_t * (spin_t * (spin_t * 6.0 - 15.0) + 10.0);
+    let angle = spin * std::f32::consts::TAU;
+    let rot = Quat::from_rotation_x(-angle);
+    let scale = Vec3::new(1.0 - 0.06 * tuck, 1.0 - 0.32 * tuck, 1.0 - 0.06 * tuck);
+    // Rotate about the hips (scaled), and lower the ball's centre toward the floor.
+    let pivot = Vec3::new(0.0, 0.80, 0.0) * scale;
+    let centre = Vec3::new(0.0, 0.80 - 0.18 * tuck, 0.0);
+    let body = Transform {
+        translation: centre - rot * pivot,
+        rotation: rot,
+        scale,
+    };
+    let k = key(
+        0.0,
+        0.0,
+        -0.35 * tuck,
+        0.35 * tuck,
+        1.35 * tuck,
+        -0.35 * tuck,
+        1.35 * tuck,
+        Vec3::new(0.0, 0.0, -1.0).lerp(Vec3::new(0.15, 0.55, 0.80), tuck),
+        1.75 * tuck,
+        1.55 * tuck,
+        -0.10 * tuck,
+    );
+    let mut pose = CombatPose::from_key(&k);
+    pose.torso = Quat::from_rotation_x(-0.45 * tuck);
+    pose.head = Quat::from_rotation_x(-0.65 * tuck);
+    pose.body = Some(body);
+    pose
+}
+
+/// Landing out of the roll: a crouch that rises back to standing over `ROLL_RECOVER_SECS`.
+const ROLL_RECOVER_SECS: f32 = 0.2;
+fn roll_recover_pose(since_end: f32) -> CombatPose {
+    let w = 1.0 - smooth01(since_end / ROLL_RECOVER_SECS);
+    let k = key(
+        0.0,
+        0.0,
+        -0.30 * w,
+        -0.30 * w,
+        0.70 * w,
+        0.45 * w,
+        0.75 * w,
+        Vec3::new(0.15, 0.40, -0.90),
+        0.70 * w,
+        -0.35 * w,
+        -0.14 * w,
+    );
+    CombatPose::from_key(&k)
+}
+
+/// Per-hero animation memory for `animate_player_limbs`.
+///
+/// This is a resource, not a `Local`: the system is registered once per game state, and a
+/// `Local` would give every registration its own copy. A state change in the middle of a swing
+/// (for example the killing blow on Mom) then recorded the twisted arm positions as the rest
+/// pose, leaving the arms attached to Stan's front and back from that point on.
+#[derive(Resource, Default)]
+pub struct LimbAnimState {
+    /// Smoothed upper-body rotation (applied to torso, head and arms about the hips).
+    upper: Option<Quat>,
+    prev_roll: f32,
+    roll_total: f32,
+    /// Seconds since the last roll ended (None before the first roll).
+    since_roll_end: Option<f32>,
+    /// Authored arm / head translations, captured the first time each part is seen.
+    base: bevy::utils::HashMap<Entity, Vec3>,
+    body_root: Option<Entity>,
+    body_dirty: bool,
+}
+
 pub fn animate_player_limbs(
     time: Res<Time>,
     state: Res<State<GameState>>,
@@ -1345,6 +2285,9 @@ pub fn animate_player_limbs(
     player_q: Query<(&Player, &Children)>,
     children_q: Query<&Children>,
     mut part_q: Query<(&Name, &mut Transform), Without<Player>>,
+    mut unnamed_q: Query<&mut Transform, (Without<Player>, Without<Name>)>,
+    saber_q: Query<Entity, With<crate::boss::HeroSaberBlade>>,
+    mut anim: ResMut<LimbAnimState>,
 ) {
     let Ok((player, root_children)) = player_q.get_single() else {
         return;
@@ -1353,8 +2296,68 @@ pub fn animate_player_limbs(
     let t = time.elapsed_secs();
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
 
+    // Roll bookkeeping: total length of the current roll (the city car bail-out uses a longer
+    // one) and time since the last roll ended, for the landing crouch.
+    if player.roll_timer > anim.prev_roll + 1e-4 {
+        anim.roll_total = player.roll_timer.max(ROLL_SECS);
+    }
+    if player.roll_timer > 0.0 {
+        anim.since_roll_end = Some(0.0);
+    } else if let Some(s) = anim.since_roll_end.as_mut() {
+        *s += dt;
+    }
+    anim.prev_roll = player.roll_timer;
+    let since_roll_end = anim.since_roll_end.unwrap_or(f32::MAX);
+
+    let scripted_pose = matches!(
+        *state.get(),
+        GameState::HeadphoneCutscene | GameState::MomVictoryCutscene | GameState::StageClear
+    );
+    let combat: Option<CombatPose> = if scripted_pose {
+        None
+    } else if player.roll_timer > 0.0 {
+        let total = anim.roll_total.max(player.roll_timer).max(1e-3);
+        Some(roll_pose(1.0 - player.roll_timer / total))
+    } else if player.attack_timer > 0.0 {
+        let k = if stats.heavy_attack {
+            // Every heavy is released from the charged wind-up, so it starts at the raised key
+            // instead of dipping back to the first one (hit timing is unchanged).
+            let p = 1.0 - player.attack_timer / HEAVY_SWING_SECS;
+            sample_keys(&HEAVY_KEYS, p.max(HEAVY_KEYS[1].at))
+        } else {
+            let k = sample_keys(&LIGHT_KEYS, 1.0 - player.attack_timer / LIGHT_SWING_SECS);
+            if player.swing_side < 0.0 { k.mirrored() } else { k }
+        };
+        Some(CombatPose::from_key(&k))
+    } else if let Some(c) = player.charge_level() {
+        // Charging a heavy: rise into the two-handed overhead wind-up, coil back a little more as
+        // the charge builds, and tremble once it is full.
+        let rise = smooth01((c * 1.8).min(1.0));
+        let mut k = sample_keys(&HEAVY_KEYS, HEAVY_KEYS[1].at * rise);
+        let full = if c >= 1.0 { 1.0 } else { 0.0 };
+        k.pitch += 0.06 * c + 0.015 * full * (t * 38.0).sin();
+        k.yaw -= 0.08 * c;
+        k.bob -= 0.03 * c;
+        Some(CombatPose::from_key(&k))
+    } else if player.block_active {
+        let r = player.block_recoil;
+        let mut k = GUARD_KEY;
+        // Blocked hit: the guard is shoved back toward the chest and Stan rocks onto his heels.
+        k.pitch += 0.18 * r;
+        k.bob -= 0.05 * r;
+        k.r_el -= 0.25 * r;
+        k.blade = (k.blade + Vec3::new(0.0, 0.0, 0.45 * r)).normalize();
+        Some(CombatPose::from_key(&k))
+    } else if since_roll_end < ROLL_RECOVER_SECS && player.grounded {
+        Some(roll_recover_pose(since_roll_end))
+    } else {
+        None
+    };
+
     let (left_leg_rot, right_leg_rot, left_arm_rot, right_arm_rot, torso_rot, head_rot, bob_y) =
-        if *state.get() == GameState::HeadphoneCutscene {
+        if let Some(c) = &combat {
+            (c.ll, c.rl, c.la, c.ra, c.torso, c.head, c.bob)
+        } else if *state.get() == GameState::HeadphoneCutscene {
             let rage_shake = (t * 36.0).sin() * 0.09;
             if stats.cutscene_beat >= 4 {
                 // Enraged Sacred Vow: swelling fury with shaking right fist raised high above head!
@@ -1423,31 +2426,6 @@ pub fn animate_player_limbs(
                     * Quat::from_rotation_x(-0.10 + swing * 0.08),
                 swing.abs() * 0.05,
             )
-        } else if player.roll_timer > 0.0 {
-            let p = (1.0 - (player.roll_timer / 0.42)).clamp(0.0, 1.0);
-            let spin = p * std::f32::consts::TAU;
-            (
-                Quat::from_rotation_x(-1.15),
-                Quat::from_rotation_x(-1.15),
-                Quat::from_rotation_x(-0.95) * Quat::from_rotation_z(-0.2),
-                Quat::from_rotation_x(-0.95) * Quat::from_rotation_z(0.2),
-                Quat::from_rotation_x(-spin),
-                Quat::from_rotation_x(0.35),
-                -0.18 * (p * std::f32::consts::PI).sin(),
-            )
-        } else if player.attack_timer > 0.0 {
-            let sw = (1.0 - (player.attack_timer / 0.28)).clamp(0.0, 1.0);
-            (
-                Quat::from_rotation_x(0.38),
-                Quat::from_rotation_x(-0.42),
-                Quat::from_rotation_x(-0.45) * Quat::from_rotation_z(-0.35),
-                Quat::from_rotation_x(-1.45 + sw * 0.65)
-                    * Quat::from_rotation_y(-1.15 + sw * 2.45)
-                    * Quat::from_rotation_z(0.55 - sw * 1.1),
-                Quat::from_rotation_x(-0.20) * Quat::from_rotation_y(-0.48 + sw * 0.96),
-                Quat::from_rotation_x(0.12) * Quat::from_rotation_y(0.20 - sw * 0.40),
-                0.04,
-            )
         } else if player.dash_timer > 0.0 {
             (
                 Quat::from_rotation_x(-0.65),
@@ -1503,6 +2481,7 @@ pub fn animate_player_limbs(
             && matches!(*state.get(), GameState::Playing | GameState::BossFight)
             && player.roll_timer <= 0.0
             && player.attack_timer <= 0.0
+            && combat.is_none()
         {
             let shake = (t * 36.0).sin() * 0.09;
             let flare = stats.rage_pulse_flash * 0.55;
@@ -1527,34 +2506,363 @@ pub fn animate_player_limbs(
             )
         };
 
-    let blend = (dt * 16.0).min(1.0);
-    let mut stack: Vec<Entity> = root_children.iter().copied().collect();
-    while let Some(entity) = stack.pop() {
-        if let Ok(kids) = children_q.get(entity) {
-            stack.extend(kids.iter().copied());
-        }
-        if let Ok((name, mut tf)) = part_q.get_mut(entity) {
-            match name.as_str() {
-                "HeroLeftLeg" => tf.rotation = tf.rotation.slerp(left_leg_rot, blend),
-                "HeroRightLeg" => tf.rotation = tf.rotation.slerp(right_leg_rot, blend),
-                "HeroLeftArm" => {
-                    tf.rotation = tf.rotation.slerp(left_arm_rot, blend);
-                    tf.translation.y = 1.36 + bob_y * 0.8;
-                }
-                "HeroRightArm" => {
-                    tf.rotation = tf.rotation.slerp(right_arm_rot, blend);
-                    tf.translation.y = 1.36 + bob_y * 0.8;
-                }
-                "HeroTorso" => {
-                    tf.rotation = tf.rotation.slerp(torso_rot, blend);
-                    tf.translation.y = 0.72 + bob_y;
-                }
-                "HeroHead" => {
-                    tf.rotation = tf.rotation.slerp(head_rot, blend);
-                    tf.translation.y = 1.52 + bob_y;
-                }
-                _ => {}
+    // Combat moves are fast arcs: follow their keys more tightly than the ambient poses.
+    let blend = if combat.is_some() { (dt * 30.0).min(1.0) } else { (dt * 16.0).min(1.0) };
+    let upper_target = combat.as_ref().map(|c| c.upper).unwrap_or(Quat::IDENTITY);
+    let upper = anim.upper.unwrap_or(Quat::IDENTITY).slerp(upper_target, blend);
+    anim.upper = Some(upper);
+    // Upper-body twist / lean pivots about the hips (the torso origin).
+    let hip = Vec3::new(0.0, 0.72 + bob_y, 0.0);
+
+    let mut body_root = None;
+    for &top in root_children.iter() {
+        let mut stack: Vec<Entity> = vec![top];
+        while let Some(entity) = stack.pop() {
+            if let Ok(kids) = children_q.get(entity) {
+                stack.extend(kids.iter().copied());
             }
+            if let Ok((name, mut tf)) = part_q.get_mut(entity) {
+                let (rot, base_y) = match name.as_str() {
+                    "HeroLeftLeg" => {
+                        tf.rotation = tf.rotation.slerp(left_leg_rot, blend);
+                        continue;
+                    }
+                    "HeroRightLeg" => {
+                        tf.rotation = tf.rotation.slerp(right_leg_rot, blend);
+                        continue;
+                    }
+                    "HeroLeftArm" => (left_arm_rot, 1.36 + bob_y * 0.8),
+                    "HeroRightArm" => (right_arm_rot, 1.36 + bob_y * 0.8),
+                    "HeroTorso" => {
+                        body_root = Some(top);
+                        tf.rotation = tf.rotation.slerp(upper * torso_rot, blend);
+                        tf.translation.y = 0.72 + bob_y;
+                        continue;
+                    }
+                    "HeroHead" => (head_rot, 1.52 + bob_y),
+                    _ => continue,
+                };
+                let authored = *anim.base.entry(entity).or_insert(tf.translation);
+                let rest = Vec3::new(authored.x, base_y, authored.z);
+                tf.translation = hip + upper * (rest - hip);
+                tf.rotation = tf.rotation.slerp(upper * rot, blend);
+            }
+        }
+    }
+
+    // Saber grip follows the swing / guard keys, and eases back to the authored grip otherwise.
+    let grip_target = combat.as_ref().map(|c| c.grip).unwrap_or_else(saber_rest_grip);
+    for saber in &saber_q {
+        if let Ok(mut s_tf) = unnamed_q.get_mut(saber) {
+            s_tf.rotation = s_tf.rotation.slerp(grip_target, blend);
+        }
+    }
+
+    // Whole-body tumble for the dodge roll on the glTF scene root. The player entity itself never
+    // rotates or moves for it, so the follow camera (which tracks the player transform) stays level.
+    if let Some(root) = body_root {
+        anim.body_root = Some(root);
+    }
+    let body_tf = combat.as_ref().and_then(|c| c.body);
+    if let Some(root) = anim.body_root {
+        if body_tf.is_some() || anim.body_dirty {
+            let target = body_tf.unwrap_or(Transform::IDENTITY);
+            if let Ok(mut r_tf) = unnamed_q.get_mut(root) {
+                *r_tf = target;
+            } else if let Ok((_, mut r_tf)) = part_q.get_mut(root) {
+                *r_tf = target;
+            }
+            anim.body_dirty = body_tf.is_some();
+        }
+    }
+}
+
+/// Short-lived saber effects: swoosh trail segments along the blade arc, block sparks and the
+/// perfect-block flash.
+#[derive(Component)]
+pub struct SaberFx {
+    age: f32,
+    life: f32,
+    vel: Vec3,
+    kind: SaberFxKind,
+    size: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SaberFxKind {
+    Trail,
+    Spark,
+    Flash,
+}
+
+/// Swing progress window (0..1) in which the blade leaves a swoosh trail.
+fn swing_trail_window(heavy: bool) -> (f32, f32) {
+    if heavy { (0.16, 0.72) } else { (0.08, 0.62) }
+}
+
+/// Spawns and ages saber effects. Runs in every state so effects alive at a scene change still
+/// fade out and despawn.
+pub fn update_saber_fx(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    stats: Res<PlayerStats>,
+    mut player_q: Query<&mut Player>,
+    blade_q: Query<&GlobalTransform, With<crate::boss::HeroSaberBlade>>,
+    mut fx_q: Query<(Entity, &mut SaberFx, &mut Transform, &MeshMaterial3d<StandardMaterial>)>,
+    mut prev_blade: Local<Option<(Vec3, Vec3)>>,
+) {
+    use bevy::pbr::NotShadowCaster;
+    use bevy::render::mesh::{Indices, PrimitiveTopology};
+    use bevy::render::render_asset::RenderAssetUsages;
+
+    let dt = time.delta_secs().min(0.05);
+    for (e, mut fx, mut tf, mat) in &mut fx_q {
+        fx.age += dt;
+        if fx.age >= fx.life {
+            commands.entity(e).despawn_recursive();
+            continue;
+        }
+        let k = 1.0 - fx.age / fx.life;
+        match fx.kind {
+            SaberFxKind::Trail => {
+                if let Some(m) = materials.get_mut(&mat.0) {
+                    m.base_color.set_alpha(0.85 * k * k);
+                }
+            }
+            SaberFxKind::Spark => {
+                let v = fx.vel;
+                tf.translation += v * dt;
+                fx.vel = v * (1.0 - 5.0 * dt).max(0.0) - Vec3::Y * (14.0 * fx.size * dt);
+                tf.scale = Vec3::splat(fx.size * (0.35 + 0.65 * k));
+            }
+            SaberFxKind::Flash => {
+                tf.scale = Vec3::splat(fx.size * (0.35 + 1.4 * (1.0 - k)));
+                if let Some(m) = materials.get_mut(&mat.0) {
+                    m.base_color.set_alpha(0.7 * k * k);
+                }
+            }
+        }
+    }
+
+    let Ok(mut player) = player_q.get_single_mut() else {
+        *prev_blade = None;
+        return;
+    };
+    let Ok(blade_gt) = blade_q.get_single() else {
+        *prev_blade = None;
+        player.block_spark = 0;
+        return;
+    };
+    let base = blade_gt.transform_point(Vec3::new(0.0, 0.40, 0.0));
+    let tip = blade_gt.transform_point(Vec3::new(0.0, 1.66, 0.0));
+    let world_scale = ((tip - base).length() / 1.26).max(0.05);
+
+    // Swoosh: a ribbon quad between last frame's blade and this frame's, bright at the tip edge
+    // and fading toward the hilt, during the striking part of the swing.
+    let striking = stats.boss_mode && player.attack_timer > 0.0 && {
+        let total = if stats.heavy_attack { HEAVY_SWING_SECS } else { LIGHT_SWING_SECS };
+        let p = 1.0 - player.attack_timer / total;
+        let (a, b) = swing_trail_window(stats.heavy_attack);
+        p >= a && p <= b
+    };
+    if let (true, Some((p_base, p_tip))) = (striking, *prev_blade) {
+        if p_tip.distance(tip) > 0.03 * world_scale {
+            let n = (p_tip - p_base).cross(tip - p_base).normalize_or(Vec3::Y);
+            let mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![p_base.to_array(), p_tip.to_array(), tip.to_array(), base.to_array()])
+                .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![n.to_array(); 4])
+                .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]])
+                .with_inserted_attribute(
+                    Mesh::ATTRIBUTE_COLOR,
+                    vec![[1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.65], [1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 1.0, 0.0]],
+                )
+                .with_inserted_indices(Indices::U32(vec![0, 1, 2, 0, 2, 3]));
+            let mat = materials.add(StandardMaterial {
+                // Unlit HDR colour (a little over 1) so the ribbon blooms softly.
+                base_color: Color::linear_rgba(1.25, 0.70, 2.2, 0.85),
+                alpha_mode: AlphaMode::Add,
+                unlit: true,
+                double_sided: true,
+                cull_mode: None,
+                ..default()
+            });
+            commands.spawn((
+                crate::state::LevelEntity,
+                SaberFx { age: 0.0, life: 0.16, vel: Vec3::ZERO, kind: SaberFxKind::Trail, size: 1.0 },
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(mat),
+                Transform::IDENTITY,
+                NotShadowCaster,
+            ));
+        }
+    }
+    *prev_blade = Some((base, tip));
+
+    // Saber hit spark at the contact point on the target: a hot burst plus a quick flash.
+    if let Some(contact) = player.hit_spark.take() {
+        let heavy = stats.heavy_attack;
+        let t = time.elapsed_secs();
+        let spark_mesh = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
+        let spark_mat = materials.add(StandardMaterial {
+            base_color: Color::linear_rgb(2.4, 1.3, 3.0),
+            unlit: true,
+            ..default()
+        });
+        let count = if heavy { 18 } else { 12 };
+        for i in 0..count {
+            let a = i as f32 * 2.399 + t * 5.0;
+            let up = 0.2 + 0.7 * ((i as f32 * 1.3 + t * 2.0).sin() * 0.5 + 0.5);
+            let dir = Vec3::new(a.cos(), up, a.sin()).normalize();
+            let speed = (if heavy { 10.0 } else { 7.5 }) * world_scale * (0.6 + 0.4 * ((i * 7 % 5) as f32 / 4.0));
+            commands.spawn((
+                crate::state::LevelEntity,
+                SaberFx { age: 0.0, life: 0.30, vel: dir * speed, kind: SaberFxKind::Spark, size: 0.05 * world_scale },
+                Mesh3d(spark_mesh.clone()),
+                MeshMaterial3d(spark_mat.clone()),
+                Transform::from_translation(contact).with_scale(Vec3::splat(0.05 * world_scale)),
+                NotShadowCaster,
+            ));
+        }
+        commands.spawn((
+            crate::state::LevelEntity,
+            SaberFx {
+                age: 0.0,
+                life: 0.18,
+                vel: Vec3::ZERO,
+                kind: SaberFxKind::Flash,
+                size: (if heavy { 0.6 } else { 0.42 }) * world_scale,
+            },
+            Mesh3d(meshes.add(Sphere::new(1.0))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::linear_rgba(2.0, 1.2, 2.6, 0.7),
+                alpha_mode: AlphaMode::Add,
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_translation(contact).with_scale(Vec3::splat(0.2 * world_scale)),
+            NotShadowCaster,
+        ));
+    }
+
+    // Block sparks at the blade, where the hit met the guard.
+    if player.block_spark > 0 {
+        let perfect = player.block_spark >= 2;
+        player.block_spark = 0;
+        let contact = blade_gt.transform_point(Vec3::new(0.0, 1.05, 0.0));
+        let t = time.elapsed_secs();
+        let spark_mesh = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
+        let spark_mat = materials.add(StandardMaterial {
+            base_color: if perfect {
+                Color::linear_rgb(1.6, 2.2, 3.0)
+            } else {
+                Color::linear_rgb(2.6, 1.9, 0.9)
+            },
+            unlit: true,
+            ..default()
+        });
+        let count = if perfect { 16 } else { 9 };
+        for i in 0..count {
+            let a = i as f32 * 2.399 + t * 7.0;
+            let up = 0.35 + 0.6 * ((i as f32 * 1.7 + t * 3.0).sin() * 0.5 + 0.5);
+            let dir = Vec3::new(a.cos(), up, a.sin()).normalize();
+            let speed = (if perfect { 9.0 } else { 6.5 }) * world_scale * (0.6 + 0.4 * ((i * 7 % 5) as f32 / 4.0));
+            commands.spawn((
+                crate::state::LevelEntity,
+                SaberFx {
+                    age: 0.0,
+                    life: if perfect { 0.38 } else { 0.28 },
+                    vel: dir * speed,
+                    kind: SaberFxKind::Spark,
+                    size: 0.045 * world_scale,
+                },
+                Mesh3d(spark_mesh.clone()),
+                MeshMaterial3d(spark_mat.clone()),
+                Transform::from_translation(contact).with_scale(Vec3::splat(0.045 * world_scale)),
+                NotShadowCaster,
+            ));
+        }
+        if perfect {
+            commands.spawn((
+                crate::state::LevelEntity,
+                SaberFx { age: 0.0, life: 0.22, vel: Vec3::ZERO, kind: SaberFxKind::Flash, size: 0.5 * world_scale },
+                Mesh3d(meshes.add(Sphere::new(1.0))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::linear_rgba(1.3, 1.6, 2.4, 0.7),
+                    alpha_mode: AlphaMode::Add,
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::from_translation(contact).with_scale(Vec3::splat(0.2 * world_scale)),
+                NotShadowCaster,
+            ));
+        }
+    }
+}
+
+/// Heavy charge glow: the hero saber's sheath thickens and brightens and its light swells as the
+/// charge builds, pulsing faster once full. Base colour (not emissive) carries it, since unlit
+/// materials draw their base colour and `gfx` caps emissive anyway; peaks stay under 2.
+pub fn update_saber_charge_glow(
+    time: Res<Time>,
+    player_q: Query<&Player>,
+    mut aura_q: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>), With<crate::boss::HeroSaberAura>>,
+    mut light_q: Query<&mut PointLight, With<crate::boss::HeroSaberLight>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut applied: Local<f32>,
+) {
+    let c = player_q.get_single().ok().and_then(|p| p.charge_level());
+    let g = match c {
+        Some(c) => {
+            let t = time.elapsed_secs();
+            let rate = if c >= 1.0 { 16.0 } else { 7.0 };
+            c * (0.8 + 0.2 * (t * rate).sin())
+        }
+        None => 0.0,
+    };
+    if g == 0.0 && *applied == 0.0 {
+        return;
+    }
+    *applied = g;
+    let base = crate::boss::HERO_SABER_AURA_COLOR.to_linear();
+    for (mut tf, mat) in &mut aura_q {
+        let r = 1.0 + 0.5 * g;
+        tf.scale = Vec3::new(r, 1.0, r);
+        if let Some(m) = materials.get_mut(&mat.0) {
+            let k = 1.0 + 0.9 * g;
+            m.base_color = Color::linear_rgba(
+                base.red * k,
+                base.green * k,
+                base.blue * k,
+                (base.alpha + 0.3 * g).min(0.8),
+            );
+        }
+    }
+    for mut light in &mut light_q {
+        light.intensity = crate::boss::HERO_SABER_LIGHT * (1.0 + 1.5 * g);
+    }
+}
+
+/// Saber hit-stop: slows virtual time to a crawl for a few frames (timed in real seconds) when a
+/// swing lands, then restores normal speed. Pausing (help) is separate and unaffected.
+pub fn update_hit_stop(
+    real: Res<Time<Real>>,
+    mut virt: ResMut<Time<Virtual>>,
+    mut player_q: Query<&mut Player>,
+    mut left: Local<f32>,
+) {
+    if let Ok(mut player) = player_q.get_single_mut() {
+        if player.hit_stop > 0.0 {
+            *left = left.max(player.hit_stop);
+            player.hit_stop = 0.0;
+        }
+    }
+    if *left > 0.0 {
+        *left -= real.delta_secs();
+        let speed = if *left > 0.0 { 0.06 } else { 1.0 };
+        if virt.relative_speed() != speed {
+            virt.set_relative_speed(speed);
         }
     }
 }

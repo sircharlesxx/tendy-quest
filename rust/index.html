@@ -311,6 +311,22 @@
           mkOsc("sine", 240, 520, 0.18, 0.22);
           return true;
         }
+        if (name === "saber_block") {
+          mkOsc("square", 1250, 620, 0.12, 0.20);
+          mkOsc("sawtooth", 180, 90, 0.16, 0.22);
+          return true;
+        }
+        if (name === "saber_parry") {
+          mkOsc("square", 1500, 1900, 0.10, 0.20);
+          mkOsc("triangle", 2400, 1200, 0.24, 0.18);
+          mkOsc("sawtooth", 220, 110, 0.18, 0.20);
+          return true;
+        }
+        if (name === "guard_break") {
+          mkOsc("sawtooth", 420, 70, 0.32, 0.30);
+          mkOsc("square", 160, 60, 0.30, 0.20);
+          return true;
+        }
         if (name === "thunder") {
           mkOsc("sawtooth", 95, 32, 0.75, 0.36);
           return true;
@@ -1000,11 +1016,137 @@
             }, 105);
           } catch (_) {}
         },
+        // --- Per-character voices (Web Speech API, no network) ---
+        // Each speaker gets its own installed voice when the browser offers several, plus its
+        // own pitch and rate so characters stay distinct even with only one or two voices.
+        // `g` is the preferred voice gender when the voice name hints at one.
+        _VOICE_PROFILES: {
+          narrator: { pitch: 0.88, rate: 0.92, volume: 0.95, g: "m" },
+          stan: { pitch: 1.02, rate: 0.97, volume: 1.0, g: "m" },
+          mom: { pitch: 0.82, rate: 0.92, volume: 1.0, g: "f", prefer: /\b(jenny|aria|michelle|sonia|libby|zira|susan|hazel|catherine|karen|moira|victoria|nancy|elizabeth|samantha|kate|serena)\b|uk english female/ },
+          lexie: { pitch: 0.74, rate: 0.93, volume: 1.0, g: "f" },
+          tj: { pitch: 1.16, rate: 1.04, volume: 0.96, g: "m" },
+          derek: { pitch: 0.80, rate: 0.99, volume: 1.0, g: "m" },
+          nate: { pitch: 1.28, rate: 1.12, volume: 1.0, g: "m" },
+          glenn: { pitch: 0.62, rate: 0.88, volume: 1.0, g: "m" },
+          mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
+        },
+        // Mood variants keep their dramatic tuning but speak with the base character's voice.
+        _VOICE_MOODS: {
+          stan_vow_1: { pitch: 0.86, rate: 0.88 },
+          stan_vow_2: { pitch: 0.72, rate: 1.06 },
+          stan_vow_3: { pitch: 0.56, rate: 1.15 },
+          stan_uzumaki: { pitch: 1.28, rate: 1.10 },
+          stan_cosmic: { pitch: 1.38, rate: 1.15 },
+          stan_thought: { pitch: 0.72, rate: 0.92, volume: 0.98 },
+          narrator_uzumaki: { pitch: 0.60, rate: 0.98 },
+          narrator_cosmic: { pitch: 0.54, rate: 1.06 },
+          tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
+        },
+        // Fixed order so the cast is deterministic for a given installed voice list.
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike"],
+        _voiceCast: null,
+        _voiceCastKey: "",
+        _voiceCastLocked: false,
+        _voiceListening: false,
+        _voiceProfile(role) {
+          const r = String(role || "");
+          let who = "narrator";
+          for (const w of this._VOICE_ORDER) {
+            if (r === w || r.startsWith(w + "_")) { who = w; break; }
+          }
+          const base = this._VOICE_PROFILES[who];
+          const mood = this._VOICE_MOODS[r] || {};
+          return {
+            who,
+            pitch: mood.pitch !== undefined ? mood.pitch : base.pitch,
+            rate: mood.rate !== undefined ? mood.rate : base.rate,
+            volume: mood.volume !== undefined ? mood.volume : base.volume,
+          };
+        },
+        _voiceScore(v, pageLang, pageBase) {
+          const n = String(v.name || "").toLowerCase();
+          let s = 0;
+          if (/natural|neural/.test(n)) s += 40;
+          if (/premium|enhanced/.test(n)) s += 30;
+          if (/online/.test(n)) s += 25;
+          if (/google/.test(n)) s += 20;
+          if (/siri/.test(n)) s += 15;
+          // eSpeak and the macOS novelty voices are a last resort.
+          if (/espeak|albert|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|jester|organ|superstar|trinoids|whisper|wobble|zarvox/.test(n)) s -= 200;
+          // Child voices (e.g. Edge's "Ana" and "Maisie") must never be cast as an adult.
+          if (/\b(ana|maisie)\b|child|kid|junior/.test(n)) s -= 200;
+          const lang = String(v.lang || "").toLowerCase().replace("_", "-");
+          if (lang === pageLang) s += 12;
+          else if (lang.split("-")[0] === pageBase) s += 6;
+          return s;
+        },
+        _voiceGender(v) {
+          const n = " " + String(v.name || "").toLowerCase() + " ";
+          // "Google US English" is a female voice even though its name does not say so.
+          if (/google us english/.test(n)) return "f";
+          if (/female|woman|\b(zira|aria|jenny|michelle|emma|ava|allison|samantha|susan|karen|moira|tessa|victoria|hazel|libby|sonia|serena|fiona|kate|catherine|heera|veena|natasha|clara|joanna|salli|kimberly|ivy|kendra|nicole|amy|olivia|elizabeth|nancy|ashley|cora|monica|emily|zoe|isla|ana|jane|sara|leah|molly|maisie|abbie|hollie|bella)\b/.test(n)) return "f";
+          if (/\bmale\b|\b(david|mark|guy|daniel|alex|ryan|george|christopher|eric|roger|steffan|thomas|oliver|tom|aaron|arthur|james|brian|matthew|joey|justin|kevin|russell|william|liam|connor|andrew|brandon|jason|tony|rishi|gordon|lee|reed|eddy|fred|ralph|junior|evan|nathan|noah|ethan|elliot|alfie|jacob)\b/.test(n)) return "m";
+          return "";
+        },
+        _buildVoiceCast() {
+          const synth = window.speechSynthesis;
+          if (!synth) return;
+          if (!this._voiceListening && synth.addEventListener) {
+            // Voices often arrive late (Chrome loads them async); rebuild when they do.
+            this._voiceListening = true;
+            synth.addEventListener("voiceschanged", () => this._buildVoiceCast());
+          }
+          // Once a cast voice has been heard, keep it for the whole session.
+          if (this._voiceCastLocked && this._voiceCast) return;
+          let all = [];
+          try { all = synth.getVoices() || []; } catch (_) {}
+          if (!all.length) return;
+          const key = all.map((v) => v.voiceURI || v.name).join("|");
+          if (key === this._voiceCastKey && this._voiceCast) return;
+          this._voiceCastKey = key;
+          const pageLang = String(document.documentElement.lang || navigator.language || "en").toLowerCase();
+          const pageBase = pageLang.split("-")[0];
+          let pool = all.filter((v) => String(v.lang || "").toLowerCase().replace("_", "-").split("-")[0] === pageBase);
+          if (!pool.length) pool = all.slice();
+          const ranked = pool
+            .map((v) => ({ v, s: this._voiceScore(v, pageLang, pageBase), g: this._voiceGender(v), id: String(v.voiceURI || "") + "|" + String(v.name || "") }))
+            .sort((a, b) => b.s - a.s || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+          const uses = new Map();
+          const cast = {};
+          for (const who of this._VOICE_ORDER) {
+            const want = this._VOICE_PROFILES[who].g;
+            let best = null;
+            let bestScore = -Infinity;
+            for (const c of ranked) {
+              // Prefer an unused voice, but never cross gender just to avoid sharing: pitch and
+              // rate already tell apart characters that share a voice.
+              let sc = c.s - (uses.get(c.id) || 0) * 60;
+              if (c.g && c.g === want) sc += 10;
+              const prefer = this._VOICE_PROFILES[who].prefer;
+              if (prefer && prefer.test(String(c.v.name || "").toLowerCase())) sc += 25;
+              else if (c.g && c.g !== want) sc -= 400;
+              if (sc > bestScore) { bestScore = sc; best = c; }
+            }
+            if (best) {
+              cast[who] = best.v;
+              uses.set(best.id, (uses.get(best.id) || 0) + 1);
+            }
+          }
+          this._voiceCast = cast;
+        },
+        _voiceFor(who) {
+          this._buildVoiceCast();
+          const v = this._voiceCast ? this._voiceCast[who] : null;
+          if (v) this._voiceCastLocked = true;
+          return v || null;
+        },
         _voiceToken: 0,
         _voiceActive: false,
         _voiceGraceUntilMs: 0,
         _voiceUntilMs: 0,
         speakVoice(text, role) {
+
           try {
             const token = ++this._voiceToken;
             if (muted || !window.speechSynthesis || !text) {
@@ -1014,62 +1156,14 @@
             }
             window.speechSynthesis.cancel();
             const u = new SpeechSynthesisUtterance(text);
-            if (role === "mom") {
-              u.pitch = 1.45;
-              u.rate = 1.05;
-              u.volume = 1.0;
-            } else if (role === "lexie") {
-              u.pitch = 0.72;
-              u.rate = 0.94;
-              u.volume = 1.0;
-            } else if (role === "stan") {
-              u.pitch = 1.02;
-              u.rate = 0.95;
-              u.volume = 1.0;
-            } else if (role === "stan_vow_1") {
-              u.pitch = 0.86;
-              u.rate = 0.88;
-              u.volume = 1.0;
-            } else if (role === "narrator_uzumaki") {
-              u.pitch = 0.60;
-              u.rate = 0.98;
-              u.volume = 1.0;
-            } else if (role === "stan_uzumaki") {
-              u.pitch = 1.28;
-              u.rate = 1.10;
-              u.volume = 1.0;
-            } else if (role === "stan_vow_2") {
-              u.pitch = 0.72;
-              u.rate = 1.06;
-              u.volume = 1.0;
-            } else if (role === "narrator_cosmic") {
-              u.pitch = 0.54;
-              u.rate = 1.06;
-              u.volume = 1.0;
-            } else if (role === "stan_cosmic" || role === "stan_vow_3") {
-              u.pitch = role === "stan_vow_3" ? 0.56 : 1.38;
-              u.rate = 1.15;
-              u.volume = 1.0;
-            } else if (role === "tj") {
-              u.pitch = 1.12;
-              u.rate = 1.02;
-              u.volume = 0.96;
-            } else if (role === "tj_upset") {
-              u.pitch = 1.32;
-              u.rate = 1.12;
-              u.volume = 1.0;
-            } else if (role === "stan_thought") {
-              u.pitch = 0.72;
-              u.rate = 0.92;
-              u.volume = 0.98;
-            } else if (role === "narrator") {
-              u.pitch = 0.90;
-              u.rate = 0.92;
-              u.volume = 0.95;
-            } else {
-              u.pitch = 0.65;
-              u.rate = 0.90;
-              u.volume = 0.95;
+            const prof = this._voiceProfile(role);
+            u.pitch = prof.pitch;
+            u.rate = prof.rate;
+            u.volume = prof.volume;
+            const voice = this._voiceFor(prof.who);
+            if (voice) {
+              u.voice = voice;
+              if (voice.lang) u.lang = voice.lang;
             }
             if (role && (role.includes("uzumaki") || role.includes("cosmic") || role.startsWith("stan_vow"))) {
               try {
@@ -1102,11 +1196,20 @@
             const now = performance.now();
             this._voiceActive = true;
             this._voiceGraceUntilMs = now + 450;
-            this._voiceUntilMs = now + Math.min(14000, Math.max(4000, words * 650 + 2500));
+            this._voiceUntilMs = now + Math.min(14000, Math.max(4000, (words * 650) / prof.rate + 2500));
             window.speechSynthesis.speak(u);
           } catch (_) {
             this._voiceActive = false;
           }
+        },
+        // Cutscene skip: cut the current line so isVoiceSpeaking() reads false at once.
+        stopVoice() {
+          try {
+            this._voiceToken++;
+            this._voiceActive = false;
+            this._voiceUntilMs = 0;
+            if (window.speechSynthesis) window.speechSynthesis.cancel();
+          } catch (_) {}
         },
         isVoiceSpeaking() {
           try {
@@ -1173,6 +1276,8 @@
         },
       };
     })();
+    // Ask for the voice list early so the per-character cast is ready before the first line.
+    try { window.tendyAudio._buildVoiceCast(); } catch (_) {}
   </script>
   <style>
     html, body {
@@ -1217,6 +1322,42 @@
     #loading p {
       color: #fef3c7;
       opacity: 0.85;
+    }
+    /* Touch SKIP button, shown only while a cutscene runs (Rust times the hold). */
+    #btn-skip {
+      display: none;
+      position: fixed;
+      right: max(14px, env(safe-area-inset-right));
+      bottom: max(14px, env(safe-area-inset-bottom));
+      z-index: 22;
+      overflow: hidden;
+      pointer-events: auto;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(20, 14, 9, 0.72);
+      border: 1.5px solid rgba(253, 230, 138, 0.55);
+      color: #fde68a;
+      font-size: 0.74rem;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+    }
+    body.cutscene-skip.touch-skip #btn-skip {
+      display: block;
+    }
+    #btn-skip-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: rgba(253, 224, 71, 0.38);
+      pointer-events: none;
+    }
+    #btn-skip-label {
+      position: relative;
     }
     #touch-controls {
       position: fixed;
@@ -1319,6 +1460,21 @@
       box-shadow: 0 0 18px rgba(168, 85, 247, 0.7);
     }
     #touch-controls.boss-mode #btn-attack {
+      display: flex;
+    }
+    /* Saber guard (hold). Sits above SABER / ROLL so the bottom row keeps its width on phones. */
+    #btn-block {
+      display: none;
+      position: absolute;
+      right: 84px;
+      bottom: calc(100% + 10px);
+      width: 64px;
+      height: 64px;
+      font-size: 0.78rem;
+      background: radial-gradient(circle at 30% 30%, rgba(148, 163, 184, 0.92), rgba(51, 65, 85, 0.92));
+      border-color: #c4b5fd;
+    }
+    #touch-controls.boss-mode #btn-block {
       display: flex;
     }
     #mobile-top-btns {
@@ -1618,6 +1774,7 @@
       </div>
     </div>
     <div id="action-buttons">
+      <button id="btn-block" class="touch-btn touch-ui" type="button">BLOCK</button>
       <button id="btn-attack" class="touch-btn touch-ui" type="button">SABER</button>
       <button id="btn-dash" class="touch-btn touch-ui" type="button">DASH</button>
       <button id="btn-jump" class="touch-btn touch-ui" type="button">JUMP</button>
@@ -1628,6 +1785,7 @@
       <button id="btn-mute" class="touch-pill touch-ui" type="button">SOUND</button>
     </div>
   </div>
+  <button id="btn-skip" type="button" aria-label="Hold to skip cutscene"><span id="btn-skip-fill"></span><span id="btn-skip-label">HOLD TO SKIP</span></button>
   <div id="fullscreen-prompt" class="touch-ui" role="dialog" aria-label="Fullscreen recommendation">
     <div class="fs-prompt-copy">
       <strong>Enter Fullscreen Mode</strong>
@@ -1648,6 +1806,11 @@
       let jumpQueued = false;
       let dashQueued = false;
       let attackQueued = false;
+      // SABER held (touch) / RB or RT held (gamepad): boss-mode heavy charge. Tap = light swing.
+      let attackTouchHeld = false;
+      let gpAttackHeld = false;
+      let bossModeActive = false;
+      let blockHeld = false;
       let actionTapQueued = false;
       let helpQueued = false;
 
@@ -1668,6 +1831,7 @@
       const btnJump = document.getElementById("btn-jump");
       const btnDash = document.getElementById("btn-dash");
       const btnAttack = document.getElementById("btn-attack");
+      const btnBlock = document.getElementById("btn-block");
       const btnHelp = document.getElementById("btn-help");
       const btnMute = document.getElementById("btn-mute");
       const btnFullscreen = document.getElementById("btn-fullscreen");
@@ -1936,7 +2100,51 @@
 
       bindActionBtn(btnJump, () => { jumpQueued = true; });
       bindActionBtn(btnDash, () => { dashQueued = true; });
-      bindActionBtn(btnAttack, () => { attackQueued = true; });
+      // SABER: the press queues the swing and the finger staying down charges a heavy.
+      if (btnAttack) {
+        const attackUp = (e) => {
+          if (e) e.preventDefault();
+          attackTouchHeld = false;
+          btnAttack.classList.remove("pressed");
+        };
+        btnAttack.addEventListener("touchstart", (e) => {
+          showTouchControls();
+          window.tendyAudio.touchUnlock();
+          e.preventDefault();
+          e.stopPropagation();
+          btnAttack.classList.add("pressed");
+          attackTouchHeld = true;
+          attackQueued = true;
+        }, { passive: false });
+        btnAttack.addEventListener("touchend", attackUp, { passive: false });
+        btnAttack.addEventListener("touchcancel", () => attackUp(null));
+        btnAttack.addEventListener("click", (e) => {
+          window.tendyAudio.touchUnlock();
+          e.stopPropagation();
+          if (e.detail > 0) attackQueued = true;
+        });
+      }
+      // BLOCK is held, not tapped: the guard stays up while the finger stays down.
+      if (btnBlock) {
+        const blockUp = (e) => {
+          if (e) e.preventDefault();
+          blockHeld = false;
+          btnBlock.classList.remove("pressed");
+        };
+        btnBlock.addEventListener("touchstart", (e) => {
+          showTouchControls();
+          window.tendyAudio.touchUnlock();
+          e.preventDefault();
+          e.stopPropagation();
+          btnBlock.classList.add("pressed");
+          blockHeld = true;
+        }, { passive: false });
+        btnBlock.addEventListener("touchend", blockUp, { passive: false });
+        btnBlock.addEventListener("touchcancel", () => blockUp(null));
+        btnBlock.addEventListener("mousedown", (e) => { e.stopPropagation(); blockHeld = true; });
+        btnBlock.addEventListener("mouseup", () => { blockHeld = false; });
+        btnBlock.addEventListener("mouseleave", () => { blockHeld = false; });
+      }
       bindActionBtn(btnHelp, () => { helpQueued = true; });
       bindActionBtn(btnMute, () => { window.tendyAudio.toggleMute(); });
 
@@ -2070,18 +2278,73 @@
 
       let pendingInitMode = (() => {
         const s = window.location.search;
+        if (s.includes("free_roam=1")) return 17;
         if (s.includes("cutscene=1")) return 1;
         if (s.includes("boss=1")) return 2;
         if (s.includes("anime=1")) return 3;
         if (s.includes("city_intro=1")) return 4;
         if (s.includes("city=1")) return 5;
         if (s.includes("city_titan=1")) return 6;
+        if (s.includes("city_crew_kaiju=1")) return 16;
+        if (s.includes("city_crew=1")) return 15;
         if (s.includes("headphones=2") || s.includes("uzumaki=1")) return 8;
         if (s.includes("headphones=1")) return 7;
         if (s.includes("tj=1") || s.includes("tj_cutscene=1")) return 9;
+        if (s.includes("derek=1")) return 10;
+        if (s.includes("nate=1")) return 11;
+        if (s.includes("glenn=1")) return 12;
+        if (s.includes("mike=1")) return 13;
+        if (s.includes("lexie_victory=1")) return 14;
         return 0;
       })();
       const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);
+
+      // --- Cutscene skip input: gamepad Start and the touch SKIP button (Enter is read in Bevy) ---
+      const autoSkipEnabled = debugKeysEnabled && /[?&]autoskip=1(?:&|$)/.test(window.location.search);
+      const btnSkip = document.getElementById("btn-skip");
+      const btnSkipFill = document.getElementById("btn-skip-fill");
+      let skipTouchHeld = false;
+      let cutsceneSkipActive = false;
+      let gpStartHeld = false;
+      let skipTouchUiCache = false;
+      let skipTouchUiAt = -1e9;
+      if (btnSkip) {
+        const skipDown = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          skipTouchHeld = true;
+          try { btnSkip.setPointerCapture(e.pointerId); } catch (_) {}
+        };
+        const skipUp = () => { skipTouchHeld = false; };
+        btnSkip.addEventListener("pointerdown", skipDown);
+        btnSkip.addEventListener("pointerup", skipUp);
+        btnSkip.addEventListener("pointercancel", skipUp);
+        btnSkip.addEventListener("lostpointercapture", skipUp);
+        btnSkip.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+      }
+      function skipTouchUi() {
+        const now = performance.now();
+        if (now - skipTouchUiAt > 500) {
+          skipTouchUiAt = now;
+          skipTouchUiCache = !!isMobileViewport();
+        }
+        return skipTouchUiCache;
+      }
+      function setCutsceneSkip(active, progress) {
+        const on = !!active;
+        if (on && !cutsceneSkipActive) {
+          // Start means skip during cutscenes; drop any help request queued just before.
+          helpQueued = false;
+        }
+        if (!on) skipTouchHeld = false;
+        cutsceneSkipActive = on;
+        document.body.classList.toggle("cutscene-skip", on);
+        document.body.classList.toggle("touch-skip", on && skipTouchUi());
+        if (btnSkipFill) {
+          const p = Math.max(0, Math.min(1, +progress || 0));
+          btnSkipFill.style.width = (p * 100).toFixed(0) + "%";
+        }
+      }
       let pendingCutsceneTime = (() => {
         try {
           const m = window.location.search.match(/[?&]cutscene_t=([0-9]+(?:\.[0-9]+)?)/);
@@ -2103,6 +2366,11 @@
       }
 
       function setBossMode(active) {
+        bossModeActive = !!active;
+        if (!active) {
+          blockHeld = false;
+          attackTouchHeld = false;
+        }
         if (touchControls) {
           touchControls.classList.toggle("boss-mode", !!active);
         }
@@ -2143,6 +2411,10 @@
       let gpY = 0.0;
       let gpLastPoll = 0;
       const gpPrevBtns = [];
+      const gpNavPrev = [];
+      let gpNavStick = 0;
+      let menuNav = 0;
+      let lastInputPad = false;
       const synthKey = (code, key, down) => {
         try {
           window.dispatchEvent(new KeyboardEvent(down ? "keydown" : "keyup", { code, key, bubbles: true }));
@@ -2162,11 +2434,17 @@
         for (let i = 0; i < pads.length; i++) {
           if (pads[i] && pads[i].connected) { pad = pads[i]; break; }
         }
-        if (!pad) return;
+        if (!pad) {
+          gpStartHeld = false;
+          gpAttackHeld = false;
+          return;
+        }
         const dz = (v) => (Math.abs(v) < 0.16 ? 0.0 : (v - Math.sign(v) * 0.16) / 0.84);
         let lx = dz(pad.axes[0] || 0);
         let ly = -dz(pad.axes[1] || 0);
         const btnDown = (i) => !!(pad.buttons[i] && pad.buttons[i].pressed);
+        gpStartHeld = btnDown(9);
+        gpAttackHeld = btnDown(5) || btnDown(7);
         if (btnDown(12)) ly = 1.0;
         if (btnDown(13)) ly = -1.0;
         if (btnDown(14)) lx = -1.0;
@@ -2212,12 +2490,59 @@
         edge(2, () => synthKey("KeyF", "f", true), () => synthKey("KeyF", "f", false));
         edge(3, () => synthKey("KeyQ", "q", true), () => synthKey("KeyQ", "q", false));
         edge(4, () => synthKey("KeyP", "p", true), () => synthKey("KeyP", "p", false));
+        // RB / RT: saber attack (tap light, hold to charge a heavy).
         edge(5, () => { attackQueued = true; });
-        edge(6, () => synthKey("KeyL", "l", true), () => synthKey("KeyL", "l", false));
-        edge(7, () => { attackQueued = true; synthKey("ShiftLeft", "Shift", true); }, () => synthKey("ShiftLeft", "Shift", false));
-        edge(8, () => synthKey("KeyC", "c", true), () => synthKey("KeyC", "c", false));
-        edge(9, () => { helpQueued = true; actionTapQueued = true; });
+        // LT (L2): hold to raise the saber guard in boss fights (same as holding R).
+        edge(6, () => synthKey("KeyR", "r", true), () => synthKey("KeyR", "r", false));
+        // In saber fights RT only attacks (its Shift would roll and cancel the charge); elsewhere
+        // it still sprints / dashes.
+        edge(7, () => { attackQueued = true; if (!bossModeActive) synthKey("ShiftLeft", "Shift", true); }, () => synthKey("ShiftLeft", "Shift", false));
+        // L3 (left stick click): hold to strafe in saber fights (same as holding V).
+        edge(10, () => synthKey("KeyV", "v", true), () => synthKey("KeyV", "v", false));
+        // R3 (right stick click): toggle target lock-on (same as Tab); lock-on also strafes.
+        edge(11, () => synthKey("Tab", "Tab", true), () => synthKey("Tab", "Tab", false));
+        // Start: help in gameplay; during cutscenes it is the hold-to-skip button instead.
+        edge(9, () => { if (cutsceneSkipActive) return; helpQueued = true; actionTapQueued = true; });
+
+        // Pause menu navigation (D-pad / left stick up and down, B to go back) and the
+        // "last input was a gamepad" flag used by the on-screen controls strip.
+        const navEdge = (idx, code) => {
+          const cur = btnDown(idx);
+          if (cur && !gpNavPrev[idx]) menuNav = code;
+          gpNavPrev[idx] = cur;
+        };
+        navEdge(12, -1);
+        navEdge(13, 1);
+        navEdge(1, 3);
+        const sy = pad.axes[1] || 0;
+        const stickDir = sy < -0.6 ? -1 : sy > 0.6 ? 1 : 0;
+        if (stickDir !== 0 && stickDir !== gpNavStick) menuNav = stickDir;
+        gpNavStick = stickDir;
+        if (lx !== 0.0 || ly !== 0.0 || rx !== 0.0 || ry !== 0.0 || pad.buttons.some((b) => b && b.pressed)) {
+          lastInputPad = true;
+        }
       }
+
+      // --- Pause menu bridge ---
+      // Pointer lock dropped by the browser (Esc, focus loss) while a gameplay state runs: Rust
+      // opens the pause menu. The game's own unlocks happen after setPlaying(false), so they
+      // are not reported.
+      let pointerLockLost = false;
+      let hadPointerLock = false;
+      document.addEventListener("pointerlockchange", () => {
+        const locked = !!document.pointerLockElement;
+        if (!locked && hadPointerLock && isPlayingState) pointerLockLost = true;
+        hadPointerLock = locked;
+      });
+      // Real (trusted) keyboard or mouse input switches the controls strip back to key labels;
+      // the gamepad poller's synthetic key events are untrusted and ignored here.
+      window.addEventListener("keydown", (e) => { if (e.isTrusted) lastInputPad = false; });
+      window.addEventListener("mousedown", (e) => { if (e.isTrusted) lastInputPad = false; });
+      window.addEventListener("mousemove", (e) => {
+        if (e.isTrusted && Math.abs(e.movementX || 0) + Math.abs(e.movementY || 0) > 3) lastInputPad = false;
+      });
+      // Debug: ?debug=1&pause_menu=1 opens the pause menu once gameplay is on screen.
+      let debugPausePending = debugKeysEnabled && /[?&]pause_menu=1(?:&|$)/.test(window.location.search);
 
       return {
         moveX: () => { pollGamepad(); return Math.abs(gpX) > 0.01 ? gpX : joyX; },
@@ -2228,6 +2553,8 @@
         takeJump() { const v = jumpQueued; jumpQueued = false; return v; },
         takeDash() { const v = dashQueued; dashQueued = false; return v; },
         takeAttack() { const v = attackQueued; attackQueued = false; return v; },
+        blockHeld() { return blockHeld; },
+        attackHeld() { pollGamepad(); return attackTouchHeld || gpAttackHeld; },
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
         setPlaying,
@@ -2237,7 +2564,24 @@
         initMode() { const m = pendingInitMode; pendingInitMode = 0; return m; },
         // Debug scene-skip keys (K / B / P) are only live with ?debug=1 in the URL.
         debugKeys() { return debugKeysEnabled; },
+        // Debug combat motion demo: ?debug=1&combat_demo=loop (or light:0.4, heavy:0.5, block, roll:0.5).
+        combatDemo() {
+          if (!debugKeysEnabled) return "";
+          const m = window.location.search.match(/[?&]combat_demo=([A-Za-z0-9.:_-]+)/);
+          return m ? m[1] : "";
+        },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
+        skipHeld() { pollGamepad(); return skipTouchHeld || gpStartHeld; },
+        skipTouchUi,
+        setCutsceneSkip,
+        // Debug: ?debug=1&autoskip=1 skips each cutscene a few seconds in (headless tests).
+        autoSkip() { return autoSkipEnabled; },
+        // Pause menu: -1 up, 1 down, 3 back (B), 0 nothing; polls the pad itself because
+        // gameplay systems (which normally poll it) are paused while the menu is open.
+        takeMenuNav() { pollGamepad(); const v = menuNav; menuNav = 0; return v; },
+        usingGamepad() { return lastInputPad; },
+        takePointerLockLost() { const v = pointerLockLost; pointerLockLost = false; return v; },
+        takeDebugPause() { const v = debugPausePending; debugPausePending = false; return v; },
       };
     })();
   </script>

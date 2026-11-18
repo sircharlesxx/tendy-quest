@@ -3,7 +3,7 @@ use crate::audio::{
     is_voice_speaking, play_boss_music, play_cutscene_music, play_sfx, play_viking_chant_music,
     speak_voice,
 };
-use crate::city::{pub217_scale, CityWorldMarker, PUB217_ANCHOR};
+use crate::city::{CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE};
 use crate::player::Player;
 use crate::state::{GameState, LevelEntity, PlayerStats};
 
@@ -139,88 +139,135 @@ pub fn spawn_glenn_rig(
     meshes: &mut Assets<Mesh>,
     mats: &GlennMaterials,
 ) {
+    use crate::shapes::{self as sh, ring};
+
     // Thick muscular quads, calves & gym sneakers
+    let quad_mesh = sh::add(meshes, sh::limb_profile(0.70, &[0.17, 0.178, 0.155, 0.13], 1.0));
+    let calf_mesh = sh::add(meshes, sh::limb_profile(0.52, &[0.105, 0.132, 0.11, 0.075], 1.0));
+    let shoe_mesh = sh::add(meshes, sh::shoe(0.23, 0.13, 0.34));
+    let sole_mesh = sh::add(meshes, sh::shoe_sole(0.23, 0.13, 0.34));
     for sx in [-0.20_f32, 0.20] {
         parent.spawn((
-            Mesh3d(meshes.add(Capsule3d::new(0.16, 0.44))),
+            Mesh3d(quad_mesh.clone()),
             MeshMaterial3d(mats.shorts.clone()),
-            Transform::from_xyz(sx, 0.54, 0.0),
+            Transform::from_xyz(sx, 0.55, 0.0),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Capsule3d::new(0.125, 0.34))),
+            Mesh3d(calf_mesh.clone()),
             MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx, 0.25, 0.0),
+            Transform::from_xyz(sx, 0.27, 0.0),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.23, 0.13, 0.34))),
+            Mesh3d(shoe_mesh.clone()),
             MeshMaterial3d(mats.shoe.clone()),
+            Transform::from_xyz(sx, 0.065, 0.05),
+        ));
+        parent.spawn((
+            Mesh3d(sole_mesh.clone()),
+            MeshMaterial3d(mats.eye_white.clone()),
             Transform::from_xyz(sx, 0.065, 0.05),
         ));
     }
 
-    // Massive V-tapered muscular torso, sculpted pecs & 6-pack abs
+    // Massive V-tapered muscular torso (one continuous black tank), sculpted pecs & traps
+    let tank = sh::loft(
+        &[
+            ring(0.63, 0.0, 0.0),
+            ring(0.65, 0.29, 0.18),
+            ring(0.72, 0.33, 0.20),
+            ring(0.90, 0.32, 0.20).dz(0.01),
+            ring(1.08, 0.40, 0.24).dz(0.02),
+            ring(1.25, 0.48, 0.27).dz(0.03),
+            ring(1.40, 0.50, 0.25),
+            ring(1.48, 0.38, 0.20),
+            ring(1.53, 0.15, 0.12),
+            ring(1.54, 0.0, 0.0),
+        ],
+        3,
+        32,
+        0.85,
+    );
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.96, 0.52, 0.52))),
+        Mesh3d(sh::add(meshes, tank)),
         MeshMaterial3d(mats.tank.clone()),
-        Transform::from_xyz(0.0, 1.24, 0.0),
+        Transform::default(),
     ));
-    parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.66, 0.42, 0.40))),
-        MeshMaterial3d(mats.tank.clone()),
-        Transform::from_xyz(0.0, 0.86, 0.0),
-    ));
-    // Sculpted pecs
-    for sx in [-0.22_f32, 0.22] {
+    let pec_mesh = sh::add(meshes, sh::superellipsoid(Vec3::splat(0.22), 0.8, 0.9, 24, 16));
+    for sx in [-0.21_f32, 0.21] {
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.22))),
+            Mesh3d(pec_mesh.clone()),
             MeshMaterial3d(mats.tank.clone()),
-            Transform::from_xyz(sx, 1.28, 0.18).with_scale(Vec3::new(1.15, 0.85, 0.72)),
+            Transform::from_xyz(sx, 1.27, 0.14).with_scale(Vec3::new(1.1, 0.8, 0.62)),
         ));
     }
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.34, 0.11, 0.17), 1.0, 1.0, 24, 14))),
+        MeshMaterial3d(mats.skin.clone()),
+        Transform::from_xyz(0.0, 1.49, -0.03),
+    ));
 
     // Giant boulder shoulders + thick bulging biceps & forearms
+    let bicep_mesh = sh::add(meshes, sh::limb_profile(0.71, &[0.15, 0.188, 0.172, 0.13], 1.0));
+    let forearm_mesh = sh::add(meshes, sh::limb_profile(0.63, &[0.145, 0.152, 0.125, 0.098], 1.0));
     for sx in [-0.62_f32, 0.62] {
         // Boulder delt
         parent.spawn((
             Mesh3d(meshes.add(Sphere::new(0.25))),
             MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx, 1.40, 0.0),
+            Transform::from_xyz(sx, 1.40, 0.0).with_scale(Vec3::new(1.0, 0.94, 0.96)),
         ));
         // Huge bicep
         parent.spawn((
-            Mesh3d(meshes.add(Capsule3d::new(0.175, 0.36))),
+            Mesh3d(bicep_mesh.clone()),
             MeshMaterial3d(mats.skin.clone()),
             Transform::from_xyz(sx * 1.06, 1.12, 0.03)
                 .with_rotation(Quat::from_rotation_z(if sx < 0.0 { 0.16 } else { -0.16 })),
         ));
         // Thick forearm + fist
         parent.spawn((
-            Mesh3d(meshes.add(Capsule3d::new(0.145, 0.34))),
+            Mesh3d(forearm_mesh.clone()),
             MeshMaterial3d(mats.skin.clone()),
             Transform::from_xyz(sx * 1.10, 0.78, 0.08),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.14))),
+            Mesh3d(sh::add(meshes, sh::hand(0.13, sx.signum(), true))),
             MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx * 1.10, 0.54, 0.10),
+            Transform::from_xyz(sx * 1.10, 0.52, 0.10),
         ));
     }
 
     // Thick muscular neck + head
     parent.spawn((
-        Mesh3d(meshes.add(Cylinder::new(0.16, 0.22))),
+        Mesh3d(sh::add(meshes, sh::limb(0.28, 0.15, 0.175))),
         MeshMaterial3d(mats.skin.clone()),
-        Transform::from_xyz(0.0, 1.58, 0.0),
+        Transform::from_xyz(0.0, 1.58, -0.01),
     ));
+    let (hr, jaw) = (0.27_f32, 0.08_f32);
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.27))),
+        Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
         MeshMaterial3d(mats.skin.clone()),
         Transform::from_xyz(0.0, 1.82, 0.0),
     ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.058, 0.048), 1.0, 1.0, 14, 10))),
+        MeshMaterial3d(mats.skin.clone()),
+        Transform::from_xyz(0.0, 1.80, 0.268),
+    ));
 
-    // Long curly black hair (layered glossy curls cascading down past shoulders & back!)
-    let curl_mesh = meshes.add(Sphere::new(0.13));
-    for (cx, cy, cz, sc) in [
+    // Long curly black hair: a scalp layer under layered lumpy curls cascading past the shoulders
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::hair_cap(hr, jaw, 0.64, -0.70, 0.05, 0.08))),
+        MeshMaterial3d(mats.hair.clone()),
+        Transform::from_xyz(0.0, 1.82, 0.0),
+    ));
+    let curl_mesh = sh::add(
+        meshes,
+        sh::blob(28, 18, |d| {
+            let th = d.z.atan2(d.x);
+            d * 0.13 * (1.0 + 0.09 * (th * 5.0).sin() * (d.y * 7.0).cos() + 0.05 * (d.y * 11.0 + th * 3.0).sin())
+        }),
+    );
+    for (i, (cx, cy, cz, sc)) in [
         // Top crown curls
         (0.0_f32, 2.08_f32, -0.02_f32, 1.35_f32),
         (-0.18, 2.04, 0.06, 1.15),
@@ -242,31 +289,41 @@ pub fn spawn_glenn_rig(
         (-0.18, 1.36, -0.28, 1.25),
         (0.18, 1.36, -0.28, 1.25),
         (0.0, 1.22, -0.26, 1.25),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         parent.spawn((
             Mesh3d(curl_mesh.clone()),
             MeshMaterial3d(mats.hair.clone()),
-            Transform::from_xyz(cx, cy, cz).with_scale(Vec3::splat(sc)),
+            Transform::from_xyz(cx, cy, cz)
+                .with_rotation(Quat::from_rotation_y(i as f32 * 1.7) * Quat::from_rotation_x(i as f32 * 0.6))
+                .with_scale(Vec3::splat(sc)),
         ));
     }
 
     // Expressive eyes & brows
+    let brow_l = sh::arc_bar(0.11, &[0.015, 0.016, 0.012, 0.008], 0.008, 0.02, 0.7);
+    let brow_r = brow_l.clone().mirrored_x();
+    let (brow_l, brow_r) = (sh::add(meshes, brow_l), sh::add(meshes, brow_r));
+    let eye_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.042, 0.036), 1.0, 1.0, 20, 14));
+    let pupil_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.023, 0.023, 0.015), 1.0, 1.0, 14, 10));
     for sx in [-0.095_f32, 0.095] {
         parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.10, 0.025, 0.03))),
+            Mesh3d(if sx < 0.0 { brow_l.clone() } else { brow_r.clone() }),
             MeshMaterial3d(mats.hair.clone()),
             Transform::from_xyz(sx, 1.92, 0.24)
                 .with_rotation(Quat::from_rotation_z(if sx < 0.0 { -0.15 } else { 0.15 })),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.042))),
+            Mesh3d(eye_mesh.clone()),
             MeshMaterial3d(mats.eye_white.clone()),
             Transform::from_xyz(sx, 1.86, 0.238),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.023))),
+            Mesh3d(pupil_mesh.clone()),
             MeshMaterial3d(mats.eye_pupil.clone()),
-            Transform::from_xyz(sx, 1.86, 0.264),
+            Transform::from_xyz(sx, 1.86, 0.268),
         ));
     }
 }
@@ -299,6 +356,7 @@ pub fn update_city_glenn(
     keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityGlenn>>,
+    orbit: Res<crate::state::CameraOrbit>,
     mut glenn_q: Query<(&mut Transform, &mut CityGlenn), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut g_state: ResMut<GlennCutsceneState>,
@@ -307,14 +365,24 @@ pub fn update_city_glenn(
         return;
     };
     let dt = time.delta_secs().min(0.05);
-    let pub_s = pub217_scale(stats.player_scale);
+    let pub_s = PUB217_SCALE;
     for (mut g_tf, mut glenn) in &mut glenn_q {
-        if glenn.recruited {
+        // `stats.glenn_recruited` is the gate's source of truth (checkpoint restore / test links).
+        if stats.glenn_recruited && !glenn.recruited {
+            glenn.recruited = true;
+        }
+        // Post-game free roam: recruited crew skip following and idle at their pub spots.
+        if glenn.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.76).clamp(1.75, 9.5);
             g_tf.scale = Vec3::splat(s);
-            let fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
-            let right = Vec3::new(fwd.z, 0.0, -fwd.x);
-            let target = p_tf.translation + right * (2.6 * s) - fwd * (2.8 * s);
+            // Outer right flank, beyond TJ, out of the camera line at every scale.
+            let target = crate::player::crew_follow_target(
+                crate::player::CrewSlot::RightOuter,
+                p_tf.translation,
+                stats.player_scale,
+                s,
+                orbit.yaw,
+            );
             let delta = Vec3::new(target.x - g_tf.translation.x, 0.0, target.z - g_tf.translation.z);
             let dist = delta.length();
             if dist > 32.0 {
@@ -347,11 +415,19 @@ pub fn update_city_glenn(
         let inside = dist < trigger_r;
         let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
 
-        if stats.driving_car.is_none()
+        // Ground level only: standing on the pub roof above them doesn't count.
+        if p_tf.translation.y < 4.0
+            && stats.driving_car.is_none()
             && stats.riding_scooter.is_none()
             && ((inside && !glenn.was_inside) || (dist < 4.3 * pub_s && interact))
         {
             glenn.was_inside = true;
+            if stats.free_roam {
+                // No cutscene replay in free roam: just a friendly line.
+                stats.hint_text = "GLENN: \"Still lifting, still winning. Go do a lap on the scooter, bro.\"".to_string();
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                continue;
+            }
             stats.saved_city_pos = p_tf.translation;
             stats.glenn_return_city = true;
             *g_state = GlennCutsceneState::default();
@@ -373,7 +449,7 @@ const GLENN_BEATS: [(&str, &str, &str, &str); 7] = [
         "GLENN (REASONABLE)",
         "BEAT 2/7  |  LONGEVITY & GROCERIES",
         "I train for cardiovascular health, mental clarity, longevity, and so I can carry all the groceries in one trip, Stan.",
-        "tj",
+        "glenn",
     ),
     (
         "STAN (UNREASONABLE)",
@@ -385,19 +461,19 @@ const GLENN_BEATS: [(&str, &str, &str, &str); 7] = [
         "GLENN (HEARTBROKEN & FURIOUS)",
         "BEAT 4/7  |  WHY?!?!",
         "MY BEER TOWER... WHY?!?! WHY WOULD YOU DO THAT, STAN?! NOW YOU'VE AWAKENED MY MAXIMUM GAINZ!!",
-        "tj",
+        "glenn",
     ),
     (
         "STAN & GLENN (DBZ TELEPORT WAR!)",
         "BEAT 5/7  |  SKYSCRAPERS VAPORIZED!!",
         "TOO SLOW!! *Z-VANISH!* ANOTHER BUILDING JUST EXPLODED!! WE'RE TEARING DOWN ALL OF CEDAR RAPIDS!!",
-        "tj",
+        "glenn",
     ),
     (
         "GLENN (MID-AIR STANDOFF)",
         "BEAT 6/7  |  SAVE PUB 217",
         "WAIT - STOP!! Look at the smoking skyline! If we keep fighting, we're going to destroy our precious Pub 217 and our whole city!!",
-        "tj",
+        "glenn",
     ),
     (
         "STAN & GLENN (SUPER SAIYAN ALLIANCE)",
@@ -787,6 +863,12 @@ pub fn update_glenn_cutscene(
 ) {
     let dt = time.delta_secs().min(0.05);
     g_state.beat_t += dt;
+    // Hold-to-skip: jump to the last beat with its wait elapsed so the normal end path runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        g_state.beat = (GLENN_BEATS.len() as u8).saturating_sub(1);
+        g_state.beat_t = g_state.beat_t.max(4.0);
+    }
 
     if g_state.beat == 4 && !g_state.fight_taunt_done && g_state.beat_t >= 6.5 {
         g_state.fight_taunt_done = true;
@@ -800,7 +882,7 @@ pub fn update_glenn_cutscene(
     }
 
     let min_t = if g_state.beat == 4 { 13.5 } else { 4.0 };
-    if g_state.beat_t >= min_t && (!is_voice_speaking() || g_state.beat_t >= 22.0) {
+    if g_state.beat_t >= min_t && (skipping || !is_voice_speaking() || g_state.beat_t >= 22.0) {
         if g_state.beat + 1 >= GLENN_BEATS.len() as u8 {
             next_state.set(GameState::CityPlay);
             return;
@@ -1039,9 +1121,10 @@ pub fn exit_glenn_cutscene(
     for mut g in &mut glenn_q {
         g.recruited = true;
     }
+    stats.glenn_recruited = true;
     stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.tendy_credits += 25;
-    stats.hint_text = "GLENN JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Pub 217 Alliance!)".to_string();
+    stats.hint_text = "GLENN JOINED YOUR SQUAD! +2 Hearts, +25 Credits.".to_string();
     play_viking_chant_music();
 }

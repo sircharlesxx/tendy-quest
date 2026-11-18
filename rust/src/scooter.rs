@@ -30,6 +30,20 @@ pub struct CityScooter {
     pub air_t: f32,
     pub flip: f32,
     pub boost_t: f32,
+    // Hop (jump while riding), driven by `stunts.rs`
+    /// Seconds a jump press stays queued, so a press just before touchdown still hops.
+    pub jump_buf: f32,
+    /// Pre-jump crouch countdown; the hop launches when it runs out.
+    pub crouch_t: f32,
+    /// This airtime started with (or got) a hop: no second hop until touchdown.
+    pub hopped: bool,
+    /// Space is still held from a flat-ground hop; backflips need a fresh press.
+    pub hop_hold: bool,
+    /// Ignores jump presses briefly after mounting (the phone unlock mounts on Space).
+    pub jump_lock: f32,
+    /// Squash & stretch spring for the hop crouch and landing bounce.
+    pub squash: f32,
+    pub squash_vel: f32,
 }
 
 impl CityScooter {
@@ -47,7 +61,25 @@ impl CityScooter {
             air_t: 0.0,
             flip: 0.0,
             boost_t: 0.0,
+            jump_buf: 0.0,
+            crouch_t: 0.0,
+            hopped: false,
+            hop_hold: false,
+            jump_lock: 0.0,
+            squash: 0.0,
+            squash_vel: 0.0,
         }
+    }
+
+    /// Clears hop state and arms the post-mount jump lock.
+    pub fn reset_hop(&mut self) {
+        self.jump_buf = 0.0;
+        self.crouch_t = 0.0;
+        self.hopped = false;
+        self.hop_hold = false;
+        self.jump_lock = 0.25;
+        self.squash = 0.0;
+        self.squash_vel = 0.0;
     }
 }
 
@@ -311,6 +343,105 @@ fn spawn_mike_shirt_text(
     }
 }
 
+/// Materials for Mike's shared body builder (city bar + alley cutscene keep their own tints).
+struct MikeLook {
+    skin: Handle<StandardMaterial>,
+    beard: Handle<StandardMaterial>,
+    tee: Handle<StandardMaterial>,
+    eye_white: Handle<StandardMaterial>,
+    eye_pupil: Handle<StandardMaterial>,
+    cap: Handle<StandardMaterial>,
+    jeans: Handle<StandardMaterial>,
+}
+
+/// Mike's body (black "MIKE" tee, jeans, light trimmed beard, red cap), facing +Z. One
+/// builder for the Pub 217 bar version and the alley cutscene so both stay identical.
+fn spawn_mike_body(m: &mut ChildBuilder, meshes: &mut Assets<Mesh>, unit_box: &Handle<Mesh>, look: &MikeLook) {
+    use crate::shapes::{self as sh, Torso};
+    let (hr, jaw) = (0.26_f32, 0.12_f32);
+    // Legs + sneakers
+    let leg = sh::add(meshes, sh::limb_profile(0.92, &[0.118, 0.11, 0.094], 1.0));
+    let shoe = sh::add(meshes, sh::shoe(0.18, 0.10, 0.29));
+    let sole = sh::add(meshes, sh::shoe_sole(0.18, 0.10, 0.29));
+    for sx in [-0.15_f32, 0.15_f32] {
+        m.spawn((Mesh3d(leg.clone()), MeshMaterial3d(look.jeans.clone()), Transform::from_xyz(sx, 0.53, 0.0)));
+        m.spawn((Mesh3d(shoe.clone()), MeshMaterial3d(look.tee.clone()), Transform::from_xyz(sx, 0.05, 0.04)));
+        m.spawn((Mesh3d(sole.clone()), MeshMaterial3d(look.eye_white.clone()), Transform::from_xyz(sx, 0.05, 0.04)));
+    }
+    // Black t-shirt torso (flat-fronted so the lettering sits on it) with bold "MIKE" lettering
+    m.spawn((
+        Mesh3d(sh::add(meshes, sh::torso(&Torso {
+            height: 0.76,
+            hip: Vec2::new(0.30, 0.17),
+            waist: Vec2::new(0.30, 0.165),
+            chest: Vec2::new(0.33, 0.178),
+            shoulder: Vec2::new(0.34, 0.17),
+            neck: 0.08,
+            sq: 0.6,
+            chest_fwd: 0.0,
+        }))),
+        MeshMaterial3d(look.tee.clone()),
+        Transform::from_xyz(0.0, 1.30, 0.0),
+    ));
+    spawn_mike_shirt_text(m, unit_box, &look.eye_white, 1.40, 0.19);
+    // Short tee sleeves, bare arms & hands
+    let sleeve = sh::add(meshes, sh::limb(0.26, 0.09, 0.085));
+    let arm = sh::add(meshes, sh::limb_profile(0.56, &[0.078, 0.072, 0.06], 1.0));
+    for sx in [-1.0_f32, 1.0] {
+        m.spawn((
+            Mesh3d(sleeve.clone()),
+            MeshMaterial3d(look.tee.clone()),
+            Transform::from_xyz(sx * 0.40, 1.53, 0.0).with_rotation(Quat::from_rotation_z(sx * 0.10)),
+        ));
+        m.spawn((
+            Mesh3d(arm.clone()),
+            MeshMaterial3d(look.skin.clone()),
+            Transform::from_xyz(sx * 0.425, 1.26, 0.02).with_rotation(Quat::from_rotation_z(sx * 0.05)),
+        ));
+        m.spawn((
+            Mesh3d(sh::add(meshes, sh::hand(0.075, sx, false))),
+            MeshMaterial3d(look.skin.clone()),
+            Transform::from_xyz(sx * 0.435, 0.94, 0.03),
+        ));
+    }
+    // Neck, head, ears & nose
+    m.spawn((Mesh3d(sh::add(meshes, sh::limb(0.18, 0.078, 0.085))), MeshMaterial3d(look.skin.clone()), Transform::from_xyz(0.0, 1.68, -0.01)));
+    m.spawn((Mesh3d(sh::add(meshes, sh::head(hr, jaw))), MeshMaterial3d(look.skin.clone()), Transform::from_xyz(0.0, 1.88, 0.0)));
+    for sx in [-1.0_f32, 1.0] {
+        m.spawn((Mesh3d(sh::add(meshes, sh::ear(0.115, sx))), MeshMaterial3d(look.skin.clone()), Transform::from_xyz(sx * 0.24, 1.88, -0.01)));
+    }
+    m.spawn((
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.055, 0.046), 1.0, 1.0, 14, 10))),
+        MeshMaterial3d(look.skin.clone()),
+        Transform::from_xyz(0.0, 1.86, 0.25),
+    ));
+    // Eyes + pupils
+    let eye = sh::add(meshes, sh::superellipsoid(Vec3::new(0.05, 0.05, 0.042), 1.0, 1.0, 20, 14));
+    let pupil = sh::add(meshes, sh::superellipsoid(Vec3::new(0.027, 0.027, 0.016), 1.0, 1.0, 14, 10));
+    for ex in [-0.09_f32, 0.09_f32] {
+        m.spawn((Mesh3d(eye.clone()), MeshMaterial3d(look.eye_white.clone()), Transform::from_xyz(ex, 1.92, 0.212)));
+        m.spawn((Mesh3d(pupil.clone()), MeshMaterial3d(look.eye_pupil.clone()), Transform::from_xyz(ex, 1.92, 0.252)));
+    }
+    // Light short trimmed beard hugging the jaw
+    m.spawn((
+        Mesh3d(sh::add(meshes, sh::beard(hr, jaw, 0.045, 0.05, -0.16))),
+        MeshMaterial3d(look.beard.clone()),
+        Transform::from_xyz(0.0, 1.88, 0.0),
+    ));
+    // Baseball Cap (crown hugging the head + curved front brim + button)
+    m.spawn((Mesh3d(sh::add(meshes, sh::cap_crown(hr, 0.30, 0.075))), MeshMaterial3d(look.cap.clone()), Transform::from_xyz(0.0, 1.88, 0.0)));
+    m.spawn((
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.025, 0.014, 0.025), 1.0, 1.0, 10, 6))),
+        MeshMaterial3d(look.cap.clone()),
+        Transform::from_xyz(0.0, 2.165, -0.01),
+    ));
+    m.spawn((
+        Mesh3d(sh::add(meshes, sh::cap_brim(0.32, 0.26, 0.026, 0.022))),
+        MeshMaterial3d(look.cap.clone()),
+        Transform::from_xyz(0.0, 1.99, 0.15).with_rotation(Quat::from_rotation_x(0.10)),
+    ));
+}
+
 pub fn spawn_city_mike(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -322,7 +453,6 @@ pub fn spawn_city_mike(
 
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
-    let unit_sphere = meshes.add(Sphere::new(1.0));
 
     let skin = materials.add(StandardMaterial {
         base_color: Color::srgb(0.90, 0.74, 0.62),
@@ -373,43 +503,16 @@ pub fn spawn_city_mike(
             Transform::from_translation(pos),
         ))
         .with_children(|m| {
-            // Legs
-            for sx in [-0.14_f32, 0.14_f32] {
-                m.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(jeans.clone()),
-                    Transform::from_xyz(sx, 0.48, 0.0).with_scale(Vec3::new(0.20, 0.96, 0.22)),
-                ));
-            }
-            // Black t-shirt torso with bold "MIKE" lettering across the chest
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(wrestling_tee.clone()),
-                Transform::from_xyz(0.0, 1.28, 0.0).with_scale(Vec3::new(0.62, 0.72, 0.34)),
-            ));
-            spawn_mike_shirt_text(m, &unit_box, &eye_white, 1.38, 0.18);
-            // Head + Light Short Trimmed Beard
-            m.spawn((
-                Mesh3d(unit_sphere.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.86, 0.0).with_scale(Vec3::splat(0.24)),
-            ));
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(beard.clone()),
-                Transform::from_xyz(0.0, 1.74, 0.12).with_scale(Vec3::new(0.22, 0.10, 0.14)),
-            ));
-            // Baseball Cap (crown + front brim)
-            m.spawn((
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(cap_red.clone()),
-                Transform::from_xyz(0.0, 2.02, 0.0).with_scale(Vec3::new(0.25, 0.14, 0.25)),
-            ));
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(cap_red.clone()),
-                Transform::from_xyz(0.0, 1.98, 0.22).with_scale(Vec3::new(0.32, 0.04, 0.24)),
-            ));
+            let look = MikeLook {
+                skin: skin.clone(),
+                beard: beard.clone(),
+                tee: wrestling_tee.clone(),
+                eye_white: eye_white.clone(),
+                eye_pupil: eye_pupil.clone(),
+                cap: cap_red.clone(),
+                jeans: jeans.clone(),
+            };
+            spawn_mike_body(m, meshes, &unit_box, &look);
             // Alley weed aura ring
             m.spawn((
                 Mesh3d(unit_cyl.clone()),
@@ -665,12 +768,13 @@ pub fn update_city_scooter_and_phone(
                         if p_tf.translation.distance(stf.translation) < 4.5 {
                             sc.paid = true;
                             sc.occupied = true;
+                            sc.reset_hop();
                             stats.riding_scooter = Some(se);
                             p_tf.translation = stf.translation + Vec3::Y * 0.25;
                             player.velocity = Vec3::ZERO;
                             play_scooter_music();
                             stats.hint_text =
-                                "SCOOTER UNLOCKED! [WASD] Zip | [SHIFT] Turbo | Hit RAMPS & BOOST RINGS | [SPACE] Backflip | [F/E] Hop Off"
+                                "SCOOTER UNLOCKED! [WASD] Zip | [SHIFT] Turbo | [SPACE] Jump, hold in air to Backflip | [F/E] Hop Off"
                                     .to_string();
                             mounted = true;
                             break;
@@ -710,8 +814,8 @@ pub fn update_city_scooter_and_phone(
     let scoot_btn_clicked = scoot_ui.btn_q.iter().any(|i| *i == Interaction::Pressed);
     let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE) || scoot_btn_clicked;
 
-    // Check Mike inside Pub 217 — scales with Stan and auto-triggers Uzumaki cutscene when bumped!
-    let pub_s = crate::city::pub217_scale(stats.player_scale);
+    // Check Mike inside Pub 217 (fixed pub size) and auto-trigger the Uzumaki cutscene when bumped!
+    let pub_s = crate::city::PUB217_SCALE;
     for (mut m_tf, mut mike) in &mut mike_q {
         m_tf.scale = Vec3::splat(pub_s);
         m_tf.translation = crate::city::PUB217_ANCHOR + Vec3::new(-4.5, 0.0, 4.3) * pub_s;
@@ -724,13 +828,23 @@ pub fn update_city_scooter_and_phone(
         if d > 3.6 * pub_s.sqrt() {
             mike.was_inside = false;
         }
-        if d < trigger_r && !mike.was_inside && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+        let on_ground = p_tf.translation.y < 4.0;
+        if stats.free_roam {
+            // Post-game free roam: Mike just hangs out (no smoke-break replay), says hi once.
+            if on_ground && d < trigger_r && !mike.was_inside {
+                mike.was_inside = true;
+                stats.hint_text = "MIKE: \"Smoke break's over, legend. Go ride.\"".to_string();
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            }
+            continue;
+        }
+        if on_ground && d < trigger_r && !mike.was_inside && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
             mike.was_inside = true;
             stats.saved_city_pos = p_tf.translation;
             stats.mike_return_city = true;
             next_state.set(GameState::MikeCutscene);
             return;
-        } else if d < 4.2 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+        } else if on_ground && d < 4.2 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
             if interact {
                 mike.was_inside = true;
                 stats.saved_city_pos = p_tf.translation;
@@ -831,13 +945,14 @@ pub fn update_city_scooter_and_phone(
                 if interact {
                     sc.paid = true;
                     sc.occupied = true;
+                    sc.reset_hop();
                     stats.riding_scooter = Some(se);
                     p_tf.translation = stf.translation + Vec3::Y * 0.25;
                     player.velocity = Vec3::ZERO;
                     play_sfx("hack_success");
                     play_scooter_music();
                     stats.hint_text =
-                        "RIDING! [WASD] Zip | [SHIFT] Turbo | Hit RAMPS & BOOST RINGS | [SPACE] Backflip | [F/E] Hop Off"
+                        "RIDING! [WASD] Zip | [SHIFT] Turbo | [SPACE] Jump, hold in air to Backflip | [F/E] Hop Off"
                             .to_string();
                 } else {
                     stats.hint_text = "Click [SCOOT!] or press [F / E] to Ride Scooter".to_string();
@@ -877,8 +992,10 @@ pub fn update_city_scooter_and_phone(
             sc.flip = 0.0;
             sc.air_t = 0.0;
             sc.boost_t = 0.0;
+            sc.reset_hop();
             stf.translation.y = 0.0;
             stf.rotation = Quat::from_rotation_y(sc.yaw);
+            stf.scale = Vec3::ONE;
             p_tf.translation = Vec3::new(stf.translation.x + 1.4, 0.0, stf.translation.z);
             p_tf.rotation = Quat::from_rotation_y(sc.yaw + std::f32::consts::PI);
         }
@@ -1092,7 +1209,6 @@ pub fn enter_mike_cutscene(
 
     let stage = Vec3::new(0.0, 0.0, -210.0);
     let unit_box = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-    let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
     let spiral_torus = meshes.add(Torus::new(0.10, 1.0));
 
@@ -1182,57 +1298,16 @@ pub fn enter_mike_cutscene(
             Transform::from_translation(stage + Vec3::new(0.0, 0.0, -1.6)),
         ))
         .with_children(|m| {
-            for sx in [-0.15_f32, 0.15_f32] {
-                m.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(jeans.clone()),
-                    Transform::from_xyz(sx, 0.48, 0.0).with_scale(Vec3::new(0.22, 0.96, 0.24)),
-                ));
-            }
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(wrestling_tee.clone()),
-                Transform::from_xyz(0.0, 1.30, 0.0).with_scale(Vec3::new(0.68, 0.76, 0.36)),
-            ));
-            spawn_mike_shirt_text(m, &unit_box, &eye_white, 1.40, 0.19);
-            m.spawn((
-                Mesh3d(unit_sphere.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.88, 0.0).with_scale(Vec3::splat(0.26)),
-            ));
-            // Eyes + pupils + nose + light short trimmed beard
-            for ex in [-0.09_f32, 0.09_f32] {
-                m.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(eye_white.clone()),
-                    Transform::from_xyz(ex, 1.92, 0.21).with_scale(Vec3::splat(0.055)),
-                ));
-                m.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(eye_pupil.clone()),
-                    Transform::from_xyz(ex, 1.92, 0.25).with_scale(Vec3::splat(0.028)),
-                ));
-            }
-            m.spawn((
-                Mesh3d(unit_sphere.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.86, 0.25).with_scale(Vec3::splat(0.045)),
-            ));
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(beard.clone()),
-                Transform::from_xyz(0.0, 1.75, 0.13).with_scale(Vec3::new(0.23, 0.10, 0.15)),
-            ));
-            m.spawn((
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(cap_red.clone()),
-                Transform::from_xyz(0.0, 2.05, 0.0).with_scale(Vec3::new(0.27, 0.14, 0.27)),
-            ));
-            m.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(cap_red.clone()),
-                Transform::from_xyz(0.0, 2.01, 0.24).with_scale(Vec3::new(0.34, 0.04, 0.26)),
-            ));
+            let look = MikeLook {
+                skin: skin.clone(),
+                beard: beard.clone(),
+                tee: wrestling_tee.clone(),
+                eye_white: eye_white.clone(),
+                eye_pupil: eye_pupil.clone(),
+                cap: cap_red.clone(),
+                jeans: jeans.clone(),
+            };
+            spawn_mike_body(m, &mut meshes, &unit_box, &look);
         });
 
     // Stan silhouette facing Mike
@@ -1347,7 +1422,7 @@ pub fn enter_mike_cutscene(
 
     play_headphone_music(2);
     play_sfx("smoke_puff");
-    speak_voice(mike_line, "tj");
+    speak_voice(mike_line, "mike");
 }
 
 pub fn update_mike_cutscene(
@@ -1367,6 +1442,12 @@ pub fn update_mike_cutscene(
     if stats.cutscene_beat == 0 && t <= dt * 2.0 {
         *beat1_start = 0.0;
     }
+    // Hold-to-skip: jump to Stan's beat with its wait elapsed so the normal end path runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        stats.cutscene_beat = 1;
+        *beat1_start = (*beat1_start).min(t - 3.5);
+    }
 
     let (mike_line, stan_line) = MIKE_BACKSTORIES[dialog.variant];
     if stats.cutscene_beat == 0 && t >= 4.0 && (!is_voice_speaking() || t >= 16.0) {
@@ -1382,7 +1463,7 @@ pub fn update_mike_cutscene(
         }
     }
     let b1_t = (t - *beat1_start).max(0.0);
-    if stats.cutscene_beat == 1 && b1_t >= 3.5 && (!is_voice_speaking() || b1_t >= 16.0) {
+    if stats.cutscene_beat == 1 && b1_t >= 3.5 && (skipping || !is_voice_speaking() || b1_t >= 16.0) {
         next_state.set(GameState::CityPlay);
         return;
     }
@@ -1440,6 +1521,10 @@ pub fn exit_mike_cutscene(
         }
     }
     set_uzumaki_mode(0);
+    if stats.in_city {
+        // Last step of the Level 2 gate (see `PlayerStats::gate_open`).
+        stats.mike_smoked = true;
+    }
     stats.hearts = (stats.hearts + 3).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.high_timer = 30.0;

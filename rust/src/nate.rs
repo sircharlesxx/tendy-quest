@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::audio::{
     is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, speak_voice,
 };
-use crate::city::{pub217_scale, CityWorldMarker, PUB217_ANCHOR};
+use crate::city::{CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE};
 use crate::player::Player;
 use crate::state::{GameState, LevelEntity, PlayerStats};
 
@@ -140,7 +140,12 @@ pub fn spawn_nate_rig(
     mats: &NateMaterials,
     is_cutscene: bool,
 ) {
+    use crate::shapes::{self as sh, Torso};
+
     // Articulated legs for kung-fu kicks
+    let leg_mesh = sh::add(meshes, sh::limb_profile(0.66, &[0.112, 0.10, 0.084], 1.0));
+    let shoe_mesh = sh::add(meshes, sh::shoe(0.19, 0.11, 0.28));
+    let sole_mesh = sh::add(meshes, sh::shoe_sole(0.19, 0.11, 0.28));
     for (idx, sx) in [-0.14_f32, 0.14].iter().enumerate() {
         let mut leg = parent.spawn((Transform::from_xyz(*sx, 0.66, 0.0), Visibility::default()));
         if is_cutscene {
@@ -148,75 +153,108 @@ pub fn spawn_nate_rig(
         }
         leg.with_children(|l| {
             l.spawn((
-                Mesh3d(meshes.add(Capsule3d::new(0.105, 0.44))),
+                Mesh3d(leg_mesh.clone()),
                 MeshMaterial3d(mats.jeans.clone()),
                 Transform::from_xyz(0.0, -0.32, 0.0),
             ));
             l.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.19, 0.11, 0.28))),
+                Mesh3d(shoe_mesh.clone()),
                 MeshMaterial3d(mats.shoe.clone()),
+                Transform::from_xyz(0.0, -0.60, 0.04),
+            ));
+            l.spawn((
+                Mesh3d(sole_mesh.clone()),
+                MeshMaterial3d(mats.cap_navy.clone()),
                 Transform::from_xyz(0.0, -0.60, 0.04),
             ));
         });
     }
 
-    // Sports jacket torso + white stripe trim
+    // Sports jacket torso + white centre stripe hugging the chest and back
+    let jacket = sh::torso(&Torso {
+        height: 0.78,
+        hip: Vec2::new(0.27, 0.165),
+        waist: Vec2::new(0.27, 0.16),
+        chest: Vec2::new(0.30, 0.18),
+        shoulder: Vec2::new(0.31, 0.17),
+        neck: 0.075,
+        sq: 0.8,
+        chest_fwd: 0.01,
+    });
+    let stripe = sh::radial_shell(&jacket, 0.006, |p| sh::smoothstep(0.056, 0.046, p.x.abs()));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.62, 0.78, 0.36))),
+        Mesh3d(sh::add(meshes, jacket)),
         MeshMaterial3d(mats.jacket.clone()),
         Transform::from_xyz(0.0, 1.04, 0.0),
     ));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.10, 0.76, 0.37))),
+        Mesh3d(sh::add(meshes, stripe)),
         MeshMaterial3d(mats.jacket_trim.clone()),
-        Transform::from_xyz(0.0, 1.04, 0.01),
+        Transform::from_xyz(0.0, 1.04, 0.0),
     ));
 
     // Articulated arms for kung-fu blocks & punches
+    let sleeve_mesh = sh::add(meshes, sh::limb_profile(0.63, &[0.10, 0.092, 0.08], 1.0));
     for (idx, sx) in [-0.40_f32, 0.40].iter().enumerate() {
         let mut arm = parent.spawn((Transform::from_xyz(*sx, 1.36, 0.0), Visibility::default()));
         if is_cutscene {
             arm.insert(NateArmPivot { is_left: idx == 0 });
         }
+        let hand_mesh = sh::add(meshes, sh::hand(0.085, sx.signum(), false));
         arm.with_children(|a| {
             a.spawn((
-                Mesh3d(meshes.add(Capsule3d::new(0.095, 0.44))),
+                Mesh3d(sleeve_mesh.clone()),
                 MeshMaterial3d(mats.jacket.clone()),
                 Transform::from_xyz(0.0, -0.24, 0.0),
             ));
             a.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.095))),
+                Mesh3d(hand_mesh),
                 MeshMaterial3d(mats.skin.clone()),
-                Transform::from_xyz(0.0, -0.52, 0.02),
+                Transform::from_xyz(0.0, -0.60, 0.02),
             ));
         });
     }
 
-    // Head
+    // Neck, head & ears
+    let (hr, jaw) = (0.265_f32, 0.12_f32);
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.265))),
+        Mesh3d(sh::add(meshes, sh::limb(0.18, 0.075, 0.082))),
+        MeshMaterial3d(mats.skin.clone()),
+        Transform::from_xyz(0.0, 1.47, -0.01),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
         MeshMaterial3d(mats.skin.clone()),
         Transform::from_xyz(0.0, 1.74, 0.0),
     ));
+    for sx in [-1.0_f32, 1.0] {
+        parent.spawn((
+            Mesh3d(sh::add(meshes, sh::ear(0.12, sx))),
+            MeshMaterial3d(mats.skin.clone()),
+            Transform::from_xyz(sx * 0.245, 1.74, -0.01),
+        ));
+    }
 
-    // Full trimmed beard & mustache
+    // Full trimmed beard (jaw-hugging shell) & mustache
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.25))),
+        Mesh3d(sh::add(meshes, sh::beard(hr, jaw, 0.07, 0.10, -0.12))),
         MeshMaterial3d(mats.beard.clone()),
-        Transform::from_xyz(0.0, 1.61, 0.07).with_scale(Vec3::new(0.94, 0.90, 0.86)),
+        Transform::from_xyz(0.0, 1.74, 0.0),
     ));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.22, 0.055, 0.08))),
+        Mesh3d(sh::add(meshes, sh::arc_bar(0.21, &[0.012, 0.028, 0.03, 0.028, 0.012], 0.012, 0.035, 0.75))),
         MeshMaterial3d(mats.beard.clone()),
-        Transform::from_xyz(0.0, 1.68, 0.24),
+        Transform::from_xyz(0.0, 1.672, 0.248),
     ));
 
-    // Nose, eyes & glasses (frames + bridge + translucent lenses)
+    // Nose, eyes & glasses (rounded frames + bridge + translucent lenses)
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.048))),
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.04, 0.055, 0.045), 1.0, 1.0, 14, 10))),
         MeshMaterial3d(mats.skin.clone()),
-        Transform::from_xyz(0.0, 1.74, 0.27),
+        Transform::from_xyz(0.0, 1.732, 0.268),
     ));
+    let lens_mesh = sh::add(meshes, sh::plate(0.132, 0.084, 0.010, 0.35));
+    let rim_mesh = sh::add(meshes, sh::frame_ring(0.14, 0.09, 0.009, 0.3));
     for sx in [-0.092_f32, 0.092] {
         let is_lazy = sx > 0.0;
         let eye_r = if is_lazy { 0.046 } else { 0.038 };
@@ -224,61 +262,60 @@ pub fn spawn_nate_rig(
         let pupil_y = if is_lazy { 1.768 } else { 1.79 };
         let pupil_z = if is_lazy { 0.248 } else { 0.255 };
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(eye_r))),
+            Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::splat(eye_r), 1.0, 1.0, 20, 14))),
             MeshMaterial3d(mats.eye_white.clone()),
-            Transform::from_xyz(sx, 1.79, 0.232),
+            Transform::from_xyz(sx, 1.79, 0.232).with_scale(Vec3::new(1.0, 1.0, 0.85)),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.022))),
+            Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::splat(0.022), 1.0, 1.0, 14, 10))),
             MeshMaterial3d(mats.eye_pupil.clone()),
-            Transform::from_xyz(pupil_x, pupil_y, pupil_z),
+            Transform::from_xyz(pupil_x, pupil_y, pupil_z).with_scale(Vec3::new(1.0, 1.0, 0.7)),
         ));
         // Glasses lens + frame rim
         parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.135, 0.085, 0.015))),
+            Mesh3d(lens_mesh.clone()),
             MeshMaterial3d(mats.glasses_lens.clone()),
             Transform::from_xyz(sx, 1.79, 0.285),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.15, 0.018, 0.024))),
+            Mesh3d(rim_mesh.clone()),
             MeshMaterial3d(mats.glasses_frame.clone()),
-            Transform::from_xyz(sx, 1.835, 0.285),
-        ));
-        parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.15, 0.018, 0.024))),
-            MeshMaterial3d(mats.glasses_frame.clone()),
-            Transform::from_xyz(sx, 1.745, 0.285),
+            Transform::from_xyz(sx, 1.79, 0.285),
         ));
     }
-    // Glasses nose bridge & side temples
+    // Glasses nose bridge & side temples running back to the ears
+    let mut glasses = sh::arc_bar(0.05, &[0.008, 0.008], 0.008, 0.0, 1.0).at(0.0, 1.80, 0.286);
+    for sx in [-1.0_f32, 1.0] {
+        glasses = glasses.merged(sh::rod(Vec3::new(sx * 0.16, 1.805, 0.282), Vec3::new(sx * 0.243, 1.79, 0.0), 0.008));
+    }
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.06, 0.02, 0.024))),
+        Mesh3d(sh::add(meshes, glasses)),
         MeshMaterial3d(mats.glasses_frame.clone()),
-        Transform::from_xyz(0.0, 1.80, 0.285),
+        Transform::default(),
     ));
-    for sx in [-0.165_f32, 0.165] {
-        parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.018, 0.02, 0.22))),
-            MeshMaterial3d(mats.glasses_frame.clone()),
-            Transform::from_xyz(sx, 1.80, 0.18),
-        ));
-    }
 
-    // Sports Baseball Cap (navy crown + white front logo patch + curved-look brim)
+    // Sports Baseball Cap (navy crown hugging the head + white front logo panel + curved brim)
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.275))),
+        Mesh3d(sh::add(meshes, sh::cap_crown(hr, 0.30, 0.075))),
         MeshMaterial3d(mats.cap_navy.clone()),
-        Transform::from_xyz(0.0, 1.88, -0.02).with_scale(Vec3::new(1.02, 0.65, 1.04)),
+        Transform::from_xyz(0.0, 1.74, 0.0),
     ));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.14, 0.10, 0.04))),
+        Mesh3d(sh::add(meshes, sh::head_panel(hr, 0.0, (1.30, 1.84), (0.42, 0.86), 0.006, |d| {
+            0.075 + 0.10 * d.y.max(0.0) + 0.004
+        }))),
         MeshMaterial3d(mats.cap_white.clone()),
-        Transform::from_xyz(0.0, 1.93, 0.24),
+        Transform::from_xyz(0.0, 1.74, 0.0),
     ));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.32, 0.036, 0.26))),
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.025, 0.014, 0.025), 1.0, 1.0, 10, 6))),
         MeshMaterial3d(mats.cap_navy.clone()),
-        Transform::from_xyz(0.0, 1.86, 0.26).with_rotation(Quat::from_rotation_x(0.10)),
+        Transform::from_xyz(0.0, 2.03, -0.01),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::cap_brim(0.31, 0.25, 0.024, 0.022))),
+        MeshMaterial3d(mats.cap_navy.clone()),
+        Transform::from_xyz(0.0, 1.853, 0.15).with_rotation(Quat::from_rotation_x(0.10)),
     ));
 }
 
@@ -310,6 +347,7 @@ pub fn update_city_nate(
     keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityNate>>,
+    orbit: Res<crate::state::CameraOrbit>,
     mut nate_q: Query<(&mut Transform, &mut CityNate), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut n_state: ResMut<NateCutsceneState>,
@@ -318,13 +356,24 @@ pub fn update_city_nate(
         return;
     };
     let dt = time.delta_secs().min(0.05);
-    let pub_s = pub217_scale(stats.player_scale);
+    let pub_s = PUB217_SCALE;
     for (mut n_tf, mut nate) in &mut nate_q {
-        if nate.recruited {
+        // `stats.nate_recruited` is the gate's source of truth (checkpoint restore / test links).
+        if stats.nate_recruited && !nate.recruited {
+            nate.recruited = true;
+        }
+        // Post-game free roam: recruited crew skip following and idle at their pub spots.
+        if nate.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.72).clamp(1.65, 9.0);
             n_tf.scale = Vec3::splat(s);
-            let fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
-            let target = p_tf.translation - fwd * (2.6 * s);
+            // Outer left flank, beyond Derek, out of the camera line at every scale.
+            let target = crate::player::crew_follow_target(
+                crate::player::CrewSlot::LeftOuter,
+                p_tf.translation,
+                stats.player_scale,
+                s,
+                orbit.yaw,
+            );
             let delta = Vec3::new(target.x - n_tf.translation.x, 0.0, target.z - n_tf.translation.z);
             let dist = delta.length();
             if dist > 32.0 {
@@ -357,11 +406,19 @@ pub fn update_city_nate(
         let inside = dist < trigger_r;
         let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
 
-        if stats.driving_car.is_none()
+        // Ground level only: standing on the pub roof above them doesn't count.
+        if p_tf.translation.y < 4.0
+            && stats.driving_car.is_none()
             && stats.riding_scooter.is_none()
             && ((inside && !nate.was_inside) || (dist < 4.3 * pub_s && interact))
         {
             nate.was_inside = true;
+            if stats.free_roam {
+                // No cutscene replay in free roam: just a friendly line.
+                stats.hint_text = "NATE: \"Saved by Stan again. I am not leaving this booth.\"".to_string();
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                continue;
+            }
             stats.saved_city_pos = p_tf.translation;
             stats.nate_return_city = true;
             *n_state = NateCutsceneState::default();
@@ -377,7 +434,7 @@ const NATE_BEATS: [(&str, &str, &str, &str); 6] = [
         "NATE (DES MOINES EXPAT)",
         "BEAT 1/6  |  THE CONFESSION",
         "Stan... don't look at me like that. I had to move to Des Moines. The rent, the bills... I didn't have a choice!",
-        "tj",
+        "nate",
     ),
     (
         "STAN (IN DISBELIEF)",
@@ -389,7 +446,7 @@ const NATE_BEATS: [(&str, &str, &str, &str); 6] = [
         "NATE (HEATED ARGUMENT)",
         "BEAT 3/6  |  RESPONSIBILITY?",
         "ARE YOU OUT OF YOUR MIND?! I NEED A JOB TO PAY RENT AND EAT, STAN!!",
-        "tj",
+        "nate",
     ),
     (
         "STAN (DEADPAN)",
@@ -401,13 +458,13 @@ const NATE_BEATS: [(&str, &str, &str, &str); 6] = [
         "NATE & STAN (KUNG-FU DUEL!)",
         "BEAT 5/6  |  PUB 217 MARTIAL ARTS SHOWDOWN",
         "HYAAAH!! YOU THINK RENT IS OPTIONAL?! TASTE MY DES MOINES FLYING CRANE KICK!!",
-        "tj",
+        "nate",
     ),
     (
         "NATE (DEFEATED & RECRUITED)",
         "BEAT 6/6  |  RESIGNATION",
         "Ugh... your jobless kung-fu is too strong... Fine. Des Moines can wait. I'm back in Cedar Rapids, Stan - let's go wreck Lexie!",
-        "tj",
+        "nate",
     ),
 ];
 
@@ -625,9 +682,15 @@ pub fn update_nate_cutscene(
 ) {
     let dt = time.delta_secs().min(0.05);
     n_state.beat_t += dt;
+    // Hold-to-skip: jump to the last beat with its wait elapsed so the normal end path runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        n_state.beat = (NATE_BEATS.len() as u8).saturating_sub(1);
+        n_state.beat_t = n_state.beat_t.max(4.0);
+    }
 
     let min_t = if n_state.beat == 3 { 2.4 } else { 4.0 };
-    if n_state.beat_t >= min_t && (!is_voice_speaking() || n_state.beat_t >= 18.0) {
+    if n_state.beat_t >= min_t && (skipping || !is_voice_speaking() || n_state.beat_t >= 18.0) {
         if n_state.beat + 1 >= NATE_BEATS.len() as u8 {
             next_state.set(GameState::CityPlay);
             return;
@@ -797,9 +860,10 @@ pub fn exit_nate_cutscene(
     for mut n in &mut nate_q {
         n.recruited = true;
     }
+    stats.nate_recruited = true;
     stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.tendy_credits += 25;
-    stats.hint_text = "NATE JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Jobless Kung-Fu Wins!)".to_string();
+    stats.hint_text = "NATE JOINED YOUR SQUAD! +2 Hearts, +25 Credits.".to_string();
     play_viking_chant_music();
 }
