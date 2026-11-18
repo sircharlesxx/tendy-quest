@@ -2,7 +2,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 use crate::state::{
-    CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats, PowerupKind, PowerupPickup,
+    CAMERA_BLEND_SECS, CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats, PowerupKind, PowerupPickup,
     TendyPickup,
 };
 
@@ -21,6 +21,108 @@ pub struct Player {
     pub dodge_counter_timer: f32,
     pub attack_timer: f32,
     pub attack_cooldown: f32,
+    /// Horizontal knockback velocity layered on top of input velocity; decays exponentially
+    /// (`KNOCKBACK_DECAY`) so a hit shoves the hero instead of teleporting them.
+    pub knockback: Vec3,
+    /// Seconds of damage blink left (set from the invulnerability window on a damaging hit).
+    pub hurt_blink: f32,
+    /// True while the blink has hidden the hero, so the blink only ever restores what it hid.
+    pub blink_hidden: bool,
+    /// Seconds a jump press stays queued, so a press just before landing still jumps.
+    pub jump_buffer: f32,
+    /// Squash (+) / stretch (-) spring state applied as a scale multiplier.
+    pub squash: f32,
+    pub squash_vel: f32,
+}
+
+/// How long a jump press is remembered while it can't be used yet.
+const JUMP_BUFFER_SECS: f32 = 0.12;
+/// Exponential approach rates (per second) toward the input's target horizontal velocity.
+const GROUND_ACCEL_RATE: f32 = 26.0;
+const GROUND_DECEL_RATE: f32 = 30.0;
+const AIR_ACCEL_RATE: f32 = 11.0;
+/// Knockback decay rate. Total knockback travel is `initial_speed / KNOCKBACK_DECAY`.
+pub const KNOCKBACK_DECAY: f32 = 10.0;
+
+/// Shared hit reaction for anything that hurts or shoves the hero.
+///
+/// * `push_dir` / `distance`: horizontal knockback; the hero travels about `distance` units over a
+///   few frames (same total as the old instant position jump), colliding with walls on the way.
+/// * `hurt`: a heart was lost. Adds the red edge flash, the invulnerability blink and a bigger
+///   camera shake. Call it after setting `invuln_timer`, since the blink lasts that long.
+pub fn hit_reaction(
+    player: &mut Player,
+    stats: &mut PlayerStats,
+    push_dir: Vec3,
+    distance: f32,
+    hurt: bool,
+) {
+    let flat = Vec3::new(push_dir.x, 0.0, push_dir.z).normalize_or_zero();
+    if distance > 0.0 && flat != Vec3::ZERO {
+        player.knockback = flat * distance * KNOCKBACK_DECAY;
+    }
+    if hurt {
+        stats.hurt_flash = 1.0;
+        stats.shake_request = stats.shake_request.max(0.6);
+        player.hurt_blink = player.invuln_timer;
+    } else {
+        stats.shake_request = stats.shake_request.max(0.25);
+    }
+}
+
+/// OnExit(gameplay state): undo a blink that was mid-flash and drop leftover knockback, so a
+/// cutscene or end card never inherits a hidden or sliding hero.
+pub fn reset_hit_reaction(mut player_q: Query<(&mut Player, &mut Visibility)>) {
+    for (mut player, mut vis) in &mut player_q {
+        if player.blink_hidden {
+            *vis = Visibility::Visible;
+            player.blink_hidden = false;
+        }
+        player.hurt_blink = 0.0;
+        player.knockback = Vec3::ZERO;
+        player.jump_buffer = 0.0;
+    }
+}
+
+/// Collected pickups pop (quick swell, then shrink to nothing) instead of vanishing.
+#[derive(Component)]
+pub struct PickupPop {
+    pub t: f32,
+    pub base_scale: Vec3,
+}
+
+const PICKUP_POP_SECS: f32 = 0.2;
+
+/// Turns a collected pickup into a short pop. Callers remove their own pickup marker first so
+/// the entity can't be collected twice.
+pub fn start_pickup_pop(commands: &mut Commands, entity: Entity, base_scale: Vec3) {
+    if let Some(mut ec) = commands.get_entity(entity) {
+        ec.insert(PickupPop { t: 0.0, base_scale });
+    }
+}
+
+pub fn animate_pickup_pops(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut pop_q: Query<(Entity, &mut Transform, &mut PickupPop)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    for (e, mut tf, mut pop) in &mut pop_q {
+        pop.t += dt;
+        if pop.t >= PICKUP_POP_SECS {
+            commands.entity(e).despawn_recursive();
+            continue;
+        }
+        let swell_t = 0.07;
+        let s = if pop.t < swell_t {
+            1.0 + 0.45 * (pop.t / swell_t)
+        } else {
+            let x = ((pop.t - swell_t) / (PICKUP_POP_SECS - swell_t)).clamp(0.0, 1.0);
+            1.45 * (1.0 - x * x)
+        };
+        tf.scale = pop.base_scale * s.max(0.001);
+        tf.rotate_y(9.0 * dt);
+    }
 }
 
 impl Default for Player {
@@ -39,6 +141,12 @@ impl Default for Player {
             dodge_counter_timer: 0.0,
             attack_timer: 0.0,
             attack_cooldown: 0.0,
+            knockback: Vec3::ZERO,
+            hurt_blink: 0.0,
+            blink_hidden: false,
+            jump_buffer: 0.0,
+            squash: 0.0,
+            squash_vel: 0.0,
         }
     }
 }
@@ -58,7 +166,39 @@ pub fn spawn_player_inner(commands: &mut Commands, asset_server: &AssetServer) {
     ));
 }
 
+/// Orbit pitch limits. Negative pitch = looking up: the boom stays at `BOOM_PITCH_MIN` (camera
+/// never drops below the hero's anchor, so it can't sink under the floor) and the view tilts up.
+const PITCH_MIN: f32 = -0.3;
+const PITCH_MAX: f32 = 1.32;
+const BOOM_PITCH_MIN: f32 = 0.08;
+
+/// Ordering for gameplay Update systems: look input, then everything that moves the hero,
+/// then the follow camera, so the camera always frames this frame's player position.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CameraSet {
+    Look,
+    Motion,
+    Follow,
+}
+
+/// Frame-rate independent smoothing factor for exponential approach at `rate` per second.
+fn smooth_factor(rate: f32, dt: f32) -> f32 {
+    1.0 - (-rate * dt).exp()
+}
+
+/// OnEnter(gameplay state): ease from the cutscene's last shot into the follow camera.
+pub fn camera_begin_blend(mut orbit: ResMut<CameraOrbit>) {
+    orbit.blend_request = true;
+    orbit.snap_follow = true;
+}
+
+/// OnEnter(non-gameplay follow states): snap the follow point, no blend.
+pub fn camera_snap_follow(mut orbit: ResMut<CameraOrbit>) {
+    orbit.snap_follow = true;
+}
+
 pub fn camera_mouse_look(
+    time: Res<Time>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -78,16 +218,22 @@ pub fn camera_mouse_look(
         }
     }
 
+    // Track how long since the player last looked around so vehicle chase cams can back off.
+    orbit.since_look = (orbit.since_look + time.delta_secs().min(0.05)).min(99.0);
+
     if mouse_motion.delta != Vec2::ZERO {
         orbit.yaw -= mouse_motion.delta.x * 0.0045;
-        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(0.15, 1.32);
+        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(PITCH_MIN, PITCH_MAX);
+        orbit.since_look = 0.0;
     }
 
+    // Touch drags and the gamepad right stick both arrive through this bridge.
     let t_dx = crate::audio::take_touch_look_dx();
     let t_dy = crate::audio::take_touch_look_dy();
     if t_dx != 0.0 || t_dy != 0.0 {
         orbit.yaw -= t_dx * 0.0065;
-        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(0.15, 1.32);
+        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(PITCH_MIN, PITCH_MAX);
+        orbit.since_look = 0.0;
     }
 
     let zoom_delta = crate::audio::take_touch_zoom_delta();
@@ -120,12 +266,12 @@ pub fn player_movement(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
-    orbit: Res<CameraOrbit>,
+    mut orbit: ResMut<CameraOrbit>,
     mut stats: ResMut<PlayerStats>,
-    mut player_q: Query<(&mut Transform, &mut Player)>,
+    mut player_q: Query<(&mut Transform, &mut Player, &mut Visibility)>,
     platform_q: Query<(&Transform, &PlatformBox), Without<Player>>,
 ) {
-    let Ok((mut tf, mut player)) = player_q.get_single_mut() else {
+    let Ok((mut tf, mut player, mut vis)) = player_q.get_single_mut() else {
         return;
     };
     let dt = time.delta_secs().min(0.05);
@@ -158,15 +304,28 @@ pub fn player_movement(
     } else {
         stats.player_scale = target_s;
     }
+    // Squash & stretch: a damped spring kicked by jumps (stretch) and landings (squash), applied as
+    // a volume-ish multiplier on top of the size scale. Feet stay planted (origin is at the feet).
+    {
+        let accel = -320.0 * player.squash - 20.0 * player.squash_vel;
+        player.squash_vel += accel * dt;
+        player.squash = (player.squash + player.squash_vel * dt).clamp(-0.3, 0.3);
+    }
+    let squash_y = 1.0 - 0.5 * player.squash;
+    let squash_xz = 1.0 + 0.3 * player.squash;
     if stats.enraged && !stats.in_city {
         let throb = 1.0 + stats.rage_pulse_flash * 0.16;
         tf.scale = Vec3::new(
-            stats.player_scale * throb,
-            stats.player_scale * (1.0 + stats.rage_pulse_flash * 0.22),
-            stats.player_scale * throb,
+            stats.player_scale * throb * squash_xz,
+            stats.player_scale * (1.0 + stats.rage_pulse_flash * 0.22) * squash_y,
+            stats.player_scale * throb * squash_xz,
         );
     } else {
-        tf.scale = Vec3::splat(stats.player_scale);
+        tf.scale = Vec3::new(
+            stats.player_scale * squash_xz,
+            stats.player_scale * squash_y,
+            stats.player_scale * squash_xz,
+        );
     }
     let size_ratio = (stats.player_scale / 0.55).max(1.0);
 
@@ -216,8 +375,29 @@ pub fn player_movement(
     // Drain screen-tap state so overlay transitions don't pick up stale taps
     let _ = crate::audio::take_touch_action_tap();
 
+    // Damage blink (~7 Hz) while the post-hit invulnerability lasts. Vehicles own the hero's
+    // visibility (the car hides them), so the blink stands down there.
+    player.hurt_blink = (player.hurt_blink - dt).max(0.0);
+    let in_vehicle = stats.driving_car.is_some() || stats.riding_scooter.is_some();
+    if in_vehicle {
+        if player.blink_hidden {
+            player.blink_hidden = false;
+            if stats.driving_car.is_none() {
+                *vis = Visibility::Visible;
+            }
+        }
+    } else {
+        let hide = player.hurt_blink > 0.0 && ((player.hurt_blink * 14.0) as i32) % 2 == 1;
+        if hide != player.blink_hidden {
+            *vis = if hide { Visibility::Hidden } else { Visibility::Visible };
+            player.blink_hidden = hide;
+        }
+    }
+
     if stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.phone_open {
         player.velocity = Vec3::ZERO;
+        player.knockback = Vec3::ZERO;
+        player.jump_buffer = 0.0;
         return;
     }
 
@@ -322,10 +502,15 @@ pub fn player_movement(
         stats.stamina_regen_delay = 0.35;
     }
 
-    // Jump & Double-Jump (Space or Touch JUMP)
-    if (keys.just_pressed(KeyCode::Space) || crate::audio::take_touch_jump())
-        && (player.grounded || player.jumps_used < 2)
-    {
+    // Jump & Double-Jump (Space or Touch JUMP). A press that can't be used yet (both jumps spent)
+    // stays buffered for JUMP_BUFFER_SECS, so pressing just before touching down still jumps.
+    player.jump_buffer = (player.jump_buffer - dt).max(0.0);
+    if keys.just_pressed(KeyCode::Space) || crate::audio::take_touch_jump() {
+        player.jump_buffer = JUMP_BUFFER_SECS;
+    }
+    if player.jump_buffer > 0.0 && (player.grounded || player.jumps_used < 2) {
+        player.jump_buffer = 0.0;
+        player.squash_vel -= 5.0;
         if player.jumps_used == 0 {
             crate::audio::play_sfx("jump");
         } else {
@@ -369,8 +554,31 @@ pub fn player_movement(
         speed *= 0.6;
     }
 
-    player.velocity.x = dir.x * speed * effective_mag;
-    player.velocity.z = dir.z * speed * effective_mag;
+    // Ease toward the input velocity (snappier on the ground than in the air). Dashes and rolls
+    // stay instant so their distances are unchanged, and anything above this state's top speed
+    // (e.g. the frame a dash ends) is clamped at once rather than coasting.
+    let target_h = Vec2::new(dir.x, dir.z) * speed * effective_mag;
+    let mut cur_h = Vec2::new(player.velocity.x, player.velocity.z);
+    if player.roll_timer > 0.0 || player.dash_timer > 0.0 {
+        cur_h = target_h;
+    } else {
+        if cur_h.length() > speed {
+            cur_h = cur_h.normalize_or_zero() * speed;
+        }
+        let rate = if !player.grounded {
+            AIR_ACCEL_RATE
+        } else if target_h.length_squared() >= cur_h.length_squared() {
+            GROUND_ACCEL_RATE
+        } else {
+            GROUND_DECEL_RATE
+        };
+        cur_h += (target_h - cur_h) * smooth_factor(rate, dt);
+        if target_h == Vec2::ZERO && cur_h.length_squared() < 0.0025 {
+            cur_h = Vec2::ZERO;
+        }
+    }
+    player.velocity.x = cur_h.x;
+    player.velocity.z = cur_h.y;
 
     let horiz_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
     if horiz_speed > 0.25 {
@@ -391,80 +599,124 @@ pub fn player_movement(
     // Gravity & integrate
     let gravity = 22.0 + (stats.player_scale - 0.55).max(0.0) * 0.55;
     player.velocity.y -= gravity * dt;
-    let prev_y = tf.translation.y;
-    tf.translation += player.velocity * dt;
+    let was_grounded = player.grounded;
+    let fall_speed = (-player.velocity.y).max(0.0);
 
-    // Platform AABB landing (top surfaces)
-    player.grounded = false;
+    // Knockback: exact integral of an exponentially decaying impulse over this frame, so the total
+    // shove distance is `initial_speed / KNOCKBACK_DECAY` regardless of frame rate.
+    let knock_decay = (-KNOCKBACK_DECAY * dt).exp();
+    let mut knock_disp = player.knockback * ((1.0 - knock_decay) / KNOCKBACK_DECAY);
+    player.knockback *= knock_decay;
+    if player.knockback.length_squared() < 0.01 {
+        player.knockback = Vec3::ZERO;
+    }
+
     let land_r = if stats.in_city {
         (0.38 * stats.player_scale).clamp(0.55, 3.2)
     } else {
         (0.38 * stats.player_scale).clamp(0.38, 0.85)
     };
-    for (p_tf, p_box) in &platform_q {
-        let min_x = p_tf.translation.x - p_box.half_extents.x - land_r;
-        let max_x = p_tf.translation.x + p_box.half_extents.x + land_r;
-        let min_z = p_tf.translation.z - p_box.half_extents.z - land_r;
-        let max_z = p_tf.translation.z + p_box.half_extents.z + land_r;
-        let top_y = p_tf.translation.y + p_box.half_extents.y;
-
-        if tf.translation.x >= min_x
-            && tf.translation.x <= max_x
-            && tf.translation.z >= min_z
-            && tf.translation.z <= max_z
-            && player.velocity.y <= 0.0
-            && prev_y >= top_y - 0.35
-            && tf.translation.y <= top_y
-        {
-            tf.translation.y = top_y;
-            player.velocity.y = 0.0;
-            player.grounded = true;
-            player.jumps_used = 0;
-        }
-    }
-
-    // Solid side-wall pushout against all props, cabinets, walls, and obstacles (2 passes prevent corner-clipping)
     let wall_r = if stats.in_city {
         (0.28 * stats.player_scale).clamp(0.45, 2.8)
     } else {
         (0.28 * stats.player_scale).clamp(0.28, 0.72)
     };
-    let player_top_y = tf.translation.y + (0.45 * stats.player_scale).max(0.55);
-    for _ in 0..2 {
+
+    // Sub-step the move whenever one frame's horizontal travel exceeds half the wall radius
+    // (kaiju sprint, honey-mustard boost, knockback). The push-out below picks the shallowest
+    // axis, so a step deeper than half a thin wall's padded width would pop out the far side.
+    let frame_h = Vec2::new(
+        player.velocity.x * dt + knock_disp.x,
+        player.velocity.z * dt + knock_disp.z,
+    )
+    .length();
+    let max_step = wall_r * 0.5;
+    let substeps = ((frame_h / max_step).ceil() as u32).clamp(1, 12);
+    let sub_dt = dt / substeps as f32;
+    knock_disp /= substeps as f32;
+
+    player.grounded = false;
+    for _ in 0..substeps {
+        let prev_y = tf.translation.y;
+        tf.translation += player.velocity * sub_dt + knock_disp;
+
+        // Platform AABB landing (top surfaces)
         for (p_tf, p_box) in &platform_q {
-            let min_x = p_tf.translation.x - p_box.half_extents.x - wall_r;
-            let max_x = p_tf.translation.x + p_box.half_extents.x + wall_r;
-            let min_z = p_tf.translation.z - p_box.half_extents.z - wall_r;
-            let max_z = p_tf.translation.z + p_box.half_extents.z + wall_r;
-            let bottom_y = p_tf.translation.y - p_box.half_extents.y;
+            let min_x = p_tf.translation.x - p_box.half_extents.x - land_r;
+            let max_x = p_tf.translation.x + p_box.half_extents.x + land_r;
+            let min_z = p_tf.translation.z - p_box.half_extents.z - land_r;
+            let max_z = p_tf.translation.z + p_box.half_extents.z + land_r;
             let top_y = p_tf.translation.y + p_box.half_extents.y;
 
-            if tf.translation.x > min_x
-                && tf.translation.x < max_x
-                && tf.translation.z > min_z
-                && tf.translation.z < max_z
-                && tf.translation.y < top_y - 0.05
-                && player_top_y > bottom_y + 0.05
+            if tf.translation.x >= min_x
+                && tf.translation.x <= max_x
+                && tf.translation.z >= min_z
+                && tf.translation.z <= max_z
+                && player.velocity.y <= 0.0
+                && prev_y >= top_y - 0.35
+                && tf.translation.y <= top_y
             {
-                let dx_left = tf.translation.x - min_x;
-                let dx_right = max_x - tf.translation.x;
-                let dz_back = tf.translation.z - min_z;
-                let dz_front = max_z - tf.translation.z;
-                let m = dx_left.min(dx_right).min(dz_back).min(dz_front);
-                if (m - dx_left).abs() < 0.001 {
-                    tf.translation.x = min_x;
-                    player.velocity.x = player.velocity.x.min(0.0);
-                } else if (m - dx_right).abs() < 0.001 {
-                    tf.translation.x = max_x;
-                    player.velocity.x = player.velocity.x.max(0.0);
-                } else if (m - dz_back).abs() < 0.001 {
-                    tf.translation.z = min_z;
-                    player.velocity.z = player.velocity.z.min(0.0);
-                } else {
-                    tf.translation.z = max_z;
-                    player.velocity.z = player.velocity.z.max(0.0);
+                tf.translation.y = top_y;
+                player.velocity.y = 0.0;
+                player.grounded = true;
+                player.jumps_used = 0;
+            }
+        }
+
+        // Solid side-wall pushout against all props, cabinets, walls, and obstacles (2 passes prevent corner-clipping)
+        let player_top_y = tf.translation.y + (0.45 * stats.player_scale).max(0.55);
+        for _ in 0..2 {
+            for (p_tf, p_box) in &platform_q {
+                let min_x = p_tf.translation.x - p_box.half_extents.x - wall_r;
+                let max_x = p_tf.translation.x + p_box.half_extents.x + wall_r;
+                let min_z = p_tf.translation.z - p_box.half_extents.z - wall_r;
+                let max_z = p_tf.translation.z + p_box.half_extents.z + wall_r;
+                let bottom_y = p_tf.translation.y - p_box.half_extents.y;
+                let top_y = p_tf.translation.y + p_box.half_extents.y;
+
+                if tf.translation.x > min_x
+                    && tf.translation.x < max_x
+                    && tf.translation.z > min_z
+                    && tf.translation.z < max_z
+                    && tf.translation.y < top_y - 0.05
+                    && player_top_y > bottom_y + 0.05
+                {
+                    let dx_left = tf.translation.x - min_x;
+                    let dx_right = max_x - tf.translation.x;
+                    let dz_back = tf.translation.z - min_z;
+                    let dz_front = max_z - tf.translation.z;
+                    let m = dx_left.min(dx_right).min(dz_back).min(dz_front);
+                    if (m - dx_left).abs() < 0.001 {
+                        tf.translation.x = min_x;
+                        player.velocity.x = player.velocity.x.min(0.0);
+                        player.knockback.x = player.knockback.x.min(0.0);
+                        knock_disp.x = knock_disp.x.min(0.0);
+                    } else if (m - dx_right).abs() < 0.001 {
+                        tf.translation.x = max_x;
+                        player.velocity.x = player.velocity.x.max(0.0);
+                        player.knockback.x = player.knockback.x.max(0.0);
+                        knock_disp.x = knock_disp.x.max(0.0);
+                    } else if (m - dz_back).abs() < 0.001 {
+                        tf.translation.z = min_z;
+                        player.velocity.z = player.velocity.z.min(0.0);
+                        player.knockback.z = player.knockback.z.min(0.0);
+                        knock_disp.z = knock_disp.z.min(0.0);
+                    } else {
+                        tf.translation.z = max_z;
+                        player.velocity.z = player.velocity.z.max(0.0);
+                        player.knockback.z = player.knockback.z.max(0.0);
+                        knock_disp.z = knock_disp.z.max(0.0);
+                    }
                 }
             }
+        }
+    }
+
+    // Landing squash, scaled by how hard the hero came down (tiny step-downs don't bounce).
+    if player.grounded && !was_grounded {
+        let impact = fall_speed / (9.0 + stats.player_scale * 1.2);
+        if impact > 0.3 {
+            player.squash_vel += 6.5 * impact.min(1.3);
         }
     }
 
@@ -473,6 +725,11 @@ pub fn player_movement(
         if half != player.last_step_half {
             player.last_step_half = half;
             crate::audio::play_sfx("step");
+            // City kaiju footsteps thump the camera, more the bigger Stan gets.
+            if stats.in_city && stats.player_scale > 4.0 {
+                let heft = ((stats.player_scale - 4.0) / 14.0).clamp(0.0, 1.0);
+                orbit.shake = orbit.shake.max(0.12 + 0.33 * heft);
+            }
         }
     }
 
@@ -482,16 +739,26 @@ pub fn player_movement(
         tf.translation.z = tf.translation.z.clamp(-126.0, 126.0);
         if tf.translation.y < -12.0 {
             tf.translation = Vec3::new(0.0, 1.0, 82.0);
-            player.velocity = Vec3::ZERO;
+            respawn_after_fall(&mut player, &mut orbit);
         }
     } else {
         tf.translation.x = tf.translation.x.clamp(-54.0, 54.0);
         tf.translation.z = tf.translation.z.clamp(-46.0, 46.0);
         if tf.translation.y < -12.0 {
             tf.translation = Vec3::new(0.0, 0.5, 29.0);
-            player.velocity = Vec3::ZERO;
+            respawn_after_fall(&mut player, &mut orbit);
         }
     }
+}
+
+/// Fell out of the world: cut the camera straight to the respawn point (no long swoop) and give a
+/// short blinking grace period so the reset reads as deliberate, not as a glitch.
+fn respawn_after_fall(player: &mut Player, orbit: &mut CameraOrbit) {
+    player.velocity = Vec3::ZERO;
+    player.knockback = Vec3::ZERO;
+    player.invuln_timer = player.invuln_timer.max(1.0);
+    player.hurt_blink = player.hurt_blink.max(1.0);
+    orbit.snap_follow = true;
 }
 
 fn ray_aabb_t(origin: Vec3, dir: Vec3, box_min: Vec3, box_max: Vec3) -> Option<(f32, f32)> {
@@ -530,9 +797,9 @@ fn ray_aabb_t(origin: Vec3, dir: Vec3, box_min: Vec3, box_max: Vec3) -> Option<(
 pub fn update_camera(
     time: Res<Time>,
     mut orbit: ResMut<CameraOrbit>,
-    stats: Res<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     window_q: Query<&Window, With<PrimaryWindow>>,
-    player_q: Query<&Transform, (With<Player>, Without<Camera3d>, Without<PlatformBox>)>,
+    player_q: Query<(&Transform, &Player), (Without<Camera3d>, Without<PlatformBox>)>,
     platform_q: Query<(&Transform, &PlatformBox), (Without<Player>, Without<Camera3d>)>,
     lock_q: Query<
         &Transform,
@@ -549,10 +816,14 @@ pub fn update_camera(
     >,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
-    let (Ok(p_tf), Ok((mut c_tf, mut proj))) = (player_q.get_single(), cam_q.get_single_mut()) else {
+    let (Ok((p_tf, player)), Ok((mut c_tf, mut proj))) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
-    if stats.lock_on_active && stats.driving_car.is_none() {
+    let dt = time.delta_secs().min(0.05);
+    let base_fov = std::f32::consts::FRAC_PI_4;
+
+    // Lock-on yaw steering (disabled in cars and on the scooter, where the chase cam owns yaw).
+    if stats.lock_on_active && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
         let mut best_pos: Option<Vec3> = None;
         let mut best_dist = 70.0_f32;
         for t in &lock_q {
@@ -571,15 +842,50 @@ pub fn update_camera(
             } else if diff < -std::f32::consts::PI {
                 diff += std::f32::consts::TAU;
             }
-            orbit.yaw += diff * (time.delta_secs().min(0.05) * 7.5).min(1.0);
+            orbit.yaw += diff * smooth_factor(7.5, dt);
         }
     }
+
+    // Damped follow point: quick horizontally, softer vertically, lag capped relative to scale.
+    // Snaps on state entry (flag) or on a teleport-sized jump in the raw player position.
+    let p_pos = p_tf.translation;
+    let follow_scale = stats.player_scale.max(0.55);
+    let teleport_dist = 6.0 + follow_scale * 1.5;
+    let snapping = orbit.snap_follow || p_pos.distance(orbit.last_player_pos) > teleport_dist;
+    if snapping {
+        orbit.follow_pos = p_pos;
+        orbit.push_offset = Vec3::ZERO;
+    } else {
+        let kh = smooth_factor(16.0, dt);
+        let kv = smooth_factor(7.0, dt);
+        let mut f = orbit.follow_pos;
+        f.x += (p_pos.x - f.x) * kh;
+        f.z += (p_pos.z - f.z) * kh;
+        f.y += (p_pos.y - f.y) * kv;
+        let max_lag_h = 0.45 + 0.30 * follow_scale;
+        let max_lag_v = 0.5 + 0.45 * follow_scale;
+        let lag_h = Vec2::new(p_pos.x - f.x, p_pos.z - f.z);
+        let lag_len = lag_h.length();
+        if lag_len > max_lag_h {
+            let keep = lag_h * (max_lag_h / lag_len);
+            f.x = p_pos.x - keep.x;
+            f.z = p_pos.z - keep.y;
+        }
+        let lag_v = p_pos.y - f.y;
+        if lag_v.abs() > max_lag_v {
+            f.y = p_pos.y - lag_v.signum() * max_lag_v;
+        }
+        orbit.follow_pos = f;
+    }
+    orbit.last_player_pos = p_pos;
+    let follow = orbit.follow_pos;
+
     let anchor_y = if stats.driving_car.is_some() {
         1.95
     } else {
         0.55 + stats.player_scale * 0.92
     };
-    let anchor = p_tf.translation + Vec3::Y * anchor_y;
+    let anchor = follow + Vec3::Y * anchor_y;
     // Widen camera distance slightly on narrow portrait viewports (mobile) so Stan stays framed.
     let aspect_mul = if let Ok(win) = window_q.get_single() {
         let aspect = win.width() / win.height().max(1.0);
@@ -595,7 +901,7 @@ pub fn update_camera(
     } else {
         0.82 + stats.player_scale.sqrt() * 0.34
     };
-    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_tf.translation, stats.player_scale);
+    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_pos, stats.player_scale);
     let pub_s = crate::city::pub217_scale(stats.player_scale);
     let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
     // Clamp distance & pitch inside Pub 217 so the bar ceiling/walls don't occlude the player.
@@ -607,10 +913,13 @@ pub fn update_camera(
     } else {
         (2.2 + stats.player_scale * 0.45).min(desired_dist)
     };
-    let mut eff_pitch = (orbit.pitch + (orbit.distance - 10.6).max(0.0) * 0.008).clamp(0.15, 1.35);
+    // The boom never pitches below BOOM_PITCH_MIN; any further "look up" tilts the view instead.
+    let mut eff_pitch = (orbit.pitch.max(BOOM_PITCH_MIN) + (orbit.distance - 10.6).max(0.0) * 0.008)
+        .clamp(BOOM_PITCH_MIN, 1.35);
     if in_pub217 {
         eff_pitch = eff_pitch.clamp(0.14, 0.28);
     }
+    let look_up = (BOOM_PITCH_MIN - orbit.pitch).max(0.0);
     let dir = Vec3::new(
         orbit.yaw.sin() * eff_pitch.cos(),
         eff_pitch.sin(),
@@ -618,25 +927,27 @@ pub fn update_camera(
     )
     .normalize();
 
-    // Spring-arm ray-AABB sweep against tall structural wall/fridge occluders only
-    // (small props & low ledges never yank the camera close to the character; skipped for NYC Skyscraper Titan)
+    // Spring-arm ray-AABB sweep against large structural boxes (walls, fridge, buildings) that
+    // actually cross the anchor->camera line. Small props & low ledges are ignored so they never
+    // yank the camera in. Skipped for the NYC Skyscraper Titan, which looks over the city.
     let mut safe_dist = desired_dist;
     let sweep_pad = Vec3::splat(0.22);
-    let desired_cam_y = anchor.y + dir.y * desired_dist;
     if !(stats.in_city && stats.player_scale >= 8.0) {
         for (p_tf_box, p_box) in &platform_q {
             if !stats.in_city && p_tf_box.translation.z > 46.5 {
                 continue;
             }
-            let box_top = p_tf_box.translation.y + p_box.half_extents.y;
-            let is_tall_wall = p_box.half_extents.y >= 2.1
-                && (p_box.half_extents.x >= 2.5 || p_box.half_extents.z >= 2.5)
-                && box_top > desired_cam_y + 0.2;
-            if !is_tall_wall {
+            let is_structural = p_box.half_extents.y >= 2.1
+                && (p_box.half_extents.x >= 2.5 || p_box.half_extents.z >= 2.5);
+            if !is_structural {
                 continue;
             }
             let bmin = p_tf_box.translation - p_box.half_extents - sweep_pad;
             let bmax = p_tf_box.translation + p_box.half_extents + sweep_pad;
+            // The boom always rises from the anchor, so boxes entirely below it can't block it.
+            if bmax.y < anchor.y {
+                continue;
+            }
             if let Some((t_min, t_max)) = ray_aabb_t(anchor, dir, bmin, bmax) {
                 if t_max > 0.0 && t_min < safe_dist {
                     if t_min > 0.0 {
@@ -671,14 +982,13 @@ pub fn update_camera(
         }
     }
 
-    // Asymmetric distance smoothing along spherical arm (prevents chord corner clipping)
-    let dt = time.delta_secs().min(0.05);
-    let rate = if safe_dist < orbit.current_dist {
-        30.0
+    // Asymmetric, frame-rate independent boom smoothing: pull in fast when blocked, ease out slowly.
+    if snapping {
+        orbit.current_dist = safe_dist;
     } else {
-        7.0
-    };
-    orbit.current_dist += (safe_dist - orbit.current_dist) * (dt * rate).min(1.0);
+        let rate = if safe_dist < orbit.current_dist { 30.0 } else { 7.0 };
+        orbit.current_dist += (safe_dist - orbit.current_dist) * smooth_factor(rate, dt);
+    }
     orbit.current_dist = orbit.current_dist.clamp(min_cam_dist, desired_dist);
 
     let mut cam_pos = anchor + dir * orbit.current_dist;
@@ -689,64 +999,103 @@ pub fn update_camera(
         cam_pos.y = cam_pos.y.min(5.5 * pub_s);
     }
 
-    // 2-pass 3D camera sphere pushout around any solid geometry touched by the camera sphere
-    let cam_margin = Vec3::splat(0.38);
-    for _ in 0..2 {
-        for (p_tf_box, p_box) in &platform_q {
-            if !stats.in_city && p_tf_box.translation.z > 46.5 {
-                continue;
-            }
-            let top_y = p_tf_box.translation.y + p_box.half_extents.y;
-            let bmin = p_tf_box.translation - p_box.half_extents - cam_margin;
-            let bmax = p_tf_box.translation + p_box.half_extents + cam_margin;
-            if cam_pos.x > bmin.x
-                && cam_pos.x < bmax.x
-                && cam_pos.y > bmin.y
-                && cam_pos.y < bmax.y
-                && cam_pos.z > bmin.z
-                && cam_pos.z < bmax.z
-            {
-                let dx_l = cam_pos.x - bmin.x;
-                let dx_r = bmax.x - cam_pos.x;
-                let dy_b = cam_pos.y - bmin.y;
-                let dy_t = bmax.y - cam_pos.y;
-                let dz_b = cam_pos.z - bmin.z;
-                let dz_f = bmax.z - cam_pos.z;
-                let mut m = dx_l.min(dx_r).min(dy_t).min(dz_b).min(dz_f);
-                if anchor.y < top_y {
-                    m = m.min(dy_b);
+    // Camera-sphere push-out from any box it ends up inside. The correction is eased through
+    // `push_offset` instead of applied in one frame, and skipped entirely for the city kaiju
+    // (it would hop the camera onto skyscraper roofs; passing through is less jarring).
+    let mut push_target = Vec3::ZERO;
+    if !(stats.in_city && stats.player_scale >= 8.0) {
+        let mut pushed = cam_pos;
+        let cam_margin = Vec3::splat(0.38);
+        for _ in 0..2 {
+            for (p_tf_box, p_box) in &platform_q {
+                if !stats.in_city && p_tf_box.translation.z > 46.5 {
+                    continue;
                 }
-                if anchor.y >= top_y && dy_t <= m + 0.45 {
-                    cam_pos.y = bmax.y;
-                } else if (m - dy_t).abs() < 0.001 {
-                    cam_pos.y = bmax.y;
-                } else if (m - dy_b).abs() < 0.001 && anchor.y < top_y {
-                    cam_pos.y = bmin.y;
-                } else if (m - dx_l).abs() < 0.001 {
-                    cam_pos.x = bmin.x;
-                } else if (m - dx_r).abs() < 0.001 {
-                    cam_pos.x = bmax.x;
-                } else if (m - dz_b).abs() < 0.001 {
-                    cam_pos.z = bmin.z;
-                } else {
-                    cam_pos.z = bmax.z;
+                let top_y = p_tf_box.translation.y + p_box.half_extents.y;
+                let bmin = p_tf_box.translation - p_box.half_extents - cam_margin;
+                let bmax = p_tf_box.translation + p_box.half_extents + cam_margin;
+                if pushed.x > bmin.x
+                    && pushed.x < bmax.x
+                    && pushed.y > bmin.y
+                    && pushed.y < bmax.y
+                    && pushed.z > bmin.z
+                    && pushed.z < bmax.z
+                {
+                    let dx_l = pushed.x - bmin.x;
+                    let dx_r = bmax.x - pushed.x;
+                    let dy_b = pushed.y - bmin.y;
+                    let dy_t = bmax.y - pushed.y;
+                    let dz_b = pushed.z - bmin.z;
+                    let dz_f = bmax.z - pushed.z;
+                    let mut m = dx_l.min(dx_r).min(dy_t).min(dz_b).min(dz_f);
+                    if anchor.y < top_y {
+                        m = m.min(dy_b);
+                    }
+                    if anchor.y >= top_y && dy_t <= m + 0.45 {
+                        pushed.y = bmax.y;
+                    } else if (m - dy_t).abs() < 0.001 {
+                        pushed.y = bmax.y;
+                    } else if (m - dy_b).abs() < 0.001 && anchor.y < top_y {
+                        pushed.y = bmin.y;
+                    } else if (m - dx_l).abs() < 0.001 {
+                        pushed.x = bmin.x;
+                    } else if (m - dx_r).abs() < 0.001 {
+                        pushed.x = bmax.x;
+                    } else if (m - dz_b).abs() < 0.001 {
+                        pushed.z = bmin.z;
+                    } else {
+                        pushed.z = bmax.z;
+                    }
                 }
             }
         }
+        push_target = pushed - cam_pos;
     }
+    if snapping {
+        orbit.push_offset = push_target;
+    } else {
+        let k = smooth_factor(12.0, dt);
+        let delta = (push_target - orbit.push_offset) * k;
+        orbit.push_offset += delta;
+    }
+    cam_pos += orbit.push_offset;
 
     cam_pos = cam_pos.clamp(room_min, room_max);
 
     let zoom_ratio = (orbit.current_dist / desired_dist.max(0.01)).clamp(0.15, 1.0);
     let look_fwd = 1.0 * (0.45 + stats.player_scale.sqrt() * 0.22) * zoom_ratio;
-    let look_target = p_tf.translation
+    let mut look_target = follow
         + Vec3::new(0.0, anchor_y * 0.88, 0.0)
         - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * look_fwd;
+    // Looking up past the boom limit: raise the look target so the view tilts upward.
+    if look_up > 0.0 {
+        let horiz = Vec2::new(look_target.x - cam_pos.x, look_target.z - cam_pos.z).length();
+        look_target.y += horiz * (look_up * 0.7).tan();
+    }
+
+    // "Drunk" sway only while high in the city, eased in/out so it never pops.
+    let wobble_target = if stats.in_city && stats.high_timer > 0.0 {
+        (stats.high_timer / 3.0).min(1.0)
+    } else {
+        0.0
+    };
+    orbit.wobble_amp += (wobble_target - orbit.wobble_amp) * smooth_factor(1.6, dt);
+    if orbit.wobble_amp < 0.001 && wobble_target == 0.0 {
+        orbit.wobble_amp = 0.0;
+    }
+    let drunk_amp = orbit.wobble_amp;
+
+    // Small FOV kick while dashing.
+    let kick_target = if player.dash_timer > 0.0 { 0.06 } else { 0.0 };
+    let kick_rate = if kick_target > orbit.fov_kick { 18.0 } else { 6.0 };
+    orbit.fov_kick += (kick_target - orbit.fov_kick) * smooth_factor(kick_rate, dt);
+
     let mut final_cam_pos = cam_pos;
     let mut final_look = look_target;
-    if stats.in_city {
+    let mut roll = 0.0;
+    let mut fov = base_fov + orbit.fov_kick;
+    if drunk_amp > 0.0 {
         let t = time.elapsed_secs();
-        let drunk_amp = if stats.high_timer > 0.0 { 1.0 } else { 0.45 };
         final_cam_pos += Vec3::new(
             (t * 1.65).sin() * 0.28 * drunk_amp,
             (t * 2.35).cos() * 0.16 * drunk_amp,
@@ -757,18 +1106,58 @@ pub fn update_camera(
             (t * 1.9).sin() * 0.14 * drunk_amp,
             0.0,
         );
-        c_tf.translation = final_cam_pos;
-        c_tf.look_at(final_look, Vec3::Y);
-        c_tf.rotate_local_z((t * 1.35).sin() * 0.065 * drunk_amp);
-        if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = std::f32::consts::FRAC_PI_4 + (t * 2.05).sin() * 0.075 * drunk_amp;
+        roll = (t * 1.35).sin() * 0.065 * drunk_amp;
+        fov += (t * 2.05).sin() * 0.075 * drunk_amp;
+    }
+    let mut goal = Transform::from_translation(final_cam_pos);
+    goal.look_at(final_look, Vec3::Y);
+    if roll != 0.0 {
+        goal.rotate_local_z(roll);
+    }
+
+    // Impact shake: an explicit, quickly decaying intensity (hits, kaiju footsteps) turned into a
+    // small rotational jitter. Rotation only, so it reads the same at every camera distance.
+    if stats.shake_request > 0.0 {
+        orbit.shake = orbit.shake.max(stats.shake_request.min(1.0));
+        stats.shake_request = 0.0;
+    }
+    if orbit.shake > 0.0 {
+        let t = time.elapsed_secs();
+        let amp = orbit.shake * 0.03;
+        goal.rotate_local_x(((t * 41.0).sin() * 0.6 + (t * 67.0 + 1.3).sin() * 0.4) * amp);
+        goal.rotate_local_y(((t * 37.0 + 0.7).sin() * 0.6 + (t * 59.0 + 2.1).sin() * 0.4) * amp);
+        goal.rotate_local_z((t * 47.0 + 0.4).sin() * amp * 0.5);
+        orbit.shake *= (-7.0 * dt).exp();
+        if orbit.shake < 0.01 {
+            orbit.shake = 0.0;
         }
+    }
+
+    // Ease from the previous shot (e.g. a cutscene's last frame) into the follow pose.
+    if orbit.blend_request {
+        orbit.blend_request = false;
+        orbit.blend_t = 0.0;
+        orbit.blend_from_pos = c_tf.translation;
+        orbit.blend_from_rot = c_tf.rotation;
+        orbit.blend_from_fov = match *proj {
+            Projection::Perspective(ref p) => p.fov,
+            _ => base_fov,
+        };
+    }
+    orbit.snap_follow = false;
+    if orbit.blend_t < CAMERA_BLEND_SECS {
+        orbit.blend_t = (orbit.blend_t + dt).min(CAMERA_BLEND_SECS);
+        let x = orbit.blend_t / CAMERA_BLEND_SECS;
+        let s = x * x * (3.0 - 2.0 * x);
+        c_tf.translation = orbit.blend_from_pos.lerp(goal.translation, s);
+        c_tf.rotation = orbit.blend_from_rot.slerp(goal.rotation, s);
+        fov = orbit.blend_from_fov + (fov - orbit.blend_from_fov) * s;
     } else {
-        c_tf.translation = final_cam_pos;
-        c_tf.look_at(final_look, Vec3::Y);
-        if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = std::f32::consts::FRAC_PI_4;
-        }
+        c_tf.translation = goal.translation;
+        c_tf.rotation = goal.rotation;
+    }
+    if let Projection::Perspective(ref mut p) = *proj {
+        p.fov = fov;
     }
 }
 
@@ -778,7 +1167,7 @@ pub fn animate_and_collect_pickups(
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<State<GameState>>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     player_q: Query<(&Transform, &Player)>,
     mut tendy_q: Query<
         (Entity, &mut Transform, &TendyPickup),
@@ -818,15 +1207,22 @@ pub fn animate_and_collect_pickups(
         ),
     >,
 ) {
-    if keys.just_pressed(KeyCode::KeyK) {
+    // Debug scene skips (K = ending cutscene, B = boss, P = headphone cutscene) only with
+    // `?debug=1` in the URL. In the city, P is the real phone key (scooter.rs); that system
+    // doesn't run here.
+    let debug_keys = (keys.just_pressed(KeyCode::KeyK)
+        || keys.just_pressed(KeyCode::KeyB)
+        || keys.just_pressed(KeyCode::KeyP))
+        && crate::audio::debug_keys_enabled();
+    if debug_keys && keys.just_pressed(KeyCode::KeyK) {
         next_state.set(GameState::Cutscene);
         return;
     }
-    if keys.just_pressed(KeyCode::KeyB) {
+    if debug_keys && keys.just_pressed(KeyCode::KeyB) {
         next_state.set(GameState::BossFight);
         return;
     }
-    if keys.just_pressed(KeyCode::KeyP) {
+    if debug_keys && keys.just_pressed(KeyCode::KeyP) {
         if let Ok((p_tf, player)) = player_q.get_single() {
             stats.saved_apartment_pos = p_tf.translation;
             stats.saved_apartment_scale = stats.player_scale;
@@ -870,7 +1266,8 @@ pub fn animate_and_collect_pickups(
         if let Some(p_pos) = player_pos {
             let d = (p_pos + Vec3::Y * player_mid_y).distance(tf.translation);
             if d < pickup_r {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).remove::<TendyPickup>();
+                start_pickup_pop(&mut commands, entity, tf.scale);
                 stats.tendies += 1;
                 stats.score += 150;
                 crate::audio::play_sfx("tendy");
@@ -894,7 +1291,8 @@ pub fn animate_and_collect_pickups(
 
         if let Some(p_pos) = player_pos {
             if (p_pos + Vec3::Y * player_mid_y).distance(tf.translation) < pickup_r {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).remove::<PowerupPickup>();
+                start_pickup_pop(&mut commands, entity, tf.scale);
                 crate::audio::play_sfx("powerup");
                 match power.kind {
                     PowerupKind::HoneyMustard => stats.speed_boost_timer = 10.0,

@@ -310,7 +310,7 @@ pub fn update_city_derek(
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityDerek>>,
     mut derek_q: Query<(&mut Transform, &mut CityDerek), Without<Player>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut d_state: ResMut<DerekCutsceneState>,
 ) {
     let Ok((p_tf, player)) = player_q.get_single() else {
@@ -948,7 +948,7 @@ pub struct DerekVfxQueries<'w, 's> {
 pub fn update_derek_cutscene(
     time: Res<Time>,
     mut d_state: ResMut<DerekCutsceneState>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut actor_q: Query<(&mut Transform, &DerekCutsceneActor), Without<Camera3d>>,
     mut arm_q: Query<(&mut Transform, &DerekArmPivot), (Without<DerekCutsceneActor>, Without<Camera3d>)>,
     mut vfx: DerekVfxQueries,

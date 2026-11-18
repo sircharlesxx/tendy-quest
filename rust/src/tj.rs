@@ -261,7 +261,7 @@ pub fn update_city_tj(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     player_q: Query<(&Transform, &Player), Without<TjCityActor>>,
     mut tj_q: Query<(Entity, &mut Transform), With<TjCityActor>>,
     mut beacon_q: Query<(&mut Visibility, &mut Transform), (With<TjCityBeacon>, Without<TjCityActor>, Without<Player>)>,
@@ -897,7 +897,7 @@ pub fn enter_tj_cutscene(
 pub fn update_tj_cutscene(
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<&mut Transform, (With<Player>, Without<Camera3d>, Without<TjCutsceneActor>, Without<TjCrackFlash>)>,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<TjCutsceneActor>, Without<TjCrackFlash>)>,
     mut leg_q: Query<(&TjLegPivot, &mut Transform), (Without<Camera3d>, Without<Player>, Without<TjCrackFlash>)>,

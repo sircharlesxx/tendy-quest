@@ -60,6 +60,34 @@
         this.inCity = inCity;
       },
     };
+    // Loading screen handoff. The game boots behind its own black fade overlay and calls
+    // ready() once the hero + Level 1 scenes have loaded (or its timeout passes). The HTML
+    // loading screen then fades out (CSS opacity transition) instead of vanishing, and the game
+    // fades in from black underneath it. A fallback timer fades it anyway if ready() never comes.
+    window.tendyBoot = {
+      isReady: false,
+      hidden: false,
+      ready() {
+        this.isReady = true;
+        this.hide();
+      },
+      hide() {
+        if (this.hidden) return;
+        const el = document.getElementById("loading");
+        if (!el) return;
+        this.hidden = true;
+        el.style.pointerEvents = "none";
+        el.style.opacity = "0";
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          el.style.display = "none";
+        };
+        el.addEventListener("transitionend", finish, { once: true });
+        setTimeout(finish, 700);
+      },
+    };
     window.tendyAudio = (() => {
       const SFX_NAMES = [
         "jump", "double_jump", "dash", "tendy", "powerup",
@@ -138,17 +166,112 @@
       let headphoneTimer = null;
       let headphoneStep = 0;
 
+      // Music changes crossfade instead of hard-stopping: every procedural track plays through
+      // its own bus gain that ramps in over MUSIC_FADE_S; on a change the old bus ramps out while
+      // its sequencer keeps ticking into it, and is torn down once silent. The looped bgm/ambience
+      // buffers just ramp their gains. This removes the clicks from cutting oscillators mid-cycle.
+      const MUSIC_FADE_S = 0.3;
+      let musicBus = null;
+      let currentTrack = "";
+      let trackStartedMs = -1e9;
+
+      function rampGain(param, target, secs) {
+        if (!ctx || !param) return;
+        const now = ctx.currentTime;
+        try {
+          if (param.cancelAndHoldAtTime) {
+            param.cancelAndHoldAtTime(now);
+          } else {
+            const v = param.value;
+            param.cancelScheduledValues(now);
+            param.setValueAtTime(v, now);
+          }
+          param.linearRampToValueAtTime(target, now + secs);
+        } catch (_) {
+          try { param.setValueAtTime(target, now); } catch (_) {}
+        }
+      }
+
+      // Fresh fading-in output bus for the track being started; returns its input node.
+      function newMusicBus(ac) {
+        const bus = ac.createGain();
+        bus.gain.setValueAtTime(0.0, ac.currentTime);
+        bus.gain.linearRampToValueAtTime(1.0, ac.currentTime + MUSIC_FADE_S);
+        bus.connect(masterGain);
+        musicBus = bus;
+        return bus;
+      }
+
+      // Several systems can ask for the same track in one frame (e.g. a cutscene exit and the
+      // OnEnter of the state it returns to). Restarting it would just re-trigger the fade.
+      function isTrackRestart(name) {
+        const now = performance.now();
+        if (name === currentTrack && now - trackStartedMs < 250) return true;
+        currentTrack = name;
+        trackStartedMs = now;
+        return false;
+      }
+
       function stopSpecialAudio() {
         try {
-          if (bossTimer) { clearInterval(bossTimer); bossTimer = null; }
-          if (vikingTimer) { clearInterval(vikingTimer); vikingTimer = null; }
-          if (headphoneTimer) { clearInterval(headphoneTimer); headphoneTimer = null; }
-          if (droneOsc1) { droneOsc1.stop(); droneOsc1.disconnect(); droneOsc1 = null; }
-          if (droneOsc2) { droneOsc2.stop(); droneOsc2.disconnect(); droneOsc2 = null; }
-          if (droneGain) { droneGain.disconnect(); droneGain = null; }
-          if (ctx && bgmGain) bgmGain.gain.setValueAtTime(0.0, ctx.currentTime);
-          if (ctx && ambGain) ambGain.gain.setValueAtTime(0.0, ctx.currentTime);
+          const timers = [bossTimer, vikingTimer, headphoneTimer];
+          const oscs = [droneOsc1, droneOsc2];
+          const oldDrone = droneGain;
+          const oldBus = musicBus;
+          bossTimer = null;
+          vikingTimer = null;
+          headphoneTimer = null;
+          droneOsc1 = null;
+          droneOsc2 = null;
+          droneGain = null;
+          musicBus = null;
+          if (ctx) {
+            const end = ctx.currentTime + MUSIC_FADE_S + 0.05;
+            if (oldBus) rampGain(oldBus.gain, 0.0, MUSIC_FADE_S);
+            for (const o of oscs) {
+              if (o) { try { o.stop(end); } catch (_) {} }
+            }
+          }
+          setTimeout(() => {
+            for (const t of timers) { if (t) clearInterval(t); }
+            for (const o of oscs) { if (o) { try { o.disconnect(); } catch (_) {} } }
+            try { if (oldDrone) oldDrone.disconnect(); } catch (_) {}
+            try { if (oldBus) oldBus.disconnect(); } catch (_) {}
+          }, (MUSIC_FADE_S + 0.1) * 1000);
+          if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+          if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
         } catch (_) {}
+      }
+
+      // Short band-passed white-noise burst (snares, crunches, door thuds), shaped like the
+      // mkOsc envelopes: quick attack, exponential decay. Routes to the SFX master unless a
+      // destination bus is passed (music loops pass their own bus).
+      let sfxNoiseBuf = null;
+      function mkNoise(dur, gainPeak, freq, dest) {
+        const ac = ensureCtx();
+        if (!ac || !masterGain) return;
+        if (!sfxNoiseBuf || sfxNoiseBuf.sampleRate !== ac.sampleRate) {
+          const len = Math.floor(ac.sampleRate * 1.0);
+          sfxNoiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+          const d = sfxNoiseBuf.getChannelData(0);
+          for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        }
+        const now = ac.currentTime;
+        const src = ac.createBufferSource();
+        src.buffer = sfxNoiseBuf;
+        const bp = ac.createBiquadFilter();
+        bp.type = "bandpass";
+        bp.frequency.value = freq;
+        bp.Q.value = 0.9;
+        const g = ac.createGain();
+        g.gain.setValueAtTime(0.001, now);
+        g.gain.linearRampToValueAtTime(gainPeak, now + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.001, now + dur);
+        src.connect(bp);
+        bp.connect(g);
+        g.connect(dest || masterGain);
+        src.start(now);
+        src.stop(now + dur + 0.02);
       }
 
       function synthProcSfx(name) {
@@ -311,6 +434,7 @@
 
       return {
         playBgm() {
+          if (isTrackRestart("bgm")) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -318,12 +442,13 @@
           startLoops();
           try {
             const ac = ensureCtx();
-            if (ac && bgmGain) bgmGain.gain.setValueAtTime(0.42, ac.currentTime);
-            if (ac && ambGain) ambGain.gain.setValueAtTime(0.14, ac.currentTime);
+            if (ac && bgmGain) rampGain(bgmGain.gain, 0.42, MUSIC_FADE_S);
+            if (ac && ambGain) rampGain(ambGain.gain, 0.14, MUSIC_FADE_S);
             if (bgmSource) bgmSource.playbackRate.value = 1.0;
           } catch (_) {}
         },
         playCutsceneMusic() {
+          if (isTrackRestart("cutscene")) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -332,15 +457,16 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
-            if (ambGain) ambGain.gain.setValueAtTime(0.06, ac.currentTime);
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.06, MUSIC_FADE_S);
             const filter = ac.createBiquadFilter();
             filter.type = "lowpass";
             filter.frequency.value = 240;
             droneGain = ac.createGain();
             droneGain.gain.value = 0.22;
             filter.connect(droneGain);
-            droneGain.connect(masterGain);
+            droneGain.connect(out);
             droneOsc1 = ac.createOscillator();
             droneOsc1.type = "sawtooth";
             droneOsc1.frequency.value = 55;
@@ -354,6 +480,7 @@
           } catch (_) {}
         },
         playHeadphoneMusic(level = 1) {
+          if (isTrackRestart("headphone" + level)) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -362,10 +489,11 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
             const lv = Math.max(1, level | 0);
             const uzumaki = lv >= 2;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
-            if (ambGain) ambGain.gain.setValueAtTime(0.03, ac.currentTime);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.03, MUSIC_FADE_S);
             // Ominous D1 + G#1 tritone sub-drone (deepens & warps in Uzumaki 2nd+ trigger)
             const filter = ac.createBiquadFilter();
             filter.type = "lowpass";
@@ -373,7 +501,7 @@
             droneGain = ac.createGain();
             droneGain.gain.value = uzumaki ? 0.21 : 0.16;
             filter.connect(droneGain);
-            droneGain.connect(masterGain);
+            droneGain.connect(out);
             droneOsc1 = ac.createOscillator();
             droneOsc1.type = "triangle";
             droneOsc1.frequency.value = uzumaki ? 32.7 : 36.71;
@@ -405,7 +533,7 @@
                 tg.gain.setValueAtTime(uzumaki ? 0.34 : 0.28, now);
                 tg.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
                 thump.connect(tg);
-                tg.connect(masterGain);
+                tg.connect(out);
                 thump.start(now);
                 thump.stop(now + 0.20);
               }
@@ -424,7 +552,7 @@
               bg.gain.exponentialRampToValueAtTime(0.0008, now + 0.38);
               bell.connect(bg);
               shimmer.connect(bg);
-              bg.connect(masterGain);
+              bg.connect(out);
               bell.start(now);
               shimmer.start(now);
               bell.stop(now + 0.40);
@@ -443,7 +571,7 @@
                 sg.gain.linearRampToValueAtTime(0.055, now + 0.02);
                 sg.gain.exponentialRampToValueAtTime(0.0008, now + 0.17);
                 spiralOsc.connect(sg);
-                sg.connect(masterGain);
+                sg.connect(out);
                 spiralOsc.start(now);
                 spiralOsc.stop(now + 0.18);
               }
@@ -458,7 +586,7 @@
                 tk.gain.setValueAtTime(0.045, now);
                 tk.gain.exponentialRampToValueAtTime(0.0008, now + 0.10);
                 tick.connect(tk);
-                tk.connect(masterGain);
+                tk.connect(out);
                 tick.start(now);
                 tick.stop(now + 0.11);
               }
@@ -466,6 +594,7 @@
           } catch (_) {}
         },
         playBossMusic() {
+          if (isTrackRestart("boss")) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -474,8 +603,9 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
-            if (ambGain) ambGain.gain.setValueAtTime(0.0, ac.currentTime);
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
             // Epic 150 BPM Chicken-Tendy boss riff + driving synth drums
             const notes = [146.83, 174.61, 220.0, 261.63, 293.66, 261.63, 220.0, 174.61];
             const bass = [73.42, 73.42, 87.31, 87.31, 98.0, 98.0, 110.0, 82.41];
@@ -495,7 +625,7 @@
                 kg.gain.setValueAtTime(0.32, now);
                 kg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
                 ko.connect(kg);
-                kg.connect(masterGain);
+                kg.connect(out);
                 ko.start(now);
                 ko.stop(now + 0.15);
               }
@@ -507,7 +637,7 @@
               lGain.gain.setValueAtTime(0.09, now);
               lGain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
               lOsc.connect(lGain);
-              lGain.connect(masterGain);
+              lGain.connect(out);
               lOsc.start(now);
               lOsc.stop(now + 0.17);
               // Driving bass pulse
@@ -519,7 +649,7 @@
                 bGain.gain.setValueAtTime(0.11, now);
                 bGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
                 bOsc.connect(bGain);
-                bGain.connect(masterGain);
+                bGain.connect(out);
                 bOsc.start(now);
                 bOsc.stop(now + 0.19);
               }
@@ -527,6 +657,7 @@
           } catch (_) {}
         },
         playVikingChantMusic() {
+          if (isTrackRestart("viking")) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -535,13 +666,14 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
-            if (bgmGain) bgmGain.gain.setValueAtTime(0.0, ac.currentTime);
-            if (ambGain) ambGain.gain.setValueAtTime(0.0, ac.currentTime);
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
 
             // Deep D1/A1 symphonic sub-drone pad
             droneGain = ac.createGain();
             droneGain.gain.setValueAtTime(0.055, ac.currentTime);
-            droneGain.connect(masterGain);
+            droneGain.connect(out);
             droneOsc1 = ac.createOscillator();
             droneOsc1.type = "sawtooth";
             droneOsc1.frequency.value = 36.71; // D1
@@ -579,7 +711,7 @@
             riffBus.gain.value = 0.24;
             shaper.connect(cabLp);
             cabLp.connect(riffBus);
-            riffBus.connect(masterGain);
+            riffBus.connect(out);
 
             // 64-step (4-bar @ 142 BPM, 16th note = 105.6ms) D Phrygian Dominant Boss Progression
             // Bass/Riff roots per 8th note (32 entries = 4 bars)
@@ -631,7 +763,7 @@
                 kg.gain.setValueAtTime(0.36, now);
                 kg.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
                 ko.connect(kg);
-                kg.connect(masterGain);
+                kg.connect(out);
                 ko.start(now);
                 ko.stop(now + 0.14);
               }
@@ -649,7 +781,7 @@
                 sg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
                 ns.connect(sbp);
                 sbp.connect(sg);
-                sg.connect(masterGain);
+                sg.connect(out);
                 ns.start(now);
                 ns.stop(now + 0.15);
 
@@ -661,7 +793,7 @@
                 sbg.gain.setValueAtTime(0.18, now);
                 sbg.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
                 sb.connect(sbg);
-                sbg.connect(masterGain);
+                sbg.connect(out);
                 sb.start(now);
                 sb.stop(now + 0.09);
               }
@@ -679,7 +811,7 @@
                 hg.gain.exponentialRampToValueAtTime(0.001, now + (isCrash ? 0.34 : 0.045));
                 hs.connect(hhp);
                 hhp.connect(hg);
-                hg.connect(masterGain);
+                hg.connect(out);
                 hs.start(now);
                 hs.stop(now + (isCrash ? 0.35 : 0.05));
               }
@@ -715,7 +847,7 @@
                 lg.gain.linearRampToValueAtTime(bar >= 2 ? 0.13 : 0.095, now + 0.02);
                 lg.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
                 bpf.connect(lg);
-                lg.connect(masterGain);
+                lg.connect(out);
                 for (const det of [0.995, 1.0, 1.006]) {
                   const lo = ac.createOscillator();
                   lo.type = "sawtooth";
@@ -740,6 +872,7 @@
           } catch (_) {}
         },
         playHackingMusic() {
+          if (isTrackRestart("hacking")) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -748,6 +881,7 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
             let hackStep = 0;
             const arp = [220, 261.63, 329.63, 392, 440, 392, 329.63, 523.25, 293.66, 349.23, 440, 523.25, 587.33, 440, 392, 329.63];
             const bass = [55, 55, 65.41, 65.41, 73.42, 73.42, 65.41, 82.41];
@@ -765,7 +899,7 @@
               ag.gain.setValueAtTime(0.085, now);
               ag.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
               ao.connect(ag);
-              ag.connect(masterGain);
+              ag.connect(out);
               ao.start(now);
               ao.stop(now + 0.10);
 
@@ -778,7 +912,7 @@
                 bg.gain.setValueAtTime(0.18, now);
                 bg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
                 bo.connect(bg);
-                bg.connect(masterGain);
+                bg.connect(out);
                 bo.start(now);
                 bo.stop(now + 0.15);
               }
@@ -793,7 +927,7 @@
                 cg.gain.setValueAtTime(0.06, now);
                 cg.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
                 co.connect(cg);
-                cg.connect(masterGain);
+                cg.connect(out);
                 co.start(now);
                 co.stop(now + 0.055);
               }
@@ -801,6 +935,7 @@
           } catch (_) {}
         },
         playScooterMusic() {
+          if (isTrackRestart("scooter")) return;
           stopSpecialAudio();
           bgmRequested = true;
           preloadAll();
@@ -809,6 +944,7 @@
           try {
             const ac = ensureCtx();
             if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
             let scStep = 0;
             const bassLine = [82.41, 82.41, 98.0, 110.0, 82.41, 82.41, 123.47, 110.0];
             const leadRiff = [329.63, 392.0, 493.88, 659.25, 587.33, 493.88, 392.0, 440.0];
@@ -828,13 +964,13 @@
                 kg.gain.setValueAtTime(0.30, now);
                 kg.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
                 ko.connect(kg);
-                kg.connect(masterGain);
+                kg.connect(out);
                 ko.start(now);
                 ko.stop(now + 0.16);
               }
               // Snappy electro snare on 4, 12
               if (s % 8 === 4) {
-                mkNoise(0.09, 0.14, 2400);
+                mkNoise(0.09, 0.14, 2400, out);
               }
               // Driving outrun sawtooth bass
               const bo = ac.createOscillator();
@@ -844,7 +980,7 @@
               bg.gain.setValueAtTime(0.11, now);
               bg.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
               bo.connect(bg);
-              bg.connect(masterGain);
+              bg.connect(out);
               bo.start(now);
               bo.stop(now + 0.095);
 
@@ -857,7 +993,7 @@
                 lg.gain.setValueAtTime(0.075, now);
                 lg.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
                 lo.connect(lg);
-                lg.connect(masterGain);
+                lg.connect(out);
                 lo.start(now);
                 lo.stop(now + 0.17);
               }
@@ -1456,7 +1592,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-ea75421d1bc4de28.js" crossorigin="anonymous" integrity="sha384-5az3MxJfuTP5cIDeC5rAhiZ1Abcuyq7eDalH2z94Kx0D4Jzctunen7KXWy/YcIKS"><link rel="preload" href="./tendy-quest-ea75421d1bc4de28_bg.wasm" crossorigin="anonymous" integrity="sha384-IXbA+2AlHL1nUtojfNUrVjMZdkByWbtwfvKG5+7pSVKdH8n3vD8LrBf6IHU8IyF8" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-2f3a910eb96f9b24.js" crossorigin="anonymous" integrity="sha384-pzGOCRCCJbjFLfZynvyLwXRh3zMLvEjqDn/BUrWIdycGKS3wa2AJmWN7smGpzCAc"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-9eb00d7af34f7656_bg.wasm" crossorigin="anonymous" integrity="sha384-sguYa64Q6GDTm0gSv9S8coVps8YEZ9r4Gu/qV5b5jyJUc1w/eGyv06SuX97UwvXE" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -1945,6 +2081,7 @@
         if (s.includes("tj=1") || s.includes("tj_cutscene=1")) return 9;
         return 0;
       })();
+      const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);
       let pendingCutsceneTime = (() => {
         try {
           const m = window.location.search.match(/[?&]cutscene_t=([0-9]+(?:\.[0-9]+)?)/);
@@ -2013,7 +2150,9 @@
       };
       function pollGamepad() {
         const now = performance.now();
-        if (now - gpLastPoll < 8) return;
+        // Dedupe the several polls made within one Bevy frame (moveX/moveY/takeLook*), but never
+        // skip a whole frame: look input is integrated by dtMs, so high refresh rates stay smooth.
+        if (now - gpLastPoll < 1) return;
         const dtMs = gpLastPoll ? Math.min(50, now - gpLastPoll) : 16;
         gpLastPoll = now;
         gpX = 0.0;
@@ -2035,8 +2174,22 @@
         gpX = Math.max(-1.0, Math.min(1.0, lx));
         gpY = Math.max(-1.0, Math.min(1.0, ly));
 
-        const rx = dz(pad.axes[2] || 0);
-        const ry = dz(pad.axes[3] || 0);
+        // Right stick: radial deadzone (no snapping to axes) with a mild response curve
+        // for fine aiming near centre and full speed at the rim.
+        let rx = 0.0;
+        let ry = 0.0;
+        {
+          const ax = pad.axes[2] || 0;
+          const ay = pad.axes[3] || 0;
+          const mag = Math.hypot(ax, ay);
+          const lookDz = 0.16;
+          if (mag > lookDz) {
+            const n = Math.min(1.0, (mag - lookDz) / (1.0 - lookDz));
+            const curved = Math.pow(n, 1.5);
+            rx = (ax / mag) * curved;
+            ry = (ay / mag) * curved;
+          }
+        }
         if (rx !== 0.0 || ry !== 0.0) {
           const scale = (dtMs / 16.0) * 9.5;
           lookDX += rx * scale;
@@ -2082,26 +2235,32 @@
         setUzumakiMode,
         setTutorialVisible,
         initMode() { const m = pendingInitMode; pendingInitMode = 0; return m; },
+        // Debug scene-skip keys (K / B / P) are only live with ?debug=1 in the URL.
+        debugKeys() { return debugKeysEnabled; },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
       };
     })();
   </script>
   <script>
-    // Hide loading overlay once Bevy starts rendering frames
+    // Fade the loading overlay once the game reports its startup scenes loaded
+    // (window.tendyBoot.ready). If the canvas is up but ready() never arrives, fade anyway.
     const observer = new MutationObserver(() => {
       const c = document.querySelector("canvas");
       if (c && c.width > 0) {
-        const el = document.getElementById("loading");
-        if (el) el.style.display = "none";
         observer.disconnect();
+        if (window.tendyBoot.isReady) {
+          window.tendyBoot.hide();
+        } else {
+          setTimeout(() => window.tendyBoot.hide(), 10000);
+        }
       }
     });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-ea75421d1bc4de28.js';
-const wasm = await init({ module_or_path: './tendy-quest-ea75421d1bc4de28_bg.wasm' });
+import init, * as bindings from './tendy-quest-2f3a910eb96f9b24.js';
+const wasm = await init({ module_or_path: './tendy-quest-9eb00d7af34f7656_bg.wasm' });
 
 
 window.wasmBindings = bindings;

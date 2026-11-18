@@ -311,7 +311,7 @@ pub fn update_city_nate(
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityNate>>,
     mut nate_q: Query<(&mut Transform, &mut CityNate), Without<Player>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut n_state: ResMut<NateCutsceneState>,
 ) {
     let Ok((p_tf, player)) = player_q.get_single() else {
@@ -613,7 +613,7 @@ pub fn enter_nate_cutscene(
 pub fn update_nate_cutscene(
     time: Res<Time>,
     mut n_state: ResMut<NateCutsceneState>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut actor_q: Query<(&mut Transform, &NateCutsceneActor), Without<Camera3d>>,
     mut arm_q: Query<(&mut Transform, &NateArmPivot), (Without<NateCutsceneActor>, Without<Camera3d>)>,
     mut leg_q: Query<(&mut Transform, &NateLegPivot), (Without<NateCutsceneActor>, Without<NateArmPivot>, Without<Camera3d>)>,

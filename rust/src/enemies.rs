@@ -34,6 +34,19 @@ pub struct Enemy {
     pub hit_cooldown: f32,
 }
 
+/// Seconds since spawn; enemies grow in from nothing over `SPAWN_GROW_SECS` instead of popping in.
+#[derive(Component)]
+pub struct SpawnGrow(pub f32);
+
+const SPAWN_GROW_SECS: f32 = 0.4;
+
+/// Ease-out-back 0 -> 1 with a slight overshoot, so the grow-in lands with a little bounce.
+fn spawn_grow_scale(t: f32) -> f32 {
+    let x = (t / SPAWN_GROW_SECS).clamp(0.0, 1.0) - 1.0;
+    let c = 1.6;
+    1.0 + (c + 1.0) * x * x * x + c * x * x
+}
+
 #[derive(Component)]
 pub struct FiberPuddle {
     pub lifetime: f32,
@@ -95,6 +108,7 @@ pub fn spawn_enemy_at(commands: &mut Commands, asset_server: &AssetServer, kind:
             hp: 2,
             hit_cooldown: 0.0,
         },
+        SpawnGrow(0.0),
     ));
 }
 
@@ -105,14 +119,14 @@ pub fn update_enemies(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut wave_timer: ResMut<WaveTimer>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut enemy_q: Query<(&mut Transform, &mut Enemy), Without<Player>>,
     mut puddle_q: Query<(Entity, &Transform, &mut FiberPuddle), (Without<Player>, Without<Enemy>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
-    let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
+    let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
         return;
     };
 
@@ -284,16 +298,18 @@ pub fn update_enemies(
                 player.invuln_timer = 0.25;
                 stats.score += 250;
                 crate::audio::play_sfx("shield");
+                stats.shake_request = stats.shake_request.max(0.2);
             } else if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
                 player.invuln_timer = 0.8;
                 enemy.knockback = -flat_to_player.normalize_or_zero() * 12.0;
                 crate::audio::play_sfx("shield");
+                stats.shake_request = stats.shake_request.max(0.25);
             } else {
                 stats.hearts -= 1;
                 player.invuln_timer = 1.2;
-                let push = flat_to_player.normalize_or_zero() * 8.0;
-                p_tf.translation += push * 0.25;
+                // Same 2-unit shove as before, delivered as a decaying knockback impulse.
+                crate::player::hit_reaction(&mut player, &mut stats, flat_to_player, 2.0, true);
                 enemy.knockback = -flat_to_player.normalize_or_zero() * 14.0;
                 player.velocity.y = 5.0;
                 crate::audio::play_sfx("hit");
@@ -329,7 +345,7 @@ pub fn update_enemies(
 
 pub fn animate_enemies(
     time: Res<Time>,
-    mut enemy_q: Query<(&Enemy, &mut Transform, Option<&Children>)>,
+    mut enemy_q: Query<(&Enemy, &mut Transform, Option<&Children>, Option<&mut SpawnGrow>)>,
     children_q: Query<&Children>,
     mut part_q: Query<(&Name, &mut Transform), Without<Enemy>>,
 ) {
@@ -337,10 +353,23 @@ pub fn animate_enemies(
     let t = time.elapsed_secs();
     let blend = (dt * 14.0).min(1.0);
 
-    for (enemy, mut e_tf, maybe_children) in &mut enemy_q {
+    for (enemy, mut e_tf, maybe_children, grow) in &mut enemy_q {
+        // Wave spawns grow in; once done the root scale is left at 1 (slimes set their own).
+        let grow_s = match grow {
+            Some(mut g) if g.0 < SPAWN_GROW_SECS => {
+                g.0 += dt;
+                let s = spawn_grow_scale(g.0).max(0.001);
+                if enemy.kind != EnemyKind::KaleSlime {
+                    e_tf.scale = Vec3::splat(s);
+                }
+                s
+            }
+            _ => 1.0,
+        };
         if enemy.kind == EnemyKind::KaleSlime {
             let pulse = (t * 4.5 + enemy.angle).sin();
-            e_tf.scale = Vec3::new(1.0 + pulse * 0.14, 1.0 - pulse * 0.16, 1.0 + pulse * 0.14);
+            e_tf.scale =
+                Vec3::new(1.0 + pulse * 0.14, 1.0 - pulse * 0.16, 1.0 + pulse * 0.14) * grow_s;
             continue;
         }
 

@@ -499,12 +499,14 @@ pub fn setup_lighting_and_camera(mut commands: Commands) {
                 ..default()
             },
             Transform::from_xyz(x, 11.5, z),
+            crate::gfx::KitchenLight,
         ));
     }
 
     // 3rd-person follow camera positioned behind Starter Breakfast Island
     commands.spawn((
         Camera3d::default(),
+        crate::gfx::camera_components(),
         Transform::from_xyz(0.0, 2.5, 36.5).looking_at(Vec3::new(0.0, 0.7, 29.0), Vec3::Y),
     ));
 }

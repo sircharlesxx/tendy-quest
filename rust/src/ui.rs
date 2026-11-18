@@ -181,6 +181,94 @@ pub fn spawn_hud(mut commands: Commands) {
         });
 }
 
+#[derive(Component)]
+pub struct HurtFlashRoot;
+
+/// One ring of the red damage vignette; `weight` scales the shared flash alpha for this ring.
+#[derive(Component)]
+pub struct HurtFlashRing {
+    pub weight: f32,
+}
+
+/// Red screen-edge flash on taking damage: three nested border rings (strongest at the very
+/// edge) since Bevy UI has no gradients. Sits above the HUD but below the help card and the
+/// scene-fade overlay, and never takes pointer focus.
+pub fn spawn_hurt_flash_overlay(mut commands: Commands) {
+    let rings = [(2.2_f32, 0.85_f32), (2.6, 0.45), (3.2, 0.2)];
+    let ring_node = |w: f32| Node {
+        width: Val::Percent(100.0),
+        height: Val::Percent(100.0),
+        border: UiRect::all(Val::VMin(w)),
+        ..default()
+    };
+    commands
+        .spawn((
+            HurtFlashRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                top: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
+            GlobalZIndex(900),
+            bevy::ui::FocusPolicy::Pass,
+            Visibility::Hidden,
+        ))
+        .with_children(|p| {
+            p.spawn((
+                ring_node(rings[0].0),
+                BorderColor(Color::NONE),
+                HurtFlashRing { weight: rings[0].1 },
+                bevy::ui::FocusPolicy::Pass,
+            ))
+            .with_children(|p| {
+                p.spawn((
+                    ring_node(rings[1].0),
+                    BorderColor(Color::NONE),
+                    HurtFlashRing { weight: rings[1].1 },
+                    bevy::ui::FocusPolicy::Pass,
+                ))
+                .with_children(|p| {
+                    p.spawn((
+                        ring_node(rings[2].0),
+                        BorderColor(Color::NONE),
+                        HurtFlashRing { weight: rings[2].1 },
+                        bevy::ui::FocusPolicy::Pass,
+                    ));
+                });
+            });
+        });
+}
+
+/// Decays `PlayerStats::hurt_flash` (real time, so a help pause can't freeze it on screen) and
+/// drives the vignette rings from it.
+pub fn update_hurt_flash(
+    real: Res<Time<Real>>,
+    mut stats: ResMut<PlayerStats>,
+    mut root_q: Query<&mut Visibility, (With<HurtFlashRoot>, Without<HurtFlashRing>)>,
+    mut ring_q: Query<(&HurtFlashRing, &mut BorderColor)>,
+) {
+    let dt = real.delta_secs().min(0.05);
+    if stats.hurt_flash > 0.0 {
+        stats.hurt_flash = (stats.hurt_flash - dt / 0.35).max(0.0);
+    }
+    let a = stats.hurt_flash * stats.hurt_flash;
+    let want = if a > 0.001 { Visibility::Inherited } else { Visibility::Hidden };
+    for mut vis in &mut root_q {
+        if *vis != want {
+            *vis = want;
+        }
+    }
+    if want == Visibility::Hidden {
+        return;
+    }
+    for (ring, mut border) in &mut ring_q {
+        border.0 = Color::srgba(0.85, 0.02, 0.04, a * ring.weight);
+    }
+}
+
 pub fn update_hud(
     stats: Res<PlayerStats>,
     state: Res<State<GameState>>,
@@ -287,25 +375,35 @@ pub fn update_hud(
 }
 
 pub fn spawn_tutorial_overlay(mut commands: Commands) {
+    spawn_tutorial_card(&mut commands, false);
+}
+
+/// Shared by the start-of-game Tutorial state and the in-game help pause overlay
+/// (`as_help` swaps the start/continue buttons for a single RESUME button).
+fn spawn_tutorial_card(commands: &mut Commands, as_help: bool) {
     crate::audio::set_tutorial_visible(true);
-    commands
-        .spawn((
-            TutorialOverlay,
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                padding: UiRect {
-                    top: Val::Px(58.0),
-                    bottom: Val::Px(14.0),
-                    left: Val::Px(10.0),
-                    right: Val::Px(10.0),
-                },
-                ..default()
+    let mut root = commands.spawn((
+        TutorialOverlay,
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            padding: UiRect {
+                top: Val::Px(58.0),
+                bottom: Val::Px(14.0),
+                left: Val::Px(10.0),
+                right: Val::Px(10.0),
             },
-            BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.28)),
-        ))
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.05, 0.03, 0.02, if as_help { 0.55 } else { 0.28 })),
+    ));
+    if as_help {
+        // Draw over the city boss bar / minimap, which are spawned later than the HUD.
+        root.insert((HelpOverlay, GlobalZIndex(1000)));
+    }
+    root
         .with_children(|root| {
             root.spawn((
                 TutorialCard,
@@ -370,7 +468,11 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 .with_children(|btn| {
                     btn.spawn((
                         TutorialBtnText,
-                        Text::new("START QUEST (SPACE / TAP)"),
+                        Text::new(if as_help {
+                            "RESUME (SPACE / H / TAP)"
+                        } else {
+                            "START QUEST (SPACE / TAP)"
+                        }),
                         TextFont {
                             font_size: 16.5,
                             ..default()
@@ -382,7 +484,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                 let mom_defeated = crate::audio::has_defeated_mom()
                     || saved.split('|').next() == Some("city");
                 let saved_stage = saved.split('|').next().unwrap_or("");
-                if mom_defeated || saved_stage == "boss" {
+                if !as_help && (mom_defeated || saved_stage == "boss") {
                     let label = if mom_defeated {
                         "SKIP TO CEDAR RAPIDS [C] (MOM DEFEATED!)"
                     } else {
@@ -527,20 +629,20 @@ pub fn adapt_ui_to_viewport(
 
 pub fn check_url_test_mode(
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
 ) {
     match crate::audio::init_test_mode() {
-        1 => next_state.set(GameState::Cutscene),
-        2 => next_state.set(GameState::BossFight),
-        3 => next_state.set(GameState::MomVictoryCutscene),
-        4 => next_state.set(GameState::CityIntroCutscene),
+        1 => next_state.set_from_black(GameState::Cutscene),
+        2 => next_state.set_from_black(GameState::BossFight),
+        3 => next_state.set_from_black(GameState::MomVictoryCutscene),
+        4 => next_state.set_from_black(GameState::CityIntroCutscene),
         5 => {
             stats.in_city = true;
             stats.tendies = 0;
             stats.total_tendies = 50;
             stats.player_scale = 1.8;
             stats.wave = 4;
-            next_state.set(GameState::CityPlay);
+            next_state.set_from_black(GameState::CityPlay);
         }
         6 => {
             stats.in_city = true;
@@ -548,19 +650,19 @@ pub fn check_url_test_mode(
             stats.total_tendies = 50;
             stats.player_scale = 18.0;
             stats.wave = 4;
-            next_state.set(GameState::CityPlay);
+            next_state.set_from_black(GameState::CityPlay);
         }
-        7 => next_state.set(GameState::HeadphoneCutscene),
+        7 => next_state.set_from_black(GameState::HeadphoneCutscene),
         8 => {
             stats.rage_level = 1;
-            next_state.set(GameState::HeadphoneCutscene);
+            next_state.set_from_black(GameState::HeadphoneCutscene);
         }
         9 => {
             stats.in_city = true;
             stats.tendies = 0;
             stats.total_tendies = 50;
             stats.wave = 4;
-            next_state.set(GameState::TjCutscene);
+            next_state.set_from_black(GameState::TjCutscene);
         }
         _ => {}
     }
@@ -570,15 +672,16 @@ pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
     mut stats: ResMut<PlayerStats>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     cont_q: Query<&Interaction, (Changed<Interaction>, With<ContinueButton>)>,
 ) {
-    if keys.just_pressed(KeyCode::KeyK) {
+    // Debug scene skips, only with `?debug=1` in the URL.
+    if keys.just_pressed(KeyCode::KeyK) && crate::audio::debug_keys_enabled() {
         next_state.set(GameState::Cutscene);
         return;
     }
-    if keys.just_pressed(KeyCode::KeyB) {
+    if keys.just_pressed(KeyCode::KeyB) && crate::audio::debug_keys_enabled() {
         next_state.set(GameState::BossFight);
         return;
     }
@@ -638,12 +741,101 @@ pub fn toggle_audio_hotkey(keys: Res<ButtonInput<KeyCode>>, mut stats: ResMut<Pl
     }
 }
 
-pub fn toggle_tutorial_hotkey(
+/// Marks the in-game help card (a pause overlay, not a `GameState`).
+#[derive(Component)]
+pub struct HelpOverlay;
+
+/// In-game help pause. Opening help no longer leaves the gameplay state (which used to re-run
+/// `OnEnter` on dismiss: the Mom fight reset her HP, and CityPlay jumped to `BossFight`); instead
+/// gameplay systems are gated off by [`gameplay_running`] and `Time<Virtual>` is paused, so
+/// everything resumes exactly where it was.
+#[derive(Resource, Default)]
+pub struct HelpPause {
+    pub open: bool,
+    /// Set on the frame help closes so the dismiss key (Space/Enter/tap) isn't also read as a
+    /// jump by gameplay systems later in that frame. Cleared in `PostUpdate`.
+    resume_grace: bool,
+}
+
+/// Run condition for gameplay-state Update sets: no transition pending and help not open.
+pub fn gameplay_running(fade: Res<crate::transition::SceneFade>, help: Res<HelpPause>) -> bool {
+    !fade.is_pending() && !help.open && !help.resume_grace
+}
+
+pub fn clear_help_resume_grace(mut help: ResMut<HelpPause>) {
+    if help.resume_grace {
+        help.resume_grace = false;
+    }
+}
+
+/// H / touch HELP opens the help card in Playing, BossFight and CityPlay; H, Space, Enter, Esc,
+/// a tap or the RESUME button closes it.
+pub fn toggle_help_overlay(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    touches: Res<Touches>,
+    mut help: ResMut<HelpPause>,
+    mut virtual_time: ResMut<Time<Virtual>>,
+    mut window_q: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
+    btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
+    overlay_q: Query<Entity, With<HelpOverlay>>,
 ) {
-    if keys.just_pressed(KeyCode::KeyH) || crate::audio::take_touch_help() {
-        next_state.set(GameState::Tutorial);
+    if !help.open {
+        if keys.just_pressed(KeyCode::KeyH) || crate::audio::take_touch_help() {
+            help.open = true;
+            virtual_time.pause();
+            spawn_tutorial_card(&mut commands, true);
+            // Free the mouse so the RESUME button can be clicked.
+            if let Ok(mut window) = window_q.get_single_mut() {
+                window.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
+                window.cursor_options.visible = true;
+            }
+            crate::audio::set_touch_playing(false);
+        }
+        return;
+    }
+    let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
+    if clicked
+        || keys.just_pressed(KeyCode::KeyH)
+        || keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::Enter)
+        || keys.just_pressed(KeyCode::Escape)
+        || touches.any_just_pressed()
+        || crate::audio::take_touch_help()
+        || crate::audio::take_touch_action_tap()
+        || crate::audio::take_touch_jump()
+    {
+        close_help(&mut commands, &mut help, &mut virtual_time, &overlay_q);
+        help.resume_grace = true;
+        crate::audio::set_touch_playing(true);
+    }
+}
+
+/// OnExit of the gameplay states: never leave the game paused or the card up.
+pub fn close_help_overlay(
+    mut commands: Commands,
+    mut help: ResMut<HelpPause>,
+    mut virtual_time: ResMut<Time<Virtual>>,
+    overlay_q: Query<Entity, With<HelpOverlay>>,
+) {
+    close_help(&mut commands, &mut help, &mut virtual_time, &overlay_q);
+}
+
+fn close_help(
+    commands: &mut Commands,
+    help: &mut HelpPause,
+    virtual_time: &mut Time<Virtual>,
+    overlay_q: &Query<Entity, With<HelpOverlay>>,
+) {
+    if help.open {
+        crate::audio::set_tutorial_visible(false);
+    }
+    help.open = false;
+    if virtual_time.is_paused() {
+        virtual_time.unpause();
+    }
+    for e in overlay_q {
+        commands.entity(e).despawn_recursive();
     }
 }
 
@@ -792,34 +984,86 @@ fn spawn_end_card(
         });
 }
 
+/// GameOver / StageClear input: after a short lockout (so a jump/attack held at the moment of
+/// death can't skip the card) request a fade back into play. The actual world reset happens in
+/// `OnExit` (see [`restart_world_after_game_over`]) while the screen is fully black.
 pub fn handle_restart_input(
-    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
+    stats: Res<PlayerStats>,
+    state: Res<State<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
+    btn_q: Query<&Interaction, (Changed<Interaction>, With<RestartButton>)>,
+) {
+    let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
+    // Always drain queued touch taps so a tap during the lockout doesn't fire afterwards.
+    let tapped = crate::audio::take_touch_action_tap();
+    let jumped = crate::audio::take_touch_jump();
+    if !next_state.input_unlocked(crate::transition::RESTART_LOCKOUT_SECS) {
+        return;
+    }
+    if !(clicked
+        || keys.just_pressed(KeyCode::KeyR)
+        || keys.just_pressed(KeyCode::Space)
+        || touches.any_just_pressed()
+        || tapped
+        || jumped)
+    {
+        return;
+    }
+    let retry_city = *state.get() == GameState::GameOver && stats.in_city;
+    next_state.set(if retry_city {
+        GameState::CityPlay
+    } else {
+        GameState::Playing
+    });
+}
+
+/// OnExit(GameOver): reset while black. Retrying in the city respawns only the hero.
+pub fn restart_world_after_game_over(
+    commands: Commands,
+    asset_server: Res<AssetServer>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<StandardMaterial>>,
+    stats: ResMut<PlayerStats>,
+    orbit: ResMut<CameraOrbit>,
+    level_q: Query<Entity, With<LevelEntity>>,
+    end_q: Query<Entity, With<EndOverlay>>,
+) {
+    let retry_city = stats.in_city;
+    reset_world_for_restart(
+        retry_city, commands, asset_server, meshes, materials, stats, orbit, level_q, end_q,
+    );
+}
+
+/// OnExit(StageClear): "play again" always restarts Level 1.
+pub fn restart_world_after_stage_clear(
+    commands: Commands,
+    asset_server: Res<AssetServer>,
+    meshes: ResMut<Assets<Mesh>>,
+    materials: ResMut<Assets<StandardMaterial>>,
+    stats: ResMut<PlayerStats>,
+    orbit: ResMut<CameraOrbit>,
+    level_q: Query<Entity, With<LevelEntity>>,
+    end_q: Query<Entity, With<EndOverlay>>,
+) {
+    reset_world_for_restart(
+        false, commands, asset_server, meshes, materials, stats, orbit, level_q, end_q,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn reset_world_for_restart(
+    retry_city: bool,
+    mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
-    state: Res<State<GameState>>,
-    mut next_state: ResMut<NextState<GameState>>,
-    btn_q: Query<&Interaction, (Changed<Interaction>, With<RestartButton>)>,
     level_q: Query<Entity, With<LevelEntity>>,
     end_q: Query<Entity, With<EndOverlay>>,
 ) {
-    let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
-    if !(clicked
-        || keys.just_pressed(KeyCode::KeyR)
-        || keys.just_pressed(KeyCode::Space)
-        || touches.any_just_pressed()
-        || crate::audio::take_touch_action_tap()
-        || crate::audio::take_touch_jump())
-    {
-        return;
-    }
-
-    let retry_city = *state.get() == GameState::GameOver && stats.in_city;
-
     for e in &end_q {
         commands.entity(e).despawn_recursive();
     }
@@ -840,7 +1084,6 @@ pub fn handle_restart_input(
         stats.player_scale = 1.8;
         stats.wave = 4;
         spawn_player_inner(&mut commands, &asset_server);
-        next_state.set(GameState::CityPlay);
         return;
     }
 
@@ -853,5 +1096,4 @@ pub fn handle_restart_input(
     spawn_player_inner(&mut commands, &asset_server);
     spawn_initial_enemies_inner(&mut commands, &asset_server);
     crate::audio::play_bgm();
-    next_state.set(GameState::Playing);
 }

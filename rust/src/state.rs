@@ -84,6 +84,11 @@ pub struct PlayerStats {
     pub high_timer: f32,
     pub wanted_stars: u8,
     pub wanted_decay_timer: f32,
+    /// Red screen-edge damage flash, 1 on a hit and decaying to 0 (drawn by `ui::update_hurt_flash`).
+    pub hurt_flash: f32,
+    /// Camera shake requested by gameplay systems that can't reach `CameraOrbit`; `update_camera`
+    /// folds it into `CameraOrbit::shake` and clears it.
+    pub shake_request: f32,
 }
 
 impl Default for PlayerStats {
@@ -142,6 +147,8 @@ impl Default for PlayerStats {
             high_timer: 0.0,
             wanted_stars: 0,
             wanted_decay_timer: 0.0,
+            hurt_flash: 0.0,
+            shake_request: 0.0,
         }
     }
 }
@@ -235,6 +242,47 @@ pub struct CameraOrbit {
     pub pitch: f32,
     pub distance: f32,
     pub current_dist: f32,
+    /// Damped follow point (player feet position, smoothed). The camera boom hangs off this
+    /// instead of the raw player translation so jumps/bobs don't shake the view.
+    pub follow_pos: Vec3,
+    /// Raw player position last frame, used to detect teleports/respawns.
+    pub last_player_pos: Vec3,
+    /// When true, `update_camera` snaps the follow point and boom length next frame.
+    pub snap_follow: bool,
+    /// Smoothed "drunk" sway amplitude (0 = perfectly steady camera).
+    pub wobble_amp: f32,
+    /// Seconds since the player last gave look input (mouse/touch/stick).
+    /// Vehicle chase cams pause auto-align while this is small.
+    pub since_look: f32,
+    /// Set on entering a gameplay state; `update_camera` captures the current camera pose and
+    /// eases from it into the follow pose over `CAMERA_BLEND_SECS`.
+    pub blend_request: bool,
+    /// Elapsed blend time; `>= CAMERA_BLEND_SECS` means no blend is active.
+    pub blend_t: f32,
+    pub blend_from_pos: Vec3,
+    pub blend_from_rot: Quat,
+    pub blend_from_fov: f32,
+    /// Smoothed FOV widening while dashing.
+    pub fov_kick: f32,
+    /// Smoothed collision push-out offset (eases instead of snapping the camera out of boxes).
+    pub push_offset: Vec3,
+    /// Hero facing recorded when leaving `CityPlay`, restored when resuming from a city cutscene.
+    pub saved_city_facing: f32,
+    /// Decaying camera-shake intensity (0 = none). Hits and kaiju footsteps raise it; it decays
+    /// quickly in `update_camera`, which turns it into a small rotational jitter.
+    pub shake: f32,
+}
+
+/// Duration of the ease from a cutscene's last shot back into the gameplay follow camera.
+pub const CAMERA_BLEND_SECS: f32 = 0.4;
+
+impl CameraOrbit {
+    /// 0 while the player is actively looking around (and for ~1.5 s after), easing back to 1,
+    /// so vehicle auto-align never fights manual look input.
+    pub fn auto_align_weight(&self) -> f32 {
+        let x = ((self.since_look - 1.5) / 1.0).clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    }
 }
 
 impl Default for CameraOrbit {
@@ -244,6 +292,20 @@ impl Default for CameraOrbit {
             pitch: 0.45,
             distance: 10.6,
             current_dist: 10.6,
+            follow_pos: Vec3::ZERO,
+            last_player_pos: Vec3::ZERO,
+            snap_follow: true,
+            wobble_amp: 0.0,
+            since_look: 99.0,
+            blend_request: false,
+            blend_t: CAMERA_BLEND_SECS,
+            blend_from_pos: Vec3::ZERO,
+            blend_from_rot: Quat::IDENTITY,
+            blend_from_fov: std::f32::consts::FRAC_PI_4,
+            fov_kick: 0.0,
+            push_offset: Vec3::ZERO,
+            saved_city_facing: 0.0,
+            shake: 0.0,
         }
     }
 }
