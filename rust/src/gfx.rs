@@ -497,7 +497,7 @@ fn add_surface_detail(
 // Mipmaps
 // ---------------------------------------------------------------------------------------------
 
-fn trilinear_sampler(address: ImageAddressMode) -> ImageSampler {
+pub(crate) fn trilinear_sampler(address: ImageAddressMode) -> ImageSampler {
     ImageSampler::Descriptor(ImageSamplerDescriptor {
         address_mode_u: address,
         address_mode_v: address,
@@ -527,7 +527,7 @@ fn linear_to_srgb(c: f32) -> f32 {
 
 /// Appends a box-filtered mip chain to a single-mip 2D RGBA8 image. Returns false (leaving the
 /// image untouched) for anything it does not understand.
-fn build_mip_chain(image: &mut Image) -> bool {
+pub(crate) fn build_mip_chain(image: &mut Image) -> bool {
     let desc = &image.texture_descriptor;
     let srgb = match desc.format {
         TextureFormat::Rgba8UnormSrgb => true,
@@ -1376,7 +1376,7 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 
 /// Bakes `f(u, v)` (v = 0 at the image top) into a mipmapped, repeating detail map and
 /// returns it with its brightness gain (1 / median luminance, clamped).
-fn bake_detail(w: u32, h: u32, aniso: u16, f: impl Fn(f32, f32) -> Vec3) -> (Image, f32) {
+pub(crate) fn bake_detail(w: u32, h: u32, aniso: u16, f: impl Fn(f32, f32) -> Vec3) -> (Image, f32) {
     let mut data = Vec::with_capacity((w * h * 4) as usize);
     let mut lum = Vec::with_capacity((w * h) as usize);
     for y in 0..h {

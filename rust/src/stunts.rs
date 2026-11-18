@@ -709,6 +709,10 @@ pub fn update_scooter_stunts(
     let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) else {
         return;
     };
+    if sc.park {
+        // On / over / grinding a skate park piece: `skatepark::update_park_ride` owns it.
+        return;
+    }
 
     // --- Terrain height beneath the scooter (ramps) ------------------------------------------
     let mut ground_h = 0.0_f32;

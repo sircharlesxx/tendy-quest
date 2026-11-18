@@ -97,6 +97,8 @@ pub struct PlayerStats {
     pub tendy_credits: u32,
     pub scooter_app_unlocked: bool,
     pub riding_scooter: Option<Entity>,
+    /// On the riverfront Ferris wheel (boarding, riding or stepping out; see ferris.rs).
+    pub riding_wheel: bool,
     pub phone_open: bool,
     pub high_timer: f32,
     /// Seconds left of being drunk from the Pub 217 beer tower (`city::update_beer_tower`).
@@ -190,6 +192,7 @@ impl Default for PlayerStats {
             tendy_credits: 0,
             scooter_app_unlocked: false,
             riding_scooter: None,
+            riding_wheel: false,
             phone_open: false,
             high_timer: 0.0,
             drunk_timer: 0.0,
