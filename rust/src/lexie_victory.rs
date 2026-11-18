@@ -243,28 +243,43 @@ pub fn enter_lexie_victory_cutscene(
             Visibility::default(),
         ))
         .with_children(|lx| {
+            // Same body meshes as the city boss (`city::lexie_meshes`) so she stays one model
+            let lm = crate::city::lexie_meshes(&mut meshes);
             // Sneakers, legs, denim shorts, pink hoodie torso
             for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(meshes.add(Cuboid::new(0.46, 0.36, 0.68))),
+                    Mesh3d(lm.shoe.clone()),
                     MeshMaterial3d(sneaker.clone()),
                     Transform::from_xyz(sx * 0.46, 0.18, 0.10),
                 ));
                 lx.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.16, 1.25))),
+                    Mesh3d(lm.sole.clone()),
+                    MeshMaterial3d(pink_hoodie.clone()),
+                    Transform::from_xyz(sx * 0.46, 0.18, 0.10),
+                ));
+                lx.spawn((
+                    Mesh3d(lm.leg.clone()),
                     MeshMaterial3d(lexie_skin.clone()),
-                    Transform::from_xyz(sx * 0.46, 0.88, 0.0),
+                    Transform::from_xyz(sx * 0.46, 0.92, 0.0).with_scale(Vec3::new(0.7, 1.0, 0.7)),
                 ));
                 lx.spawn((
                     Mesh3d(meshes.add(Sphere::new(0.32))),
                     MeshMaterial3d(denim_shorts.clone()),
                     Transform::from_xyz(sx * 0.44, 1.56, 0.0),
                 ));
+                let arm_tf = Transform::from_xyz(sx * 0.95, 2.55, 0.25)
+                    .with_rotation(Quat::from_euler(EulerRot::XYZ, -0.85, 0.0, sx * 0.35));
                 lx.spawn((
-                    Mesh3d(meshes.add(Capsule3d::new(0.16, 0.72))),
+                    Mesh3d(lm.sleeve.clone()),
                     MeshMaterial3d(pink_hoodie.clone()),
-                    Transform::from_xyz(sx * 0.95, 2.55, 0.25)
-                        .with_rotation(Quat::from_euler(EulerRot::XYZ, -0.85, 0.0, sx * 0.35)),
+                    arm_tf.with_scale(Vec3::new(0.5, 0.8, 0.5)),
+                ));
+                lx.spawn((
+                    Mesh3d(lm.hand_l.clone()),
+                    MeshMaterial3d(lexie_skin.clone()),
+                    Transform::from_translation(arm_tf.transform_point(Vec3::new(0.0, -0.62, 0.0)))
+                        .with_rotation(arm_tf.rotation)
+                        .with_scale(Vec3::splat(0.75)),
                 ));
             }
             lx.spawn((
@@ -273,13 +288,18 @@ pub fn enter_lexie_victory_cutscene(
                 Transform::from_xyz(0.0, 1.82, 0.04).with_scale(Vec3::new(1.3, 0.7, 1.1)),
             ));
             lx.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.88))),
+                Mesh3d(lm.torso.clone()),
                 MeshMaterial3d(pink_hoodie.clone()),
-                Transform::from_xyz(0.0, 2.55, 0.10).with_scale(Vec3::new(1.15, 0.95, 0.98)),
+                Transform::from_xyz(0.0, -0.08, -0.08),
+            ));
+            lx.spawn((
+                Mesh3d(lm.hood.clone()),
+                MeshMaterial3d(pink_hoodie.clone()),
+                Transform::from_xyz(0.0, 3.48, -0.38).with_rotation(Quat::from_rotation_x(0.45)),
             ));
             // Head + double chin
             lx.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.62))),
+                Mesh3d(lm.head.clone()),
                 MeshMaterial3d(lexie_skin.clone()),
                 Transform::from_xyz(0.0, 3.85, 0.06),
             ));
@@ -290,25 +310,25 @@ pub fn enter_lexie_victory_cutscene(
             ));
             // Blonde cascading hair + messy bun
             lx.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.68))),
+                Mesh3d(lm.hair.clone()),
                 MeshMaterial3d(blonde_hair.clone()),
-                Transform::from_xyz(0.0, 4.15, -0.06).with_scale(Vec3::new(1.08, 0.82, 1.02)),
+                Transform::from_xyz(0.0, 3.85, 0.06),
             ));
             lx.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.75))),
+                Mesh3d(lm.mane.clone()),
                 MeshMaterial3d(blonde_hair.clone()),
-                Transform::from_xyz(0.0, 3.55, -0.35).with_scale(Vec3::new(1.15, 1.15, 0.65)),
+                Transform::from_xyz(0.0, 3.55, -0.35),
             ));
             lx.spawn((
                 Mesh3d(meshes.add(Sphere::new(0.36))),
                 MeshMaterial3d(blonde_hair.clone()),
-                Transform::from_xyz(0.0, 4.72, -0.14),
+                Transform::from_xyz(0.0, 4.62, -0.18),
             ));
             for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.36))),
+                    Mesh3d(if sx < 0.0 { lm.lock_l.clone() } else { lm.lock_r.clone() }),
                     MeshMaterial3d(blonde_hair.clone()),
-                    Transform::from_xyz(sx * 0.52, 3.60, 0.02).with_scale(Vec3::new(0.75, 1.65, 0.85)),
+                    Transform::from_xyz(sx * 0.56, 3.58, 0.04),
                 ));
             }
             // Asymmetrical bulging maniacal spiral eyes!
@@ -571,8 +591,14 @@ pub fn update_lexie_victory_cutscene(
 ) {
     let dt = time.delta_secs().min(0.05);
     v_state.beat_t += dt;
+    // Hold-to-skip: jump to the last beat with its wait elapsed so the normal end path runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        v_state.beat = (GROSS_BEATS.len() as u8).saturating_sub(1);
+        v_state.beat_t = v_state.beat_t.max(4.0);
+    }
 
-    if v_state.beat_t >= 4.0 && (!is_voice_speaking() || v_state.beat_t >= 18.0) {
+    if v_state.beat_t >= 4.0 && (skipping || !is_voice_speaking() || v_state.beat_t >= 18.0) {
         if v_state.beat + 1 >= GROSS_BEATS.len() as u8 {
             next_state.set(GameState::StageClear);
             return;

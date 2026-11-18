@@ -561,6 +561,22 @@ pub fn spawn_stunt_course(
 // Per-frame stunt physics
 // ---------------------------------------------------------------------------------------------
 
+/// Same press-before-touchdown window as the on-foot jump (`player.rs` JUMP_BUFFER_SECS).
+const SCOOTER_JUMP_BUFFER_SECS: f32 = 0.12;
+/// Pre-jump crouch before the hop leaves the ground (short enough not to feel laggy).
+const SCOOTER_CROUCH_SECS: f32 = 0.05;
+/// A press this soon after leaving a ramp lip still counts as jumping off it.
+const LIP_GRACE_SECS: f32 = 0.15;
+/// Share of the hop impulse stacked on top of a ramp launch.
+const LIP_HOP_SHARE: f32 = 0.75;
+
+/// Hop take-off speed (m/s) under the stunt gravity of 28 m/s^2. Grows gently with Stan like the
+/// on-foot jump: 7.8 at 0.55 (about 1.1 m), 8.4 at the city's 1.8 (about 1.3 m, 0.6 s airtime),
+/// capped at 10.5 (about 2 m) near the 6.0 riding limit.
+fn scooter_hop_speed(player_scale: f32) -> f32 {
+    (7.8 + (player_scale - 0.55).max(0.0) * 0.5).min(10.5)
+}
+
 #[allow(clippy::type_complexity)]
 pub fn update_scooter_stunts(
     time: Res<Time>,
@@ -568,9 +584,8 @@ pub fn update_scooter_stunts(
     mut stats: ResMut<PlayerStats>,
     mut st: ResMut<StuntState>,
     mut player_q: Query<
-        &mut Transform,
+        (&mut Transform, &mut Player),
         (
-            With<Player>,
             Without<CityScooter>,
             Without<StuntRamp>,
             Without<BoostRing>,
@@ -672,7 +687,7 @@ pub fn update_scooter_stunts(
     let Some(se) = stats.riding_scooter else {
         return;
     };
-    let Ok(mut p_tf) = player_q.get_single_mut() else {
+    let Ok((mut p_tf, mut rider)) = player_q.get_single_mut() else {
         return;
     };
     let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) else {
@@ -710,6 +725,69 @@ pub fn update_scooter_stunts(
     let prev_ground = sc.ground_h;
     sc.ground_h = ground_h;
 
+    // --- Hop: Space / gamepad A (synthesised Space) / touch JUMP -------------------------------
+    // Runs before the grounded/airborne split so a hop simply hands the scooter to the airborne
+    // branch below (same state as a ramp launch: flips, scoring and touchdown all apply). The touch
+    // queue is drained every riding frame so a tap here can't leak into an on-foot jump later.
+    let touch_jump = crate::audio::take_touch_jump();
+    let space_down = keys.pressed(KeyCode::Space);
+    sc.jump_lock = (sc.jump_lock - dt).max(0.0);
+    sc.jump_buf = (sc.jump_buf - dt).max(0.0);
+    if (touch_jump || keys.just_pressed(KeyCode::Space)) && sc.jump_lock <= 0.0 {
+        sc.jump_buf = SCOOTER_JUMP_BUFFER_SECS;
+    }
+    if !space_down {
+        sc.hop_hold = false;
+    }
+    let hop_v = scooter_hop_speed(stats.player_scale);
+    let mut hop_launched = false;
+    if sc.crouch_t > 0.0 {
+        sc.crouch_t -= dt;
+        if !sc.grounded {
+            // Rolled off a ramp lip mid-crouch: stack the hop onto the launch right away.
+            sc.crouch_t = 0.0;
+            sc.vy += hop_v * LIP_HOP_SHARE;
+            sc.hopped = true;
+            hop_launched = true;
+        } else if sc.crouch_t <= 0.0 {
+            sc.crouch_t = 0.0;
+            // On a ramp face the hop adds to what the ramp would have launched at the lip.
+            let on_ramp = ground_h > 0.1 && sc.speed > 5.0;
+            sc.vy = if on_ramp {
+                (sc.speed * slope * 1.1).clamp(3.5, 14.5) + hop_v * LIP_HOP_SHARE
+            } else {
+                hop_v
+            };
+            sc.grounded = false;
+            sc.y = sc.y.max(ground_h);
+            sc.air_t = 0.0;
+            sc.flip = 0.0;
+            sc.hopped = true;
+            // Flat hops keep Space-held from turning straight into a backflip; ramp hops keep the
+            // classic "hold through the launch to flip" feel.
+            sc.hop_hold = space_down && !on_ramp;
+            hop_launched = true;
+        }
+    } else if sc.jump_buf > 0.0 {
+        if sc.grounded {
+            sc.jump_buf = 0.0;
+            sc.crouch_t = SCOOTER_CROUCH_SECS;
+            sc.squash_vel += 4.0;
+            rider.squash_vel += 3.0;
+        } else if !sc.hopped && sc.air_t < LIP_GRACE_SECS {
+            // Pressed a beat after leaving a ramp lip: still counts as jumping off it.
+            sc.jump_buf = 0.0;
+            sc.vy += hop_v * LIP_HOP_SHARE;
+            sc.hopped = true;
+            hop_launched = true;
+        }
+    }
+    if hop_launched {
+        sc.squash_vel -= 5.0;
+        rider.squash_vel -= 5.0;
+        play_sfx("jump");
+    }
+
     if sc.grounded {
         if prev_ground - ground_h > 0.35 && sc.speed > 5.0 {
             // Rolled off the lip of a ramp: LAUNCH!
@@ -731,7 +809,7 @@ pub fn update_scooter_stunts(
         sc.y += sc.vy * dt;
         sc.air_t += dt;
 
-        let flipping = keys.pressed(KeyCode::Space) && sc.air_t > 0.12;
+        let flipping = space_down && sc.air_t > 0.12 && !sc.hop_hold;
         if flipping {
             sc.flip += 7.2 * dt;
         } else {
@@ -741,13 +819,30 @@ pub fn update_scooter_stunts(
 
         if sc.y <= ground_h && sc.vy <= 0.0 {
             // Touchdown
+            let impact = -sc.vy;
             sc.y = ground_h;
             sc.vy = 0.0;
             sc.grounded = true;
             let nearest = (sc.flip / TAU).round();
             let off = (sc.flip - nearest * TAU).abs();
             let flips = nearest.max(0.0) as u32;
-            if sc.air_t > 0.35 {
+            // Landing bounce + thump, harder the faster it came down.
+            if sc.air_t > 0.15 {
+                let k = (impact / 14.0).clamp(0.3, 1.3);
+                sc.squash_vel += 6.0 * k;
+                rider.squash_vel += 5.0 * k;
+                stats.shake_request = stats.shake_request.max(0.05 + 0.1 * k);
+            }
+            // A plain flat-ground hop is movement, not a trick: no points/credits/energy for it
+            // (else hop-spamming would farm combos). Flips or big ramp-hop air still score.
+            let trick = flips > 0 || !sc.hopped || sc.air_t > 0.9;
+            sc.hopped = false;
+            sc.hop_hold = false;
+            let judged = sc.air_t > 0.35 && !(off < 1.0 && !trick);
+            if !judged && sc.air_t > 0.15 {
+                play_sfx("step");
+            }
+            if judged {
                 if off < 1.0 {
                     st.combo += 1;
                     st.combo_t = 4.0;
@@ -848,6 +943,14 @@ pub fn update_scooter_stunts(
                 );
             }
         }
+    }
+
+    // --- Hop squash & stretch (same damped spring as the on-foot hero; deck stays on the ground) -
+    {
+        let accel = -320.0 * sc.squash - 20.0 * sc.squash_vel;
+        sc.squash_vel += accel * dt;
+        sc.squash = (sc.squash + sc.squash_vel * dt).clamp(-0.3, 0.3);
+        stf.scale = Vec3::new(1.0 + 0.3 * sc.squash, 1.0 - 0.5 * sc.squash, 1.0 + 0.3 * sc.squash);
     }
 
     // --- Follow transforms (rider rides the deck; flips/pitch apply to both) ------------------

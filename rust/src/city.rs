@@ -19,29 +19,50 @@ const CITADEL_POS: Vec3 = Vec3::new(0.0, 0.0, -82.0);
 const LEXIE_TERRACE_POS: Vec3 = Vec3::new(0.0, 38.0, -75.5);
 pub const PUB217_ANCHOR: Vec3 = Vec3::new(-11.75, 0.0, 34.0);
 
-/// Scales Pub 217 dynamically with Stan's Katamari growth (`1.45x` baseline at 180cm) so he
-/// can still enter the bar and trigger/revisit TJ, Derek, Nate, and Glenn at Kaiju sizes.
-pub fn pub217_scale(player_scale: f32) -> f32 {
-    (player_scale / 1.8).max(1.0) * 1.45
-}
+/// Pub 217 is built at a fixed `1.45x` around `PUB217_ANCHOR` (its east doorway). It no longer
+/// grows with Stan: the crew gate keeps him at 180cm until TJ, Derek, Nate and Glenn are all
+/// recruited, so a grown Stan treats the pub like any other small building.
+pub const PUB217_SCALE: f32 = 1.45;
+/// Above this hero scale the pub doorway is plugged (see `update_pub217_door`), so a growing
+/// Stan can't wedge himself into the bar with his head through the ceiling.
+const PUB217_DOOR_MAX_SCALE: f32 = 3.2;
 
-pub fn is_in_pub217(pos: Vec3, player_scale: f32) -> bool {
-    let s = pub217_scale(player_scale);
+/// True while `pos` is inside the pub interior (footprint and below the ceiling). Standing on
+/// the roof doesn't count. `_player_scale` is unused since the pub no longer scales.
+pub fn is_in_pub217(pos: Vec3, _player_scale: f32) -> bool {
+    let s = PUB217_SCALE;
     let min_x = PUB217_ANCHOR.x - 13.5 * s;
     let max_x = PUB217_ANCHOR.x + 0.5 * s;
     let min_z = PUB217_ANCHOR.z - 7.0 * s;
     let max_z = PUB217_ANCHOR.z + 7.0 * s;
-    pos.x >= min_x && pos.x <= max_x && pos.z >= min_z && pos.z <= max_z
+    pos.x >= min_x
+        && pos.x <= max_x
+        && pos.z >= min_z
+        && pos.z <= max_z
+        && pos.y < 6.2 * s
 }
 
 #[derive(Component)]
 pub struct Pub217Root;
 
+/// Invisible collider across the pub doorway, active only once Stan has outgrown the door.
 #[derive(Component)]
-pub struct Pub217ScaledCollider {
-    pub base_local: Vec3,
-    pub base_half: Vec3,
+pub struct Pub217DoorPlug;
+
+/// Crew-gate look of the city tendies: `lit` is the look currently applied by
+/// `update_city_crew_gate` (`None` right after a world spawn, so it is applied once).
+#[derive(Resource)]
+pub struct CityTendyLook {
+    pub lit: Option<bool>,
 }
+
+/// Translucent grey "sealed" bubble around a city tendy, shown while the crew gate is locked.
+#[derive(Component)]
+pub struct CityTendySeal;
+
+/// Golden sky beacon above a city tendy, shown once the crew gate is open.
+#[derive(Component)]
+pub struct CityTendyBeacon;
 
 #[derive(Component)]
 pub struct CityWorldMarker;
@@ -101,6 +122,11 @@ pub struct CityMinimapBossDot;
 #[derive(Component)]
 pub struct CityMinimapTendyDot;
 
+/// Radar marker for a gate step still to do: 0 = TJ (out front), 1 = Pub 217 (Derek, Nate,
+/// Glenn and Mike share one marker since they stand a few meters apart inside the bar).
+#[derive(Component)]
+pub struct CityMinimapCrewDot(pub u8);
+
 #[derive(Component)]
 pub struct LexieBossHudText;
 
@@ -156,6 +182,8 @@ pub struct LexieBoss {
     pub debris_timer: f32,
     pub hit_flash: f32,
     pub roar_cooldown: f32,
+    /// `Player::swing_id` of the last saber swing that connected (one hit per swing).
+    pub last_saber_swing: u32,
 }
 
 #[derive(Component)]
@@ -166,6 +194,8 @@ pub struct GarlicProjectile {
     pub velocity: Vec3,
     pub spin: f32,
     pub age: f32,
+    /// Batted away by a perfect saber block: harmless, and fizzles without a stench cloud.
+    pub deflected: bool,
 }
 
 #[derive(Component)]
@@ -478,6 +508,11 @@ pub fn update_mom_victory_cutscene(
 ) {
     let dt = time.delta_secs().min(0.05);
     stats.cutscene_timer += dt;
+    // Hold-to-skip: jump to the end so the normal end path below runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        stats.cutscene_timer = stats.cutscene_timer.max(22.8);
+    }
     let t = stats.cutscene_timer;
     let total_elapsed = time.elapsed_secs();
 
@@ -520,14 +555,17 @@ pub fn update_mom_victory_cutscene(
 
     // Hold on previous beat cleanly until TTS speech finishes!
     let mut active_beat = stats.cutscene_beat;
-    if beat_idx > stats.cutscene_beat && !is_voice_speaking() {
+    if beat_idx > stats.cutscene_beat && (skipping || !is_voice_speaking()) {
         stats.cutscene_beat = beat_idx;
         active_beat = beat_idx;
-        if let Some(name) = sfx {
-            play_sfx(name);
-        }
-        if !speech.is_empty() {
-            speak_voice(speech, role);
+        // A skip jumps straight to the last beat; its line and sting are not started.
+        if !skipping {
+            if let Some(name) = sfx {
+                play_sfx(name);
+            }
+            if !speech.is_empty() {
+                speak_voice(speech, role);
+            }
         }
     } else if beat_idx > stats.cutscene_beat && is_voice_speaking() {
         stats.cutscene_timer -= dt;
@@ -567,7 +605,7 @@ pub fn update_mom_victory_cutscene(
     }
 
     // Wait: subtitle text updates run in a tiny helper system or inline — keep mutable UI updates separate!
-    if active_beat >= 3 && t >= 22.8 && !is_voice_speaking() {
+    if active_beat >= 3 && t >= 22.8 && (skipping || !is_voice_speaking()) {
         next_state.set(GameState::CityIntroCutscene);
     }
 }
@@ -676,6 +714,7 @@ fn is_clear_of_skyscrapers(x: f32, z: f32, margin: f32) -> bool {
 
 pub fn spawn_nyc_world_if_needed(
     commands: &mut Commands,
+    asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     existing_city_q: &Query<Entity, With<CityWorldMarker>>,
@@ -694,47 +733,58 @@ pub fn spawn_nyc_world_if_needed(
         brightness: 440.0,
     });
 
+    // Unit box with UVs in world metres for a given transform scale, so detail textures tile at
+    // their real size instead of stretching across non-uniformly scaled boxes.
+    fn tiled_unit(meshes: &mut Assets<Mesh>, world: Vec3, tile: f32) -> Handle<Mesh> {
+        meshes.add(crate::gfx::tiled_box(Vec3::ONE, world, Vec2::splat(tile), 0.0, None))
+    }
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
     let unit_cone = meshes.add(Cone::new(1.0, 1.0));
 
-    let asphalt = materials.add(StandardMaterial {
+    let asphalt = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.22, 0.23, 0.25),
         perceptual_roughness: 0.86,
         ..default()
-    });
-    let sidewalk_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Asphalt));
+    let sidewalk_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.64, 0.62, 0.58),
         perceptual_roughness: 0.88,
         ..default()
-    });
-    let brick_walk_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Pavers));
+    let brick_walk_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.52, 0.27, 0.22),
         perceptual_roughness: 0.90,
         ..default()
-    });
-    let bike_lane_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Brick));
+    let bike_lane_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.24, 0.56, 0.30),
         perceptual_roughness: 0.82,
         ..default()
-    });
-    let yellow_stripe = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Paint));
+    let yellow_stripe = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.95, 0.74, 0.14),
         perceptual_roughness: 0.55,
         ..default()
-    });
-    let white_stripe = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Paint));
+    let white_stripe = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.92, 0.92, 0.92),
         perceptual_roughness: 0.55,
         ..default()
-    });
+    }, crate::gfx::CityTex::Paint));
 
     // Solid Manhattan street slab covering full 270m x 270m grid (top_y = 0.0)
     commands.spawn((
         LevelEntity,
         CityWorldMarker,
-        Mesh3d(meshes.add(Cuboid::new(CITY_HALF_EXTENT * 2.0, 1.0, CITY_HALF_EXTENT * 2.0))),
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(CITY_HALF_EXTENT * 2.0, 1.0, CITY_HALF_EXTENT * 2.0),
+            Vec3::new(CITY_HALF_EXTENT * 2.0, 1.0, CITY_HALF_EXTENT * 2.0),
+            Vec2::splat(12.0),
+            -1.0,
+            None,
+        ))),
         MeshMaterial3d(asphalt.clone()),
         Transform::from_xyz(0.0, -0.5, 0.0),
         PlatformBox {
@@ -742,13 +792,19 @@ pub fn spawn_nyc_world_if_needed(
         },
     ));
 
+    let stripe_meshes = [
+        tiled_unit(meshes, Vec3::new(0.22, 0.02, CITY_HALF_EXTENT * 1.96), 1.5),
+        tiled_unit(meshes, Vec3::new(CITY_HALF_EXTENT * 1.96, 0.02, 0.22), 1.5),
+        tiled_unit(meshes, Vec3::new(0.18, 0.02, 4.2), 1.5),
+        tiled_unit(meshes, Vec3::new(4.2, 0.02, 0.18), 1.5),
+    ];
     // Yellow Avenue double centerlines + White cross-street dashes
     for &r in &ROAD_COORDS {
         for off in [-0.28_f32, 0.28_f32] {
             commands.spawn((
                 LevelEntity,
                 CityWorldMarker,
-                Mesh3d(unit_box.clone()),
+                Mesh3d(stripe_meshes[0].clone()),
                 MeshMaterial3d(yellow_stripe.clone()),
                 Transform::from_xyz(r + off, 0.015, 0.0)
                     .with_scale(Vec3::new(0.22, 0.02, CITY_HALF_EXTENT * 1.96)),
@@ -756,7 +812,7 @@ pub fn spawn_nyc_world_if_needed(
             commands.spawn((
                 LevelEntity,
                 CityWorldMarker,
-                Mesh3d(unit_box.clone()),
+                Mesh3d(stripe_meshes[1].clone()),
                 MeshMaterial3d(yellow_stripe.clone()),
                 Transform::from_xyz(0.0, 0.015, r + off)
                     .with_scale(Vec3::new(CITY_HALF_EXTENT * 1.96, 0.02, 0.22)),
@@ -768,7 +824,7 @@ pub fn spawn_nyc_world_if_needed(
                 commands.spawn((
                     LevelEntity,
                     CityWorldMarker,
-                    Mesh3d(unit_box.clone()),
+                    Mesh3d(stripe_meshes[2].clone()),
                     MeshMaterial3d(white_stripe.clone()),
                     Transform::from_xyz(r + side, 0.016, d as f32)
                         .with_scale(Vec3::new(0.18, 0.02, 4.2)),
@@ -776,7 +832,7 @@ pub fn spawn_nyc_world_if_needed(
                 commands.spawn((
                     LevelEntity,
                     CityWorldMarker,
-                    Mesh3d(unit_box.clone()),
+                    Mesh3d(stripe_meshes[3].clone()),
                     MeshMaterial3d(white_stripe.clone()),
                     Transform::from_xyz(d as f32, 0.016, r + side)
                         .with_scale(Vec3::new(4.2, 0.02, 0.18)),
@@ -787,32 +843,32 @@ pub fn spawn_nyc_world_if_needed(
 
     // Architectural palette for Historic Downtown Cedar Rapids (Red Brick, Brownstone, Limestone, Glass)
     let building_mats = [
-        materials.add(StandardMaterial {
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.48, 0.23, 0.18),
             perceptual_roughness: 0.82,
             ..default()
-        }),
-        materials.add(StandardMaterial {
+        }, crate::gfx::CityTex::FacadeBrick)),
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.58, 0.46, 0.36),
             perceptual_roughness: 0.78,
             ..default()
-        }),
-        materials.add(StandardMaterial {
+        }, crate::gfx::CityTex::FacadeConcrete)),
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.72, 0.68, 0.60),
             perceptual_roughness: 0.72,
             ..default()
-        }),
-        materials.add(StandardMaterial {
+        }, crate::gfx::CityTex::FacadeConcrete)),
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.36, 0.22, 0.20),
             perceptual_roughness: 0.84,
             ..default()
-        }),
-        materials.add(StandardMaterial {
+        }, crate::gfx::CityTex::FacadeBrick)),
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.32, 0.44, 0.50),
             metallic: 0.45,
             perceptual_roughness: 0.28,
             ..default()
-        }),
+        }, crate::gfx::CityTex::FacadeGlass)),
     ];
     let window_glow = materials.add(StandardMaterial {
         base_color: Color::srgb(0.16, 0.20, 0.26),
@@ -821,40 +877,40 @@ pub fn spawn_nyc_world_if_needed(
         ..default()
     });
     let billboard_mats = [
-        materials.add(StandardMaterial {
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.86, 0.76, 0.52),
             perceptual_roughness: 0.6,
             ..default()
-        }),
-        materials.add(StandardMaterial {
+        }, crate::gfx::CityTex::Billboard)),
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.16, 0.44, 0.26),
             perceptual_roughness: 0.7,
             ..default()
-        }),
-        materials.add(StandardMaterial {
+        }, crate::gfx::CityTex::Billboard)),
+        materials.add(crate::gfx::city_textured(StandardMaterial {
             base_color: Color::srgb(0.68, 0.22, 0.18),
             perceptual_roughness: 0.7,
             ..default()
-        }),
+        }, crate::gfx::CityTex::Billboard)),
     ];
 
     // Spawn Downtown Cedar Rapids blocks + Cedar River & Mays Island on the West (x = -114) + Greene Square Park at (69, 69)
-    let water_mat = materials.add(StandardMaterial {
+    let water_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgba(0.05, 0.22, 0.42, 0.92),
         metallic: 0.35,
         perceptual_roughness: 0.18,
         ..default()
-    });
-    let park_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Water));
+    let park_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.10, 0.34, 0.16),
         perceptual_roughness: 0.85,
         ..default()
-    });
-    let pub_brick_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Grass));
+    let pub_brick_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.38, 0.14, 0.12),
         perceptual_roughness: 0.78,
         ..default()
-    });
+    }, crate::gfx::CityTex::Brick));
     let pub_sign_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.78, 0.16),
         emissive: LinearRgba::rgb(2.6, 1.6, 0.25),
@@ -865,7 +921,7 @@ pub fn spawn_nyc_world_if_needed(
     commands.spawn((
         LevelEntity,
         CityWorldMarker,
-        Mesh3d(unit_box.clone()),
+        Mesh3d(tiled_unit(meshes, Vec3::new(34.0, 0.06, 270.0), 10.0)),
         MeshMaterial3d(water_mat),
         Transform::from_xyz(-114.0, 0.03, 0.0).with_scale(Vec3::new(34.0, 0.06, 270.0)),
     ));
@@ -873,47 +929,51 @@ pub fn spawn_nyc_world_if_needed(
     commands.spawn((
         LevelEntity,
         CityWorldMarker,
-        Mesh3d(unit_box.clone()),
+        Mesh3d(tiled_unit(meshes, Vec3::new(18.0, 0.24, 34.0), 3.0)),
         MeshMaterial3d(sidewalk_mat.clone()),
         Transform::from_xyz(-114.0, 0.12, 0.0).with_scale(Vec3::new(18.0, 0.24, 34.0)),
     ));
+    let bridge_mesh = tiled_unit(meshes, Vec3::new(36.0, 0.18, 12.0), 12.0);
     for &bz in &[-46.0_f32, 0.0, 46.0] {
         commands.spawn((
             LevelEntity,
             CityWorldMarker,
-            Mesh3d(unit_box.clone()),
+            Mesh3d(bridge_mesh.clone()),
             MeshMaterial3d(asphalt.clone()),
             Transform::from_xyz(-114.0, 0.16, bz).with_scale(Vec3::new(36.0, 0.18, 12.0)),
         ));
     }
 
     // Green Bike Lanes + Brick Sidewalk Trim + Leafy Street Trees along 3rd St SE (x = 0)
+    let bike_lane_mesh = tiled_unit(meshes, Vec3::new(1.8, 0.02, CITY_HALF_EXTENT * 1.9), 3.0);
+    let brick_walk_mesh = tiled_unit(meshes, Vec3::new(2.2, 0.06, CITY_HALF_EXTENT * 1.9), 1.2);
     for sx in [-5.8_f32, 5.8_f32] {
         commands.spawn((
             LevelEntity,
             CityWorldMarker,
-            Mesh3d(unit_box.clone()),
+            Mesh3d(bike_lane_mesh.clone()),
             MeshMaterial3d(bike_lane_mat.clone()),
             Transform::from_xyz(sx, 0.014, 0.0).with_scale(Vec3::new(1.8, 0.02, CITY_HALF_EXTENT * 1.9)),
         ));
         commands.spawn((
             LevelEntity,
             CityWorldMarker,
-            Mesh3d(unit_box.clone()),
+            Mesh3d(brick_walk_mesh.clone()),
             MeshMaterial3d(brick_walk_mat.clone()),
             Transform::from_xyz(sx * 1.45, 0.03, 0.0).with_scale(Vec3::new(2.2, 0.06, CITY_HALF_EXTENT * 1.9)),
         ));
     }
-    let trunk_mat = materials.add(StandardMaterial {
+    let trunk_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.32, 0.22, 0.14),
         perceptual_roughness: 0.9,
         ..default()
-    });
-    let leaf_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Bark));
+    let leaf_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.20, 0.52, 0.22),
         perceptual_roughness: 0.85,
+        uv_transform: bevy::math::Affine2::from_scale(Vec2::new(4.0, 2.0)),
         ..default()
-    });
+    }, crate::gfx::CityTex::Foliage));
     let bench_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.10, 0.10, 0.12),
         metallic: 0.4,
@@ -958,22 +1018,22 @@ pub fn spawn_nyc_world_if_needed(
         base_color: Color::srgb(0.08, 0.08, 0.10),
         ..default()
     });
-    let pub_navy_mat = materials.add(StandardMaterial {
+    let pub_navy_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.11, 0.14, 0.22),
         perceptual_roughness: 0.75,
         ..default()
-    });
-    let pub_wood_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Brick));
+    let pub_wood_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.24, 0.11, 0.07),
         metallic: 0.15,
         perceptual_roughness: 0.35,
         ..default()
-    });
-    let pub_floor_mat = materials.add(StandardMaterial {
+    }, crate::gfx::CityTex::Wood));
+    let pub_floor_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.32, 0.22, 0.14),
         perceptual_roughness: 0.72,
         ..default()
-    });
+    }, crate::gfx::CityTex::Wood));
     let cooler_glow_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.92, 0.96, 1.0),
         emissive: LinearRgba::rgb(1.3, 1.4, 1.6),
@@ -1016,6 +1076,7 @@ pub fn spawn_nyc_world_if_needed(
         ));
     }
 
+    let pub_floor_mesh = tiled_unit(meshes, Vec3::new(13.5, 0.08, 14.0), 2.0);
     // Pub 217 Visual Root (scales around East doorway anchor PUB217_ANCHOR so Stan always fits inside!)
     commands
         .spawn((
@@ -1023,12 +1084,12 @@ pub fn spawn_nyc_world_if_needed(
             CityWorldMarker,
             Pub217Root,
             crate::gfx::CityOccluderGroup,
-            Transform::from_translation(PUB217_ANCHOR),
+            Transform::from_translation(PUB217_ANCHOR).with_scale(Vec3::splat(PUB217_SCALE)),
         ))
         .with_children(|pub_root| {
             // Floor Slab
             pub_root.spawn((
-                Mesh3d(unit_box.clone()),
+                Mesh3d(pub_floor_mesh),
                 MeshMaterial3d(pub_floor_mat),
                 Transform::from_translation(Vec3::new(-18.25, 0.04, 34.0) - PUB217_ANCHOR)
                     .with_scale(Vec3::new(13.5, 0.08, 14.0)),
@@ -1044,7 +1105,7 @@ pub fn spawn_nyc_world_if_needed(
                 (-18.25, 6.5, 34.0, 13.5, 0.35, 14.0, pub_black_mat.clone()),
             ] {
                 pub_root.spawn((
-                    Mesh3d(unit_box.clone()),
+                    Mesh3d(tiled_unit(meshes, Vec3::new(sx, sy, sz), 1.2)),
                     MeshMaterial3d(mat),
                     Transform::from_translation(Vec3::new(wx, wy, wz) - PUB217_ANCHOR)
                         .with_scale(Vec3::new(sx, sy, sz)),
@@ -1223,7 +1284,7 @@ pub fn spawn_nyc_world_if_needed(
             }
         });
 
-    // Scaled PlatformBox colliders for Pub 217 walls, bar, and beer-pyramid table
+    // PlatformBox colliders for Pub 217 walls, bar, and beer-pyramid table (fixed pub scale)
     for (wx, wy, wz, sx, sy, sz) in [
         (-24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32),
         (-18.25, 3.2, 27.25, 13.5, 6.4, 0.5),
@@ -1241,17 +1302,42 @@ pub fn spawn_nyc_world_if_needed(
         commands.spawn((
             LevelEntity,
             CityWorldMarker,
-            Pub217ScaledCollider {
-                base_local,
-                base_half,
-            },
-            Transform::from_translation(PUB217_ANCHOR + base_local),
+            Transform::from_translation(PUB217_ANCHOR + base_local * PUB217_SCALE),
             PlatformBox {
-                half_extents: base_half,
+                half_extents: base_half * PUB217_SCALE,
             },
         ));
     }
+    // Doorway plug: parked underground until Stan outgrows the door (`update_pub217_door`).
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        Pub217DoorPlug,
+        Transform::from_translation(PUB217_ANCHOR + Vec3::new(0.0, -50.0, 0.0)),
+        PlatformBox {
+            half_extents: Vec3::new(0.25, 0.1, 0.1),
+        },
+    ));
 
+    let park_mesh = tiled_unit(meshes, Vec3::new(26.5, 0.12, 26.5), 4.0);
+    let block_walk_mesh = tiled_unit(meshes, Vec3::new(26.5, 0.08, 26.5), 3.0);
+    let kerb_ring = meshes.add(crate::gfx::kerb_ring_mesh(26.54, 0.32, 0.11, 1.5));
+    let kerb_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
+        base_color: Color::srgb(0.70, 0.69, 0.66),
+        perceptual_roughness: 0.85,
+        ..default()
+    }, crate::gfx::CityTex::Pavers));
+    let roof_mats = building_mats.clone().map(|h| {
+        let c = materials.get(&h).map(|m| m.base_color).unwrap_or(Color::WHITE);
+        materials.add(crate::gfx::city_roof_material(c))
+    });
+    // Roof membrane caps per footprint (17 m inner, 18 m outer): [main roof, penthouse roof].
+    let roof_caps = [17.0_f32, 18.0].map(|fp| {
+        [
+            tiled_unit(meshes, Vec3::new(fp, 0.04, fp), 6.0),
+            tiled_unit(meshes, Vec3::new(fp * 0.62, 0.04, fp * 0.62), 6.0),
+        ]
+    });
     let mut b_idx = 0_usize;
     let block_all = [-114.0_f32, -69.0, -23.0, 23.0, 69.0, 114.0];
     for &bx in &block_all {
@@ -1269,7 +1355,7 @@ pub fn spawn_nyc_world_if_needed(
                 commands.spawn((
                     LevelEntity,
                     CityWorldMarker,
-                    Mesh3d(unit_box.clone()),
+                    Mesh3d(park_mesh.clone()),
                     MeshMaterial3d(park_mat.clone()),
                     Transform::from_xyz(bx, 0.06, bz).with_scale(Vec3::new(26.5, 0.12, 26.5)),
                 ));
@@ -1279,9 +1365,16 @@ pub fn spawn_nyc_world_if_needed(
             commands.spawn((
                 LevelEntity,
                 CityWorldMarker,
-                Mesh3d(unit_box.clone()),
+                Mesh3d(block_walk_mesh.clone()),
                 MeshMaterial3d(sidewalk_mat.clone()),
                 Transform::from_xyz(bx, 0.04, bz).with_scale(Vec3::new(26.5, 0.08, 26.5)),
+            ));
+            commands.spawn((
+                LevelEntity,
+                CityWorldMarker,
+                Mesh3d(kerb_ring.clone()),
+                MeshMaterial3d(kerb_mat.clone()),
+                Transform::from_xyz(bx, 0.0, bz),
             ));
 
             let height = 18.0 + ((b_idx * 17 + 7) % 28) as f32 + if is_outer { 10.0 } else { 0.0 };
@@ -1292,7 +1385,13 @@ pub fn spawn_nyc_world_if_needed(
                 .spawn((
                     LevelEntity,
                     CityWorldMarker,
-                    Mesh3d(meshes.add(Cuboid::new(footprint, height, footprint))),
+                    Mesh3d(meshes.add(crate::gfx::tiled_box(
+                        Vec3::new(footprint, height, footprint),
+                        Vec3::new(footprint, height, footprint),
+                        crate::gfx::FACADE_TILE,
+                        0.0,
+                        Some(crate::gfx::FACADE_FLAT_UV),
+                    ))),
                     crate::gfx::CityBuilding,
                     MeshMaterial3d(b_mat.clone()),
                     Transform::from_xyz(bx, height * 0.5, bz),
@@ -1303,11 +1402,29 @@ pub fn spawn_nyc_world_if_needed(
                 .with_children(|b| {
                     // Architectural setback roof penthouse & spire
                     b.spawn((
-                        Mesh3d(unit_box.clone()),
+                        Mesh3d(meshes.add(crate::gfx::tiled_box(
+                            Vec3::ONE,
+                            Vec3::new(footprint * 0.62, 6.4, footprint * 0.62),
+                            crate::gfx::FACADE_TILE,
+                            height,
+                            Some(crate::gfx::FACADE_FLAT_UV),
+                        ))),
                         MeshMaterial3d(b_mat.clone()),
                         Transform::from_xyz(0.0, height * 0.5 + 3.2, 0.0)
                             .with_scale(Vec3::new(footprint * 0.62, 6.4, footprint * 0.62)),
                     ));
+                    // Roof membrane caps on the main roof and the penthouse roof
+                    let caps = &roof_caps[usize::from(is_outer)];
+                    for (cap, cy, cs) in [
+                        (&caps[0], height * 0.5 + 0.02, footprint),
+                        (&caps[1], height * 0.5 + 6.42, footprint * 0.62),
+                    ] {
+                        b.spawn((
+                            Mesh3d(cap.clone()),
+                            MeshMaterial3d(roof_mats[b_idx % roof_mats.len()].clone()),
+                            Transform::from_xyz(0.0, cy, 0.0).with_scale(Vec3::new(cs, 0.04, cs)),
+                        ));
+                    }
                     if b_idx % 2 == 0 {
                         b.spawn((
                             Mesh3d(unit_cyl.clone()),
@@ -1350,12 +1467,12 @@ pub fn spawn_nyc_world_if_needed(
     }
 
     // Iconic Tiered EMPIRE CITADEL TOWER at (0, 0, -82)
-    let citadel_stone = materials.add(StandardMaterial {
+    let citadel_stone = materials.add(crate::gfx::city_textured(StandardMaterial {
         base_color: Color::srgb(0.74, 0.72, 0.68),
         perceptual_roughness: 0.52,
         metallic: 0.22,
         ..default()
-    });
+    }, crate::gfx::CityTex::FacadeConcrete));
     let citadel_gold = materials.add(StandardMaterial {
         base_color: Color::srgb(0.95, 0.78, 0.24),
         metallic: 0.82,
@@ -1366,7 +1483,13 @@ pub fn spawn_nyc_world_if_needed(
     commands.spawn((
         LevelEntity,
         CityWorldMarker,
-        Mesh3d(meshes.add(Cuboid::new(22.0, 16.0, 22.0))),
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(22.0, 16.0, 22.0),
+            Vec3::new(22.0, 16.0, 22.0),
+            crate::gfx::FACADE_TILE,
+            0.0,
+            Some(crate::gfx::FACADE_FLAT_UV),
+        ))),
         crate::gfx::CityBuilding,
         MeshMaterial3d(citadel_stone.clone()),
         Transform::from_xyz(CITADEL_POS.x, 8.0, CITADEL_POS.z),
@@ -1378,7 +1501,13 @@ pub fn spawn_nyc_world_if_needed(
     commands.spawn((
         LevelEntity,
         CityWorldMarker,
-        Mesh3d(meshes.add(Cuboid::new(18.0, 22.0, 18.0))),
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(18.0, 22.0, 18.0),
+            Vec3::new(18.0, 22.0, 18.0),
+            crate::gfx::FACADE_TILE,
+            16.0,
+            Some(crate::gfx::FACADE_FLAT_UV),
+        ))),
         crate::gfx::CityBuilding,
         MeshMaterial3d(citadel_stone.clone()),
         Transform::from_xyz(CITADEL_POS.x, 27.0, CITADEL_POS.z),
@@ -1391,7 +1520,13 @@ pub fn spawn_nyc_world_if_needed(
         .spawn((
             LevelEntity,
             CityWorldMarker,
-            Mesh3d(meshes.add(Cuboid::new(9.5, 24.0, 9.5))),
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::new(9.5, 24.0, 9.5),
+                Vec3::new(9.5, 24.0, 9.5),
+                crate::gfx::FACADE_TILE,
+                38.0,
+                Some(crate::gfx::FACADE_FLAT_UV),
+            ))),
             crate::gfx::CityBuilding,
             MeshMaterial3d(citadel_stone),
             Transform::from_xyz(CITADEL_POS.x, 50.0, CITADEL_POS.z - 4.0),
@@ -1420,25 +1555,24 @@ pub fn spawn_nyc_world_if_needed(
     );
 
     // Spawn 50 Collectible Golden Tendies across open Manhattan Streets, Avenues & Plazas
-    spawn_50_city_tendies(commands, meshes, materials);
+    spawn_50_city_tendies(commands, asset_server, meshes, materials);
 
     // Spawn 28 Moving NYC Cars & Taxis on Avenues & Streets
     spawn_city_traffic(
         commands,
+        meshes,
         materials,
-        unit_box.clone(),
-        unit_cyl.clone(),
     );
 
     // Spawn 38 Sidewalk Manhattan NPCs
-    spawn_city_npcs(commands, materials, unit_box, unit_sphere);
+    spawn_city_npcs(commands, meshes, materials);
 }
 
 fn spawn_lexie_boss(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    unit_box: Handle<Mesh>,
+    _unit_box: Handle<Mesh>,
     unit_sphere: Handle<Mesh>,
     unit_cyl: Handle<Mesh>,
 ) {
@@ -1510,21 +1644,28 @@ fn spawn_lexie_boss(
                 debris_timer: 0.3,
                 hit_flash: 0.0,
                 roar_cooldown: 4.0,
+                last_saber_swing: 0,
             },
             Transform::from_translation(LEXIE_TERRACE_POS).with_scale(Vec3::splat(5.8)),
         ))
         .with_children(|lx| {
-            // Chunky sneakers + thick legs & wide hips (overweight King-Kong titan silhouette)
+            let lm = lexie_meshes(meshes);
+            // Chunky sneakers + thick tapered legs & wide hips (overweight King-Kong titan silhouette)
             for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(unit_box.clone()),
+                    Mesh3d(lm.shoe.clone()),
                     MeshMaterial3d(sneaker.clone()),
-                    Transform::from_xyz(sx * 0.46, 0.18, 0.10).with_scale(Vec3::new(0.46, 0.36, 0.68)),
+                    Transform::from_xyz(sx * 0.46, 0.18, 0.10),
                 ));
                 lx.spawn((
-                    Mesh3d(unit_cyl.clone()),
+                    Mesh3d(lm.sole.clone()),
+                    MeshMaterial3d(pink_hoodie.clone()),
+                    Transform::from_xyz(sx * 0.46, 0.18, 0.10),
+                ));
+                lx.spawn((
+                    Mesh3d(lm.leg.clone()),
                     MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(sx * 0.46, 0.88, 0.0).with_scale(Vec3::new(0.32, 1.25, 0.34)),
+                    Transform::from_xyz(sx * 0.46, 0.92, 0.0),
                 ));
                 lx.spawn((
                     Mesh3d(unit_sphere.clone()),
@@ -1532,97 +1673,117 @@ fn spawn_lexie_boss(
                     Transform::from_xyz(sx * 0.44, 1.56, 0.0).with_scale(Vec3::new(0.56, 0.46, 0.54)),
                 ));
             }
-            // Wide denim waist + prominent rounded belly & curvy broad upper torso
+            // Wide denim waist + one continuous pink hoodie body with a prominent rounded belly
             lx.spawn((
                 Mesh3d(unit_sphere.clone()),
                 MeshMaterial3d(denim_shorts),
                 Transform::from_xyz(0.0, 1.82, 0.04).with_scale(Vec3::new(1.12, 0.52, 0.94)),
             ));
             lx.spawn((
-                Mesh3d(unit_sphere.clone()),
+                Mesh3d(lm.torso.clone()),
                 MeshMaterial3d(pink_hoodie.clone()),
-                Transform::from_xyz(0.0, 2.38, 0.24).with_scale(Vec3::new(1.18, 0.84, 1.06)),
+                Transform::default(),
             ));
             lx.spawn((
-                Mesh3d(unit_sphere.clone()),
+                Mesh3d(lm.hood.clone()),
                 MeshMaterial3d(pink_hoodie.clone()),
-                Transform::from_xyz(0.0, 2.98, 0.0).with_scale(Vec3::new(1.06, 0.72, 0.82)),
+                Transform::from_xyz(0.0, 3.56, -0.30).with_rotation(Quat::from_rotation_x(0.45)),
+            ));
+            lx.spawn((
+                Mesh3d(lm.strings.clone()),
+                MeshMaterial3d(sneaker.clone()),
+                Transform::default(),
             ));
 
             // Plump Head, Double Chin, Glaring Eyes, Red Lipstick & Golden-Blonde Cascading Hair
             lx.spawn((
-                Mesh3d(unit_sphere.clone()),
+                Mesh3d(lm.head.clone()),
                 MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 3.92, 0.06).with_scale(Vec3::new(0.64, 0.60, 0.58)),
+                Transform::from_xyz(0.0, 3.92, 0.06),
             ));
             lx.spawn((
                 Mesh3d(unit_sphere.clone()),
                 MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 3.55, 0.20).with_scale(Vec3::new(0.48, 0.24, 0.44)),
+                Transform::from_xyz(0.0, 3.57, 0.18).with_scale(Vec3::new(0.46, 0.22, 0.42)),
+            ));
+            lx.spawn((
+                Mesh3d(lm.nose.clone()),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 3.89, 0.65),
             ));
             // Eyes + Angry Brows + Chewing Red Mouth (Local +Z faces down 5th Avenue toward Stan!)
             for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(unit_sphere.clone()),
+                    Mesh3d(lm.eye.clone()),
                     MeshMaterial3d(eye_dark.clone()),
-                    Transform::from_xyz(sx * 0.20, 4.00, 0.58).with_scale(Vec3::splat(0.085)),
+                    Transform::from_xyz(sx * 0.20, 4.00, 0.60).with_rotation(Quat::from_rotation_y(sx * 0.32) * Quat::from_rotation_z(sx * 0.18)),
                 ));
                 lx.spawn((
-                    Mesh3d(unit_box.clone()),
+                    Mesh3d(lm.brow.clone()),
                     MeshMaterial3d(blonde_hair.clone()),
-                    Transform::from_xyz(sx * 0.21, 4.13, 0.59)
-                        .with_rotation(Quat::from_rotation_z(-sx * 0.28))
-                        .with_scale(Vec3::new(0.24, 0.06, 0.06)),
+                    Transform::from_xyz(sx * 0.21, 4.12, 0.60)
+                        .with_rotation(Quat::from_rotation_y(sx * 0.32) * Quat::from_rotation_z(-sx * 0.28)),
                 ));
             }
             lx.spawn((
-                Mesh3d(unit_sphere.clone()),
+                Mesh3d(lm.lips.clone()),
                 MeshMaterial3d(red_lip),
-                Transform::from_xyz(0.0, 3.74, 0.62).with_scale(Vec3::new(0.18, 0.09, 0.08)),
+                Transform::from_xyz(0.0, 3.74, 0.62),
             ));
 
-            // Lush Golden Blonde Hair: crown + cascading side locks + back mane + messy bun
+            // Lush Golden Blonde Hair: hugging crown + cascading wavy side locks + back mane + messy bun
             lx.spawn((
-                Mesh3d(unit_sphere.clone()),
+                Mesh3d(lm.hair.clone()),
                 MeshMaterial3d(blonde_hair.clone()),
-                Transform::from_xyz(0.0, 4.18, -0.05).with_scale(Vec3::new(0.76, 0.56, 0.72)),
+                Transform::from_xyz(0.0, 3.92, 0.06),
+            ));
+            lx.spawn((
+                Mesh3d(lm.mane.clone()),
+                MeshMaterial3d(blonde_hair.clone()),
+                Transform::from_xyz(0.0, 3.62, -0.34),
             ));
             lx.spawn((
                 Mesh3d(unit_sphere.clone()),
                 MeshMaterial3d(blonde_hair.clone()),
-                Transform::from_xyz(0.0, 3.62, -0.34).with_scale(Vec3::new(0.92, 0.96, 0.52)),
-            ));
-            lx.spawn((
-                Mesh3d(unit_sphere.clone()),
-                MeshMaterial3d(blonde_hair.clone()),
-                Transform::from_xyz(0.0, 4.72, -0.14).with_scale(Vec3::splat(0.42)),
+                Transform::from_xyz(0.0, 4.66, -0.18).with_scale(Vec3::new(0.42, 0.36, 0.40)),
             ));
             for sx in [-1.0_f32, 1.0_f32] {
                 lx.spawn((
-                    Mesh3d(unit_sphere.clone()),
+                    Mesh3d(if sx < 0.0 { lm.lock_l.clone() } else { lm.lock_r.clone() }),
                     MeshMaterial3d(blonde_hair.clone()),
-                    Transform::from_xyz(sx * 0.54, 3.65, 0.02).with_scale(Vec3::new(0.32, 0.85, 0.42)),
+                    Transform::from_xyz(sx * 0.56, 3.62, 0.04),
                 ));
             }
 
             // Left Arm holding giant PICKLED GARLIC CLOVES Glass Jar
             lx.spawn((
-                Mesh3d(unit_cyl.clone()),
+                Mesh3d(lm.sleeve.clone()),
                 MeshMaterial3d(pink_hoodie.clone()),
                 Transform::from_xyz(-1.12, 2.74, 0.36)
-                    .with_rotation(Quat::from_rotation_x(-0.85) * Quat::from_rotation_z(-0.25))
-                    .with_scale(Vec3::new(0.34, 1.05, 0.34)),
-            ));
-            // Jar Glass + Green Label + Floating Ivory Pickled Garlic Cloves
+                    .with_rotation(Quat::from_rotation_x(-0.85) * Quat::from_rotation_z(-0.25)),
+            ))
+            .with_children(|arm| {
+                arm.spawn((
+                    Mesh3d(lm.hand_l.clone()),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(0.02, -0.70, 0.04).with_rotation(Quat::from_rotation_y(0.4)),
+                ));
+            });
+            // Jar Glass + Green Label + Lid + Floating Ivory Pickled Garlic Cloves
             lx.spawn((
-                Mesh3d(unit_cyl.clone()),
+                Mesh3d(lm.jar.clone()),
                 MeshMaterial3d(jar_glass),
-                Transform::from_xyz(-1.18, 2.66, 1.02).with_scale(Vec3::new(0.52, 0.95, 0.52)),
+                Transform::from_xyz(-1.18, 2.66, 1.02),
             ));
             lx.spawn((
                 Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(garlic_label),
+                MeshMaterial3d(garlic_label.clone()),
                 Transform::from_xyz(-1.18, 2.66, 1.02).with_scale(Vec3::new(0.535, 0.36, 0.535)),
+            ));
+            lx.spawn((
+                Mesh3d(lm.lid.clone()),
+                MeshMaterial3d(garlic_label),
+                Transform::from_xyz(-1.18, 3.17, 1.02),
             ));
             for &(gx, gy, gz) in &[
                 (-1.26_f32, 2.48_f32, 1.00_f32),
@@ -1631,46 +1792,155 @@ fn spawn_lexie_boss(
                 (-1.14, 2.94, 1.04),
             ] {
                 lx.spawn((
-                    Mesh3d(unit_sphere.clone()),
+                    Mesh3d(lm.clove.clone()),
                     MeshMaterial3d(garlic_clove.clone()),
-                    Transform::from_xyz(gx, gy, gz).with_scale(Vec3::new(0.14, 0.22, 0.13)),
+                    Transform::from_xyz(gx, gy, gz).with_rotation(Quat::from_rotation_z(gx * 3.0)),
                 ));
             }
 
             // Right Throwing Arm gripping a glowing Pickled Garlic Clove
             lx.spawn((
                 LexieThrowArm,
-                Mesh3d(unit_cyl),
+                Mesh3d(lm.sleeve_long.clone()),
                 MeshMaterial3d(pink_hoodie),
                 Transform::from_xyz(1.16, 3.16, 0.28)
-                    .with_rotation(Quat::from_rotation_x(0.65) * Quat::from_rotation_z(0.28))
-                    .with_scale(Vec3::new(0.34, 1.15, 0.34)),
+                    .with_rotation(Quat::from_rotation_x(0.65) * Quat::from_rotation_z(0.28)),
             ))
             .with_children(|arm| {
                 arm.spawn((
-                    Mesh3d(unit_sphere.clone()),
+                    Mesh3d(lm.fist.clone()),
                     MeshMaterial3d(skin),
-                    Transform::from_xyz(0.0, 0.58, 0.0).with_scale(Vec3::splat(0.58)),
+                    Transform::from_xyz(0.0, 0.74, 0.0).with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
                 ));
                 arm.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.36))),
+                    Mesh3d(lm.big_clove.clone()),
                     MeshMaterial3d(garlic_clove),
-                    Transform::from_xyz(0.0, 0.92, 0.0).with_scale(Vec3::new(0.85, 1.25, 0.85)),
+                    Transform::from_xyz(0.0, 1.06, 0.0),
                 ));
             });
         });
 }
 
+/// Lexie's body-part meshes, shared by the city boss and the finale cutscene so she keeps
+/// one consistent model. Local units match `spawn_lexie_boss` before its 5.8x root scale.
+pub(crate) struct LexieMeshes {
+    pub shoe: Handle<Mesh>,
+    pub sole: Handle<Mesh>,
+    pub leg: Handle<Mesh>,
+    pub torso: Handle<Mesh>,
+    pub hood: Handle<Mesh>,
+    pub strings: Handle<Mesh>,
+    pub head: Handle<Mesh>,
+    pub nose: Handle<Mesh>,
+    pub eye: Handle<Mesh>,
+    pub brow: Handle<Mesh>,
+    pub lips: Handle<Mesh>,
+    pub hair: Handle<Mesh>,
+    pub mane: Handle<Mesh>,
+    pub lock_l: Handle<Mesh>,
+    pub lock_r: Handle<Mesh>,
+    pub sleeve: Handle<Mesh>,
+    pub sleeve_long: Handle<Mesh>,
+    pub hand_l: Handle<Mesh>,
+    pub fist: Handle<Mesh>,
+    pub jar: Handle<Mesh>,
+    pub lid: Handle<Mesh>,
+    pub clove: Handle<Mesh>,
+    pub big_clove: Handle<Mesh>,
+}
+
+pub(crate) fn lexie_meshes(meshes: &mut Assets<Mesh>) -> LexieMeshes {
+    use crate::shapes::{self as sh, ring};
+    let torso = sh::loft(
+        &[
+            ring(1.70, 0.0, 0.0),
+            ring(1.74, 0.92, 0.78).dz(0.08),
+            ring(2.05, 1.14, 0.98).dz(0.20),
+            ring(2.40, 1.18, 1.04).dz(0.26),
+            ring(2.75, 1.09, 0.92).dz(0.16),
+            ring(3.05, 1.06, 0.80).dz(0.03),
+            ring(3.33, 0.98, 0.68),
+            ring(3.54, 0.62, 0.48),
+            ring(3.66, 0.28, 0.26).dz(0.04),
+            ring(3.70, 0.0, 0.0).dz(0.04),
+        ],
+        3,
+        36,
+        1.0,
+    );
+    let string = |x: f32| sh::limb(0.62, 0.025, 0.032).at(x, 3.10, 0.0).deformed(|p| {
+        // Lay the drawstrings onto the curved hoodie front
+        Vec3::new(p.x, p.y, p.z + 0.84 - 0.10 * ((p.y - 3.10) / 0.31).powi(2))
+    });
+    let lock = |side: f32| {
+        sh::limb_profile(1.0, &[0.18, 0.30, 0.27, 0.22, 0.12], 0.85).deformed(move |p| {
+            Vec3::new(p.x + side * 0.05 * (p.y * 7.0).sin(), p.y, p.z + 0.04 * (p.y * 6.0).cos())
+        })
+    };
+    let lips = sh::superellipsoid(Vec3::new(0.15, 0.042, 0.06), 0.8, 0.9, 20, 10)
+        .at(0.0, 0.03, 0.0)
+        .merged(sh::superellipsoid(Vec3::new(0.14, 0.05, 0.065), 0.8, 0.9, 20, 10).at(0.0, -0.035, 0.0))
+        .deformed(|p| Vec3::new(p.x, p.y, p.z - 0.6 * p.x * p.x));
+    let jar = sh::loft(
+        &[
+            ring(-0.475, 0.0, 0.0),
+            ring(-0.475, 0.44, 0.44),
+            ring(-0.45, 0.52, 0.52),
+            ring(0.36, 0.52, 0.52),
+            ring(0.44, 0.44, 0.44),
+            ring(0.47, 0.40, 0.40),
+            ring(0.47, 0.0, 0.0),
+        ],
+        2,
+        32,
+        1.0,
+    );
+    LexieMeshes {
+        shoe: sh::add(meshes, sh::shoe(0.46, 0.36, 0.68)),
+        sole: sh::add(meshes, sh::shoe_sole(0.46, 0.36, 0.68)),
+        leg: sh::add(meshes, sh::limb_profile(1.42, &[0.30, 0.34, 0.28, 0.21], 1.05)),
+        torso: sh::add(meshes, torso),
+        hood: meshes.add(Torus::new(0.24, 0.58)),
+        strings: sh::add(meshes, string(-0.16).merged(string(0.16))),
+        head: sh::add(meshes, sh::head(0.63, 0.12)),
+        nose: sh::add(meshes, sh::superellipsoid(Vec3::new(0.07, 0.10, 0.07), 1.0, 1.0, 14, 10)),
+        eye: sh::add(meshes, sh::superellipsoid(Vec3::new(0.10, 0.06, 0.04), 1.0, 1.0, 16, 10)),
+        brow: sh::add(meshes, sh::arc_bar(0.27, &[0.02, 0.036, 0.03, 0.016], 0.02, 0.03, 0.7)),
+        lips: sh::add(meshes, lips),
+        hair: sh::add(meshes, sh::hair_cap(0.63, 0.12, 0.42, -0.55, 0.10, 0.16)),
+        mane: sh::add(meshes, sh::superellipsoid(Vec3::new(0.90, 0.98, 0.50), 1.0, 1.0, 28, 18).deformed(|p| {
+            Vec3::new(p.x * (1.0 - 0.18 * (p.y / 0.98).min(0.0).abs()), p.y, p.z + 0.06 * (p.x * 8.0).sin() * (p.y < 0.0) as u8 as f32)
+        })),
+        lock_l: sh::add(meshes, lock(-1.0)),
+        lock_r: sh::add(meshes, lock(1.0)),
+        sleeve: sh::add(meshes, sh::limb(1.30, 0.36, 0.30)),
+        sleeve_long: sh::add(meshes, sh::limb(1.38, 0.30, 0.36)),
+        hand_l: sh::add(meshes, sh::hand(0.24, -1.0, false)),
+        fist: sh::add(meshes, sh::hand(0.24, 1.0, true)),
+        jar: sh::add(meshes, jar),
+        lid: sh::add(meshes, sh::superellipsoid(Vec3::new(0.43, 0.06, 0.43), 0.4, 1.0, 28, 8)),
+        clove: sh::add(meshes, sh::limb_profile(0.42, &[0.02, 0.12, 0.13, 0.10], 0.9)),
+        big_clove: sh::add(meshes, sh::limb_profile(0.62, &[0.03, 0.17, 0.19, 0.14], 0.9)),
+    }
+}
+
 fn spawn_50_city_tendies(
     commands: &mut Commands,
+    asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let tendy_mesh = meshes.add(Capsule3d::new(0.45, 0.95));
-    let tendy_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.64, 0.16),
-        emissive: LinearRgba::rgb(0.62, 0.32, 0.04),
-        perceptual_roughness: 0.42,
+    // The real golden tendy model (as in Level 1 and the Mom fight), one shared scene handle.
+    let tendy_path = "models/golden_tendy.glb#Scene0";
+    let tendy_scene: Handle<Scene> = asset_server.load(tendy_path);
+    // The model is ~1.1 m long with its body ~0.26-0.79 m above its origin; 1.7x makes it about
+    // as big as the old 1.85 m capsule, and the offset centres it on the pickup point.
+    const TENDY_MODEL_SCALE: f32 = 1.7;
+    let seal_mesh = meshes.add(Sphere::new(1.25));
+    let seal_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.60, 0.62, 0.68, 0.42),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.25,
         ..default()
     });
     let beacon_mesh = meshes.add(Cylinder::new(0.28, 12.0));
@@ -1725,6 +1995,9 @@ fn spawn_50_city_tendies(
     crate::scooter::spawn_city_scooters(commands, meshes, materials);
     crate::stunts::spawn_stunt_course(commands, meshes, materials);
     spots.extend(crate::stunts::stunt_tendy_spots());
+    // Never put a tendy inside Pub 217: Stan must not be able to grow while in the bar.
+    spots.retain(|p| !is_in_pub217(*p, 1.8));
+    commands.insert_resource(CityTendyLook { lit: None });
     let mut mike_seed_bytes = [0u8; 8];
     let _ = getrandom::getrandom(&mut mike_seed_bytes);
     let mike_seed = u64::from_le_bytes(mike_seed_bytes);
@@ -1744,18 +2017,31 @@ fn spawn_50_city_tendies(
                     phase: i as f32 * 0.55,
                     is_final_goal: false,
                 },
-                Mesh3d(tendy_mesh.clone()),
-                MeshMaterial3d(tendy_mat.clone()),
-                Transform::from_translation(pos)
-                    .with_rotation(Quat::from_rotation_z(0.55)),
+                Transform::from_translation(pos),
+                Visibility::default(),
             ))
             .with_children(|t| {
+                t.spawn((
+                    SceneRoot(tendy_scene.clone()),
+                    crate::state::SceneRetryPath::new(tendy_path),
+                    Transform::from_xyz(0.0, -0.53 * TENDY_MODEL_SCALE, 0.0)
+                        .with_scale(Vec3::splat(TENDY_MODEL_SCALE)),
+                ));
+                // Locked look (toggled by `update_city_crew_gate`): sealed bubble on, beacon off.
+                t.spawn((
+                    CityTendySeal,
+                    Mesh3d(seal_mesh.clone()),
+                    MeshMaterial3d(seal_mat.clone()),
+                    Transform::default(),
+                    Visibility::Inherited,
+                ));
                 // Tall faint golden sky-beacon so players spot distant Manhattan tendies!
                 t.spawn((
+                    CityTendyBeacon,
                     Mesh3d(beacon_mesh.clone()),
                     MeshMaterial3d(beacon_mat.clone()),
-                    Transform::from_xyz(0.0, 5.5, 0.0)
-                        .with_rotation(Quat::from_rotation_z(-0.55)),
+                    Transform::from_xyz(0.0, 5.5, 0.0),
+                    Visibility::Hidden,
                 ));
             });
     }
@@ -1763,9 +2049,8 @@ fn spawn_50_city_tendies(
 
 fn spawn_city_traffic(
     commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    unit_box: Handle<Mesh>,
-    unit_cyl: Handle<Mesh>,
 ) {
     let body_colors = [
         materials.add(StandardMaterial {
@@ -1819,6 +2104,24 @@ fn spawn_city_traffic(
         emissive: LinearRgba::rgb(2.2, 0.2, 0.2),
         ..default()
     });
+    let trim = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.12, 0.12, 0.14),
+        perceptual_roughness: 0.55,
+        metallic: 0.2,
+        ..default()
+    });
+    let hub = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.72, 0.74, 0.78),
+        perceptual_roughness: 0.3,
+        metallic: 0.8,
+        ..default()
+    });
+    let taxi_sign = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.96, 0.82),
+        emissive: LinearRgba::rgb(0.9, 0.8, 0.45),
+        ..default()
+    });
+    let cm = car_meshes(meshes);
 
     // Spawn 28 moving NYC vehicles distributed across both N-S Avenues and E-W Cross-Streets
     for i in 0..28_usize {
@@ -1871,30 +2174,18 @@ fn spawn_city_traffic(
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
             .with_children(|car| {
-                // Chassis
-                car.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(mat),
-                    Transform::from_xyz(0.0, 0.72, 0.0).with_scale(Vec3::new(2.15, 0.82, 4.45)),
-                ));
-                // Cabin glass
-                car.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(glass.clone()),
-                    Transform::from_xyz(0.0, 1.38, -0.15).with_scale(Vec3::new(1.88, 0.62, 2.25)),
-                ));
+                // Rounded chassis with sloped hood/trunk, tapered glass cabin and a body-colour roof
+                car.spawn((Mesh3d(cm.body.clone()), MeshMaterial3d(mat.clone()), Transform::from_xyz(0.0, 0.72, 0.0)));
+                car.spawn((Mesh3d(cm.cabin.clone()), MeshMaterial3d(glass.clone()), Transform::from_xyz(0.0, 1.38, -0.15)));
+                car.spawn((Mesh3d(cm.roof.clone()), MeshMaterial3d(mat), Transform::from_xyz(0.0, 1.665, -0.26)));
+                // Bumpers, grille, side skirts
+                car.spawn((Mesh3d(cm.trim.clone()), MeshMaterial3d(trim.clone()), Transform::default()));
                 // Headlights (+Z front) & Taillights (-Z rear)
-                for sx in [-0.72_f32, 0.72_f32] {
-                    car.spawn((
-                        Mesh3d(unit_box.clone()),
-                        MeshMaterial3d(headlight.clone()),
-                        Transform::from_xyz(sx, 0.68, 2.24).with_scale(Vec3::new(0.42, 0.24, 0.08)),
-                    ));
-                    car.spawn((
-                        Mesh3d(unit_box.clone()),
-                        MeshMaterial3d(taillight.clone()),
-                        Transform::from_xyz(sx, 0.68, -2.24).with_scale(Vec3::new(0.42, 0.24, 0.08)),
-                    ));
+                car.spawn((Mesh3d(cm.headlights.clone()), MeshMaterial3d(headlight.clone()), Transform::default()));
+                car.spawn((Mesh3d(cm.taillights.clone()), MeshMaterial3d(taillight.clone()), Transform::default()));
+                if i % body_colors.len() < 2 {
+                    // Yellow cabs get the classic roof sign
+                    car.spawn((Mesh3d(cm.taxi_sign.clone()), MeshMaterial3d(taxi_sign.clone()), Transform::from_xyz(0.0, 1.80, -0.30)));
                 }
                 // 4 Wheels
                 for (wx, wz, is_front) in [
@@ -1905,22 +2196,75 @@ fn spawn_city_traffic(
                 ] {
                     car.spawn((
                         CityCarWheel { is_front },
-                        Mesh3d(unit_cyl.clone()),
+                        Mesh3d(cm.tyre.clone()),
                         MeshMaterial3d(tire.clone()),
                         Transform::from_xyz(wx, 0.36, wz)
                             .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
                             .with_scale(Vec3::new(0.36, 0.28, 0.36)),
-                    ));
+                    ))
+                    .with_children(|w| {
+                        w.spawn((Mesh3d(cm.hub.clone()), MeshMaterial3d(hub.clone()), Transform::default()));
+                    });
                 }
             });
     }
 }
 
+/// Shared car meshes. Footprint matches the old 2.15 x 4.45 box so driving/collision code
+/// (which works from constants, not meshes) is unaffected.
+struct CarMeshes {
+    body: Handle<Mesh>,
+    cabin: Handle<Mesh>,
+    roof: Handle<Mesh>,
+    trim: Handle<Mesh>,
+    headlights: Handle<Mesh>,
+    taillights: Handle<Mesh>,
+    taxi_sign: Handle<Mesh>,
+    tyre: Handle<Mesh>,
+    hub: Handle<Mesh>,
+}
+
+fn car_meshes(meshes: &mut Assets<Mesh>) -> CarMeshes {
+    use crate::shapes as sh;
+    let body = sh::superellipsoid(Vec3::new(1.075, 0.41, 2.225), 0.28, 0.2, 36, 18).deformed(|p| {
+        let end = sh::smoothstep(0.55, 1.0, p.z.abs() / 2.225);
+        let mut q = p;
+        if q.y > 0.0 {
+            q.y -= 0.12 * end * (q.y / 0.41);
+        }
+        q
+    });
+    let cabin = sh::superellipsoid(Vec3::new(0.94, 0.31, 1.125), 0.3, 0.3, 32, 16).deformed(|p| {
+        let t = (p.y / 0.31 * 0.5 + 0.5).clamp(0.0, 1.0);
+        let zk = if p.z > 0.0 { 1.0 - 0.38 * t } else { 1.0 - 0.18 * t };
+        Vec3::new(p.x * (1.0 - 0.12 * t), p.y, p.z * zk)
+    });
+    let roof = sh::superellipsoid(Vec3::new(0.80, 0.055, 0.76), 0.5, 0.3, 28, 10);
+    let bumper = |z: f32| sh::superellipsoid(Vec3::new(1.07, 0.11, 0.15), 0.45, 0.35, 28, 10).at(0.0, 0.42, z);
+    let skirt = |x: f32| sh::superellipsoid(Vec3::new(0.05, 0.07, 1.6), 0.5, 0.5, 12, 8).at(x, 0.36, 0.0);
+    let trim = bumper(2.18)
+        .merged(bumper(-2.18))
+        .merged(sh::plate(0.86, 0.17, 0.06, 0.4).at(0.0, 0.70, 2.21))
+        .merged(skirt(1.06))
+        .merged(skirt(-1.06));
+    let lamp = |x: f32, z: f32| sh::superellipsoid(Vec3::new(0.21, 0.10, 0.05), 0.6, 0.6, 16, 10).at(x, 0.80, z);
+    CarMeshes {
+        body: sh::add(meshes, body),
+        cabin: sh::add(meshes, cabin),
+        roof: sh::add(meshes, roof),
+        trim: sh::add(meshes, trim),
+        headlights: sh::add(meshes, lamp(-0.70, 2.19).merged(lamp(0.70, 2.19))),
+        taillights: sh::add(meshes, lamp(-0.72, -2.19).merged(lamp(0.72, -2.19))),
+        taxi_sign: sh::add(meshes, sh::rounded_box(Vec3::new(0.52, 0.17, 0.22), 0.35)),
+        tyre: sh::add(meshes, sh::tyre()),
+        hub: meshes.add(Cylinder::new(0.58, 1.04)),
+    }
+}
+
 fn spawn_city_npcs(
     commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    unit_box: Handle<Mesh>,
-    unit_sphere: Handle<Mesh>,
 ) {
     let coats = [
         materials.add(StandardMaterial {
@@ -1956,6 +2300,12 @@ fn spawn_city_npcs(
         base_color: Color::srgb(0.16, 0.12, 0.10),
         ..default()
     });
+    let shoe = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.10, 0.11),
+        perceptual_roughness: 0.6,
+        ..default()
+    });
+    let npc = npc_meshes(meshes);
 
     // Spawn 38 New Yorkers patrolling sidewalks safely outside skyscraper footprints
     for i in 0..38_usize {
@@ -1986,41 +2336,75 @@ fn spawn_city_npcs(
                 Transform::from_translation(home),
             ))
             .with_children(|n| {
-                // Torso
-                n.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(coat),
-                    Transform::from_xyz(0.0, 1.05, 0.0).with_scale(Vec3::new(0.52, 0.72, 0.30)),
-                ));
-                // Head + hair
-                n.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(0.0, 1.62, 0.0).with_scale(Vec3::splat(0.22)),
-                ));
-                n.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(hair.clone()),
-                    Transform::from_xyz(0.0, 1.69, -0.03).with_scale(Vec3::splat(0.225)),
-                ));
-                // Animated legs & arms
+                n.spawn((Mesh3d(npc.torso.clone()), MeshMaterial3d(coat.clone()), Transform::from_xyz(0.0, 1.05, 0.0)));
+                n.spawn((Mesh3d(npc.neck.clone()), MeshMaterial3d(skin.clone()), Transform::from_xyz(0.0, 1.43, 0.0)));
+                // Head + hair + eyes
+                n.spawn((Mesh3d(npc.head.clone()), MeshMaterial3d(skin.clone()), Transform::from_xyz(0.0, 1.62, 0.0)));
+                n.spawn((Mesh3d(npc.hair.clone()), MeshMaterial3d(hair.clone()), Transform::from_xyz(0.0, 1.62, 0.0)));
+                n.spawn((Mesh3d(npc.eyes.clone()), MeshMaterial3d(hair.clone()), Transform::from_xyz(0.0, 1.62, 0.0)));
+                // Animated legs & arms (meshes centred on the limb origin, which is the swing pivot)
                 for &sx in &[-1.0_f32, 1.0_f32] {
                     n.spawn((
                         CityNpcLimb { side: sx, is_arm: false },
-                        Mesh3d(unit_box.clone()),
+                        Mesh3d(npc.leg.clone()),
                         MeshMaterial3d(pants.clone()),
-                        Transform::from_xyz(sx * 0.14, 0.36, 0.0)
-                            .with_scale(Vec3::new(0.18, 0.72, 0.18)),
-                    ));
+                        Transform::from_xyz(sx * 0.14, 0.36, 0.0),
+                    ))
+                    .with_children(|l| {
+                        l.spawn((Mesh3d(npc.shoe.clone()), MeshMaterial3d(shoe.clone()), Transform::from_xyz(0.0, -0.32, 0.04)));
+                    });
                     n.spawn((
                         CityNpcLimb { side: sx, is_arm: true },
-                        Mesh3d(unit_box.clone()),
+                        Mesh3d(npc.arm.clone()),
                         MeshMaterial3d(skin.clone()),
-                        Transform::from_xyz(sx * 0.34, 1.04, 0.0)
-                            .with_scale(Vec3::new(0.14, 0.56, 0.14)),
-                    ));
+                        Transform::from_xyz(sx * 0.34, 1.04, 0.0),
+                    ))
+                    .with_children(|a| {
+                        let hand = if sx < 0.0 { npc.hand_l.clone() } else { npc.hand_r.clone() };
+                        a.spawn((Mesh3d(hand), MeshMaterial3d(skin.clone()), Transform::from_xyz(0.0, -0.31, 0.0)));
+                    });
                 }
             });
+    }
+}
+
+/// Shared street-NPC meshes (built once for all 38 pedestrians).
+struct NpcMeshes {
+    torso: Handle<Mesh>,
+    neck: Handle<Mesh>,
+    head: Handle<Mesh>,
+    hair: Handle<Mesh>,
+    eyes: Handle<Mesh>,
+    leg: Handle<Mesh>,
+    shoe: Handle<Mesh>,
+    arm: Handle<Mesh>,
+    hand_l: Handle<Mesh>,
+    hand_r: Handle<Mesh>,
+}
+
+fn npc_meshes(meshes: &mut Assets<Mesh>) -> NpcMeshes {
+    use crate::shapes as sh;
+    let eye = |x: f32| sh::superellipsoid(Vec3::new(0.022, 0.028, 0.012), 1.0, 1.0, 10, 8).at(x, 0.02, 0.205);
+    NpcMeshes {
+        torso: sh::add(meshes, sh::torso(&sh::Torso {
+            height: 0.72,
+            hip: Vec2::new(0.23, 0.15),
+            waist: Vec2::new(0.22, 0.14),
+            chest: Vec2::new(0.26, 0.155),
+            shoulder: Vec2::new(0.27, 0.14),
+            neck: 0.06,
+            sq: 0.8,
+            chest_fwd: 0.01,
+        })),
+        neck: sh::add(meshes, sh::limb(0.16, 0.06, 0.065)),
+        head: sh::add(meshes, sh::head(0.22, 0.12)),
+        hair: sh::add(meshes, sh::hair_cap(0.22, 0.12, 0.52, -0.35, 0.035, 0.07)),
+        eyes: sh::add(meshes, eye(-0.075).merged(eye(0.075))),
+        leg: sh::add(meshes, sh::limb(0.72, 0.085, 0.068)),
+        shoe: sh::add(meshes, sh::shoe(0.13, 0.08, 0.24)),
+        arm: sh::add(meshes, sh::limb(0.56, 0.068, 0.054)),
+        hand_l: sh::add(meshes, sh::hand(0.058, -1.0, false)),
+        hand_r: sh::add(meshes, sh::hand(0.058, 1.0, false)),
     }
 }
 
@@ -2030,6 +2414,7 @@ fn spawn_city_npcs(
 
 pub fn enter_city_intro_cutscene(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
@@ -2066,6 +2451,7 @@ pub fn enter_city_intro_cutscene(
 
     spawn_nyc_world_if_needed(
         &mut commands,
+        &asset_server,
         &mut meshes,
         &mut materials,
         &existing_city_q,
@@ -2172,6 +2558,11 @@ pub fn update_city_intro_cutscene(
 ) {
     let dt = time.delta_secs().min(0.05);
     stats.cutscene_timer += dt;
+    // Hold-to-skip: jump to the end so the normal end path below runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        stats.cutscene_timer = stats.cutscene_timer.max(23.0);
+    }
     let t = stats.cutscene_timer;
 
     let (beat_idx, speech, role, sfx): (u8, &str, &str, Option<&str>) = if t < 5.6 {
@@ -2200,14 +2591,17 @@ pub fn update_city_intro_cutscene(
     };
 
     let mut active_beat = stats.cutscene_beat;
-    if beat_idx > stats.cutscene_beat && !is_voice_speaking() {
+    if beat_idx > stats.cutscene_beat && (skipping || !is_voice_speaking()) {
         stats.cutscene_beat = beat_idx;
         active_beat = beat_idx;
-        if let Some(name) = sfx {
-            play_sfx(name);
-        }
-        if !speech.is_empty() {
-            speak_voice(speech, role);
+        // A skip jumps straight to the last beat; its line and sting are not started.
+        if !skipping {
+            if let Some(name) = sfx {
+                play_sfx(name);
+            }
+            if !speech.is_empty() {
+                speak_voice(speech, role);
+            }
         }
     } else if beat_idx > stats.cutscene_beat && is_voice_speaking() {
         stats.cutscene_timer -= dt;
@@ -2259,7 +2653,7 @@ pub fn update_city_intro_cutscene(
         cam_tf.look_at(target, Vec3::Y);
     }
 
-    if active_beat >= 3 && t >= 23.0 && !is_voice_speaking() {
+    if active_beat >= 3 && t >= 23.0 && (skipping || !is_voice_speaking()) {
         next_state.set(GameState::CityPlay);
     }
 }
@@ -2325,6 +2719,7 @@ pub fn exit_city_intro_cutscene(
 
 pub fn enter_city_play(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
@@ -2340,6 +2735,7 @@ pub fn enter_city_play(
 
     spawn_nyc_world_if_needed(
         &mut commands,
+        &asset_server,
         &mut meshes,
         &mut materials,
         &existing_city_q,
@@ -2372,22 +2768,28 @@ pub fn enter_city_play(
     stats.wave = 4;
 
     crate::audio::mark_mom_defeated();
-    crate::ui::save_game_checkpoint("city", &stats);
     if resuming_from_tj {
-        stats.hint_text = if from_mike {
-            "TRIPPY ALLEY ENCOUNTER COMPLETE! (+3 Hearts, Full Stamina, Extra Woozy!)"
-                .to_string()
-        } else if from_derek {
-            "DEREK JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Beer Tower Truce!)"
-                .to_string()
-        } else if from_nate {
-            "NATE JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Jobless Kung-Fu Wins!)"
-                .to_string()
-        } else if from_glenn {
-            "GLENN JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Pub 217 Alliance!)"
-                .to_string()
+        // Crew progress rides along with every recruit message; the fourth recruit is then
+        // celebrated by `update_city_crew_gate`.
+        let crew_line = if stats.gate_open() {
+            "Gate 5/5!".to_string()
         } else {
-            "TJ JOINED YOUR SQUAD! Collect 50 Tendies & take down Lexie together!".to_string()
+            format!(
+                "Before tendies ({}/5): {}.",
+                stats.gate_steps_done(),
+                stats.missing_gate_steps().join(", ")
+            )
+        };
+        stats.hint_text = if from_mike {
+            format!("SMOKE BREAK WITH MIKE DONE! +3 Hearts, Extra Woozy. {}", crew_line)
+        } else if from_derek {
+            format!("DEREK JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
+        } else if from_nate {
+            format!("NATE JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
+        } else if from_glenn {
+            format!("GLENN JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
+        } else {
+            format!("TJ JOINED YOUR SQUAD! {}", crew_line)
         };
     } else {
         stats.boss_hp = 300.0;
@@ -2396,9 +2798,33 @@ pub fn enter_city_play(
         stats.hearts = stats.max_hearts;
         stats.estus_flasks = stats.max_estus_flasks;
         stats.tj_recruited = false;
+        stats.derek_recruited = false;
+        stats.nate_recruited = false;
+        stats.glenn_recruited = false;
+        stats.mike_smoked = false;
+        stats.crew_unlock_announced = false;
         stats.lexie_defeated = false;
+        // Gate progress restored from a checkpoint ([C] continue); 0 for a brand new run.
+        let restore = std::mem::take(&mut stats.restore_gate_mask);
+        stats.apply_gate_mask(restore);
+        // A restored, already-open gate doesn't replay the "gate open" moment.
+        stats.crew_unlock_announced = stats.gate_open();
 
-        if is_titan_preview {
+        if stats.free_roam {
+            // Post-game free roam (Continue after Lexie, a beaten save, `free_roam=1`, or a
+            // restart/retry inside free roam): normal size, crew at their spots, no Lexie.
+            stats.prepare_free_roam();
+            stats.hint_text =
+                "FREE ROAM! Lexie is gone for good. Scoot around Cedar Rapids, hit the stunt gates and say hi to the crew."
+                    .to_string();
+        } else if let Some(preset_tendies) = stats.test_crew_preset.take() {
+            // `city_crew=1` / `city_crew_kaiju=1` test links: whole gate already done.
+            stats.apply_gate_mask(31);
+            stats.crew_unlock_announced = false;
+            stats.tendies = preset_tendies.min(stats.total_tendies);
+            stats.player_scale = stats.target_scale();
+            stats.hint_text = "TEST: crew preset loaded.".to_string();
+        } else if is_titan_preview {
             stats.player_scale = 18.0;
             stats.hint_text =
                 "SKYSCRAPER KAIJU! Slash Lexie with your Lightsaber [CLICK / SLASH] & Dodge Roll garlic!"
@@ -2407,10 +2833,18 @@ pub fn enter_city_play(
             stats.tendies = 0;
             stats.player_scale = 1.8;
             stats.hint_text =
-                "PUB 217 AT NIGHT! Walk inside Pub 217 to find Mike, meet TJ, & grab 50 Tendies!"
-                    .to_string();
+                if stats.gate_open() {
+                    "BACK IN CEDAR RAPIDS! Your crew is with you: eat 50 tendies and take down Lexie!"
+                        .to_string()
+                } else {
+                    "PUB 217 AT NIGHT! Before the tendies: recruit TJ (out front), Derek, Nate & Glenn (inside Pub 217), and smoke with Mike."
+                        .to_string()
+                };
         }
     }
+
+    // Saved after the gate flags are settled so a recruit (or a restored gate) is persisted.
+    crate::ui::save_game_checkpoint("city", &stats);
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
         p_tf.translation = if resuming_from_tj {
@@ -2447,7 +2881,8 @@ pub fn enter_city_play(
         play_viking_chant_music();
     }
 
-    // Spawn Lexie Top-Center Boss Bar + Corner NYC Tendy Radar Minimap
+    // Spawn Lexie Top-Center Boss Bar (not in free roam) + Corner Cedar Rapids Tendy Radar Minimap
+    if !stats.free_roam {
     commands
         .spawn((
             CityPlayUi,
@@ -2512,8 +2947,9 @@ pub fn enter_city_play(
                 });
             });
         });
+    }
 
-    // Top-Right Corner NYC Radar Minimap (clears Score box and mobile Help/Sound pills)
+    // Top-Right Corner Cedar Rapids Radar Minimap (clears Score box and mobile Help/Sound pills)
     commands
         .spawn((
             CityPlayUi,
@@ -2534,7 +2970,7 @@ pub fn enter_city_play(
         ))
         .with_children(|box_ui| {
             box_ui.spawn((
-                Text::new("NYC TENDY RADAR"),
+                Text::new("CEDAR RAPIDS RADAR"),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -2597,6 +3033,27 @@ pub fn enter_city_play(
                             },
                             BackgroundColor(Color::srgb(1.0, 0.84, 0.14)),
                             BorderRadius::all(Val::Px(2.0)),
+                        ));
+                    }
+
+                    // Green crew markers (TJ, Pub 217) shown while crew members are missing
+                    for idx in 0..2_u8 {
+                        radar.spawn((
+                            CityMinimapCrewDot(idx),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(50.0),
+                                top: Val::Percent(50.0),
+                                width: Val::Px(10.0),
+                                height: Val::Px(10.0),
+                                margin: UiRect::all(Val::Px(-5.0)),
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.20, 1.0, 0.45, 0.35)),
+                            BorderColor(Color::srgb(0.35, 1.0, 0.55)),
+                            BorderRadius::all(Val::Px(5.0)),
+                            Visibility::Hidden,
                         ));
                     }
 
@@ -2677,21 +3134,6 @@ fn wrap_angle(mut a: f32) -> f32 {
         a += std::f32::consts::TAU;
     }
     a
-}
-
-pub fn update_pub217_scale(
-    stats: Res<PlayerStats>,
-    mut root_q: Query<&mut Transform, (With<Pub217Root>, Without<Pub217ScaledCollider>)>,
-    mut col_q: Query<(&mut Transform, &mut PlatformBox, &Pub217ScaledCollider), Without<Pub217Root>>,
-) {
-    let s = pub217_scale(stats.player_scale);
-    if let Ok(mut tf) = root_q.get_single_mut() {
-        tf.scale = Vec3::splat(s);
-    }
-    for (mut c_tf, mut pbox, sc) in &mut col_q {
-        c_tf.translation = PUB217_ANCHOR + sc.base_local * s;
-        pbox.half_extents = sc.base_half * s;
-    }
 }
 
 pub fn update_city_driving(
@@ -3245,6 +3687,14 @@ pub fn update_city_traffic(
             let knock = (p_tf.translation - car_tf.translation)
                 .with_y(0.0)
                 .normalize_or_zero();
+            // Saber guard stops the car at the blade; a perfect block bats it away.
+            let outcome =
+                crate::player::try_block(&mut player, &mut stats, p_tf.translation, car_tf.translation);
+            if outcome.blocked() {
+                let push = 6.0 + if outcome == crate::player::BlockOutcome::Perfect { 14.0 } else { 0.0 };
+                car.knock_vel -= Vec2::new(knock.x, knock.z) * push;
+                continue;
+            }
             player.velocity.y = 4.5;
             player.invuln_timer = 1.1;
             // Same 2.2-unit shove as before, delivered as a decaying knockback impulse.
@@ -3304,6 +3754,7 @@ pub fn update_city_pickups(
     mut stats: ResMut<PlayerStats>,
     player_q: Query<&Transform, With<Player>>,
     mut tendy_q: Query<(Entity, &mut Transform, &TendyPickup), (With<CityTendy>, Without<Player>)>,
+    mut lock_hint_cd: Local<f32>,
 ) {
     let dt = time.delta_secs();
     let t = time.elapsed_secs();
@@ -3313,19 +3764,46 @@ pub fn update_city_pickups(
     let pickup_r = 2.1 + stats.player_scale * 0.45;
     let mid_y = 0.55 * stats.player_scale;
 
+    let unlocked = stats.city_tendies_unlocked();
+    *lock_hint_cd = (*lock_hint_cd - dt).max(0.0);
     for (entity, mut tf, tendy) in &mut tendy_q {
-        tf.rotate_y(2.4 * dt);
-        tf.translation.y = tendy.base_y + (t * 3.2 + tendy.phase).sin() * 0.22;
+        // Locked tendies hang still and dim; lit ones spin and bob.
+        if unlocked {
+            tf.rotate_y(2.4 * dt);
+            tf.translation.y = tendy.base_y + (t * 3.2 + tendy.phase).sin() * 0.22;
+        }
 
         let d = (p_tf.translation + Vec3::Y * mid_y).distance(tf.translation);
+        if d < pickup_r && !unlocked {
+            if *lock_hint_cd <= 0.0 {
+                *lock_hint_cd = 3.5;
+                stats.hint_text = format!(
+                    "TENDY LOCKED ({}/5)! First: {}.",
+                    stats.gate_steps_done(),
+                    stats.missing_gate_steps().join(", ")
+                );
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                play_sfx("hack_deny");
+            }
+            continue;
+        }
         if d < pickup_r {
             commands.entity(entity).remove::<(TendyPickup, CityTendy)>();
             crate::player::start_pickup_pop(&mut commands, entity, tf.scale);
+            if stats.free_roam {
+                // Post-game: score-only snack. Never touches `tendies`, so Stan stays 180 cm.
+                stats.roam_tendies += 1;
+                stats.tendy_credits += 2;
+                stats.score += 400;
+                play_sfx("tendy");
+                stats.hint_text = format!("Tendy snack! +400 score ({} eaten in free roam)", stats.roam_tendies);
+                continue;
+            }
             stats.tendies = (stats.tendies + 2).min(stats.total_tendies);
             stats.tendy_credits += 2;
             stats.score += 400;
             crate::audio::mark_mom_defeated();
-    crate::ui::save_game_checkpoint("city", &stats);
+            crate::ui::save_game_checkpoint("city", &stats);
             play_sfx("tendy");
             if stats.tendies >= stats.total_tendies {
                 stats.score += 5000;
@@ -3338,7 +3816,7 @@ pub fn update_city_pickups(
                 );
             } else {
                 stats.hint_text = format!(
-                    "NYC Tendy {}/{}! Size: {} ({}cm)",
+                    "Tendy {}/{}! Size: {} ({}cm)",
                     stats.tendies,
                     stats.total_tendies,
                     stats.size_tier(),
@@ -3346,6 +3824,22 @@ pub fn update_city_pickups(
                 );
             }
         }
+    }
+}
+
+/// Hearts Lexie's garlic can't take Stan below while the gate is still closed (half of the
+/// city's 20).
+const LEXIE_PREGATE_HEART_FLOOR: i32 = 10;
+
+/// One Lexie hit (garlic clove or stench tick). Full damage (1 heart) once the gate is open;
+/// before that the fight hasn't begun, so a hit still costs 1 heart but never takes Stan below
+/// `LEXIE_PREGATE_HEART_FLOOR` (or below what he already has), so exploring can't kill him.
+fn lexie_damage(stats: &mut PlayerStats) {
+    // `city_tendies_unlocked` also covers the `city_titan=1` preview (50 tendies, no crew).
+    if stats.city_tendies_unlocked() {
+        stats.hearts -= 1;
+    } else if stats.hearts > LEXIE_PREGATE_HEART_FLOOR {
+        stats.hearts -= 1;
     }
 }
 
@@ -3396,6 +3890,24 @@ pub fn update_city_lexie(
     let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
         return;
     };
+
+    // Post-game free roam: Lexie is gone for good. Clear her (spawned with the city world) and
+    // anything she threw; nothing below (garlic hits, GameOver, the victory cutscene) can run.
+    if stats.free_roam {
+        for (e, ..) in &lexie_q {
+            commands.entity(e).despawn_recursive();
+        }
+        for (e, ..) in &garlic_q {
+            commands.entity(e).despawn_recursive();
+        }
+        for (e, ..) in &stench_q {
+            commands.entity(e).despawn_recursive();
+        }
+        for (e, ..) in &debris_q {
+            commands.entity(e).despawn_recursive();
+        }
+        return;
+    }
 
     if let Ok((lexie_ent, mut lx_tf, mut lexie, lx_children)) = lexie_q.get_single_mut() {
         // Tower demolition chunks falling off Empire Citadel while Lexie rampages
@@ -3513,6 +4025,7 @@ pub fn update_city_lexie(
                         velocity: Vec3::new(vx, vy, vz),
                         spin: 5.5 + k as f32,
                         age: 0.0,
+                        deflected: false,
                     },
                     Mesh3d(clove_mesh.clone()),
                     MeshMaterial3d(clove_mat.clone()),
@@ -3522,10 +4035,18 @@ pub fn update_city_lexie(
         }
 
         // Take Stan's Skyscraper Lightsaber Slash!
-        let saber_reach = 5.5 + stats.player_scale * 1.45;
-        let hit_dist = p_tf.translation.distance(lx_tf.translation);
-        if player.attack_timer > 0.14 && hit_dist < saber_reach && lexie.hit_flash <= 0.0 {
+        // Shared scale-aware test (player.rs `saber_contact`): reach to her surface, swing arc,
+        // active window of the visible strike, one hit per swing.
+        let lexie_contact = crate::player::saber_contact(
+            &player,
+            &stats,
+            p_tf.translation,
+            &crate::player::SaberTarget::lexie(&lx_tf),
+        );
+        if let (Some(contact), true) = (lexie_contact, lexie.last_saber_swing != player.swing_id) {
+            lexie.last_saber_swing = player.swing_id;
             lexie.hit_flash = 0.32;
+            crate::player::register_saber_hit(&mut player, &mut stats, contact);
             play_sfx("saber_hit");
             let heavy_mul = if stats.heavy_attack { 1.85 } else { 1.0 };
             if stats.tendies < 50 {
@@ -3574,6 +4095,7 @@ pub fn update_city_lexie(
     }
 
     let in_pub217 = is_in_pub217(p_tf.translation, stats.player_scale);
+    let lexie_pos = lexie_q.get_single().ok().map(|(_, tf, _, _)| tf.translation);
 
     // Update airborne Pickled Garlic Clove Projectiles & burst into lingering Stench Clouds
     for (g_ent, mut g_tf, mut proj) in &mut garlic_q {
@@ -3587,9 +4109,42 @@ pub fn update_city_lexie(
             commands.entity(g_ent).despawn_recursive();
             continue;
         }
+        if proj.deflected {
+            if g_tf.translation.y <= 0.6 || proj.age > 5.5 {
+                commands.entity(g_ent).despawn_recursive();
+            }
+            continue;
+        }
 
         let hit_stan = g_tf.translation.distance(p_tf.translation + Vec3::Y * (0.5 * stats.player_scale))
             < (2.6 + stats.player_scale * 0.25);
+
+        // Saber guard: a blocked clove is sliced apart (no stench cloud on Stan); a perfect block
+        // bats it back toward Lexie. Cloves arriving inside the post-block grace are cut for free.
+        if !stats.phone_open && !in_pub217 && hit_stan && player.roll_timer <= 0.0 {
+            let outcome = if player.invuln_timer <= 0.0 {
+                crate::player::try_block(&mut player, &mut stats, p_tf.translation, g_tf.translation)
+            } else if crate::player::guard_covers(&player, &stats, p_tf.translation, g_tf.translation) {
+                player.block_spark = player.block_spark.max(1);
+                crate::player::BlockOutcome::Blocked
+            } else {
+                crate::player::BlockOutcome::None
+            };
+            if outcome == crate::player::BlockOutcome::Perfect {
+                let back = lexie_pos
+                    .map(|l| Vec3::new(l.x - g_tf.translation.x, 0.0, l.z - g_tf.translation.z))
+                    .unwrap_or(-proj.velocity.with_y(0.0))
+                    .normalize_or_zero();
+                let speed = proj.velocity.with_y(0.0).length().max(12.0) * 1.3;
+                proj.velocity = back * speed + Vec3::Y * 14.0;
+                proj.deflected = true;
+                proj.age = 0.0;
+                continue;
+            } else if outcome == crate::player::BlockOutcome::Blocked {
+                commands.entity(g_ent).despawn_recursive();
+                continue;
+            }
+        }
 
         if !stats.phone_open && !in_pub217 && hit_stan && player.roll_timer <= 0.0 && player.invuln_timer <= 0.0 {
             player.invuln_timer = 1.0;
@@ -3598,9 +4153,13 @@ pub fn update_city_lexie(
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
             } else {
-                stats.hearts -= 1;
+                lexie_damage(&mut stats);
                 play_sfx("hit");
-                stats.hint_text = "DIRECT PICKLED GARLIC HIT! Dodge Roll [SHIFT / ROLL]!".to_string();
+                stats.hint_text = if stats.city_tendies_unlocked() {
+                    "DIRECT PICKLED GARLIC HIT! Dodge Roll [SHIFT / ROLL]!".to_string()
+                } else {
+                    "Garlic splash! Lexie is only warming up until your crew is ready.".to_string()
+                };
                 if stats.hearts <= 0 {
                     play_sfx("gameover");
                     next_state.set(GameState::GameOver);
@@ -3674,7 +4233,7 @@ pub fn update_city_lexie(
             if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
             } else {
-                stats.hearts -= 1;
+                lexie_damage(&mut stats);
                 play_sfx("hit");
                 stats.hint_text =
                     "INTENSE PICKLED GARLIC SMELL! Dodge Roll out of green fumes!".to_string();
@@ -3701,15 +4260,25 @@ pub fn update_city_lexie(
 }
 
 pub fn update_city_minimap(
+    time: Res<Time>,
+    stats: Res<PlayerStats>,
     player_q: Query<&Transform, With<Player>>,
     lexie_q: Query<&Transform, (With<LexieBoss>, Without<Player>)>,
     tendy_q: Query<&Transform, (With<CityTendy>, Without<Player>, Without<LexieBoss>)>,
     mut p_dot_q: Query<&mut Node, With<CityMinimapPlayerDot>>,
     mut b_dot_q: Query<(&mut Node, &mut Visibility), (With<CityMinimapBossDot>, Without<CityMinimapPlayerDot>)>,
     mut t_dot_q: Query<
-        (&mut Node, &mut Visibility),
+        (&mut Node, &mut Visibility, &mut BackgroundColor),
         (
             With<CityMinimapTendyDot>,
+            Without<CityMinimapPlayerDot>,
+            Without<CityMinimapBossDot>,
+        ),
+    >,
+    mut c_dot_q: Query<
+        (&mut Node, &mut Visibility, &mut BorderColor, &CityMinimapCrewDot),
+        (
+            Without<CityMinimapTendyDot>,
             Without<CityMinimapPlayerDot>,
             Without<CityMinimapBossDot>,
         ),
@@ -3732,15 +4301,128 @@ pub fn update_city_minimap(
         }
     }
 
+    // Locked tendies show as faint grey dots so the radar points at the crew first.
+    let unlocked = stats.city_tendies_unlocked();
+    let tendy_color = if unlocked {
+        Color::srgb(1.0, 0.84, 0.14)
+    } else {
+        Color::srgba(0.62, 0.62, 0.66, 0.45)
+    };
     let mut tendies_iter = tendy_q.iter();
-    for (mut t_node, mut t_vis) in &mut t_dot_q {
+    for (mut t_node, mut t_vis, mut t_bg) in &mut t_dot_q {
         if let Some(t_tf) = tendies_iter.next() {
             *t_vis = Visibility::Visible;
             t_node.left = Val::Percent(to_pct(t_tf.translation.x));
             t_node.top = Val::Percent(to_pct(t_tf.translation.z));
+            if t_bg.0 != tendy_color {
+                t_bg.0 = tendy_color;
+            }
         } else {
             *t_vis = Visibility::Hidden;
         }
+    }
+
+    // Missing-crew markers pulse so they read as the current goal.
+    let pulse = 0.55 + 0.45 * (time.elapsed_secs() * 4.0).sin().abs();
+    for (mut c_node, mut c_vis, mut c_border, dot) in &mut c_dot_q {
+        let (pos, missing) = if dot.0 == 0 {
+            (crate::tj::TJ_CITY_SPAWN, !stats.tj_recruited)
+        } else {
+            (
+                PUB217_ANCHOR + Vec3::new(-6.5, 0.0, 0.0) * PUB217_SCALE,
+                !(stats.derek_recruited
+                    && stats.nate_recruited
+                    && stats.glenn_recruited
+                    && stats.mike_smoked),
+            )
+        };
+        let want = if missing && !unlocked { Visibility::Visible } else { Visibility::Hidden };
+        if *c_vis != want {
+            *c_vis = want;
+        }
+        c_node.left = Val::Percent(to_pct(pos.x));
+        c_node.top = Val::Percent(to_pct(pos.z));
+        c_border.0 = Color::srgba(0.35, 1.0, 0.55, pulse);
+    }
+}
+
+/// Crew gate: city tendies stay dimmed (no glow, no sky beacon) until TJ, Derek, Nate and
+/// Glenn have all joined and Stan has smoked with Mike; the last step triggers a one-time
+/// "gate open" moment.
+pub fn update_city_crew_gate(
+    mut stats: ResMut<PlayerStats>,
+    look: Option<ResMut<CityTendyLook>>,
+    mut seal_q: Query<&mut Visibility, (With<CityTendySeal>, Without<CityTendyBeacon>)>,
+    mut beacon_q: Query<&mut Visibility, (With<CityTendyBeacon>, Without<CityTendySeal>)>,
+) {
+    if stats.gate_open() && !stats.crew_unlock_announced {
+        stats.crew_unlock_announced = true;
+        if stats.tendies < stats.total_tendies {
+            stats.hint_text =
+                "CREW ASSEMBLED & MIKE'S SMOKE BREAK DONE! The tendies are lit: eat 50, grow into a kaiju, take down Lexie!"
+                    .to_string();
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            play_sfx("powerup");
+            speak_voice("The crew is assembled! Go eat those tendies, Stan!", "narrator");
+        }
+    }
+    let Some(mut look) = look else {
+        return;
+    };
+    let lit = stats.city_tendies_unlocked();
+    if look.lit == Some(lit) {
+        return;
+    }
+    look.lit = Some(lit);
+    // Locked: each tendy sits in a sealed grey bubble with its beacon off (and the spin stops,
+    // see `update_city_pickups`). Unlocked: bubbles vanish and the beacons come on.
+    let (seal, beacon) = if lit {
+        (Visibility::Hidden, Visibility::Inherited)
+    } else {
+        (Visibility::Inherited, Visibility::Hidden)
+    };
+    for mut v in &mut seal_q {
+        *v = seal;
+    }
+    for mut v in &mut beacon_q {
+        *v = beacon;
+    }
+}
+
+/// Pub 217 has a fixed size, so once Stan outgrows its door the doorway is plugged like the
+/// rest of the building's walls (he can still stand on the roof). Stan never grows inside the
+/// pub (no tendies spawn there), so the plug can't trap him.
+pub fn update_pub217_door(
+    mut stats: ResMut<PlayerStats>,
+    player_q: Query<&Transform, (With<Player>, Without<Pub217DoorPlug>)>,
+    mut plug_q: Query<(&mut Transform, &mut PlatformBox), With<Pub217DoorPlug>>,
+    mut warned: Local<bool>,
+) {
+    let too_big = stats.player_scale > PUB217_DOOR_MAX_SCALE;
+    for (mut tf, mut pbox) in &mut plug_q {
+        if too_big {
+            tf.translation = PUB217_ANCHOR + Vec3::new(0.0, 3.2, 0.0) * PUB217_SCALE;
+            pbox.half_extents = Vec3::new(0.25, 3.2, 2.3) * PUB217_SCALE;
+        } else {
+            tf.translation = PUB217_ANCHOR + Vec3::new(0.0, -50.0, 0.0);
+            pbox.half_extents = Vec3::new(0.25, 0.1, 0.1);
+        }
+    }
+    // One short hint per approach when a grown Stan walks up to the door.
+    let Ok(p_tf) = player_q.get_single() else {
+        return;
+    };
+    let near_door = Vec2::new(p_tf.translation.x - PUB217_ANCHOR.x, p_tf.translation.z - PUB217_ANCHOR.z)
+        .length()
+        < 4.0 + stats.player_scale * 0.6;
+    if too_big && near_door && p_tf.translation.y < 3.0 {
+        if !*warned {
+            *warned = true;
+            stats.hint_text = "You've outgrown Pub 217! The crew is with you: go eat tendies.".to_string();
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        }
+    } else if !near_door {
+        *warned = false;
     }
 }
 

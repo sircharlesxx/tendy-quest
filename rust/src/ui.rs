@@ -19,38 +19,38 @@ pub struct StartButton;
 #[derive(Component)]
 pub struct ContinueButton;
 
+/// StageClear "Continue" (post-game free roam) button; shown only after the Lexie win.
+#[derive(Component)]
+pub struct RoamButton;
+
+/// True when a checkpoint string records that Lexie has been beaten (field 7).
+pub fn saved_game_beaten(saved: &str) -> bool {
+    saved.split('|').nth(7) == Some("1")
+}
+
 /// Serializes progress as a compact pipe-delimited string for `window.tendySave` (`localStorage`)
 /// rather than pulling `serde`/`serde_json` into the WASM binary.
 pub fn save_game_checkpoint(stage: &str, stats: &PlayerStats) {
+    // Field 6 (gate mask: 1 TJ, 2 Derek, 4 Nate, 8 Glenn, 16 Mike) and field 7 (Lexie beaten)
+    // were appended later; older saves still load (see `handle_tutorial_input`). The beaten
+    // flag is sticky: once a save has it, later saves from a fresh run keep it.
+    let beaten = stats.game_beaten || saved_game_beaten(&crate::audio::load_checkpoint());
     let data = format!(
-        "{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}",
         stage,
         stats.score,
         stats.tendies,
         stats.tendy_credits,
         stats.tj_recruited as u8,
         stats.scooter_app_unlocked as u8,
+        stats.gate_mask(),
+        beaten as u8,
     );
     crate::audio::save_checkpoint(&data);
 }
 
 #[derive(Component)]
 pub struct RestartButton;
-
-#[derive(Component)]
-pub struct HeartsText;
-
-#[derive(Component)]
-pub struct TendyText;
-
-#[derive(Component)]
-pub struct ScoreText;
-
-#[derive(Component)]
-pub struct StatusText;
-
-#[derive(Component)]
-pub struct DashBarFill;
 
 #[derive(Component)]
 pub struct TutorialCard;
@@ -67,6 +67,87 @@ pub struct TutorialControlsText;
 #[derive(Component)]
 pub struct TutorialBtnText;
 
+/// Which HUD text a `Text` node shows; `update_hud` fills them all through one query.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum HudField {
+    Hearts,
+    Tendies,
+    Tier,
+    Flask,
+    Credits,
+    App,
+    Objective,
+    Status,
+    Score,
+    Hint,
+}
+
+/// HUD nodes that are shown only when they apply (`Display::None` otherwise).
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+pub enum HudSlot {
+    /// City-only chips (credits, scooter app).
+    CityChip,
+    /// The active-status line (enraged, mustard, shield, high...).
+    Status,
+}
+
+/// One heart pip of the heart meter (index 0..HUD_MAX_PIPS).
+#[derive(Component)]
+pub struct HeartPip(pub u8);
+
+/// Fill of the tendy progress bar under the tendy counter.
+#[derive(Component)]
+pub struct TendyBarFill;
+
+#[derive(Component)]
+pub struct DashBarFill;
+
+/// The top-left status panel (resized by `adapt_ui_to_viewport`).
+#[derive(Component)]
+pub struct HudStatusPanel;
+
+/// Transient hint toast (separate from persistent status), fades out a few seconds after the
+/// hint changes.
+#[derive(Component)]
+pub struct HintToast;
+
+#[derive(Component)]
+pub struct HintToastBox;
+
+const HUD_MAX_PIPS: u8 = 20;
+const HUD_PANEL_BG: Color = Color::srgba(0.04, 0.05, 0.09, 0.80);
+const HUD_CHIP_BG: Color = Color::srgba(1.0, 1.0, 1.0, 0.07);
+const HEART_FULL: Color = Color::srgb(1.0, 0.30, 0.38);
+const HEART_EMPTY: Color = Color::srgba(0.45, 0.20, 0.24, 0.45);
+const HINT_SECS: f32 = 5.0;
+
+fn hud_text(field: HudField, text: &str, size: f32, color: Color) -> impl Bundle {
+    (
+        field,
+        Text::new(text),
+        TextFont {
+            font_size: size,
+            ..default()
+        },
+        TextColor(color),
+    )
+}
+
+fn hud_label(text: &str, color: Color) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont {
+            font_size: 10.0,
+            ..default()
+        },
+        TextColor(color),
+        Node {
+            width: Val::Px(30.0),
+            ..default()
+        },
+    )
+}
+
 pub fn spawn_hud(mut commands: Commands) {
     commands
         .spawn((
@@ -81,69 +162,172 @@ pub fn spawn_hud(mut commands: Commands) {
             },
         ))
         .with_children(|parent| {
-            // Top-left: Compact, translucent Hearts, Dash Bar, Tendy & Size Counter
+            // Top-left status panel: heart meter, stamina bar, tendies + size tier, flask and
+            // city chips, one objective line, and active statuses (only while they apply).
             parent
                 .spawn((
+                    HudStatusPanel,
                     Node {
                         flex_direction: FlexDirection::Column,
-                        max_width: Val::Px(290.0),
-                        row_gap: Val::Px(2.0),
-                        padding: UiRect::axes(Val::Px(7.0), Val::Px(4.0)),
+                        width: Val::Px(266.0),
+                        max_width: Val::Percent(48.0),
+                        row_gap: Val::Px(5.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(8.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.03, 0.03, 0.05, 0.26)),
-                    BorderRadius::all(Val::Px(6.0)),
+                    BackgroundColor(HUD_PANEL_BG),
+                    BorderRadius::all(Val::Px(10.0)),
                 ))
                 .with_children(|col| {
-                    col.spawn((
-                        HeartsText,
-                        Text::new("HEARTS 5/5"),
-                        TextFont {
-                            font_size: 12.5,
+                    // Hearts: pip meter + count
+                    col.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn(hud_label("HP", HEART_FULL));
+                        row.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            flex_wrap: FlexWrap::Wrap,
+                            flex_grow: 1.0,
+                            flex_shrink: 1.0,
+                            column_gap: Val::Px(1.5),
+                            row_gap: Val::Px(2.0),
                             ..default()
-                        },
-                        TextColor(Color::srgba(1.0, 0.42, 0.46, 0.88)),
-                    ));
-                    // Dash bar
-                    col.spawn((
-                        Node {
-                            width: Val::Px(92.0),
-                            height: Val::Px(5.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.16, 0.18, 0.22, 0.35)),
-                        BorderRadius::all(Val::Px(3.0)),
-                    ))
-                    .with_children(|bar| {
-                        bar.spawn((
-                            DashBarFill,
+                        })
+                        .with_children(|pips| {
+                            for i in 0..HUD_MAX_PIPS {
+                                pips.spawn((
+                                    HeartPip(i),
+                                    Node {
+                                        width: Val::Px(6.0),
+                                        height: Val::Px(6.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(HEART_FULL),
+                                    BorderRadius::all(Val::Px(3.0)),
+                                ));
+                            }
+                        });
+                        row.spawn(hud_text(HudField::Hearts, "5/5", 12.0, Color::WHITE));
+                    });
+                    // Stamina bar
+                    col.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(6.0),
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        row.spawn(hud_label("STA", Color::srgb(0.45, 0.92, 0.55)));
+                        row.spawn((
                             Node {
-                                width: Val::Percent(100.0),
-                                height: Val::Percent(100.0),
+                                flex_grow: 1.0,
+                                height: Val::Px(6.0),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.18, 0.78, 0.34, 0.88)),
+                            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.10)),
                             BorderRadius::all(Val::Px(3.0)),
+                        ))
+                        .with_children(|bar| {
+                            bar.spawn((
+                                DashBarFill,
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.24, 0.84, 0.40)),
+                                BorderRadius::all(Val::Px(3.0)),
+                            ));
+                        });
+                    });
+                    // Tendies counter + progress bar + size tier
+                    col.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(2.0),
+                        ..default()
+                    })
+                    .with_children(|blk| {
+                        blk.spawn(hud_text(
+                            HudField::Tendies,
+                            "TENDIES 0/12",
+                            14.0,
+                            Color::srgb(1.0, 0.86, 0.32),
+                        ));
+                        blk.spawn((
+                            Node {
+                                width: Val::Percent(100.0),
+                                height: Val::Px(4.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.10)),
+                            BorderRadius::all(Val::Px(2.0)),
+                        ))
+                        .with_children(|bar| {
+                            bar.spawn((
+                                TendyBarFill,
+                                Node {
+                                    width: Val::Percent(0.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(1.0, 0.78, 0.18)),
+                                BorderRadius::all(Val::Px(2.0)),
+                            ));
+                        });
+                        blk.spawn(hud_text(
+                            HudField::Tier,
+                            "Tiny Toy | 15cm",
+                            11.0,
+                            Color::srgb(0.86, 0.88, 0.94),
                         ));
                     });
+                    // Chips: flask, credits, scooter app
+                    col.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: Val::Px(4.0),
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    })
+                    .with_children(|chips| {
+                        for (field, slot, color) in [
+                            (HudField::Flask, None, Color::srgb(1.0, 0.80, 0.42)),
+                            (HudField::Credits, Some(HudSlot::CityChip), Color::srgb(0.55, 0.90, 1.0)),
+                            (HudField::App, Some(HudSlot::CityChip), Color::srgb(0.70, 1.0, 0.70)),
+                        ] {
+                            let mut chip = chips.spawn((
+                                Node {
+                                    padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(HUD_CHIP_BG),
+                                BorderRadius::all(Val::Px(6.0)),
+                            ));
+                            if let Some(slot) = slot {
+                                chip.insert(slot);
+                            }
+                            chip.with_children(|c| {
+                                c.spawn(hud_text(field, "", 10.5, color));
+                            });
+                        }
+                    });
+                    // Current objective (one line, wraps on narrow screens)
+                    col.spawn(hud_text(HudField::Objective, "", 11.5, Color::WHITE));
+                    // Active statuses only (hidden when nothing applies)
                     col.spawn((
-                        TendyText,
-                        Text::new("TENDIES 0/12 | 15cm (Tiny Toy)"),
-                        TextFont {
-                            font_size: 11.5,
+                        HudSlot::Status,
+                        Node {
+                            display: Display::None,
                             ..default()
                         },
-                        TextColor(Color::srgba(1.0, 0.88, 0.38, 0.92)),
-                    ));
-                    col.spawn((
-                        StatusText,
-                        Text::new(""),
-                        TextFont {
-                            font_size: 10.5,
-                            ..default()
-                        },
-                        TextColor(Color::srgba(0.88, 1.0, 0.9, 0.9)),
-                    ));
+                    ))
+                    .with_children(|c| {
+                        c.spawn(hud_text(HudField::Status, "", 10.5, Color::srgb(0.62, 1.0, 0.72)));
+                    });
                 });
 
             // Top-right: Score + Controls hint
@@ -160,23 +344,48 @@ pub fn spawn_hud(mut commands: Commands) {
                     BorderRadius::all(Val::Px(10.0)),
                 ))
                 .with_children(|col| {
+                    col.spawn(hud_text(HudField::Score, "SCORE: 000000\nWAVE 1/3", 15.5, Color::WHITE));
                     col.spawn((
-                        ScoreText,
-                        Text::new("SCORE: 000000\nWAVE 1/3"),
-                        TextFont {
-                            font_size: 15.5,
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                    col.spawn((
-                        Text::new("[H] Help  |  [M] Audio"),
+                        Text::new("[ESC] Pause  |  [M] Sound"),
                         TextFont {
                             font_size: 12.0,
                             ..default()
                         },
                         TextColor(Color::srgb(0.9, 0.85, 0.7)),
                     ));
+                });
+
+            // Transient hint toast, lower center (kept clear of the top boss bars).
+            parent
+                .spawn((
+                    HintToast,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        bottom: Val::Px(90.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    Visibility::Hidden,
+                ))
+                .with_children(|root| {
+                    root.spawn((
+                        HintToastBox,
+                        Node {
+                            max_width: Val::Px(560.0),
+                            margin: UiRect::horizontal(Val::Px(12.0)),
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                            border: UiRect::all(Val::Px(1.0)),
+                            ..default()
+                        },
+                        BackgroundColor(HUD_PANEL_BG),
+                        BorderColor(Color::srgba(1.0, 0.84, 0.32, 0.55)),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn(hud_text(HudField::Hint, "", 13.5, Color::srgb(1.0, 0.95, 0.80)));
+                    });
                 });
         });
 }
@@ -269,99 +478,225 @@ pub fn update_hurt_flash(
     }
 }
 
+/// The single "what do I do now" line for the HUD.
+fn objective_line(stats: &PlayerStats) -> String {
+    if stats.in_city {
+        if stats.free_roam {
+            return "> FREE ROAM: scoot, hit the stunt gates, visit the crew".to_string();
+        }
+        if stats.lexie_defeated {
+            return "LEXIE DEFEATED!".to_string();
+        }
+        if !stats.city_tendies_unlocked() {
+            let mut steps = Vec::new();
+            if !stats.tj_recruited {
+                steps.push("meet TJ out front".to_string());
+            }
+            let pub_crew: Vec<&str> = stats
+                .missing_crew()
+                .into_iter()
+                .filter(|n| *n != "TJ")
+                .collect();
+            if !pub_crew.is_empty() {
+                steps.push(format!("find {} in Pub 217", pub_crew.join(", ")));
+            }
+            if !stats.mike_smoked {
+                steps.push("smoke with Mike".to_string());
+            }
+            return format!(
+                "> UNLOCK TENDIES {}/5: {}",
+                stats.gate_steps_done(),
+                steps.join(", ")
+            );
+        }
+        if stats.tendies < stats.total_tendies {
+            return "> Eat tendies to grow, then slash Lexie".to_string();
+        }
+        return "> SLASH LEXIE! [CLICK] attack, [R-CLICK] block, [SHIFT] roll".to_string();
+    }
+    if stats.boss_mode {
+        return "> Beat Mom: [CLICK] slash, [R-CLICK] block, [SHIFT] roll".to_string();
+    }
+    if stats.tendies < stats.total_tendies {
+        "> Eat tendies to grow, then open the fridge".to_string()
+    } else {
+        "> Open the fridge!".to_string()
+    }
+}
+
+/// Status words shown only while they apply.
+fn status_tags(stats: &PlayerStats) -> Vec<String> {
+    let mut tags = Vec::new();
+    if stats.enraged {
+        tags.push(format!(
+            "ENRAGED x{} {:.0}s",
+            stats.rage_level.max(1),
+            stats.rage_cooldown_timer.ceil().max(1.0)
+        ));
+    }
+    if stats.speed_boost_timer > 0.0 {
+        tags.push(format!("MUSTARD {:.0}s", stats.speed_boost_timer.ceil()));
+    }
+    if stats.has_ranch_shield {
+        tags.push("RANCH SHIELD".to_string());
+    }
+    if stats.lock_on_active {
+        tags.push("LOCK-ON [TAB]".to_string());
+    }
+    if stats.in_city {
+        if stats.high_timer > 0.0 {
+            tags.push(format!("HIGH+DRUNK {:.0}s", stats.high_timer.ceil()));
+        }
+        if stats.wanted_stars > 0 {
+            tags.push(format!("WANTED {}", "*".repeat(stats.wanted_stars as usize)));
+        }
+        if stats.riding_scooter.is_some() {
+            tags.push("ON SCOOTER".to_string());
+        }
+    }
+    if stats.audio_muted {
+        tags.push("MUTED".to_string());
+    }
+    tags
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn update_hud(
+    time: Res<Time>,
     stats: Res<PlayerStats>,
     state: Res<State<GameState>>,
-    mut hearts_q: Query<&mut Text, With<HeartsText>>,
-    mut tendy_q: Query<&mut Text, (With<TendyText>, Without<HeartsText>)>,
-    mut score_q: Query<&mut Text, (With<ScoreText>, Without<HeartsText>, Without<TendyText>)>,
-    mut status_q: Query<
-        &mut Text,
-        (
-            With<StatusText>,
-            Without<HeartsText>,
-            Without<TendyText>,
-            Without<ScoreText>,
-        ),
-    >,
+    mut text_q: Query<(&mut Text, &mut TextColor, &HudField)>,
     mut dash_q: Query<&mut Node, With<DashBarFill>>,
+    mut tendy_bar_q: Query<(&mut Node, &mut BackgroundColor), (With<TendyBarFill>, Without<DashBarFill>)>,
+    mut pip_q: Query<
+        (&HeartPip, &mut Node, &mut BackgroundColor),
+        (Without<DashBarFill>, Without<TendyBarFill>),
+    >,
+    mut slot_q: Query<(&HudSlot, &mut Node), (Without<DashBarFill>, Without<TendyBarFill>, Without<HeartPip>)>,
+    mut toast_q: Query<&mut Visibility, With<HintToast>>,
+    mut toast_box_q: Query<
+        (&mut BackgroundColor, &mut BorderColor),
+        (With<HintToastBox>, Without<TendyBarFill>, Without<HeartPip>),
+    >,
+    mut hint_track: Local<(String, u32, f32)>,
 ) {
-    if let Ok(mut t) = hearts_q.get_single_mut() {
-        t.0 = format!("HEARTS {}/{}", stats.hearts.max(0), stats.max_hearts);
+    // Transient hint: shown for HINT_SECS after `hint_text` (or `hint_bump`) changes.
+    if hint_track.0 != stats.hint_text || hint_track.1 != stats.hint_bump {
+        hint_track.0 = stats.hint_text.clone();
+        hint_track.1 = stats.hint_bump;
+        hint_track.2 = 0.0;
+    } else {
+        hint_track.2 += time.delta_secs();
     }
-    if let Ok(mut t) = tendy_q.get_single_mut() {
-        t.0 = format!(
-            "TENDIES {}/{} | {}cm ({})",
-            stats.tendies,
-            stats.total_tendies,
-            stats.height_cm(),
-            stats.size_tier()
-        );
-    }
-    if let Ok(mut t) = score_q.get_single_mut() {
-        if stats.in_city {
-            t.0 = format!("SCORE: {:06}\nCEDAR RAPIDS | {}/50", stats.score, stats.tendies);
-        } else {
-            t.0 = format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave);
+    let hint_age = hint_track.2;
+    let hint_alpha = if stats.hint_text.is_empty() {
+        0.0
+    } else {
+        (1.0 - (hint_age - (HINT_SECS - 0.6)) / 0.6).clamp(0.0, 1.0)
+    };
+    let want_toast = if hint_alpha > 0.0 { Visibility::Inherited } else { Visibility::Hidden };
+    for mut vis in &mut toast_q {
+        if *vis != want_toast {
+            *vis = want_toast;
         }
     }
-    if let Ok(mut t) = status_q.get_single_mut() {
-        let mut tags = Vec::new();
-        if stats.enraged {
-            tags.push(format!(
-                "ENRAGED x{} ({:.0}s)",
-                stats.rage_level.max(1),
-                stats.rage_cooldown_timer.ceil().max(1.0)
-            ));
-        }
-        if stats.speed_boost_timer > 0.0 {
-            tags.push(format!("MUSTARD {:.0}s", stats.speed_boost_timer));
-        }
-        if stats.has_ranch_shield {
-            tags.push("RANCH SHIELD".to_string());
-        }
-        if stats.estus_flasks > 0 || stats.boss_mode {
-            tags.push(format!("ESTUS [Q]: {}/{}", stats.estus_flasks, stats.max_estus_flasks));
-        }
-        if stats.lock_on_active {
-            tags.push("LOCK-ON [TAB]".to_string());
-        }
-        if stats.in_city {
-            tags.push(format!("CREDITS: {}", stats.tendy_credits));
-            if stats.wanted_stars > 0 {
-                let stars = "*".repeat(stats.wanted_stars as usize);
-                tags.push(format!("WANTED: {}", stars));
+    if let Ok((mut bg, mut border)) = toast_box_q.get_single_mut() {
+        bg.0 = HUD_PANEL_BG.with_alpha(0.80 * hint_alpha);
+        border.0 = Color::srgba(1.0, 0.84, 0.32, 0.55 * hint_alpha);
+    }
+
+    let unlocked = !stats.in_city || stats.city_tendies_unlocked();
+    let tags = status_tags(&stats);
+    for (mut text, mut color, field) in &mut text_q {
+        let new_text = match field {
+            HudField::Hearts => format!("{}/{}", stats.hearts.max(0), stats.max_hearts),
+            HudField::Tendies => {
+                if stats.in_city && stats.free_roam {
+                    format!("TENDY SNACKS {} (SCORE ONLY)", stats.roam_tendies)
+                } else if unlocked {
+                    format!("TENDIES {}/{}", stats.tendies, stats.total_tendies)
+                } else {
+                    format!("TENDIES {}/{}  LOCKED", stats.tendies, stats.total_tendies)
+                }
             }
-            if stats.high_timer > 0.0 {
-                tags.push(format!("HIGH+DRUNK {:.0}s", stats.high_timer));
-            } else {
-                tags.push("DRUNK".to_string());
+            HudField::Tier => format!("{} | {}cm", stats.size_tier(), stats.height_cm()),
+            HudField::Flask => format!("FLASK [Q] {}/{}", stats.estus_flasks, stats.max_estus_flasks),
+            HudField::Credits => format!("CREDITS {}", stats.tendy_credits),
+            HudField::App => {
+                if stats.scooter_app_unlocked {
+                    "SCOOTER APP OK".to_string()
+                } else {
+                    "PHONE [P]".to_string()
+                }
             }
-            if stats.riding_scooter.is_some() {
-                tags.push("SCOOTER".to_string());
-            } else if stats.scooter_app_unlocked {
-                tags.push("APP: UNLOCKED".to_string());
-            } else {
-                tags.push("PHONE [P]".to_string());
+            HudField::Objective => objective_line(&stats),
+            HudField::Status => tags.join("  "),
+            HudField::Score => {
+                if stats.in_city && stats.free_roam {
+                    format!("SCORE: {:06}\nCEDAR RAPIDS | FREE ROAM", stats.score)
+                } else if stats.in_city {
+                    format!("SCORE: {:06}\nCEDAR RAPIDS | {}/50", stats.score, stats.tendies)
+                } else {
+                    format!("SCORE: {:06}\nWAVE {}/3", stats.score, stats.wave)
+                }
             }
+            HudField::Hint => stats.hint_text.clone(),
+        };
+        if text.0 != new_text {
+            text.0 = new_text;
         }
-        if stats.tj_recruited {
-            tags.push("ALLY: TJ".to_string());
-        }
-        if stats.audio_muted {
-            tags.push("MUTED".to_string());
-        }
-        let buff_line = tags.join(" | ");
-        if buff_line.is_empty() {
-            t.0 = stats.hint_text.clone();
-        } else if stats.hint_text.is_empty() {
-            t.0 = buff_line;
-        } else {
-            t.0 = format!("{}\n{}", buff_line, stats.hint_text);
+        match field {
+            HudField::Hint => {
+                color.0 = color.0.with_alpha(hint_alpha);
+            }
+            HudField::Tendies => {
+                color.0 = if unlocked {
+                    Color::srgb(1.0, 0.86, 0.32)
+                } else {
+                    Color::srgb(0.70, 0.70, 0.74)
+                };
+            }
+            _ => {}
         }
     }
+
+    for (slot, mut node) in &mut slot_q {
+        let show = match slot {
+            HudSlot::CityChip => stats.in_city,
+            HudSlot::Status => !tags.is_empty(),
+        };
+        let want = if show { Display::Flex } else { Display::None };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+
+    let max_pips = stats.max_hearts.clamp(1, HUD_MAX_PIPS as i32);
+    for (pip, mut node, mut bg) in &mut pip_q {
+        let i = pip.0 as i32;
+        let want = if i < max_pips { Display::Flex } else { Display::None };
+        if node.display != want {
+            node.display = want;
+        }
+        bg.0 = if i < stats.hearts { HEART_FULL } else { HEART_EMPTY };
+    }
+
     if let Ok(mut node) = dash_q.get_single_mut() {
         node.width = Val::Percent(stats.dash_energy.clamp(0.0, 100.0));
+    }
+    if let Ok((mut node, mut bg)) = tendy_bar_q.get_single_mut() {
+        // Free-roam tendies are score-only, so the growth bar stays empty.
+        let frac = if stats.in_city && stats.free_roam {
+            0.0
+        } else {
+            stats.tendies as f32 / stats.total_tendies.max(1) as f32
+        };
+        node.width = Val::Percent((frac * 100.0).clamp(0.0, 100.0));
+        bg.0 = if unlocked {
+            Color::srgb(1.0, 0.78, 0.18)
+        } else {
+            Color::srgb(0.55, 0.55, 0.60)
+        };
     }
     crate::audio::update_telemetry(
         &format!("{:?}", state.get()),
@@ -374,13 +709,8 @@ pub fn update_hud(
     );
 }
 
+/// Start-of-game Tutorial card (the in-game pause menu lives in controls.rs).
 pub fn spawn_tutorial_overlay(mut commands: Commands) {
-    spawn_tutorial_card(&mut commands, false);
-}
-
-/// Shared by the start-of-game Tutorial state and the in-game help pause overlay
-/// (`as_help` swaps the start/continue buttons for a single RESUME button).
-fn spawn_tutorial_card(commands: &mut Commands, as_help: bool) {
     crate::audio::set_tutorial_visible(true);
     let mut root = commands.spawn((
         TutorialOverlay,
@@ -397,12 +727,8 @@ fn spawn_tutorial_card(commands: &mut Commands, as_help: bool) {
             },
             ..default()
         },
-        BackgroundColor(Color::srgba(0.05, 0.03, 0.02, if as_help { 0.55 } else { 0.28 })),
+        BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.28)),
     ));
-    if as_help {
-        // Draw over the city boss bar / minimap, which are spawned later than the HUD.
-        root.insert((HelpOverlay, GlobalZIndex(1000)));
-    }
     root
         .with_children(|root| {
             root.spawn((
@@ -446,7 +772,11 @@ fn spawn_tutorial_card(commands: &mut Commands, as_help: bool) {
                         "- Move: WASD / Arrows or Left Touch Stick\n\
                          - Jump / Double-Jump: SPACE or JUMP (Dash: SHIFT / DASH)\n\
                          - Look / Zoom: Mouse + Scroll Wheel (Mobile: Drag + Pinch Zoom)\n\
-                         - Help / Audio: H / M",
+                         - Saber fights: tap CLICK / J to slash, hold it to charge a heavy, SHIFT / ROLL dodge roll\n\
+                         - Block: hold RIGHT-CLICK / R / BLOCK / LT (raise it just in time to parry)\n\
+                         - Strafe: hold V / L3 (or while blocking / locked on), Lock-on: TAB / R3, Heal: Q\n\
+                         - Pause menu: ESC / H / START / HELP, Sound: M\n\
+                         - Skip cutscene: hold ENTER / START / SKIP",
                     ),
                     TextFont {
                         font_size: 13.0,
@@ -468,11 +798,7 @@ fn spawn_tutorial_card(commands: &mut Commands, as_help: bool) {
                 .with_children(|btn| {
                     btn.spawn((
                         TutorialBtnText,
-                        Text::new(if as_help {
-                            "RESUME (SPACE / H / TAP)"
-                        } else {
-                            "START QUEST (SPACE / TAP)"
-                        }),
+                        Text::new("START QUEST (SPACE / TAP)"),
                         TextFont {
                             font_size: 16.5,
                             ..default()
@@ -484,8 +810,10 @@ fn spawn_tutorial_card(commands: &mut Commands, as_help: bool) {
                 let mom_defeated = crate::audio::has_defeated_mom()
                     || saved.split('|').next() == Some("city");
                 let saved_stage = saved.split('|').next().unwrap_or("");
-                if !as_help && (mom_defeated || saved_stage == "boss") {
-                    let label = if mom_defeated {
+                if mom_defeated || saved_stage == "boss" {
+                    let label = if saved_game_beaten(&saved) {
+                        "FREE ROAM CEDAR RAPIDS [C] (LEXIE BEATEN!)"
+                    } else if mom_defeated {
                         "SKIP TO CEDAR RAPIDS [C] (MOM DEFEATED!)"
                     } else {
                         "CONTINUE CHECKPOINT: MOM BOSS [C]"
@@ -548,13 +876,32 @@ pub fn adapt_ui_to_viewport(
         ),
     >,
     mut hud_text_q: Query<
-        &mut TextFont,
+        (&mut TextFont, &HudField),
         (
-            Or<(With<HeartsText>, With<TendyText>, With<ScoreText>)>,
             Without<TutorialTitleText>,
             Without<TutorialBodyText>,
             Without<TutorialControlsText>,
             Without<TutorialBtnText>,
+        ),
+    >,
+    mut hud_node_q: Query<
+        (&mut Node, Has<HintToast>),
+        (
+            Or<(With<HudStatusPanel>, With<HintToast>)>,
+            Without<TutorialOverlay>,
+            Without<TutorialCard>,
+            Without<crate::city::LexieBossHudRoot>,
+        ),
+    >,
+    mut strip_q: Query<
+        &mut Node,
+        (
+            With<crate::controls::ControlStrip>,
+            Without<TutorialOverlay>,
+            Without<TutorialCard>,
+            Without<crate::city::LexieBossHudRoot>,
+            Without<HudStatusPanel>,
+            Without<HintToast>,
         ),
     >,
 ) {
@@ -613,8 +960,48 @@ pub fn adapt_ui_to_viewport(
     if let Ok(mut tf) = btn_q.get_single_mut() {
         tf.font_size = if is_short { 14.5 } else if is_narrow { 16.0 } else { 18.5 };
     }
-    for mut tf in &mut hud_text_q {
-        tf.font_size = if is_short || is_narrow { 12.5 } else { 15.0 };
+    // HUD text: one size per field, a touch smaller on narrow / short viewports.
+    let k = if is_short || is_narrow { 0.88 } else { 1.0 };
+    for (mut tf, field) in &mut hud_text_q {
+        let base = match field {
+            HudField::Hearts => 12.0,
+            HudField::Tendies => 14.0,
+            HudField::Tier => 11.0,
+            HudField::Flask | HudField::Credits | HudField::App | HudField::Status => 10.5,
+            HudField::Objective => 11.5,
+            HudField::Score => 15.5,
+            HudField::Hint => 13.5,
+        };
+        let size = base * k;
+        if tf.font_size != size {
+            tf.font_size = size;
+        }
+    }
+    for (mut node, is_toast) in &mut hud_node_q {
+        if is_toast {
+            // Lower center; on narrow screens sit above the bottom-docked Lexie bar.
+            let bottom = Val::Px(if w < 720.0 { 190.0 } else { 90.0 });
+            if node.bottom != bottom {
+                node.bottom = bottom;
+            }
+        } else {
+            let width = Val::Px(if is_narrow { 214.0 } else { 266.0 });
+            if node.width != width {
+                node.width = width;
+            }
+        }
+    }
+    // Controls strip: bottom-left, never reaching the centred SCOOT button / hint toast.
+    if let Ok(mut node) = strip_q.get_single_mut() {
+        // A definite width (not max_width) so Taffy wraps whole chips into rows.
+        let width = Val::Px((w * 0.5 - 200.0).clamp(200.0, 520.0));
+        if node.width != width {
+            node.width = width;
+        }
+        let bottom = Val::Px(if is_short { 6.0 } else { 10.0 });
+        if node.bottom != bottom {
+            node.bottom = bottom;
+        }
     }
     for mut node in &mut lexie_hud_q {
         if w < 720.0 {
@@ -664,6 +1051,38 @@ pub fn check_url_test_mode(
             stats.wave = 4;
             next_state.set_from_black(GameState::TjCutscene);
         }
+        // Test links for the remaining city cutscenes (same city setup as the TJ link).
+        m @ 10..=14 => {
+            stats.in_city = true;
+            stats.tendies = 0;
+            stats.total_tendies = 50;
+            stats.player_scale = 1.8;
+            stats.wave = 4;
+            // The Lexie finale link ends on the real post-Lexie StageClear card.
+            stats.lexie_defeated = m == 14;
+            next_state.set_from_black(match m {
+                10 => GameState::DerekCutscene,
+                11 => GameState::NateCutscene,
+                12 => GameState::GlennCutscene,
+                13 => GameState::MikeCutscene,
+                _ => GameState::LexieVictoryCutscene,
+            });
+        }
+        // `city_crew=1` (gate done, 0 tendies) and `city_crew_kaiju=1` (gate done, 30 tendies).
+        m @ 15..=16 => {
+            stats.in_city = true;
+            stats.tendies = 0;
+            stats.total_tendies = 50;
+            stats.player_scale = 1.8;
+            stats.wave = 4;
+            stats.test_crew_preset = Some(if m == 15 { 0 } else { 30 });
+            next_state.set_from_black(GameState::CityPlay);
+        }
+        // `free_roam=1`: post-game free roam in the city.
+        17 => {
+            stats.prepare_free_roam();
+            next_state.set_from_black(GameState::CityPlay);
+        }
         _ => {}
     }
 }
@@ -701,7 +1120,20 @@ pub fn handle_tutorial_input(
             if parts.get(5).copied() == Some("1") {
                 stats.scooter_app_unlocked = true;
             }
-            if mom_defeated {
+            if mom_defeated && saved_game_beaten(&saved) {
+                // Lexie already beaten: continue straight into post-game free roam.
+                stats.prepare_free_roam();
+                next_state.set(GameState::CityPlay);
+                return;
+            } else if mom_defeated {
+                // Restore gate progress (applied by `enter_city_play`). Tendies always restart
+                // at 0, so an old save with tendies but no crew can't skip the gate. Saves from
+                // before the gate mask existed only know about TJ (field 4).
+                stats.restore_gate_mask = parts
+                    .get(6)
+                    .and_then(|v| v.parse::<u8>().ok())
+                    .unwrap_or_else(|| (parts.get(4).copied() == Some("1")) as u8)
+                    & 31;
                 stats.in_city = true;
                 stats.tendies = 0;
                 stats.total_tendies = 50;
@@ -741,7 +1173,7 @@ pub fn toggle_audio_hotkey(keys: Res<ButtonInput<KeyCode>>, mut stats: ResMut<Pl
     }
 }
 
-/// Marks the in-game help card (a pause overlay, not a `GameState`).
+/// Marks the in-game pause menu root (a pause overlay, not a `GameState`; see controls.rs).
 #[derive(Component)]
 pub struct HelpOverlay;
 
@@ -754,7 +1186,7 @@ pub struct HelpPause {
     pub open: bool,
     /// Set on the frame help closes so the dismiss key (Space/Enter/tap) isn't also read as a
     /// jump by gameplay systems later in that frame. Cleared in `PostUpdate`.
-    resume_grace: bool,
+    pub(crate) resume_grace: bool,
 }
 
 /// Run condition for gameplay-state Update sets: no transition pending and help not open.
@@ -768,49 +1200,6 @@ pub fn clear_help_resume_grace(mut help: ResMut<HelpPause>) {
     }
 }
 
-/// H / touch HELP opens the help card in Playing, BossFight and CityPlay; H, Space, Enter, Esc,
-/// a tap or the RESUME button closes it.
-pub fn toggle_help_overlay(
-    mut commands: Commands,
-    keys: Res<ButtonInput<KeyCode>>,
-    touches: Res<Touches>,
-    mut help: ResMut<HelpPause>,
-    mut virtual_time: ResMut<Time<Virtual>>,
-    mut window_q: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
-    btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
-    overlay_q: Query<Entity, With<HelpOverlay>>,
-) {
-    if !help.open {
-        if keys.just_pressed(KeyCode::KeyH) || crate::audio::take_touch_help() {
-            help.open = true;
-            virtual_time.pause();
-            spawn_tutorial_card(&mut commands, true);
-            // Free the mouse so the RESUME button can be clicked.
-            if let Ok(mut window) = window_q.get_single_mut() {
-                window.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
-                window.cursor_options.visible = true;
-            }
-            crate::audio::set_touch_playing(false);
-        }
-        return;
-    }
-    let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
-    if clicked
-        || keys.just_pressed(KeyCode::KeyH)
-        || keys.just_pressed(KeyCode::Space)
-        || keys.just_pressed(KeyCode::Enter)
-        || keys.just_pressed(KeyCode::Escape)
-        || touches.any_just_pressed()
-        || crate::audio::take_touch_help()
-        || crate::audio::take_touch_action_tap()
-        || crate::audio::take_touch_jump()
-    {
-        close_help(&mut commands, &mut help, &mut virtual_time, &overlay_q);
-        help.resume_grace = true;
-        crate::audio::set_touch_playing(true);
-    }
-}
-
 /// OnExit of the gameplay states: never leave the game paused or the card up.
 pub fn close_help_overlay(
     mut commands: Commands,
@@ -819,9 +1208,11 @@ pub fn close_help_overlay(
     overlay_q: Query<Entity, With<HelpOverlay>>,
 ) {
     close_help(&mut commands, &mut help, &mut virtual_time, &overlay_q);
+    // A pointer-lock loss reported around the state change must not pause the next scene.
+    let _ = crate::audio::take_pointer_lock_lost();
 }
 
-fn close_help(
+pub(crate) fn close_help(
     commands: &mut Commands,
     help: &mut HelpPause,
     virtual_time: &mut Time<Virtual>,
@@ -849,17 +1240,21 @@ pub fn despawn_tutorial_overlay(
     }
 }
 
-pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
+pub fn spawn_stage_clear_overlay(commands: Commands, mut stats: ResMut<PlayerStats>) {
     if stats.lexie_defeated {
+        // Record the win so a reload can go straight to free roam (checkpoint field 7).
+        stats.game_beaten = true;
+        save_game_checkpoint("city", &stats);
         spawn_end_card(
             commands,
             "LEXIE DEFEATED - NEW YORK CITY SAVED!",
             &format!(
-                "SKYSCRAPER KAIJU STAN MASTERED THE TENDY-VERSE!\n50 / 50 MANHATTAN TENDIES | LEXIE & PICKLED GARLIC BANISHED!\nFINAL SCORE: {:06}",
+                "SKYSCRAPER KAIJU STAN MASTERED THE TENDY-VERSE!\n50 / 50 MANHATTAN TENDIES | LEXIE & PICKLED GARLIC BANISHED!\nFINAL SCORE: {:06}\n\nCONTINUE: back to Cedar Rapids at normal size, crew at their spots, scoot around.",
                 stats.score
             ),
-            "PLAY AGAIN (R / TAP)",
+            "PLAY AGAIN (R)",
             Color::srgb(1.0, 0.84, 0.2),
+            true,
         );
     } else if stats.boss_mode {
         spawn_end_card(
@@ -871,6 +1266,7 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
             ),
             "PLAY AGAIN (R / TAP)",
             Color::srgb(1.0, 0.84, 0.2),
+            false,
         );
     } else {
         spawn_end_card(
@@ -886,6 +1282,7 @@ pub fn spawn_stage_clear_overlay(commands: Commands, stats: Res<PlayerStats>) {
             ),
             "PLAY AGAIN (R / TAP)",
             Color::srgb(1.0, 0.84, 0.2),
+            false,
         );
     }
 }
@@ -906,6 +1303,7 @@ pub fn spawn_game_over_overlay(commands: Commands, stats: Res<PlayerStats>) {
         ),
         btn,
         Color::srgb(0.86, 0.10, 0.10),
+        false,
     );
 }
 
@@ -915,6 +1313,7 @@ fn spawn_end_card(
     body: &str,
     btn_label: &str,
     title_color: Color,
+    with_roam: bool,
 ) {
     commands
         .spawn((
@@ -959,15 +1358,44 @@ fn spawn_end_card(
                     },
                     TextColor(Color::WHITE),
                 ));
+                if with_roam {
+                    // Post-game choice: free roam first (selected by default), then play again.
+                    // `handle_restart_input` drives the selection highlight.
+                    card.spawn((
+                        RoamButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
+                            margin: UiRect::top(Val::Px(6.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.14, 0.58, 0.28)),
+                        BorderColor(Color::NONE),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("CONTINUE: FREE ROAM (C)"),
+                            TextFont {
+                                font_size: 20.0,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                }
                 card.spawn((
                     RestartButton,
                     Button,
                     Node {
                         padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
                         margin: UiRect::top(Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
                     BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
+                    BorderColor(Color::NONE),
                     BorderRadius::all(Val::Px(10.0)),
                 ))
                 .with_children(|btn| {
@@ -987,19 +1415,84 @@ fn spawn_end_card(
 /// GameOver / StageClear input: after a short lockout (so a jump/attack held at the moment of
 /// death can't skip the card) request a fade back into play. The actual world reset happens in
 /// `OnExit` (see [`restart_world_after_game_over`]) while the screen is fully black.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_restart_input(
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
-    stats: Res<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     state: Res<State<GameState>>,
     mut next_state: crate::transition::SceneTransition,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<RestartButton>)>,
+    roam_q: Query<&Interaction, (Changed<Interaction>, With<RoamButton>)>,
+    new_roam_q: Query<(), Added<RoamButton>>,
+    mut style_q: Query<
+        (&mut BackgroundColor, &mut BorderColor, Has<RoamButton>),
+        Or<(With<RestartButton>, With<RoamButton>)>,
+    >,
+    // Two-choice card selection: 0 = Continue (free roam), 1 = Play Again.
+    mut selected: Local<u8>,
 ) {
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
+    let roam_clicked = roam_q.iter().any(|i| *i == Interaction::Pressed);
     // Always drain queued touch taps so a tap during the lockout doesn't fire afterwards.
     let tapped = crate::audio::take_touch_action_tap();
     let jumped = crate::audio::take_touch_jump();
+    let has_roam = style_q.iter().any(|(_, _, roam)| roam);
+    if has_roam {
+        if !new_roam_q.is_empty() {
+            *selected = 0;
+        }
+        // Up/down (keys, D-pad, stick) or left/right toggle between the two choices.
+        let nav = crate::audio::take_menu_nav();
+        if nav == -1
+            || nav == 1
+            || keys.any_just_pressed([
+                KeyCode::ArrowUp,
+                KeyCode::ArrowDown,
+                KeyCode::ArrowLeft,
+                KeyCode::ArrowRight,
+                KeyCode::KeyW,
+                KeyCode::KeyS,
+            ])
+        {
+            *selected = 1 - (*selected).min(1);
+        }
+        for (mut bg, mut border, roam) in &mut style_q {
+            let on = (*selected == 0) == roam;
+            let want_bg = match (roam, on) {
+                (true, true) => Color::srgb(0.14, 0.58, 0.28),
+                (false, true) => Color::srgb(0.82, 0.14, 0.16),
+                _ => Color::srgba(1.0, 1.0, 1.0, 0.10),
+            };
+            let want_border = if on { Color::srgba(1.0, 0.84, 0.32, 0.9) } else { Color::NONE };
+            if bg.0 != want_bg {
+                bg.0 = want_bg;
+            }
+            if border.0 != want_border {
+                border.0 = want_border;
+            }
+        }
+    }
     if !next_state.input_unlocked(crate::transition::RESTART_LOCKOUT_SECS) {
+        return;
+    }
+    if has_roam {
+        // Buttons (mouse / touch), hotkeys C and R, or confirm the highlighted choice with
+        // Space / Enter / gamepad A / touch JUMP. A bare screen tap is ambiguous here, so it
+        // only counts through the buttons. LT also sends R, so R is keyboard-only.
+        let confirm = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) || jumped;
+        let go_roam = roam_clicked || keys.just_pressed(KeyCode::KeyC) || (confirm && *selected == 0);
+        let go_again = clicked
+            || (keys.just_pressed(KeyCode::KeyR) && !crate::audio::last_input_gamepad())
+            || (confirm && *selected == 1);
+        if go_roam {
+            // Read by `restart_world_after_stage_clear` while the screen is black.
+            stats.free_roam = true;
+            next_state.set(GameState::CityPlay);
+        } else if go_again {
+            stats.free_roam = false;
+            next_state.set(GameState::Playing);
+        }
         return;
     }
     if !(clicked
@@ -1036,7 +1529,8 @@ pub fn restart_world_after_game_over(
     );
 }
 
-/// OnExit(StageClear): "play again" always restarts Level 1.
+/// OnExit(StageClear): "play again" restarts Level 1; "continue" (`free_roam` set by
+/// `handle_restart_input`) respawns the city for post-game free roam.
 pub fn restart_world_after_stage_clear(
     commands: Commands,
     asset_server: Res<AssetServer>,
@@ -1047,13 +1541,14 @@ pub fn restart_world_after_stage_clear(
     level_q: Query<Entity, With<LevelEntity>>,
     end_q: Query<Entity, With<EndOverlay>>,
 ) {
+    let roam = stats.free_roam;
     reset_world_for_restart(
-        false, commands, asset_server, meshes, materials, stats, orbit, level_q, end_q,
+        roam, commands, asset_server, meshes, materials, stats, orbit, level_q, end_q,
     );
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reset_world_for_restart(
+pub(crate) fn reset_world_for_restart(
     retry_city: bool,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -1071,8 +1566,14 @@ fn reset_world_for_restart(
         commands.entity(e).despawn_recursive();
     }
     let was_muted = stats.audio_muted;
+    // A city retry / restart inside free roam stays in free roam (keeping the score), and the
+    // "Lexie beaten" flag always survives so later checkpoints keep it.
+    let keep_roam = retry_city && stats.free_roam;
+    let roam_score = stats.score;
+    let beaten = stats.game_beaten;
     *stats = PlayerStats::default();
     stats.audio_muted = was_muted;
+    stats.game_beaten = beaten;
     *orbit = CameraOrbit::default();
     crate::audio::set_touch_boss_mode(false);
     crate::audio::set_uzumaki_mode(0);
@@ -1083,6 +1584,10 @@ fn reset_world_for_restart(
         stats.total_tendies = 50;
         stats.player_scale = 1.8;
         stats.wave = 4;
+        if keep_roam {
+            stats.prepare_free_roam();
+            stats.score = roam_score;
+        }
         spawn_player_inner(&mut commands, &asset_server);
         return;
     }

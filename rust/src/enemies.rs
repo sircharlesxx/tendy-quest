@@ -32,6 +32,8 @@ pub struct Enemy {
     pub walk_phase: f32,
     pub hp: i32,
     pub hit_cooldown: f32,
+    /// `Player::swing_id` of the last saber swing that connected (one hit per swing).
+    pub last_saber_swing: u32,
 }
 
 /// Seconds since spawn; enemies grow in from nothing over `SPAWN_GROW_SECS` instead of popping in.
@@ -107,6 +109,7 @@ pub fn spawn_enemy_at(commands: &mut Commands, asset_server: &AssetServer, kind:
             walk_phase: pos.z * 0.5,
             hp: 2,
             hit_cooldown: 0.0,
+            last_saber_swing: 0,
         },
         SpawnGrow(0.0),
     ));
@@ -299,6 +302,20 @@ pub fn update_enemies(
                 stats.score += 250;
                 crate::audio::play_sfx("shield");
                 stats.shake_request = stats.shake_request.max(0.2);
+            } else if let outcome @ (crate::player::BlockOutcome::Blocked | crate::player::BlockOutcome::Perfect) =
+                crate::player::try_block(&mut player, &mut stats, p_tf.translation, e_tf.translation)
+            {
+                // Saber guard: the veggie bounces off the blade; a perfect block staggers it.
+                let away = -flat_to_player.normalize_or_zero();
+                if outcome == crate::player::BlockOutcome::Perfect {
+                    enemy.knockback = away * 22.0;
+                    if enemy.kind == EnemyKind::CarrotLancer {
+                        enemy.carrot_state = CarrotState::Stunned;
+                        enemy.state_timer = 1.1;
+                    }
+                } else {
+                    enemy.knockback = away * 12.0;
+                }
             } else if stats.has_ranch_shield {
                 stats.has_ranch_shield = false;
                 player.invuln_timer = 0.8;

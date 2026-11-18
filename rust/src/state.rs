@@ -69,6 +69,23 @@ pub struct PlayerStats {
     pub derek_return_city: bool,
     pub nate_return_city: bool,
     pub glenn_return_city: bool,
+    /// Crew recruitment flags (TJ uses `tj_recruited`). These are the source of truth for the
+    /// Level 2 crew gate; the city NPC components mirror them.
+    pub derek_recruited: bool,
+    pub nate_recruited: bool,
+    pub glenn_recruited: bool,
+    /// Stan has finished the Mike (smoke break) cutscene this city run; the last gate step.
+    pub mike_smoked: bool,
+    /// Set once the "crew assembled" moment has played this city run, so it fires only once.
+    pub crew_unlock_announced: bool,
+    /// Bumped to re-show the transient HUD hint even when `hint_text` is unchanged.
+    pub hint_bump: u32,
+    /// Test-link preset (`city_crew=1` / `city_crew_kaiju=1`): fresh city entry starts with the
+    /// whole gate done and this many tendies eaten.
+    pub test_crew_preset: Option<u32>,
+    /// Gate progress restored from a checkpoint (bits: 1 TJ, 2 Derek, 4 Nate, 8 Glenn, 16 Mike),
+    /// applied on the next fresh city entry.
+    pub restore_gate_mask: u8,
     pub saved_city_pos: Vec3,
     pub driving_car: Option<Entity>,
     pub stamina_regen_delay: f32,
@@ -89,6 +106,14 @@ pub struct PlayerStats {
     /// Camera shake requested by gameplay systems that can't reach `CameraOrbit`; `update_camera`
     /// folds it into `CameraOrbit::shake` and clears it.
     pub shake_request: f32,
+    /// Post-game free roam (after beating Lexie): Stan stays 180 cm, no Lexie, the crew idle at
+    /// their first-found spots without replaying cutscenes, and city tendies only add score.
+    pub free_roam: bool,
+    /// Lexie has been beaten at least once (persisted as checkpoint field 7, see
+    /// `ui::save_game_checkpoint`). Survives restarts so a later save never drops the win.
+    pub game_beaten: bool,
+    /// Score-only tendies eaten this free-roam run (they never touch `tendies` or Stan's size).
+    pub roam_tendies: u32,
 }
 
 impl Default for PlayerStats {
@@ -132,6 +157,14 @@ impl Default for PlayerStats {
             derek_return_city: false,
             nate_return_city: false,
             glenn_return_city: false,
+            derek_recruited: false,
+            nate_recruited: false,
+            glenn_recruited: false,
+            mike_smoked: false,
+            crew_unlock_announced: false,
+            hint_bump: 0,
+            test_crew_preset: None,
+            restore_gate_mask: 0,
             saved_city_pos: Vec3::new(0.0, 0.0, 82.0),
             driving_car: None,
             stamina_regen_delay: 0.0,
@@ -149,6 +182,9 @@ impl Default for PlayerStats {
             wanted_decay_timer: 0.0,
             hurt_flash: 0.0,
             shake_request: 0.0,
+            free_roam: false,
+            game_beaten: false,
+            roam_tendies: 0,
         }
     }
 }
@@ -162,6 +198,9 @@ impl PlayerStats {
     ///   tendies need gentle increments around small counter props while the final 4 tendies
     ///   must rapidly vault Stan to adult height (`6.0`) to reach the refrigerator handle.
     pub fn target_scale(&self) -> f32 {
+        if self.in_city && self.free_roam {
+            return 1.8;
+        }
         if self.in_city {
             let t = self.tendies.min(50) as f32 / 50.0;
             return 1.8 + t.powf(1.08) * 16.2;
@@ -184,11 +223,113 @@ impl PlayerStats {
         base
     }
 
+    /// Crew members recruited so far in Level 2 (TJ, Derek, Nate, Glenn).
+    pub fn crew_count(&self) -> u32 {
+        [self.tj_recruited, self.derek_recruited, self.nate_recruited, self.glenn_recruited]
+            .iter()
+            .filter(|&&r| r)
+            .count() as u32
+    }
+
+    /// All four crew members found: city tendies become collectable.
+    pub fn crew_assembled(&self) -> bool {
+        self.crew_count() >= 4
+    }
+
+    /// Gate steps done out of 5: the four crew recruits plus the smoke break with Mike.
+    pub fn gate_steps_done(&self) -> u32 {
+        self.crew_count() + self.mike_smoked as u32
+    }
+
+    /// Gate steps still to do, in story order (crew names, then Mike's smoke break).
+    pub fn missing_gate_steps(&self) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = self.missing_crew();
+        if let Some(first) = out.first_mut() {
+            *first = match *first {
+                "TJ" => "recruit TJ",
+                "Derek" => "recruit Derek",
+                "Nate" => "recruit Nate",
+                _ => "recruit Glenn",
+            };
+        }
+        if !self.mike_smoked {
+            out.push("smoke with Mike");
+        }
+        out
+    }
+
+    /// Names of crew members still missing, in story order.
+    pub fn missing_crew(&self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if !self.tj_recruited {
+            out.push("TJ");
+        }
+        if !self.derek_recruited {
+            out.push("Derek");
+        }
+        if !self.nate_recruited {
+            out.push("Nate");
+        }
+        if !self.glenn_recruited {
+            out.push("Glenn");
+        }
+        out
+    }
+
+    /// The Level 2 gate: all four crew recruited AND the smoke break with Mike done.
+    pub fn gate_open(&self) -> bool {
+        self.crew_assembled() && self.mike_smoked
+    }
+
+    /// Gate progress as one bitmask (1 TJ, 2 Derek, 4 Nate, 8 Glenn, 16 Mike) for checkpoints.
+    pub fn gate_mask(&self) -> u8 {
+        (self.tj_recruited as u8)
+            | (self.derek_recruited as u8) << 1
+            | (self.nate_recruited as u8) << 2
+            | (self.glenn_recruited as u8) << 3
+            | (self.mike_smoked as u8) << 4
+    }
+
+    pub fn apply_gate_mask(&mut self, mask: u8) {
+        self.tj_recruited = mask & 1 != 0;
+        self.derek_recruited = mask & 2 != 0;
+        self.nate_recruited = mask & 4 != 0;
+        self.glenn_recruited = mask & 8 != 0;
+        self.mike_smoked = mask & 16 != 0;
+    }
+
+    /// Sets up post-game free roam for the next fresh `CityPlay` entry (applied again by
+    /// `enter_city_play`): city, 180 cm, whole gate done, Lexie beaten, scooter app unlocked.
+    pub fn prepare_free_roam(&mut self) {
+        self.free_roam = true;
+        self.game_beaten = true;
+        self.lexie_defeated = true;
+        self.in_city = true;
+        self.boss_mode = false;
+        self.tendies = 0;
+        self.roam_tendies = 0;
+        self.total_tendies = 50;
+        self.player_scale = 1.8;
+        self.wave = 4;
+        self.scooter_app_unlocked = true;
+        self.apply_gate_mask(31);
+        self.crew_unlock_announced = true;
+        self.restore_gate_mask = 0;
+        self.test_crew_preset = None;
+    }
+
+    /// City tendies can be eaten once the gate is open. A run that already holds every tendy
+    /// (the `city_titan=1` preview) counts as unlocked so nothing there reads as locked.
+    pub fn city_tendies_unlocked(&self) -> bool {
+        self.gate_open() || self.tendies >= self.total_tendies
+    }
+
     pub fn height_cm(&self) -> u32 {
         if self.in_city {
-            return ((self.player_scale / 18.0) * 6500.0)
-                .round()
-                .clamp(180.0, 6500.0) as u32;
+            // 1.8 scale is a 180 cm adult and 18.0 is the 6500 cm kaiju; interpolate between them
+            // so the HUD does not claim 650 cm at the start of the city.
+            let t = ((self.player_scale - 1.8) / (18.0 - 1.8)).clamp(0.0, 1.0);
+            return (180.0 + t * (6500.0 - 180.0)).round() as u32;
         }
         ((self.player_scale / 6.0) * 180.0)
             .round()
@@ -196,6 +337,9 @@ impl PlayerStats {
     }
 
     pub fn size_tier(&self) -> &'static str {
+        if self.in_city && self.free_roam {
+            return "Free Roam";
+        }
         if self.in_city {
             return match self.tendies {
                 0..=11 => "NYC Street Brawler",

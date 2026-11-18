@@ -38,6 +38,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = isVoiceSpeaking)]
         fn js_is_voice_speaking() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = stopVoice)]
+        fn js_stop_voice();
+
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playSfx)]
         fn js_play_sfx(name: &str);
 
@@ -71,6 +74,15 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeAttack)]
         fn js_take_attack() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = blockHeld)]
+        fn js_block_held() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = attackHeld)]
+        fn js_attack_held() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = combatDemo)]
+        fn js_combat_demo() -> String;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeActionTap)]
         fn js_take_action_tap() -> bool;
 
@@ -97,6 +109,30 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCutsceneStartTime)]
         fn js_take_cutscene_start_time() -> f32;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = skipHeld)]
+        fn js_skip_held() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = skipTouchUi)]
+        fn js_skip_touch_ui() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setCutsceneSkip)]
+        fn js_set_cutscene_skip(active: bool, progress: f32);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = autoSkip)]
+        fn js_auto_skip() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeMenuNav)]
+        fn js_take_menu_nav() -> i32;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = usingGamepad)]
+        fn js_using_gamepad() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takePointerLockLost)]
+        fn js_take_pointer_lock_lost() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeDebugPause)]
+        fn js_take_debug_pause() -> bool;
 
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCheckpoint)]
         fn js_save_checkpoint(json: &str);
@@ -164,6 +200,52 @@ mod imp {
         js_is_voice_speaking()
     }
 
+    /// Cancels the current TTS line so `is_voice_speaking` reads false right away.
+    pub fn stop_voice() {
+        js_stop_voice();
+    }
+
+    /// Gamepad Start or the touch SKIP button is held (keyboard Enter is read in Bevy).
+    pub fn skip_input_held() -> bool {
+        js_skip_held()
+    }
+
+    /// Touch layout is active, so the HTML SKIP button replaces the keyboard prompt.
+    pub fn skip_touch_ui() -> bool {
+        js_skip_touch_ui()
+    }
+
+    /// Shows/hides the touch SKIP button and sets its hold fill (0..1); also tells the gamepad
+    /// poller that Start means skip, not help, while a cutscene runs.
+    pub fn set_cutscene_skip(active: bool, progress: f32) {
+        js_set_cutscene_skip(active, progress);
+    }
+
+    /// `?debug=1&autoskip=1`: skip each cutscene automatically (headless tests).
+    pub fn debug_autoskip_enabled() -> bool {
+        js_auto_skip()
+    }
+
+    /// Pause menu gamepad navigation since the last call: -1 up, 1 down, 3 back (B), 0 none.
+    pub fn take_menu_nav() -> i32 {
+        js_take_menu_nav()
+    }
+
+    /// True when the most recent input came from a gamepad (controls strip shows pad labels).
+    pub fn last_input_gamepad() -> bool {
+        js_using_gamepad()
+    }
+
+    /// The browser dropped pointer lock (Esc, focus loss) during gameplay since the last call.
+    pub fn take_pointer_lock_lost() -> bool {
+        js_take_pointer_lock_lost()
+    }
+
+    /// `?debug=1&pause_menu=1`: open the pause menu once on load (headless screenshots).
+    pub fn take_debug_pause() -> bool {
+        js_take_debug_pause()
+    }
+
     pub fn play_sfx(name: &str) {
         js_play_sfx(name);
     }
@@ -210,6 +292,21 @@ mod imp {
 
     pub fn take_touch_action_tap() -> bool {
         js_take_action_tap()
+    }
+
+    /// Touch BLOCK button is being held (boss mode saber guard).
+    pub fn touch_block_held() -> bool {
+        js_block_held()
+    }
+
+    /// Touch SABER button or a gamepad attack button (RB / RT) is held down (heavy charge).
+    pub fn touch_attack_held() -> bool {
+        js_attack_held()
+    }
+
+    /// `combat_demo=` URL value (empty unless `debug=1`), for the debug combat motion demo.
+    pub fn debug_combat_demo() -> String {
+        js_combat_demo()
     }
 
     pub fn take_touch_help() -> bool {
@@ -305,6 +402,38 @@ mod imp {
         false
     }
 
+    pub fn stop_voice() {}
+
+    pub fn skip_input_held() -> bool {
+        false
+    }
+
+    pub fn skip_touch_ui() -> bool {
+        false
+    }
+
+    pub fn set_cutscene_skip(_active: bool, _progress: f32) {}
+
+    pub fn debug_autoskip_enabled() -> bool {
+        false
+    }
+
+    pub fn take_menu_nav() -> i32 {
+        0
+    }
+
+    pub fn last_input_gamepad() -> bool {
+        false
+    }
+
+    pub fn take_pointer_lock_lost() -> bool {
+        false
+    }
+
+    pub fn take_debug_pause() -> bool {
+        false
+    }
+
     pub fn play_sfx(_name: &str) {}
 
     pub fn toggle_mute() -> bool {
@@ -349,6 +478,18 @@ mod imp {
 
     pub fn take_touch_action_tap() -> bool {
         false
+    }
+
+    pub fn touch_block_held() -> bool {
+        false
+    }
+
+    pub fn touch_attack_held() -> bool {
+        false
+    }
+
+    pub fn debug_combat_demo() -> String {
+        String::new()
     }
 
     pub fn take_touch_help() -> bool {
@@ -405,12 +546,14 @@ mod imp {
 }
 
 pub use imp::{
-    debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
+    debug_autoskip_enabled, debug_combat_demo, debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
     mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_cutscene_music, play_hacking_music,
     play_headphone_music, play_scooter_music, play_sfx, play_viking_chant_music, save_checkpoint,
-    set_touch_boss_mode, set_touch_playing,
-    set_tutorial_visible, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
+    set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
+    skip_touch_ui, stop_voice, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
-    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_move_x,
+    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_attack_held, touch_block_held, touch_move_x,
     touch_move_y, update_telemetry,
 };
+// Pause menu / controls strip bridge (controls.rs).
+pub use imp::{last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};

@@ -32,6 +32,15 @@ pub struct HeroCosmetic;
 #[derive(Component)]
 pub struct HeroSaberBlade;
 
+/// Hero saber's outer glow sheath and its light; brightened while a heavy charges.
+#[derive(Component)]
+pub struct HeroSaberAura;
+#[derive(Component)]
+pub struct HeroSaberLight;
+/// Resting colour of the hero saber sheath and intensity of its light.
+pub const HERO_SABER_AURA_COLOR: Color = Color::srgba(0.62, 0.28, 1.0, 0.42);
+pub const HERO_SABER_LIGHT: f32 = 38000.0;
+
 #[derive(Component)]
 pub struct HeroRageAuraRoot;
 
@@ -178,7 +187,37 @@ pub struct MomBoss {
     pub lunge_dir: Vec3,
     pub hit_cooldown: f32,
     pub dealt_slash_hit: bool,
+    /// `Player::swing_id` of the last saber swing that connected (one hit per swing).
+    pub last_saber_swing: u32,
+    /// Seconds her guard stays broken (dodge-roll counter window or a guard-breaking heavy). Runs
+    /// on its own clock, so her attack cycle can't bring the guard back early.
+    pub guard_open: f32,
+    /// Her guard is up this frame: light swings are parried. Set by `update_boss_fight`.
+    pub guarding: bool,
+    /// Visual state for `update_mom_guard_cues`: shield raise (0..1), break burst and clash
+    /// flash (1 -> 0).
+    pub guard_up: f32,
+    pub guard_break_fx: f32,
+    pub guard_clash_fx: f32,
+    /// The "how to break her guard" hint was shown this fight.
+    pub guard_hint_shown: bool,
 }
+
+/// Mom stays open at least this long after her guard is broken (by a charged heavy, or the dodge
+/// roll's own 2.8 s / 3.2 s counter window), enough for several light swings (0.36 s cooldown).
+pub const MOM_GUARD_BREAK_SECS: f32 = 2.6;
+/// Damage of the charged heavy that breaks her guard (a normal light hit is 17, 22 enraged).
+pub const MOM_GUARD_BREAK_DAMAGE: f32 = 8.0;
+/// Brief stagger when her guard is broken by a heavy.
+const MOM_GUARD_BREAK_STAGGER_SECS: f32 = 0.6;
+
+/// Mom's translucent guard shield in front of her (child of the boss entity).
+#[derive(Component)]
+pub struct MomGuardShield;
+
+/// Guard status line under the boss HP bar.
+#[derive(Component)]
+pub struct MomGuardLabel;
 
 #[derive(Component, Clone, Copy)]
 pub struct MomPart(pub &'static str);
@@ -266,7 +305,7 @@ pub fn ensure_hero_vikings_gear(
         ..default()
     });
     let saber_aura = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.62, 0.28, 1.0, 0.42),
+        base_color: HERO_SABER_AURA_COLOR,
         emissive: LinearRgba::new(1.1, 0.4, 2.4, 1.0),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
@@ -416,17 +455,21 @@ pub fn ensure_hero_vikings_gear(
             ));
             // Outer energy glow sheath
             saber.spawn((
+                HeroSaberAura,
                 Mesh3d(meshes.add(Cylinder::new(0.072, 1.54))),
                 MeshMaterial3d(saber_aura),
                 Transform::from_xyz(0.0, 0.92, 0.0),
             ));
-            saber.spawn(PointLight {
-                color: Color::srgb(0.68, 0.38, 1.0),
-                intensity: 38000.0,
-                range: 14.0,
-                shadows_enabled: false,
-                ..default()
-            });
+            saber.spawn((
+                HeroSaberLight,
+                PointLight {
+                    color: Color::srgb(0.68, 0.38, 1.0),
+                    intensity: HERO_SABER_LIGHT,
+                    range: 14.0,
+                    shadows_enabled: false,
+                    ..default()
+                },
+            ));
         });
     });
 }
@@ -1613,6 +1656,11 @@ pub fn update_cutscene(
 
     let dt = time.delta_secs().min(0.05);
     let mut t = stats.cutscene_timer + dt;
+    // Hold-to-skip: jump past the last beat so the normal end path below runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        t = t.max(BEAT_ENDS[7]);
+    }
 
     let mut target_beat: u8 = 9;
     for (idx, &end_t) in BEAT_ENDS.iter().enumerate() {
@@ -1624,7 +1672,7 @@ pub fn update_cutscene(
 
     // Wait cleanly for TTS to finish before advancing to the next beat or leaving cutscene
     if stats.cutscene_beat > 0 && target_beat > stats.cutscene_beat {
-        if crate::audio::is_voice_speaking() {
+        if !skipping && crate::audio::is_voice_speaking() {
             let hold_idx = (stats.cutscene_beat.saturating_sub(1) as usize).min(7);
             t = BEAT_ENDS[hold_idx] - 0.01;
             target_beat = stats.cutscene_beat;
@@ -1633,7 +1681,7 @@ pub fn update_cutscene(
             next_state.set(GameState::BossFight);
             return;
         }
-    } else if target_beat == 9 && !crate::audio::is_voice_speaking() {
+    } else if target_beat == 9 && (skipping || !crate::audio::is_voice_speaking()) {
         stats.cutscene_timer = t;
         next_state.set(GameState::BossFight);
         return;
@@ -2487,6 +2535,11 @@ pub fn update_headphone_cutscene(
     const BEAT_ENDS: [f32; 4] = [6.2, 12.8, 19.4, 26.0];
     let dt = time.delta_secs().min(0.05);
     let mut t = stats.cutscene_timer + dt;
+    // Hold-to-skip: jump past the last beat so the normal end path below runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        t = t.max(BEAT_ENDS[3]);
+    }
 
     let mut target_beat: u8 = 5;
     for (idx, &end_t) in BEAT_ENDS.iter().enumerate() {
@@ -2497,7 +2550,7 @@ pub fn update_headphone_cutscene(
     }
 
     if stats.cutscene_beat > 0 && target_beat > stats.cutscene_beat {
-        if crate::audio::is_voice_speaking() {
+        if !skipping && crate::audio::is_voice_speaking() {
             let hold_idx = (stats.cutscene_beat.saturating_sub(1) as usize).min(3);
             t = BEAT_ENDS[hold_idx] - 0.01;
             target_beat = stats.cutscene_beat;
@@ -2510,7 +2563,7 @@ pub fn update_headphone_cutscene(
             });
             return;
         }
-    } else if target_beat == 5 && !crate::audio::is_voice_speaking() {
+    } else if target_beat == 5 && (skipping || !crate::audio::is_voice_speaking()) {
         stats.cutscene_timer = t;
         next_state.set(if stats.headphone_return_boss {
             GameState::BossFight
@@ -3024,38 +3077,83 @@ pub(crate) fn spawn_mom_mesh_hierarchy(
             Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
         ))
         .with_children(|mom| {
+            use crate::shapes::{self as sh, ring, Torso};
+            // Mom faces -Z: builders face +Z, so face/hair/shoe/hand parts are turned half a turn.
+            let turn = Quat::from_rotation_y(PI);
+            let (hr, jaw) = (0.28_f32, 0.12_f32);
             // Torso & Head
             mom.spawn((
                 MomPart("Torso"),
                 Transform::from_xyz(0.0, 0.85, 0.0),
             ))
             .with_children(|t| {
+                let hips = sh::loft(
+                    &[
+                        ring(-0.19, 0.0, 0.0),
+                        ring(-0.18, 0.31, 0.24),
+                        ring(-0.12, 0.36, 0.275),
+                        ring(0.10, 0.36, 0.275),
+                        ring(0.13, 0.0, 0.0),
+                    ],
+                    2,
+                    28,
+                    0.9,
+                );
                 t.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.35, 0.30))),
+                    Mesh3d(sh::add(meshes, hips)),
                     MeshMaterial3d(slacks.clone()),
-                    Transform::from_xyz(0.0, -0.03, 0.0).with_scale(Vec3::new(1.02, 1.0, 0.78)),
+                    Transform::from_xyz(0.0, -0.03, 0.0),
                 ));
                 t.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.36, 0.78))),
+                    Mesh3d(sh::add(meshes, sh::torso(&Torso {
+                        height: 0.78,
+                        hip: Vec2::new(0.37, 0.28),
+                        waist: Vec2::new(0.355, 0.27),
+                        chest: Vec2::new(0.38, 0.285),
+                        shoulder: Vec2::new(0.375, 0.27),
+                        neck: 0.085,
+                        sq: 0.9,
+                        chest_fwd: -0.012,
+                    }))),
                     MeshMaterial3d(sweater.clone()),
-                    Transform::from_xyz(0.0, 0.32, 0.0).with_scale(Vec3::new(1.05, 1.0, 0.78)),
+                    Transform::from_xyz(0.0, 0.32, 0.0),
                 ));
-                // White Kitchen Apron front
+                // White Kitchen Apron front (curved to wrap the body)
                 t.spawn((
-                    Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.52, 0.72, 0.06)))),
+                    Mesh3d(sh::add(
+                        meshes,
+                        sh::plate(0.52, 0.72, 0.03, 0.35).deformed(|p| Vec3::new(p.x * (1.0 - 0.12 * p.y), p.y, p.z + 0.9 * p.x * p.x + 0.04 * (0.36 - p.y).max(0.0))),
+                    )),
                     MeshMaterial3d(apron),
-                    Transform::from_xyz(0.0, 0.22, -0.28),
+                    Transform::from_xyz(0.0, 0.22, -0.27).with_rotation(turn),
                 ));
-                // Head + stern face + chestnut bun
                 t.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.28))),
+                    Mesh3d(sh::add(meshes, sh::limb(0.18, 0.085, 0.092))),
                     MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(0.0, 0.96, 0.0),
+                    Transform::from_xyz(0.0, 0.70, 0.0),
+                ));
+                // Head + stern face + chestnut hair & bun
+                t.spawn((
+                    Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(0.0, 0.96, 0.0).with_rotation(turn),
+                ));
+                for sx in [-1.0_f32, 1.0] {
+                    t.spawn((
+                        Mesh3d(sh::add(meshes, sh::ear(0.12, -sx))),
+                        MeshMaterial3d(skin.clone()),
+                        Transform::from_xyz(sx * 0.258, 0.96, 0.01).with_rotation(turn),
+                    ));
+                }
+                t.spawn((
+                    Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.058, 0.048), 1.0, 1.0, 14, 10))),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(0.0, 0.94, -0.272),
                 ));
                 t.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.30))),
+                    Mesh3d(sh::add(meshes, sh::hair_cap(hr, jaw, 0.42, -0.45, 0.08, 0.10))),
                     MeshMaterial3d(hair.clone()),
-                    Transform::from_xyz(0.0, 1.02, 0.07),
+                    Transform::from_xyz(0.0, 0.96, 0.0).with_rotation(turn),
                 ));
                 t.spawn((
                     Mesh3d(meshes.add(Sphere::new(0.16))),
@@ -3063,19 +3161,22 @@ pub(crate) fn spawn_mom_mesh_hierarchy(
                     Transform::from_xyz(0.0, 1.24, 0.16),
                 ));
                 // Stern yelling eyes & open mouth facing -Z
+                let brow_l = sh::arc_bar(0.11, &[0.016, 0.017, 0.012, 0.008], 0.008, 0.02, 0.7).transformed(Transform::from_rotation(turn));
+                let brow_r = brow_l.clone().mirrored_x();
+                let (brow_l, brow_r) = (sh::add(meshes, brow_l), sh::add(meshes, brow_r));
                 for sx in [-1.0_f32, 1.0_f32] {
                     t.spawn((
                         Mesh3d(meshes.add(Sphere::new(0.048))),
                         MeshMaterial3d(eye_w.clone()),
-                        Transform::from_xyz(sx * 0.10, 1.00, -0.24),
+                        Transform::from_xyz(sx * 0.10, 1.00, -0.24).with_scale(Vec3::new(1.0, 1.0, 0.85)),
                     ));
                     t.spawn((
                         Mesh3d(meshes.add(Sphere::new(0.025))),
                         MeshMaterial3d(eye_b.clone()),
-                        Transform::from_xyz(sx * 0.10, 1.00, -0.275),
+                        Transform::from_xyz(sx * 0.10, 1.00, -0.275).with_scale(Vec3::new(1.0, 1.0, 0.7)),
                     ));
                     t.spawn((
-                        Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(0.10, 0.03, 0.03)))),
+                        Mesh3d(if sx < 0.0 { brow_r.clone() } else { brow_l.clone() }),
                         MeshMaterial3d(hair.clone()),
                         Transform::from_xyz(sx * 0.10, 1.07, -0.26)
                             .with_rotation(Quat::from_rotation_z(sx * -0.28)),
@@ -3089,7 +3190,9 @@ pub(crate) fn spawn_mom_mesh_hierarchy(
                 ));
             });
 
-            // Legs
+            // Legs with flat shoes
+            let leg_mesh = sh::add(meshes, sh::limb_profile(0.72, &[0.12, 0.11, 0.088], 1.0));
+            let shoe_mesh = sh::add(meshes, sh::shoe(0.17, 0.10, 0.27));
             for (sx, part_name) in [(-1.0_f32, "LeftLeg"), (1.0_f32, "RightLeg")] {
                 mom.spawn((
                     MomPart(part_name),
@@ -3097,13 +3200,19 @@ pub(crate) fn spawn_mom_mesh_hierarchy(
                 ))
                 .with_children(|leg| {
                     leg.spawn((
-                        Mesh3d(meshes.add(Cylinder::new(0.115, 0.72))),
+                        Mesh3d(leg_mesh.clone()),
                         MeshMaterial3d(slacks.clone()),
                         Transform::from_xyz(0.0, -0.36, 0.0),
+                    ));
+                    leg.spawn((
+                        Mesh3d(shoe_mesh.clone()),
+                        MeshMaterial3d(eye_b.clone()),
+                        Transform::from_xyz(0.0, -0.67, -0.04).with_rotation(turn),
                     ));
                 });
             }
 
+            let sleeve_mesh = sh::add(meshes, sh::limb_profile(0.60, &[0.10, 0.093, 0.082], 1.0));
             // Left arm
             mom.spawn((
                 MomPart("LeftArm"),
@@ -3111,14 +3220,14 @@ pub(crate) fn spawn_mom_mesh_hierarchy(
             ))
             .with_children(|arm| {
                 arm.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.095, 0.56))),
+                    Mesh3d(sleeve_mesh.clone()),
                     MeshMaterial3d(sweater.clone()),
                     Transform::from_xyz(0.0, -0.26, 0.0),
                 ));
                 arm.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.09))),
+                    Mesh3d(sh::add(meshes, sh::hand(0.08, 1.0, false))),
                     MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(0.0, -0.55, 0.0),
+                    Transform::from_xyz(0.0, -0.60, 0.0).with_rotation(turn),
                 ));
             });
 
@@ -3130,14 +3239,14 @@ pub(crate) fn spawn_mom_mesh_hierarchy(
             ))
             .with_children(|arm| {
                 arm.spawn((
-                    Mesh3d(meshes.add(Cylinder::new(0.095, 0.56))),
+                    Mesh3d(sleeve_mesh),
                     MeshMaterial3d(sweater),
                     Transform::from_xyz(0.0, -0.26, 0.0),
                 ));
                 arm.spawn((
-                    Mesh3d(meshes.add(Sphere::new(0.09))),
+                    Mesh3d(sh::add(meshes, sh::hand(0.085, -1.0, true))),
                     MeshMaterial3d(skin),
-                    Transform::from_xyz(0.0, -0.55, 0.0),
+                    Transform::from_xyz(0.0, -0.56, 0.0).with_rotation(turn),
                 ));
                 // Crimson Lightsaber angled upward and forward away from torso
                 arm.spawn(
@@ -3237,7 +3346,7 @@ pub fn enter_boss_fight(
     }
     stats.mom_quote = MOM_QUOTES[0].to_string();
     stats.hint_text =
-        "DODGE & ROLL (SHIFT / ROLL) to counter Mom! Grab glowing Tendies to refuel Hearts!"
+        "Mom GUARDS! DODGE ROLL or HOLD ATTACK for a charged heavy to break it. Tendies refuel Hearts!"
             .to_string();
 
     orbit.yaw = 0.0;
@@ -3283,8 +3392,47 @@ pub fn enter_boss_fight(
         walk_phase: 0.0,
         lunge_dir: Vec3::Z,
         hit_cooldown: 0.0,
+        last_saber_swing: 0,
         dealt_slash_hit: false,
+        guard_open: 0.0,
+        guarding: true,
+        guard_up: 1.0,
+        guard_break_fx: 0.0,
+        guard_clash_fx: 0.0,
+        guard_hint_shown: false,
     });
+    // Guard shield: a glowing crimson disc with a bright rim across her front (-Z) while her guard
+    // is up, animated by `update_mom_guard_cues`.
+    {
+        let shield_mat = materials.add(StandardMaterial {
+            base_color: Color::linear_rgba(1.3, 0.32, 0.18, 0.3),
+            alpha_mode: AlphaMode::Add,
+            unlit: true,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
+        });
+        let disc = meshes.add(Sphere::new(1.0));
+        let rim = meshes.add(Torus::new(0.9, 1.0));
+        commands.entity(mom_ent).with_children(|m| {
+            m.spawn((
+                LevelEntity,
+                MomGuardShield,
+                Mesh3d(disc),
+                MeshMaterial3d(shield_mat.clone()),
+                Transform::from_xyz(0.0, 1.05, -0.62).with_scale(Vec3::new(0.95, 1.15, 0.3)),
+                bevy::pbr::NotShadowCaster,
+            ))
+            .with_children(|sh| {
+                sh.spawn((
+                    Mesh3d(rim),
+                    MeshMaterial3d(shield_mat),
+                    Transform::from_rotation(Quat::from_rotation_x(PI * 0.5)),
+                    bevy::pbr::NotShadowCaster,
+                ));
+            });
+        });
+    }
 
     // Scatter varied healing tendies across the apartment floor so Stan can refuel hearts mid-duel
     let varieties = [
@@ -3367,6 +3515,15 @@ pub fn enter_boss_fight(
                         BorderRadius::all(Val::Px(6.0)),
                     ));
                 });
+            panel.spawn((
+                MomGuardLabel,
+                Text::new(MOM_GUARD_LABEL_UP),
+                TextFont {
+                    font_size: 12.5,
+                    ..default()
+                },
+                TextColor(MOM_GUARD_COLOR_UP),
+            ));
             panel.spawn((
                 BossQuoteText,
                 Text::new(format!("\"{}\"", MOM_QUOTES[0])),
@@ -3537,24 +3694,57 @@ pub fn update_boss_fight(
         spawn_enemy_at(&mut commands, &asset_server, EnemyKind::BroccoliBrute, spawn_pos);
     }
 
-    // Stan's Lightsaber attack hits Mom (requires Dodge & Roll opening!) AND Veggie Minions
-    if player.attack_timer > 0.0 {
-        let p_forward = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
-        let slash_center = p_tf.translation + p_forward * 2.2;
+    // Mom's guard. A dodge roll opens it for its counter window (2.8 s, 3.2 s after a perfect
+    // dodge), a charged heavy breaks it for `MOM_GUARD_BREAK_SECS`; staggers (end of her slash, a
+    // perfect block, a landed hit) leave her open while they last. The open window keeps its own
+    // clock, so landing hits doesn't close it early.
+    if player.roll_timer > 0.0 || player.dodge_counter_timer > 0.0 {
+        mom.guard_open = mom.guard_open.max(player.dodge_counter_timer).max(player.roll_timer);
+    }
+    if mom.guard_open > 0.0 {
+        mom.guard_open = (mom.guard_open - dt).max(0.0);
+        if mom.guard_open <= 0.0 && !matches!(mom.state, MomState::Staggered) {
+            crate::audio::play_sfx("shield");
+            stats.hint_text = "Mom's guard is back UP!".to_string();
+        }
+    }
+    mom.guarding = mom.guard_open <= 0.0
+        && player.roll_timer <= 0.0
+        && !matches!(mom.state, MomState::Staggered);
 
+    // Stan's Lightsaber attack hits Mom (requires Dodge & Roll opening!) AND Veggie Minions
+    // Shared scale-aware test (player.rs `saber_contact`): reach to the target's surface, swing
+    // arc, active window of the visible strike; each swing lands at most once per target.
+    if player.attack_timer > 0.0 {
         // Check Mom hit once per swing
-        let dist_mom = Vec2::new(
-            slash_center.x - mom_tf.translation.x,
-            slash_center.z - mom_tf.translation.z,
-        )
-        .length();
-        let dy_mom = (p_tf.translation.y - mom_tf.translation.y).abs();
-        if dist_mom < 5.6 && dy_mom < 4.5 && mom.hit_cooldown <= 0.0 {
-            let dodge_opening = player.roll_timer > 0.0
-                || player.dodge_counter_timer > 0.0
-                || matches!(mom.state, MomState::Staggered);
+        let mom_contact = crate::player::saber_contact(
+            &player,
+            &stats,
+            p_tf.translation,
+            &crate::player::SaberTarget::mom(&mom_tf),
+        );
+        if let (Some(contact), true) = (mom_contact, mom.last_saber_swing != player.swing_id) {
+            mom.last_saber_swing = player.swing_id;
             mom.hit_cooldown = 0.34;
-            if !dodge_opening {
+            if mom.guarding && stats.heavy_attack {
+                // Charged heavy on her guard: breaks it (minor damage, brief stagger) and opens
+                // the same window as a dodge roll so light swings can follow up.
+                crate::player::register_saber_hit(&mut player, &mut stats, contact);
+                stats.shake_request = stats.shake_request.max(0.5);
+                mom.hp = (mom.hp - MOM_GUARD_BREAK_DAMAGE).max(0.0);
+                stats.boss_hp = mom.hp;
+                stats.score += 500;
+                mom.guard_open = MOM_GUARD_BREAK_SECS;
+                mom.guarding = false;
+                mom.guard_break_fx = 1.0;
+                mom.state = MomState::Staggered;
+                mom.timer = MOM_GUARD_BREAK_STAGGER_SECS;
+                let kb = mom_tf.translation - p_tf.translation;
+                mom_tf.translation += Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero() * 1.6;
+                crate::audio::play_sfx("guard_break");
+                crate::audio::play_sfx("saber_hit");
+                stats.hint_text = "GUARD BROKEN! Slash Mom NOW!".to_string();
+            } else if mom.guarding {
                 let push = Vec3::new(
                     p_tf.translation.x - mom_tf.translation.x,
                     0.0,
@@ -3563,11 +3753,19 @@ pub fn update_boss_fight(
                 .normalize_or_zero();
                 // Parry shove (same 1.4 units as before) as a decaying knockback impulse.
                 crate::player::hit_reaction(&mut player, &mut stats, push, 1.4, false);
-                crate::audio::play_sfx("shield");
-                stats.hint_text =
-                    "MOM PARRIED! Use DODGE & ROLL (SHIFT / ROLL) to evade & break her guard!"
-                        .to_string();
+                // Clang on her shield: sparks at the blade, a shield flash and the block sound.
+                player.block_spark = player.block_spark.max(1);
+                mom.guard_clash_fx = 1.0;
+                crate::audio::play_sfx("saber_block");
+                stats.hint_text = if mom.guard_hint_shown {
+                    "MOM PARRIED! Roll or charge a heavy to break her guard.".to_string()
+                } else {
+                    mom.guard_hint_shown = true;
+                    "Mom is GUARDING! DODGE ROLL, or HOLD ATTACK and release a charged heavy to break her guard!"
+                        .to_string()
+                };
             } else {
+                crate::player::register_saber_hit(&mut player, &mut stats, contact);
                 let base_dmg = if stats.enraged { 22.0 } else { 17.0 };
                 let dmg = base_dmg * if stats.heavy_attack { 1.85 } else { 1.0 };
                 mom.hp = (mom.hp - dmg).max(0.0);
@@ -3587,13 +3785,13 @@ pub fn update_boss_fight(
 
         // Check Minion hits
         for (e_ent, mut e_tf, mut enemy) in &mut enemy_q {
-            let d = Vec2::new(
-                slash_center.x - e_tf.translation.x,
-                slash_center.z - e_tf.translation.z,
-            )
-            .length();
-            let dy = (p_tf.translation.y - e_tf.translation.y).abs();
-            if d < 5.2 && dy < 3.6 && enemy.hit_cooldown <= 0.0 {
+            if enemy.last_saber_swing == player.swing_id {
+                continue;
+            }
+            let target = crate::player::SaberTarget::veggie(&e_tf, enemy.kind);
+            if let Some(contact) = crate::player::saber_contact(&player, &stats, p_tf.translation, &target) {
+                enemy.last_saber_swing = player.swing_id;
+                crate::player::register_saber_hit(&mut player, &mut stats, contact);
                 enemy.hp -= 1;
                 enemy.hit_cooldown = 0.35;
                 let push = e_tf.translation - p_tf.translation;
@@ -3677,18 +3875,32 @@ pub fn update_boss_fight(
                     mom.state = MomState::Staggered;
                     mom.timer = 1.65;
                 } else if player.invuln_timer <= 0.0 {
-                    stats.hearts -= 1;
-                    player.invuln_timer = 0.9;
-                    // Same 3.6-unit shove as before, delivered as a decaying knockback impulse.
-                    crate::player::hit_reaction(&mut player, &mut stats, mom.lunge_dir, 3.6, true);
-                    player.velocity.y = 6.2;
-                    stats.hint_text =
-                        "SLASHED BY MOM! Press SHIFT / ROLL right as she swings!".to_string();
-                    crate::audio::play_sfx("hit");
-                    if stats.hearts <= 0 {
-                        crate::audio::play_sfx("lose");
-                        next_state.set(GameState::GameOver);
-                        return;
+                    let outcome = crate::player::try_block(
+                        &mut player,
+                        &mut stats,
+                        p_tf.translation,
+                        mom_tf.translation,
+                    );
+                    if outcome == crate::player::BlockOutcome::Perfect {
+                        // Perfect block knocks her saber wide: a short stagger, which also opens
+                        // her guard to Stan's counter (like the end-of-slash stagger).
+                        mom.state = MomState::Staggered;
+                        mom.timer = 0.9;
+                        stats.hint_text = "PERFECT BLOCK! Mom is staggered, SLASH NOW!".to_string();
+                    } else if outcome == crate::player::BlockOutcome::None {
+                        stats.hearts -= 1;
+                        player.invuln_timer = 0.9;
+                        // Same 3.6-unit shove as before, delivered as a decaying knockback impulse.
+                        crate::player::hit_reaction(&mut player, &mut stats, mom.lunge_dir, 3.6, true);
+                        player.velocity.y = 6.2;
+                        stats.hint_text =
+                            "SLASHED BY MOM! Press SHIFT / ROLL right as she swings!".to_string();
+                        crate::audio::play_sfx("hit");
+                        if stats.hearts <= 0 {
+                            crate::audio::play_sfx("lose");
+                            next_state.set(GameState::GameOver);
+                            return;
+                        }
                     }
                 }
             }
@@ -3732,6 +3944,14 @@ pub fn update_boss_fight(
     let blend = (dt * 15.0).min(1.0);
     let s = mom.walk_phase.sin();
     let (ll, rl, la, ra, body_rot) = match mom.state {
+        // Guarding: saber held up across her front instead of swinging with the walk.
+        MomState::Pursue if mom.guarding => (
+            Quat::from_rotation_x(s * 0.72),
+            Quat::from_rotation_x(-s * 0.72),
+            Quat::from_rotation_x(-s * 0.55) * Quat::from_rotation_z(-0.18),
+            Quat::from_rotation_z(0.45) * Quat::from_rotation_x(1.25) * Quat::from_rotation_z(-0.55),
+            Quat::from_rotation_x(-0.08),
+        ),
         MomState::Pursue => (
             Quat::from_rotation_x(s * 0.72),
             Quat::from_rotation_x(-s * 0.72),
@@ -3788,6 +4008,78 @@ pub fn update_boss_fight(
     }
     if let Ok(mut q_txt) = quote_q.get_single_mut() {
         q_txt.0 = format!("\"{}\"", stats.mom_quote);
+    }
+}
+
+const MOM_GUARD_LABEL_UP: &str = "MOM IS GUARDING: ROLL OR CHARGED HEAVY TO BREAK";
+const MOM_GUARD_COLOR_UP: Color = Color::srgb(1.0, 0.78, 0.42);
+const MOM_HP_FILL: Color = Color::srgb(0.95, 0.16, 0.22);
+
+/// Mom's guard cues: the shield in front of her (raised while guarding, shatters outward on a
+/// guard break, flashes on a parried swing, grows back when the guard returns), the status line
+/// under her HP bar and a flashing HP bar while she is open.
+pub fn update_mom_guard_cues(
+    time: Res<Time>,
+    mut mom_q: Query<&mut MomBoss>,
+    mut shield_q: Query<(&mut Transform, &mut Visibility, &MeshMaterial3d<StandardMaterial>), With<MomGuardShield>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut label_q: Query<(&mut Text, &mut TextColor), With<MomGuardLabel>>,
+    mut fill_q: Query<&mut BackgroundColor, With<BossHpBarFill>>,
+) {
+    let Ok(mut mom) = mom_q.get_single_mut() else {
+        return;
+    };
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    let up_target = if mom.guarding { 1.0 } else { 0.0 };
+    let rate = if mom.guarding { 4.0 } else { 14.0 };
+    mom.guard_up += (up_target - mom.guard_up) * (rate * dt).min(1.0);
+    mom.guard_break_fx = (mom.guard_break_fx - dt * 2.8).max(0.0);
+    mom.guard_clash_fx = (mom.guard_clash_fx - dt * 5.0).max(0.0);
+
+    let base = Vec3::new(0.95, 1.15, 0.3);
+    for (mut tf, mut vis, mat) in &mut shield_q {
+        let (scale, alpha, heat) = if mom.guard_break_fx > 0.0 {
+            // Shatter: bursts outward, white-hot, and fades.
+            let k = mom.guard_break_fx;
+            (base * (1.0 + 0.9 * (1.0 - k)), 0.55 * k, 1.0)
+        } else {
+            let pulse = 0.5 + 0.5 * (t * 5.0).sin();
+            (base * mom.guard_up.max(0.001), (0.22 + 0.06 * pulse + 0.35 * mom.guard_clash_fx) * mom.guard_up, mom.guard_clash_fx)
+        };
+        tf.scale = scale;
+        let show = alpha > 0.01;
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        if show {
+            if let Some(m) = materials.get_mut(&mat.0) {
+                m.base_color = Color::linear_rgba(1.3 + 0.4 * heat, 0.32 + 0.9 * heat, 0.18 + 0.9 * heat, alpha);
+            }
+        }
+    }
+
+    let open_flash = 0.5 + 0.5 * (t * 10.0).sin();
+    if let Ok((mut text, mut color)) = label_q.get_single_mut() {
+        let (txt, c) = if mom.guarding {
+            (MOM_GUARD_LABEL_UP, MOM_GUARD_COLOR_UP)
+        } else if mom.guard_open > 0.0 {
+            ("GUARD BROKEN! SLASH NOW!", Color::srgb(0.55 + 0.4 * open_flash, 1.0, 0.5))
+        } else {
+            ("MOM IS OPEN! SLASH NOW!", Color::srgb(0.55 + 0.4 * open_flash, 1.0, 0.5))
+        };
+        if text.0 != txt {
+            text.0 = txt.to_string();
+        }
+        color.0 = c;
+    }
+    if let Ok(mut fill) = fill_q.get_single_mut() {
+        fill.0 = if mom.guarding {
+            MOM_HP_FILL
+        } else {
+            Color::srgb(0.95 + 0.05 * open_flash, 0.16 + 0.6 * open_flash, 0.22 + 0.5 * open_flash)
+        };
     }
 }
 

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::audio::{
     is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, speak_voice,
 };
-use crate::city::{pub217_scale, CityWorldMarker, PUB217_ANCHOR};
+use crate::city::{CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE};
 use crate::player::Player;
 use crate::state::{GameState, LevelEntity, PlayerStats};
 
@@ -162,24 +162,59 @@ pub fn spawn_derek_rig(
     mats: &DerekMaterials,
     is_cutscene: bool,
 ) {
+    use crate::shapes::{self as sh, Torso};
+
     // Legs & boots
+    let leg_mesh = sh::add(meshes, sh::limb_profile(0.70, &[0.12, 0.11, 0.092], 1.0));
+    let boot_mesh = sh::add(meshes, sh::shoe(0.20, 0.12, 0.30));
+    let sole_mesh = sh::add(meshes, sh::shoe_sole(0.20, 0.12, 0.30));
     for sx in [-0.14_f32, 0.14] {
         parent.spawn((
-            Mesh3d(meshes.add(Capsule3d::new(0.11, 0.48))),
+            Mesh3d(leg_mesh.clone()),
             MeshMaterial3d(mats.pants.clone()),
             Transform::from_xyz(sx, 0.36, 0.0),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.20, 0.12, 0.30))),
+            Mesh3d(boot_mesh.clone()),
             MeshMaterial3d(mats.shoe.clone()),
+            Transform::from_xyz(sx, 0.06, 0.04),
+        ));
+        parent.spawn((
+            Mesh3d(sole_mesh.clone()),
+            MeshMaterial3d(mats.hoodie_dark.clone()),
             Transform::from_xyz(sx, 0.06, 0.04),
         ));
     }
 
-    // Broad dark-grey hoodie torso
+    // Broad dark-grey hoodie torso with ribbed waistband and kangaroo pocket
+    let hoodie = sh::torso(&Torso {
+        height: 0.82,
+        hip: Vec2::new(0.31, 0.19),
+        waist: Vec2::new(0.31, 0.185),
+        chest: Vec2::new(0.335, 0.20),
+        shoulder: Vec2::new(0.34, 0.19),
+        neck: 0.08,
+        sq: 0.8,
+        chest_fwd: 0.012,
+    });
+    let trims = sh::radial_shell(&hoodie, 0.008, |p| sh::smoothstep(-0.31, -0.33, p.y)).merged(sh::radial_shell(
+        &hoodie,
+        0.014,
+        |p| {
+            sh::smoothstep(0.18, 0.16, p.x.abs())
+                * sh::smoothstep(-0.31, -0.29, p.y)
+                * sh::smoothstep(-0.05, -0.07, p.y - 0.25 * (0.18 - p.x.abs()).max(0.0))
+                * sh::smoothstep(0.05, 0.10, p.z)
+        },
+    ));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.68, 0.82, 0.40))),
+        Mesh3d(sh::add(meshes, hoodie)),
         MeshMaterial3d(mats.hoodie.clone()),
+        Transform::from_xyz(0.0, 1.05, 0.0),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, trims)),
+        MeshMaterial3d(mats.hoodie_dark.clone()),
         Transform::from_xyz(0.0, 1.05, 0.0),
     ));
     // Hoodie collar / hood bunched behind neck
@@ -188,16 +223,30 @@ pub fn spawn_derek_rig(
         MeshMaterial3d(mats.hoodie_dark.clone()),
         Transform::from_xyz(0.0, 1.44, -0.04).with_rotation(Quat::from_rotation_x(0.35)),
     ));
-    // Hoodie drawstrings
+    // Hoodie drawstrings with white aglet tips
+    let mut strings = sh::Geo::default();
+    let mut tips = sh::Geo::default();
     for sx in [-0.07_f32, 0.07] {
-        parent.spawn((
-            Mesh3d(meshes.add(Cylinder::new(0.013, 0.32))),
-            MeshMaterial3d(mats.hoodie_dark.clone()),
-            Transform::from_xyz(sx, 1.24, 0.21),
-        ));
+        let (top, bot) = (Vec3::new(sx, 1.40, 0.20), Vec3::new(sx * 1.12, 1.10, 0.226));
+        strings = strings.merged(sh::rod(top, bot, 0.012));
+        tips = tips.merged(sh::rod(bot, bot + Vec3::new(0.0, -0.045, 0.002), 0.015));
     }
+    parent.spawn((
+        Mesh3d(sh::add(meshes, strings)),
+        MeshMaterial3d(mats.hoodie_dark.clone()),
+        Transform::default(),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, tips)),
+        MeshMaterial3d(mats.eye_white.clone()),
+        Transform::default(),
+    ));
 
     // Arms (pivoted if cutscene so Derek can clash/swing!)
+    let sleeve = sh::limb_profile(0.66, &[0.108, 0.10, 0.09], 1.0);
+    let cuff = sh::radial_shell(&sleeve, 0.008, |p| sh::smoothstep(-0.22, -0.24, p.y));
+    let sleeve_mesh = sh::add(meshes, sleeve);
+    let cuff_mesh = sh::add(meshes, cuff);
     for (idx, sx) in [-0.44_f32, 0.44].iter().enumerate() {
         let mut arm = parent.spawn((
             Transform::from_xyz(*sx, 1.38, 0.0),
@@ -209,74 +258,103 @@ pub fn spawn_derek_rig(
                 is_stan: false,
             });
         }
+        let hand_mesh = sh::add(meshes, sh::hand(0.09, sx.signum(), false));
         arm.with_children(|a| {
             a.spawn((
-                Mesh3d(meshes.add(Capsule3d::new(0.10, 0.46))),
+                Mesh3d(sleeve_mesh.clone()),
                 MeshMaterial3d(mats.hoodie.clone()),
                 Transform::from_xyz(0.0, -0.26, 0.0),
             ));
             a.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.10))),
+                Mesh3d(cuff_mesh.clone()),
+                MeshMaterial3d(mats.hoodie_dark.clone()),
+                Transform::from_xyz(0.0, -0.26, 0.0),
+            ));
+            a.spawn((
+                Mesh3d(hand_mesh),
                 MeshMaterial3d(mats.skin.clone()),
-                Transform::from_xyz(0.0, -0.56, 0.02),
+                Transform::from_xyz(0.0, -0.64, 0.02),
             ));
         });
     }
 
-    // Head
+    // Neck, head & ears
+    let (hr, jaw) = (0.28_f32, 0.12_f32);
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.28))),
+        Mesh3d(sh::add(meshes, sh::limb(0.18, 0.08, 0.088))),
+        MeshMaterial3d(mats.skin.clone()),
+        Transform::from_xyz(0.0, 1.48, -0.01),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
         MeshMaterial3d(mats.skin.clone()),
         Transform::from_xyz(0.0, 1.76, 0.0),
     ));
+    for sx in [-1.0_f32, 1.0] {
+        parent.spawn((
+            Mesh3d(sh::add(meshes, sh::ear(0.125, sx))),
+            MeshMaterial3d(mats.skin.clone()),
+            Transform::from_xyz(sx * 0.258, 1.76, -0.01),
+        ));
+    }
 
-    // Pulled-back dark brown hair + back bun
+    // Pulled-back dark brown hair + back bun with a hair tie
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.275))),
+        Mesh3d(sh::add(meshes, sh::hair_cap(hr, jaw, 0.66, -0.30, 0.035, 0.04))),
         MeshMaterial3d(mats.hair.clone()),
-        Transform::from_xyz(0.0, 1.82, -0.05).with_scale(Vec3::new(0.96, 0.85, 0.98)),
+        Transform::from_xyz(0.0, 1.76, 0.0),
     ));
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.11))),
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.11, 0.10, 0.10), 0.9, 1.0, 20, 14))),
         MeshMaterial3d(mats.hair.clone()),
-        Transform::from_xyz(0.0, 1.80, -0.32),
+        Transform::from_xyz(0.0, 1.81, -0.33),
+    ));
+    parent.spawn((
+        Mesh3d(meshes.add(Torus::new(0.05, 0.075))),
+        MeshMaterial3d(mats.hoodie_dark.clone()),
+        Transform::from_xyz(0.0, 1.81, -0.265).with_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
     ));
 
     // Thick full dark beard & mustache (matching Derek's photo)
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.265))),
+        Mesh3d(sh::add(meshes, sh::beard(hr, jaw, 0.11, 0.16, -0.10))),
         MeshMaterial3d(mats.beard.clone()),
-        Transform::from_xyz(0.0, 1.63, 0.07).with_scale(Vec3::new(0.96, 0.92, 0.88)),
+        Transform::from_xyz(0.0, 1.76, 0.0),
     ));
     parent.spawn((
-        Mesh3d(meshes.add(Cuboid::new(0.24, 0.065, 0.09))),
+        Mesh3d(sh::add(meshes, sh::arc_bar(0.24, &[0.015, 0.034, 0.036, 0.034, 0.015], 0.012, 0.04, 0.8))),
         MeshMaterial3d(mats.beard.clone()),
-        Transform::from_xyz(0.0, 1.69, 0.25),
+        Transform::from_xyz(0.0, 1.688, 0.262),
     ));
 
     // Nose & brows
     parent.spawn((
-        Mesh3d(meshes.add(Sphere::new(0.052))),
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.046, 0.062, 0.05), 1.0, 1.0, 14, 10))),
         MeshMaterial3d(mats.skin.clone()),
-        Transform::from_xyz(0.0, 1.75, 0.28),
+        Transform::from_xyz(0.0, 1.745, 0.276),
     ));
+    let brow_l = sh::arc_bar(0.11, &[0.016, 0.017, 0.012, 0.008], 0.008, 0.02, 0.7);
+    let brow_r = brow_l.clone().mirrored_x();
+    let (brow_l, brow_r) = (sh::add(meshes, brow_l), sh::add(meshes, brow_r));
+    let eye_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.042, 0.036), 1.0, 1.0, 20, 14));
+    let pupil_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.024, 0.024, 0.016), 1.0, 1.0, 14, 10));
     for sx in [-0.095_f32, 0.095] {
         parent.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.10, 0.026, 0.04))),
+            Mesh3d(if sx < 0.0 { brow_l.clone() } else { brow_r.clone() }),
             MeshMaterial3d(mats.beard.clone()),
             Transform::from_xyz(sx, 1.86, 0.245)
                 .with_rotation(Quat::from_rotation_z(if sx < 0.0 { -0.14 } else { 0.14 })),
         ));
         // Eyes
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.042))),
+            Mesh3d(eye_mesh.clone()),
             MeshMaterial3d(mats.eye_white.clone()),
             Transform::from_xyz(sx, 1.80, 0.242),
         ));
         parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.024))),
+            Mesh3d(pupil_mesh.clone()),
             MeshMaterial3d(mats.eye_pupil.clone()),
-            Transform::from_xyz(sx, 1.80, 0.268),
+            Transform::from_xyz(sx, 1.80, 0.272),
         ));
     }
 }
@@ -309,6 +387,7 @@ pub fn update_city_derek(
     keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityDerek>>,
+    orbit: Res<crate::state::CameraOrbit>,
     mut derek_q: Query<(&mut Transform, &mut CityDerek), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut d_state: ResMut<DerekCutsceneState>,
@@ -317,14 +396,24 @@ pub fn update_city_derek(
         return;
     };
     let dt = time.delta_secs().min(0.05);
-    let pub_s = pub217_scale(stats.player_scale);
+    let pub_s = PUB217_SCALE;
     for (mut d_tf, mut derek) in &mut derek_q {
-        if derek.recruited {
+        // `stats.derek_recruited` is the gate's source of truth (checkpoint restore / test links).
+        if stats.derek_recruited && !derek.recruited {
+            derek.recruited = true;
+        }
+        // Post-game free roam: recruited crew skip following and idle at their pub spots.
+        if derek.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.72).clamp(1.65, 9.0);
             d_tf.scale = Vec3::splat(s);
-            let fwd = Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos());
-            let right = Vec3::new(fwd.z, 0.0, -fwd.x);
-            let target = p_tf.translation - right * (1.65 * s) - fwd * (1.4 * s);
+            // Flank Stan on his left, out of the camera line at every scale.
+            let target = crate::player::crew_follow_target(
+                crate::player::CrewSlot::LeftInner,
+                p_tf.translation,
+                stats.player_scale,
+                s,
+                orbit.yaw,
+            );
             let delta = Vec3::new(target.x - d_tf.translation.x, 0.0, target.z - d_tf.translation.z);
             let dist = delta.length();
             if dist > 32.0 {
@@ -357,11 +446,19 @@ pub fn update_city_derek(
         let inside = dist < trigger_r;
         let interact = keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
 
-        if stats.driving_car.is_none()
+        // Ground level only: standing on the pub roof above them doesn't count.
+        if p_tf.translation.y < 4.0
+            && stats.driving_car.is_none()
             && stats.riding_scooter.is_none()
             && ((inside && !derek.was_inside) || (dist < 4.5 * pub_s && interact))
         {
             derek.was_inside = true;
+            if stats.free_roam {
+                // No cutscene replay in free roam: just a friendly line.
+                stats.hint_text = "DEREK: \"Beer tower is on me tonight, champ. Go enjoy the city.\"".to_string();
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                continue;
+            }
             stats.saved_city_pos = p_tf.translation;
             stats.derek_return_city = true;
             *d_state = DerekCutsceneState::default();
@@ -377,7 +474,7 @@ const DEREK_BEATS: [(&str, &str, &str, &str); 6] = [
         "DEREK (FORMER ARCH-RIVAL)",
         "BEAT 1/6  |  TEARS BY THE BEER TOWER",
         "Stan... I swore the next time we met under these ceiling tiles, one of us wouldn't walk out. Remember the 1990 Ninja Turtles arcade cabinet? You stole my Michelangelo quarter and knocked over a six-foot beer tower!",
-        "tj",
+        "derek",
     ),
     (
         "STAN",
@@ -389,7 +486,7 @@ const DEREK_BEATS: [(&str, &str, &str, &str); 6] = [
         "DEREK & STAN (KAMEHAMEHA CLASH!)",
         "BEAT 3/6  |  KA-ME-HA-ME-COWABUNGA!!",
         "Ten years of shattered beer towers—KA-ME-HA-ME... COWABUNGA!! TAKE MY SPLINTER-STYLE KAMEHAMEHA!",
-        "tj",
+        "derek",
     ),
     (
         "STAN (LOCKED IN CLASH)",
@@ -401,7 +498,7 @@ const DEREK_BEATS: [(&str, &str, &str, &str); 6] = [
         "DEREK (TEARS OF BROTHERHOOD)",
         "BEAT 5/6  |  THE BEER TOWER TRUCE",
         "Heh... four brothers, one pizza, one impossible beer tower. For tonight only, Stan... our duel waits. Go take down Lexie—and when you get back, the next tower is on me!",
-        "tj",
+        "derek",
     ),
     (
         "STAN & DEREK",
@@ -959,8 +1056,14 @@ pub fn update_derek_cutscene(
 ) {
     let dt = time.delta_secs().min(0.05);
     d_state.beat_t += dt;
+    // Hold-to-skip: jump to the last beat with its wait elapsed so the normal end path runs.
+    let skipping = crate::skip::skipping();
+    if skipping {
+        d_state.beat = (DEREK_BEATS.len() as u8).saturating_sub(1);
+        d_state.beat_t = d_state.beat_t.max(4.0);
+    }
 
-    if d_state.beat_t >= 4.0 && (!is_voice_speaking() || d_state.beat_t >= 18.0) {
+    if d_state.beat_t >= 4.0 && (skipping || !is_voice_speaking() || d_state.beat_t >= 18.0) {
         if d_state.beat + 1 >= DEREK_BEATS.len() as u8 {
             next_state.set(GameState::CityPlay);
             return;
@@ -1175,9 +1278,10 @@ pub fn exit_derek_cutscene(
     for mut d in &mut derek_q {
         d.recruited = true;
     }
+    stats.derek_recruited = true;
     stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.tendy_credits += 25;
-    stats.hint_text = "DEREK JOINED YOUR SQUAD! (+2 Hearts, +25 Credits — Beer Tower Truce!)".to_string();
+    stats.hint_text = "DEREK JOINED YOUR SQUAD! +2 Hearts, +25 Credits.".to_string();
     play_viking_chant_music();
 }

@@ -1,6 +1,7 @@
 mod audio;
 mod boss;
 mod city;
+mod controls;
 mod derek;
 mod enemies;
 mod gfx;
@@ -10,6 +11,8 @@ mod lexie_victory;
 mod nate;
 mod player;
 mod scooter;
+mod shapes;
+mod skip;
 mod state;
 mod stunts;
 mod tj;
@@ -30,7 +33,7 @@ use city::{
     exit_mom_victory_cutscene, record_city_facing, update_city_intro_cutscene, update_city_intro_subtitles,
     update_city_driving, update_city_lexie, update_city_minimap, update_city_npcs,
     update_city_pickups, update_city_traffic, update_mom_victory_cutscene,
-    update_mom_victory_subtitles, update_pub217_scale,
+    update_mom_victory_subtitles, update_city_crew_gate, update_pub217_door,
 };
 use derek::{
     DerekCutsceneState, enter_derek_cutscene, exit_derek_cutscene, update_city_derek,
@@ -66,7 +69,7 @@ use ui::{
     close_help_overlay, despawn_tutorial_overlay, gameplay_running, handle_restart_input,
     handle_tutorial_input, restart_world_after_game_over, restart_world_after_stage_clear,
     spawn_game_over_overlay, spawn_hud, spawn_hurt_flash_overlay, update_hurt_flash, spawn_stage_clear_overlay, spawn_tutorial_overlay,
-    toggle_audio_hotkey, toggle_help_overlay, update_hud,
+    toggle_audio_hotkey, update_hud,
 };
 use transition::{SceneFade, drive_scene_fade, sim_running, spawn_fade_overlay, wait_for_boot_assets};
 
@@ -93,9 +96,14 @@ fn main() {
                 }),
         )
         .add_plugins(gfx::GfxPlugin)
+        // Hold Enter / Start / touch SKIP to skip any cutscene (see skip.rs).
+        .add_plugins(skip::CutsceneSkipPlugin)
+        // Bottom-left controls strip + Esc / H / Start pause menu (see controls.rs).
+        .add_plugins(controls::ControlsPlugin)
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
+        .init_resource::<player::LimbAnimState>()
         .init_resource::<PhoneMazeState>()
         .init_resource::<MikeCutsceneDialog>()
         .init_resource::<DerekCutsceneState>()
@@ -124,17 +132,8 @@ fn main() {
             ),
         )
         .add_systems(Update, wait_for_boot_assets)
+        .add_systems(Update, player::update_hit_stop)
         .add_systems(PostUpdate, (drive_scene_fade, clear_help_resume_grace))
-        .add_systems(
-            Update,
-            toggle_help_overlay
-                .run_if(
-                    in_state(GameState::Playing)
-                        .or(in_state(GameState::BossFight))
-                        .or(in_state(GameState::CityPlay)),
-                )
-                .run_if(sim_running),
-        )
         .add_systems(OnExit(GameState::Playing), (close_help_overlay, reset_hit_reaction))
         .add_systems(OnExit(GameState::BossFight), (close_help_overlay, reset_hit_reaction))
         .add_systems(OnExit(GameState::CityPlay), (close_help_overlay, reset_hit_reaction))
@@ -153,6 +152,8 @@ fn main() {
                 // or flash started just before a scene change still finishes and cleans up.
                 update_hurt_flash,
                 animate_pickup_pops,
+                player::update_saber_fx,
+                player::update_saber_charge_glow,
             ),
         )
         .add_systems(OnEnter(GameState::Tutorial), spawn_tutorial_overlay)
@@ -229,6 +230,7 @@ fn main() {
                 animate_player_limbs,
                 update_camera.in_set(CameraSet::Follow),
                 update_boss_fight,
+                boss::update_mom_guard_cues.after(update_boss_fight),
                 update_boss_healing_tendies,
                 update_enemies,
                 animate_enemies,
@@ -257,6 +259,7 @@ fn main() {
                 update_city_intro_cutscene,
                 update_city_intro_subtitles,
                 animate_city_intro_lexie,
+                update_city_crew_gate,
                 update_city_traffic,
                 update_city_npcs,
                 ensure_hero_vikings_gear,
@@ -279,7 +282,7 @@ fn main() {
                     .in_set(CameraSet::Motion),
                 animate_player_limbs,
                 update_camera.in_set(CameraSet::Follow),
-                update_pub217_scale,
+                (update_city_crew_gate, update_pub217_door),
                 update_city_traffic,
                 update_city_npcs,
                 update_city_tj,
