@@ -4,7 +4,7 @@ use bevy::render::render_asset::RenderAssetUsages;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use crate::audio::play_sfx;
-use crate::city::CityWorldMarker;
+use crate::city::{city_car_contact, CarContact, CityCar, CityWorldMarker};
 use crate::player::Player;
 use crate::scooter::CityScooter;
 use crate::state::{LevelEntity, PlayerStats};
@@ -570,12 +570,17 @@ const LIP_GRACE_SECS: f32 = 0.15;
 /// Share of the hop impulse stacked on top of a ramp launch.
 const LIP_HOP_SHARE: f32 = 0.75;
 
-/// Hop take-off speed (m/s) under the stunt gravity of 28 m/s^2. Grows gently with Stan like the
-/// on-foot jump: 7.8 at 0.55 (about 1.1 m), 8.4 at the city's 1.8 (about 1.3 m, 0.6 s airtime),
-/// capped at 10.5 (about 2 m) near the 6.0 riding limit.
+/// Hop take-off speed (m/s). Sized to clear the city cars (cab sign tops 1.89 m, 4.66 m long):
+/// at the city's 1.8 scale 10.5 m/s under `HOP_RISE_GRAVITY` peaks at 2.5 m, stays above a cab
+/// sign for 0.45 s and above the hood for 0.67 s, and lands after 0.9 s (13.5 m at 15 m/s).
+/// Grows gently with Stan; capped at 11.5 near the 6.0 riding limit.
 fn scooter_hop_speed(player_scale: f32) -> f32 {
-    (7.8 + (player_scale - 0.55).max(0.0) * 0.5).min(10.5)
+    (10.2 + (player_scale - 0.55).max(0.0) * 0.25).min(11.5)
 }
+/// Stunt gravity (ramp launches and every descent).
+const STUNT_GRAVITY: f32 = 28.0;
+/// Softer gravity while a flat hop is still rising: more height and hang without a floaty fall.
+const HOP_RISE_GRAVITY: f32 = 22.0;
 
 #[allow(clippy::type_complexity)]
 pub fn update_scooter_stunts(
@@ -642,6 +647,17 @@ pub fn update_scooter_stunts(
             Without<StuntRamp>,
             Without<BoostRing>,
             Without<BoostPad>,
+        ),
+    >,
+    car_q: Query<
+        (&Transform, &CityCar),
+        (
+            Without<Player>,
+            Without<CityScooter>,
+            Without<StuntRamp>,
+            Without<BoostRing>,
+            Without<BoostPad>,
+            Without<ScooterBoostFlame>,
         ),
     >,
 ) {
@@ -722,8 +738,28 @@ pub fn update_scooter_stunts(
         }
     }
 
+    // --- Car hoods and roofs: ride on them when coming down from above ----------------------
+    // Same contact test the traffic hit uses (`city_car_contact`), so a scooter is either over a
+    // car (surface below, no hit) or inside it (hit), never both.
+    let mut car_ground = false;
+    let wheels = Vec3::new(stf.translation.x, sc.y, stf.translation.z);
+    for (ctf, car) in &car_q {
+        if let CarContact::Over(h) = city_car_contact(ctf, car, wheels, 0.45) {
+            if !sc.grounded && sc.flat_hop && sc.y > h {
+                sc.car_hop = true;
+            }
+            if h > ground_h {
+                ground_h = h;
+                slope = 0.0;
+                car_ground = true;
+            }
+        }
+    }
+
     let prev_ground = sc.ground_h;
     sc.ground_h = ground_h;
+    let was_on_car = sc.on_car;
+    sc.on_car = car_ground;
 
     // --- Hop: Space / gamepad A (synthesised Space) / touch JUMP -------------------------------
     // Runs before the grounded/airborne split so a hop simply hands the scooter to the airborne
@@ -752,7 +788,7 @@ pub fn update_scooter_stunts(
         } else if sc.crouch_t <= 0.0 {
             sc.crouch_t = 0.0;
             // On a ramp face the hop adds to what the ramp would have launched at the lip.
-            let on_ramp = ground_h > 0.1 && sc.speed > 5.0;
+            let on_ramp = ground_h > 0.1 && !car_ground && sc.speed > 5.0;
             sc.vy = if on_ramp {
                 (sc.speed * slope * 1.1).clamp(3.5, 14.5) + hop_v * LIP_HOP_SHARE
             } else {
@@ -763,6 +799,8 @@ pub fn update_scooter_stunts(
             sc.air_t = 0.0;
             sc.flip = 0.0;
             sc.hopped = true;
+            sc.flat_hop = !on_ramp;
+            sc.car_hop = false;
             // Flat hops keep Space-held from turning straight into a backflip; ramp hops keep the
             // classic "hold through the launch to flip" feel.
             sc.hop_hold = space_down && !on_ramp;
@@ -789,7 +827,18 @@ pub fn update_scooter_stunts(
     }
 
     if sc.grounded {
-        if prev_ground - ground_h > 0.35 && sc.speed > 5.0 {
+        if was_on_car && ground_h < prev_ground - 0.05 {
+            // The car drove out from under us (or we rode off it): just drop, no ramp launch
+            // and no score for the fall.
+            sc.grounded = false;
+            sc.vy = 0.0;
+            sc.y = prev_ground;
+            sc.air_t = 0.0;
+            sc.flip = 0.0;
+            sc.hopped = true;
+            sc.flat_hop = false;
+            sc.car_hop = false;
+        } else if prev_ground - ground_h > 0.35 && sc.speed > 5.0 {
             // Rolled off the lip of a ramp: LAUNCH!
             sc.grounded = false;
             sc.vy = (sc.speed * sc.last_slope * 1.1).clamp(3.5, 14.5);
@@ -805,11 +854,14 @@ pub fn update_scooter_stunts(
             }
         }
     } else {
-        sc.vy -= 28.0 * dt;
+        let g = if sc.flat_hop && sc.vy > 0.0 { HOP_RISE_GRAVITY } else { STUNT_GRAVITY };
+        sc.vy -= g * dt;
         sc.y += sc.vy * dt;
         sc.air_t += dt;
 
-        let flipping = space_down && sc.air_t > 0.12 && !sc.hop_hold;
+        // Flat hops don't flip: their longer car-clearing airtime would otherwise turn hop-spam
+        // into backflip points. Ramp launches and ramp hops flip as before.
+        let flipping = space_down && sc.air_t > 0.12 && !sc.hop_hold && !sc.flat_hop;
         if flipping {
             sc.flip += 7.2 * dt;
         } else {
@@ -835,9 +887,13 @@ pub fn update_scooter_stunts(
             }
             // A plain flat-ground hop is movement, not a trick: no points/credits/energy for it
             // (else hop-spamming would farm combos). Flips or big ramp-hop air still score.
-            let trick = flips > 0 || !sc.hopped || sc.air_t > 0.9;
+            // Clearing a car is the one flat hop that scores (small: airtime points only).
+            let car_hop = sc.car_hop;
+            let trick = flips > 0 || !sc.hopped || (sc.air_t > 0.9 && !sc.flat_hop) || car_hop;
             sc.hopped = false;
             sc.hop_hold = false;
+            sc.flat_hop = false;
+            sc.car_hop = false;
             let judged = sc.air_t > 0.35 && !(off < 1.0 && !trick);
             if !judged && sc.air_t > 0.15 {
                 play_sfx("step");
@@ -854,6 +910,8 @@ pub fn update_scooter_stunts(
                     play_sfx(if flips > 0 { "powerup" } else { "tendy" });
                     let flip_txt = if flips > 0 {
                         format!("{}x BACKFLIP! ", flips)
+                    } else if car_hop {
+                        "CAR HOP! ".to_string()
                     } else {
                         String::new()
                     };

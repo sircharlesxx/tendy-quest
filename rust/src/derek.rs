@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::audio::{
     is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, speak_voice,
 };
-use crate::city::{CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE};
+use crate::city::{CityWorldMarker, PUB217_SCALE};
 use crate::player::Player;
 use crate::state::{GameState, LevelEntity, PlayerStats};
 
@@ -363,9 +363,9 @@ pub fn spawn_city_derek(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
 ) {
     let mats = make_derek_materials(materials);
-    let pos = PUB217_ANCHOR + Vec3::new(-9.6, 0.0, -3.4);
     commands
         .spawn((
             LevelEntity,
@@ -391,6 +391,7 @@ pub fn update_city_derek(
     mut derek_q: Query<(&mut Transform, &mut CityDerek), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut d_state: ResMut<DerekCutsceneState>,
+    spots: Option<Res<crate::city::CrewSpots>>,
 ) {
     let Ok((p_tf, player)) = player_q.get_single() else {
         return;
@@ -402,7 +403,7 @@ pub fn update_city_derek(
         if stats.derek_recruited && !derek.recruited {
             derek.recruited = true;
         }
-        // Post-game free roam: recruited crew skip following and idle at their pub spots.
+        // Post-game free roam: recruited crew skip following and idle in Pub 217.
         if derek.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.72).clamp(1.65, 9.0);
             d_tf.scale = Vec3::splat(s);
@@ -433,13 +434,14 @@ pub fn update_city_derek(
             continue;
         }
 
-        d_tf.translation = PUB217_ANCHOR + Vec3::new(-9.6, 0.0, -3.4) * pub_s;
-        d_tf.scale = Vec3::splat(pub_s);
+        // Waiting: at this build's scattered spot (free roam: in Pub 217), facing the street
+        // until Stan is close. Normal follower size outside, pub size inside.
+        let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_DEREK, &stats, spots.as_deref(), p_tf.translation);
+        d_tf.translation = pos;
+        d_tf.rotation = rot;
+        d_tf.scale = Vec3::splat(if stats.free_roam { pub_s } else { 1.65 });
         let to_p = p_tf.translation - d_tf.translation;
         let flat = Vec3::new(to_p.x, 0.0, to_p.z);
-        if flat.length_squared() > 0.01 {
-            d_tf.rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
-        }
 
         let dist = flat.length();
         let trigger_r = 2.2 * pub_s;

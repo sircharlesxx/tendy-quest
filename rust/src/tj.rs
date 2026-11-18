@@ -14,9 +14,6 @@ use crate::ui::HudOverlay;
 pub struct TjCityActor;
 
 #[derive(Component)]
-pub struct TjCityBeacon;
-
-#[derive(Component)]
 pub struct TjCutsceneEntity;
 
 #[derive(Component)]
@@ -321,10 +318,9 @@ pub fn spawn_tj_character(
         .id()
 }
 
-/// Where TJ waits on 3rd St SE (out front of Pub 217) until Stan meets him.
-pub const TJ_CITY_SPAWN: Vec3 = Vec3::new(3.5, 0.0, 38.0);
-
-/// Ensures TJ exists in the NYC city map and handles meeting / companion following.
+/// Ensures TJ exists in the NYC city map and handles meeting / companion following. Until he is
+/// recruited TJ waits at this build's scattered spot (`crate::city::CrewSpots`; in free roam he
+/// hangs out in Pub 217), with the shared crew marker and call-out from `update_crew_callouts`.
 pub fn update_city_tj(
     mut commands: Commands,
     time: Res<Time>,
@@ -335,84 +331,37 @@ pub fn update_city_tj(
     player_q: Query<(&Transform, &Player), Without<TjCityActor>>,
     orbit: Res<crate::state::CameraOrbit>,
     mut tj_q: Query<(Entity, &mut Transform), With<TjCityActor>>,
-    mut beacon_q: Query<(&mut Visibility, &mut Transform), (With<TjCityBeacon>, Without<TjCityActor>, Without<Player>)>,
-    mut cast_q: Query<&mut Visibility, (With<TjAnkleCast>, Without<TjCityBeacon>, Without<TjCityActor>, Without<Player>)>,
+    mut cast_q: Query<&mut Visibility, (With<TjAnkleCast>, Without<TjCityActor>, Without<Player>)>,
     mut roam_greeted: Local<bool>,
+    spots: Option<Res<crate::city::CrewSpots>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
 
+    let Ok((p_tf, _player)) = player_q.get_single() else {
+        return;
+    };
     if tj_q.is_empty() {
-        let spawn_pos = TJ_CITY_SPAWN;
+        let (spawn_pos, spawn_rot) =
+            crate::city::crew_wait_pose(crate::city::CREW_TJ, &stats, spots.as_deref(), p_tf.translation);
         let tj_ent = spawn_tj_character(
             &mut commands,
             &mut meshes,
             &mut materials,
             spawn_pos,
-            0.0,
+            spawn_rot.to_euler(EulerRot::YXZ).0,
             1.8,
             stats.tj_recruited,
         );
-        let ring_mat = materials.add(StandardMaterial {
-            base_color: Color::srgba(0.25, 0.90, 1.0, 0.85),
-            emissive: LinearRgba::new(0.4, 2.4, 3.6, 1.0),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        });
-        let marker_mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.25, 0.95, 1.0),
-            emissive: LinearRgba::new(0.6, 3.0, 4.2, 1.0),
-            unlit: true,
-            ..default()
-        });
-        commands.entity(tj_ent).insert(TjCityActor).with_children(|p| {
-            p.spawn((
-                TjCityBeacon,
-                Mesh3d(meshes.add(Torus::new(0.10, 1.25))),
-                MeshMaterial3d(ring_mat),
-                Transform::from_xyz(0.0, 0.12, 0.0),
-                if stats.tj_recruited {
-                    Visibility::Hidden
-                } else {
-                    Visibility::Inherited
-                },
-            ));
-            p.spawn((
-                TjCityBeacon,
-                Mesh3d(meshes.add(Cone::new(0.22, 0.45))),
-                MeshMaterial3d(marker_mat),
-                Transform::from_xyz(0.0, 2.75, 0.0).with_rotation(Quat::from_rotation_x(PI)),
-                if stats.tj_recruited {
-                    Visibility::Hidden
-                } else {
-                    Visibility::Inherited
-                },
-            ));
-        });
+        commands.entity(tj_ent).insert(TjCityActor);
         return;
     }
 
-    let Ok((p_tf, _player)) = player_q.get_single() else {
-        return;
-    };
     let Ok((_, mut tj_tf)) = tj_q.get_single_mut() else {
         return;
     };
     tj_tf.scale = Vec3::splat(stats.player_scale.max(1.8));
 
-    for (mut vis, mut b_tf) in &mut beacon_q {
-        *vis = if stats.tj_recruited {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        };
-        if !stats.tj_recruited {
-            let s = 1.0 + (t * 3.5).sin() * 0.14;
-            b_tf.scale = Vec3::splat(s);
-            b_tf.rotate_y(dt * 1.8);
-        }
-    }
     for mut c_vis in &mut cast_q {
         *c_vis = if stats.tj_recruited {
             Visibility::Inherited
@@ -422,15 +371,14 @@ pub fn update_city_tj(
     }
 
     if stats.free_roam {
-        // Post-game free roam: TJ hangs out at his spot out front at normal size, turns to face
+        // Post-game free roam: TJ hangs out in Pub 217 by the door at normal size, turns to face
         // Stan, and just says hi (no cutscene replay, no following).
-        tj_tf.translation = TJ_CITY_SPAWN;
+        let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_TJ, &stats, spots.as_deref(), p_tf.translation);
+        tj_tf.translation = pos;
+        tj_tf.rotation = rot;
         tj_tf.scale = Vec3::splat(1.8);
         let flat = p_tf.translation - tj_tf.translation;
         let dist = Vec2::new(flat.x, flat.z).length();
-        if dist > 0.2 && dist < 20.0 {
-            tj_tf.rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
-        }
         if dist < 5.5 && p_tf.translation.y < 4.0 {
             if !*roam_greeted {
                 *roam_greeted = true;
@@ -441,12 +389,14 @@ pub fn update_city_tj(
             *roam_greeted = false;
         }
     } else if !stats.tj_recruited {
+        // Waiting at his scattered spot, facing the street until Stan is close.
+        let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_TJ, &stats, spots.as_deref(), p_tf.translation);
+        tj_tf.translation = pos;
+        tj_tf.rotation = rot;
+        tj_tf.scale = Vec3::splat(1.8);
         let flat = p_tf.translation - tj_tf.translation;
         let dist = Vec2::new(flat.x, flat.z).length();
-        if dist > 0.2 {
-            tj_tf.rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
-        }
-        if dist < 5.5 {
+        if dist < 5.5 && p_tf.translation.y < 4.0 {
             stats.saved_city_pos = p_tf.translation;
             stats.tj_return_city = true;
             next_state.set(GameState::TjCutscene);

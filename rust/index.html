@@ -41,6 +41,12 @@
           return false;
         }
       },
+      clearAllProgress() {
+        try {
+          localStorage.removeItem("tendy_quest_save_v1");
+          localStorage.removeItem("tendy_quest_mom_defeated_v1");
+        } catch (_) {}
+      },
     };
     window.tendyTelemetry = {
       state: "Tutorial",
@@ -2570,6 +2576,12 @@
           const m = window.location.search.match(/[?&]combat_demo=([A-Za-z0-9.:_-]+)/);
           return m ? m[1] : "";
         },
+        // Debug: ?debug=1&city_start=pub (or pubin, door, sky, crew) drops Stan there on a fresh city entry.
+        cityStart() {
+          if (!debugKeysEnabled) return "";
+          const m = window.location.search.match(/[?&]city_start=([a-z]+)/);
+          return m ? m[1] : "";
+        },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
         skipHeld() { pollGamepad(); return skipTouchHeld || gpStartHeld; },
         skipTouchUi,
@@ -2582,6 +2594,8 @@
         usingGamepad() { return lastInputPad; },
         takePointerLockLost() { const v = pointerLockLost; pointerLockLost = false; return v; },
         takeDebugPause() { const v = debugPausePending; debugPausePending = false; return v; },
+        // Debug: ?debug=1&at_beer=1 starts Stan inside Pub 217 facing the beer tower.
+        atBeer() { return debugKeysEnabled && /[?&]at_beer=1(?:&|$)/.test(window.location.search); },
       };
     })();
   </script>

@@ -1,4 +1,5 @@
 mod audio;
+mod beer_fx;
 mod boss;
 mod city;
 mod controls;
@@ -96,6 +97,7 @@ fn main() {
                 }),
         )
         .add_plugins(gfx::GfxPlugin)
+        .add_plugins(beer_fx::BeerFxPlugin)
         // Hold Enter / Start / touch SKIP to skip any cutscene (see skip.rs).
         .add_plugins(skip::CutsceneSkipPlugin)
         // Bottom-left controls strip + Esc / H / Start pause menu (see controls.rs).
@@ -271,7 +273,21 @@ fn main() {
         .add_systems(OnEnter(GameState::CityPlay), (enter_city_play, camera_begin_blend))
         .add_systems(
             OnExit(GameState::CityPlay),
-            (unlock_cursor, exit_city_play, record_city_facing),
+            (unlock_cursor, exit_city_play, record_city_facing, city::despawn_prop_prompt),
+        )
+        .add_systems(
+            Update,
+            // Beer tower, parked car and the license card. After the crew so a same-frame
+            // interact hint from the bar wins over Glenn's free-roam line.
+            (
+                city::update_city_props,
+                city::update_license_card,
+                city::sync_parked_car_collider,
+            )
+                .after(update_city_glenn)
+                .before(update_city_driving)
+                .run_if(in_state(GameState::CityPlay))
+                .run_if(gameplay_running),
         )
         .add_systems(
             Update,
@@ -282,7 +298,7 @@ fn main() {
                     .in_set(CameraSet::Motion),
                 animate_player_limbs,
                 update_camera.in_set(CameraSet::Follow),
-                (update_city_crew_gate, update_pub217_door),
+                (update_city_crew_gate, update_pub217_door, city::update_crew_callouts),
                 update_city_traffic,
                 update_city_npcs,
                 update_city_tj,

@@ -8,7 +8,7 @@
 //! * The pause menu replaces the old help card. Esc, H, touch HELP and gamepad Start open it in the
 //!   gameplay states (and so does the browser dropping pointer lock); it pauses exactly like the old
 //!   card did (`HelpPause` + `Time<Virtual>`, see `ui::gameplay_running`). Buttons: Resume, Sound,
-//!   Restart (press twice). Restart re-enters the current state through `SceneTransition`, and the
+//!   Restart (press twice), Clear save (press twice). Restart re-enters the current state through `SceneTransition`, and the
 //!   identity transition runs that state's OnExit, the world reset and its OnEnter while black
 //!   (see [`run_pause_restart`]).
 
@@ -91,7 +91,7 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
                 bind("SHIFT", "B", "Roll", true),
             ];
             if ctx == ControlContext::CityFoot {
-                v.push(bind("F", "X", "Ride / drive", true));
+                v.push(bind("F", "X", "Ride / drive / drink", true));
                 v.push(bind("P", "LB", "Phone", true));
             }
             v.extend([
@@ -276,8 +276,9 @@ fn update_control_strip(
 const BTN_RESUME: usize = 0;
 const BTN_SOUND: usize = 1;
 const BTN_RESTART: usize = 2;
-const BTN_COUNT: usize = 3;
-/// Real seconds the "press again to restart" confirmation stays armed.
+const BTN_CLEAR_SAVE: usize = 3;
+const BTN_COUNT: usize = 4;
+/// Real seconds the "press again to restart" (or "to clear save") confirmation stays armed.
 const RESTART_CONFIRM_SECS: f32 = 3.0;
 /// Ignore Esc-to-close this long after opening, so the Esc that dropped pointer lock (which can
 /// arrive as a key event a frame after the lock change) doesn't close the menu again.
@@ -291,6 +292,10 @@ pub struct PauseMenu {
     opened_at: f64,
     /// State to restart, set when Restart is confirmed; consumed by [`run_pause_restart`].
     restart_pending: Option<GameState>,
+    /// > 0 while the Clear save button is armed (real seconds left).
+    confirm_clear: f32,
+    /// Set when Clear save is confirmed; consumed by [`run_pause_clear_save`].
+    clear_pending: bool,
 }
 
 #[derive(Component)]
@@ -527,6 +532,9 @@ fn update_pause_menu(
     if menu.confirm_restart > 0.0 {
         menu.confirm_restart = (menu.confirm_restart - dt).max(0.0);
     }
+    if menu.confirm_clear > 0.0 {
+        menu.confirm_clear = (menu.confirm_clear - dt).max(0.0);
+    }
     drain_queued_actions();
     // A lock change while paused is our own unlock (or a stale event); never act on it.
     let _ = crate::audio::take_pointer_lock_lost();
@@ -555,6 +563,9 @@ fn update_pause_menu(
     }
     if menu.selected != prev_sel && menu.selected != BTN_RESTART {
         menu.confirm_restart = 0.0;
+    }
+    if menu.selected != prev_sel && menu.selected != BTN_CLEAR_SAVE {
+        menu.confirm_clear = 0.0;
     }
     if activate.is_none() && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space)) {
         // Keyboard (or gamepad A, which arrives as a Space key event).
@@ -585,6 +596,18 @@ fn update_pause_menu(
             }
             menu.confirm_restart = RESTART_CONFIRM_SECS;
         }
+        Some((BTN_CLEAR_SAVE, _)) => {
+            if menu.confirm_clear > 0.0 {
+                menu.confirm_clear = 0.0;
+                menu.clear_pending = true;
+                // Wipe storage now (in case the tab closes mid-fade); `run_pause_clear_save`
+                // wipes it again after OnExit and resets the world to a fresh title screen.
+                crate::audio::clear_all_progress();
+                next_state.set(GameState::Tutorial);
+                return;
+            }
+            menu.confirm_clear = RESTART_CONFIRM_SECS;
+        }
         _ => {}
     }
     if !resume {
@@ -612,10 +635,12 @@ fn refresh_pause_menu(
         return;
     }
     let armed = menu.confirm_restart > 0.0;
+    let armed_clear = menu.confirm_clear > 0.0;
     for (btn, mut bg, mut border) in &mut btn_q {
         let selected = btn.0 == menu.selected;
         let want_bg = match (btn.0, selected) {
             (BTN_RESTART, _) if armed => Color::srgb(0.70, 0.06, 0.06),
+            (BTN_CLEAR_SAVE, _) if armed_clear => Color::srgb(0.70, 0.06, 0.06),
             (_, true) => Color::srgb(0.82, 0.14, 0.16),
             _ => Color::srgba(1.0, 1.0, 1.0, 0.08),
         };
@@ -636,6 +661,8 @@ fn refresh_pause_menu(
             BTN_RESUME => "RESUME",
             BTN_SOUND if stats.audio_muted => "SOUND: OFF",
             BTN_SOUND => "SOUND: ON",
+            BTN_CLEAR_SAVE if armed_clear => "PRESS AGAIN TO CLEAR SAVE",
+            BTN_CLEAR_SAVE => "CLEAR SAVE",
             _ if armed => "PRESS AGAIN TO RESTART LEVEL",
             _ => "RESTART LEVEL",
         };
@@ -655,22 +682,41 @@ fn run_pause_restart(world: &mut World) {
         return;
     };
     let _ = world.try_run_schedule(OnExit(state));
-    let _ = world.run_system_once_with(state == GameState::CityPlay, restart_world_for_pause);
+    let _ = world.run_system_once_with((state == GameState::CityPlay, false), restart_world_for_pause);
     let _ = world.try_run_schedule(OnEnter(state));
 }
 
+/// OnTransition(gameplay state -> Tutorial): a confirmed pause-menu Clear save. Runs after the
+/// gameplay state's OnExit and before OnEnter(Tutorial) (so the title card sees no save and shows
+/// no Continue), while the fade overlay is black. Both localStorage keys are wiped again here so
+/// nothing written during the fade survives, then the world gets the same Level 1 reset as
+/// "Play again", but without the sticky `game_beaten` flag: only the mute setting survives.
+fn run_pause_clear_save(world: &mut World) {
+    if !std::mem::take(&mut world.resource_mut::<PauseMenu>().clear_pending) {
+        return;
+    }
+    crate::audio::clear_all_progress();
+    let _ = world.run_system_once_with((false, true), restart_world_for_pause);
+}
+
+/// `(retry_city, wipe_progress)`: `wipe_progress` drops the sticky `game_beaten` flag too.
 #[allow(clippy::too_many_arguments)]
 fn restart_world_for_pause(
-    In(retry_city): In<bool>,
+    In((retry_city, wipe_progress)): In<(bool, bool)>,
     commands: Commands,
     asset_server: Res<AssetServer>,
     meshes: ResMut<Assets<Mesh>>,
     materials: ResMut<Assets<StandardMaterial>>,
-    stats: ResMut<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     orbit: ResMut<CameraOrbit>,
     level_q: Query<Entity, With<LevelEntity>>,
     end_q: Query<Entity, With<EndOverlay>>,
 ) {
+    if wipe_progress {
+        // `reset_world_for_restart` keeps `game_beaten` and resets everything else (license
+        // included, as this is not a city retry).
+        stats.game_beaten = false;
+    }
     crate::ui::reset_world_for_restart(
         retry_city, commands, asset_server, meshes, materials, stats, orbit, level_q, end_q,
     );
@@ -700,6 +746,13 @@ impl Plugin for ControlsPlugin {
                     entered: s,
                 },
                 run_pause_restart,
+            );
+            app.add_systems(
+                OnTransition {
+                    exited: s,
+                    entered: GameState::Tutorial,
+                },
+                run_pause_clear_save,
             );
         }
     }

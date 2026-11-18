@@ -578,6 +578,14 @@ fn smooth_factor(rate: f32, dt: f32) -> f32 {
     1.0 - (-rate * dt).exp()
 }
 
+/// Beer stagger in -1..1: a few incommensurate sines, so the drift wanders instead of ticking
+/// back and forth on a beat. Fades out over the last 2 s of `drunk_timer`. Callers scale it into
+/// a heading offset (on foot) or a steering bias (scooter).
+pub fn drunk_steer_drift(t: f32, drunk_timer: f32) -> f32 {
+    let fade = (drunk_timer / 2.0).min(1.0);
+    ((t * 0.83).sin() * 0.6 + (t * 1.91 + 1.3).sin() * 0.3 + (t * 3.7 + 0.4).sin() * 0.1) * fade
+}
+
 /// OnEnter(gameplay state): ease from the cutscene's last shot into the follow camera.
 pub fn camera_begin_blend(mut orbit: ResMut<CameraOrbit>) {
     orbit.blend_request = true;
@@ -774,6 +782,12 @@ pub fn player_movement(
     if stats.high_timer > 0.0 {
         stats.high_timer = (stats.high_timer - dt).max(0.0);
     }
+    if stats.drunk_timer > 0.0 {
+        stats.drunk_timer = (stats.drunk_timer - dt).max(0.0);
+    }
+    if stats.beer_cooldown > 0.0 {
+        stats.beer_cooldown = (stats.beer_cooldown - dt).max(0.0);
+    }
     if stats.stamina_regen_delay > 0.0 {
         stats.stamina_regen_delay = (stats.stamina_regen_delay - dt).max(0.0);
     } else if !player.block_active && player.charge_level().is_none() {
@@ -842,6 +856,11 @@ pub fn player_movement(
     let raw_move = forward * forward_in + right * right_in;
     let move_mag = raw_move.length().min(1.0);
     let mut dir = raw_move.normalize_or_zero();
+    // Beer: a slow, wandering drift on the walk direction (see `drunk_steer_drift`).
+    if stats.in_city && stats.drunk_timer > 0.0 && dir != Vec3::ZERO {
+        let a = drunk_steer_drift(time.elapsed_secs(), stats.drunk_timer) * 0.45;
+        dir = Quat::from_rotation_y(a) * dir;
+    }
 
     // Target Lock-On toggle [TAB] & Estus Tendy Flask [Q / 1]
     if keys.just_pressed(KeyCode::Tab) {
@@ -1788,6 +1807,17 @@ pub fn update_camera(
         orbit.wobble_amp = 0.0;
     }
     let drunk_amp = orbit.wobble_amp;
+    // Beer sway: slower and rollier than the high sway (a ship deck rather than a buzz).
+    let beer_target = if stats.in_city && stats.drunk_timer > 0.0 {
+        (stats.drunk_timer / 3.0).min(1.0)
+    } else {
+        0.0
+    };
+    orbit.beer_amp += (beer_target - orbit.beer_amp) * smooth_factor(1.2, dt);
+    if orbit.beer_amp < 0.001 && beer_target == 0.0 {
+        orbit.beer_amp = 0.0;
+    }
+    let beer_amp = orbit.beer_amp;
 
     // Small FOV kick while dashing.
     let kick_target = if player.dash_timer > 0.0 { 0.06 } else { 0.0 };
@@ -1812,6 +1842,13 @@ pub fn update_camera(
         );
         roll = (t * 1.35).sin() * 0.065 * drunk_amp;
         fov += (t * 2.05).sin() * 0.075 * drunk_amp;
+    }
+    if beer_amp > 0.0 {
+        let t = time.elapsed_secs();
+        final_cam_pos += Vec3::new((t * 0.7).sin() * 0.45, (t * 1.1).sin() * 0.08, 0.0) * beer_amp;
+        final_look += Vec3::new((t * 0.55).sin() * 0.35, 0.0, 0.0) * beer_amp;
+        roll += ((t * 0.62).sin() * 0.13 + (t * 1.7).sin() * 0.025) * beer_amp;
+        fov += (t * 0.8).sin() * 0.04 * beer_amp;
     }
     let mut goal = Transform::from_translation(final_cam_pos);
     goal.look_at(final_look, Vec3::Y);

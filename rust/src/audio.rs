@@ -83,6 +83,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = combatDemo)]
         fn js_combat_demo() -> String;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = cityStart)]
+        fn js_city_start() -> String;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeActionTap)]
         fn js_take_action_tap() -> bool;
 
@@ -134,6 +137,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeDebugPause)]
         fn js_take_debug_pause() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = atBeer)]
+        fn js_at_beer() -> bool;
+
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCheckpoint)]
         fn js_save_checkpoint(json: &str);
 
@@ -148,6 +154,9 @@ mod imp {
 
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = hasDefeatedMom)]
         fn js_has_defeated_mom() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearAllProgress)]
+        fn js_clear_all_progress();
 
         #[wasm_bindgen(js_namespace = ["window", "tendyBoot"], js_name = ready)]
         fn js_boot_ready();
@@ -246,6 +255,11 @@ mod imp {
         js_take_debug_pause()
     }
 
+    /// `?debug=1&at_beer=1`: start Stan inside Pub 217 facing the beer tower (headless shots).
+    pub fn debug_at_beer() -> bool {
+        js_at_beer()
+    }
+
     pub fn play_sfx(name: &str) {
         js_play_sfx(name);
     }
@@ -309,6 +323,11 @@ mod imp {
         js_combat_demo()
     }
 
+    /// `city_start=` URL value (empty unless `debug=1`): where a fresh city entry drops Stan.
+    pub fn debug_city_start() -> String {
+        js_city_start()
+    }
+
     pub fn take_touch_help() -> bool {
         js_take_help()
     }
@@ -360,6 +379,11 @@ mod imp {
 
     pub fn has_defeated_mom() -> bool {
         js_has_defeated_mom()
+    }
+
+    /// Pause-menu Clear save: drops both localStorage keys (checkpoint + Mom-defeated).
+    pub fn clear_all_progress() {
+        js_clear_all_progress();
     }
 
     /// Startup scenes are loaded: lets `index.html` fade its loading screen out.
@@ -434,6 +458,10 @@ mod imp {
         false
     }
 
+    pub fn debug_at_beer() -> bool {
+        false
+    }
+
     pub fn play_sfx(_name: &str) {}
 
     pub fn toggle_mute() -> bool {
@@ -492,6 +520,10 @@ mod imp {
         String::new()
     }
 
+    pub fn debug_city_start() -> String {
+        String::new()
+    }
+
     pub fn take_touch_help() -> bool {
         false
     }
@@ -531,6 +563,8 @@ mod imp {
         false
     }
 
+    pub fn clear_all_progress() {}
+
     pub fn notify_boot_ready() {}
 
     pub fn update_telemetry(
@@ -546,7 +580,7 @@ mod imp {
 }
 
 pub use imp::{
-    debug_autoskip_enabled, debug_combat_demo, debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
+    debug_autoskip_enabled, debug_city_start, debug_combat_demo, debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
     mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_cutscene_music, play_hacking_music,
     play_headphone_music, play_scooter_music, play_sfx, play_viking_chant_music, save_checkpoint,
     set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
@@ -556,4 +590,6 @@ pub use imp::{
     touch_move_y, update_telemetry,
 };
 // Pause menu / controls strip bridge (controls.rs).
-pub use imp::{last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
+pub use imp::{clear_all_progress, last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
+// Debug start at the Pub 217 beer tower (beer_fx.rs).
+pub use imp::debug_at_beer;

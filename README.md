@@ -20,10 +20,10 @@
 
 ## Welcome to Tendy Quest! (Eat Tendies, Grow Into a Kaiju)
 
-Start shrunk down to miniature **17cm Tiny Toy** size (`0.55` scale) right next to a stack of pancakes on the **Breakfast Island** of a **1,200 sq ft Open-Concept Apartment**. As **Stan (the Plaid Hero)**, you've got cozy red-and-black buffalo plaid pajamas, springy **Double-Jumps**, a speedy **Belly Dash**, and a two-part adventure:
+Start shrunk down to miniature **17cm Tiny Toy** size (`0.55` scale) right next to a stack of pancakes on the **Breakfast Island** of a **1,200 sq ft Open-Concept Apartment**. As **the Plaid Hero**, you've got cozy red-and-black buffalo plaid pajamas, springy **Double-Jumps**, a speedy **Belly Dash**, and a two-part adventure:
 
-1. **Level 1 — The Apartment:** Eat all **12 Golden Tendies** to grow from **17cm** to **180cm Full Adult Size** (`6.0` scale), bowl over grumpy veggies, and swing open the **Giant Refrigerator**!
-2. **Level 2 — Cedar Rapids & Pub 217:** Step outside into **Cedar Rapids** with **20 Hearts**, recruit your crew (**TJ, Derek, Nate, and Glenn**) through dramatic anime/kung-fu cutscenes and share a smoke break with **Mike** (the city tendies stay locked until all five are done), tear up **3 Electric Scooter Stunt Circuits**, collect **50 City Tendies** to grow into a **6500cm Skyscraper Kaiju**, and smash **Giant Pickled Garlic Lexie**!
+1. **Level 1 (The Apartment):** Eat all **12 Golden Tendies** to grow from **17cm** to **180cm Full Adult Size** (`6.0` scale), bowl over grumpy veggies, and swing open the **Giant Refrigerator**!
+2. **Level 2 (Cedar Rapids & the Local Pub):** Step outside into **Cedar Rapids** with **20 Hearts**, recruit your crew of **four friends** through dramatic anime/kung-fu cutscenes and share a smoke break with **the scooter vendor** (the city tendies stay locked until all five are done), tear up **3 Electric Scooter Stunt Circuits**, collect **50 City Tendies** to grow into a **6500cm Skyscraper Kaiju**, and smash **the Giant Pickled Garlic boss**!
 
 <table>
   <tr>
@@ -32,22 +32,22 @@ Start shrunk down to miniature **17cm Tiny Toy** size (`0.55` scale) right next 
       <ul>
         <li><strong>Hunt 12 Golden Tendies Across 1,200 Sq Ft:</strong> Leap around the South Breakfast Island, bound down to the hardwood floor, weave through the Living Room and Dining Area, and climb up the North Kitchen Countertop (<code>+150 pts</code> per tendy, plus a <code>+1,000 pts</code> Big Boy bonus at <code>12/12</code>).</li>
         <li><strong>Grow From Little Guy to 180cm Big Boy:</strong> Level up from <strong>Tiny Toy</strong> (<code>0–3</code> Tendies) &rarr; <strong>Counter Climber</strong> (<code>4–7</code>) &rarr; <strong>Kid Size</strong> (<code>8–11</code>) &rarr; <strong>180cm Big Boy</strong> (<code>12/12</code>).</li>
-        <li><strong>Turn the Tables on Veggies:</strong> Past <code>2.2</code> scale, Stan shrugs off sticky Kale Slime puddles and bowls Broccoli Brutes &amp; Carrot Lancers across the room on contact (<code>+250 pts</code>)!</li>
+        <li><strong>Turn the Tables on Veggies:</strong> Past <code>2.2</code> scale, the hero shrugs off sticky Kale Slime puddles and bowls Broccoli Brutes &amp; Carrot Lancers across the room on contact (<code>+250 pts</code>)!</li>
         <li><strong>Open the Giant Refrigerator:</strong> At full <strong>180cm</strong> height, walk up to the towering fridge on the north wall and yank its door wide open (<code>+5,000 pts</code>) to head out to Cedar Rapids!</li>
         <li><strong>Navigate Apartment Clutter &amp; 3 Veggie Waves:</strong> Hop over scattered <strong>Ricos Nacho Cheese Cups</strong>, wireless <strong>Game Controllers</strong>, and floor <strong>Headphones</strong> while veggie waves spawn every 16 seconds.</li>
       </ul>
     </td>
     <td width="250" align="center" valign="middle">
-      <img src="assets/readme/kitchen_dance.gif" alt="Stan celebrating and dodging veggies in his plaid pajamas" width="230" />
+      <img src="assets/readme/kitchen_dance.gif" alt="The Plaid Hero celebrating and dodging veggies in his plaid pajamas" width="230" />
       <br/>
-      <sub><em>Stan gearing up for snack time</em></sub>
+      <sub><em>The Plaid Hero gearing up for snack time</em></sub>
     </td>
   </tr>
 </table>
 
 ### Growth Milestones (Level 1)
 
-| Tendies Eaten | Size Tier | Stan's Height | What Changes |
+| Tendies Eaten | Size Tier | Hero's Height | What Changes |
 | :---: | :--- | :--- | :--- |
 | `0 – 3` | **Tiny Toy** | Starts at **17cm** (`0.55` scale) | Cozy bite-sized adventurer dodging towering forks and giant pancakes. |
 | `4 – 7` | **Counter Climber** | Climbing upward | Faster stride, higher jumps, and wider reach across apartment furniture. |
@@ -56,24 +56,23 @@ Start shrunk down to miniature **17cm Tiny Toy** size (`0.55` scale) right next 
 
 ---
 
-## Level 2 — Cedar Rapids, Pub 217 & The Kaiju Showdown
+## Level 2: Cedar Rapids, the Local Pub & The Kaiju Showdown
 
 <p align="center">
-  <img src="assets/readme/city_preview.png" alt="Cedar Rapids & Pub 217 City Adventure" width="100%" />
+  <img src="assets/readme/city_preview.png" alt="Cedar Rapids & Local Pub City Adventure" width="100%" />
 </p>
 
-Once you conquer the Giant Refrigerator, Stan heads out into **Cedar Rapids** (`20 Hearts`), reunites the crew at **Pub 217**, gathers **50 City Tendies**, hits scooter stunts, and takes down **Giant Pickled Garlic Lexie**:
+Once you conquer the Giant Refrigerator, the hero heads out into **Cedar Rapids** (`20 Hearts`), reunites the crew at **the local pub**, gathers **50 City Tendies**, hits scooter stunts, and takes down **the Giant Pickled Garlic boss**:
 
-- **Crew First:** The city tendies stay dimmed and locked until Stan has recruited **TJ** (out front of Pub 217), **Derek, Nate, and Glenn** (inside Pub 217) and smoked with **Mike** in the bar. The HUD objective and the radar's green markers show what is left. Until then Lexie is only warming up: her garlic stings but can't take Stan below 10 hearts. Once all five are done the tendies light up, Stan starts growing, and the real fight begins. Pub 217 keeps its size, so a grown Stan simply towers over it.
+- **Crew First:** The city tendies stay dimmed and locked until the hero has found and recruited **all four crew members**, who are scattered around Cedar Rapids (each waits on a sidewalk somewhere in town, at a new random spot every time the city is built), and shared a smoke break with **the scooter vendor** in **the local pub**, which stands on its own block with its door facing the avenue. The radar doesn't give the crew away: when the hero gets within about 35 m of one, they call out to him (a hint, a chime, and a spoken line), a small green marker floats over their head, and from then on a pulsing green dot shows them on the radar. The pub keeps an amber radar marker until the smoke break with the scooter vendor, and the HUD objective lists who is still missing. Until then the garlic boss is only warming up: her garlic stings but can't take the hero below 10 hearts. Once all five are done the tendies light up, the hero starts growing, and the real fight begins. The pub keeps its size, so a grown hero simply towers over it.
 
 - **Recruitable Crew & Dramatic Cutscenes (Full Story, Skippable):** Hold `Enter`, gamepad `Start`, or the touch **SKIP** button for a moment to skip any cutscene; you land exactly where watching it out would leave you. Every character speaks with their own browser voice, pitch, and pace.
-  - **TJ:** Blue hoodie, crutches, glasses, and beard — joins and follows Stan after his cutscene.
-  - **Derek:** Dark-grey hoodie with drawstrings, back bun, and beard — joins and follows Stan after his cutscene.
-  - **Nate (in Pub 217 near the Beer Tower):** Glasses with a comically prominent lazy eye, beard, and sports baseball cap. Confronts Stan about moving to Des Moines, sparks a heated argument (*"So?"*) and a kung-fu duel before resigning to join Stan.
-  - **Glenn (in Pub 217):** Long curly black hair and a noticeably muscular build in a black tank. Stan questions why he works out and smashes the Beer Tower—sending Glenn into tears (*"WHY?!"*) and triggering a high-speed **DBZ-style** city teleportation & building-destruction fight before they team up to wreck Lexie!
+  - **The Crew:** A crew of four friends, each recruited through their own dramatic cutscene (heated arguments, a kung-fu duel, and a high-speed **DBZ-style** city teleportation & building-destruction fight among them), who then join and follow the hero and team up to wreck the final boss!
+- **Beer Tower (the Pub):** The beer tower in the back corner of the pub glows amber from the start. Walk up at normal size and press `F` / `E` (gamepad `X`, or tap the **DRINK A BEER** button) to drink: **+3 hearts**, but the hero is **drunk for 20 s** (more beers add time, up to 45 s; one beer every 4 s). A drunk hero gets a slow, rolling camera sway (different from the scooter vendor's smoke-break high), a `DRUNK` timer on the HUD, and a wandering drift when walking or steering the scooter.
+- **Driver's License & Cars:** No car can be driven until the hero finds the **driver's license** card hidden at a random kerbside spot each run (a spinning card with a blue beacon; walk into it). Until then every car, including the one random **parked car** with its **DRIVE** prompt, answers "Sorry, you don't have a license", and after the first refusal the radar shows the card with a pulsing blue marker. With the license the traffic cars can be hijacked with `F` / `E` as before, and the parked car drives like any of them (leave it anywhere and it stays parked there). The license is saved in the checkpoint, kept on retries, and carries into free roam.
 - **Electric Scooter & 3 Stunt Circuits:** Unlock your **Veo** scooter via the phone (`P`), ride freely across the city, and hit **3 Stunt Circuits** packed with launch ramps, boost pads, glowing boost rings, and mid-air backflips.
-- **Skyscraper Kaiju Finale & Colored Uzumaki Ending:** Grow up to **6500cm** (`50/50` City Tendies) to smash **Giant Pickled Garlic Lexie** to a 142 BPM symphonic metal boss anthem—culminating in a colored Junji Ito *Uzumaki*-style horror ending where spiral-eyed Lexie melts into fermented garlic brine in front of **Stan, Derek, TJ, Nate, and Glenn**!
-- **Post-Game Free Roam:** After beating Lexie, the victory screen offers **Continue** or **Play Again**. Continue drops Stan back into Cedar Rapids at normal size (180cm) with no Lexie: the crew wait at their usual spots (TJ out front; Derek, Nate, Glenn and Mike in Pub 217) for a quick hello, the scooter is unlocked for the stunt circuits, and city tendies are score-only snacks that no longer grow Stan. The win is saved, so after a reload the checkpoint button (`[C]`) goes straight to free roam. Test link: `?free_roam=1`.
+- **Skyscraper Kaiju Finale & Colored Uzumaki Ending:** Grow up to **6500cm** (`50/50` City Tendies) to smash **the Giant Pickled Garlic boss** to a 142 BPM symphonic metal boss anthem, culminating in a colored Junji Ito *Uzumaki*-style horror ending where the spiral-eyed boss melts into fermented garlic brine in front of **the hero and the whole crew**!
+- **Post-Game Free Roam:** After beating the final boss, the victory screen offers **Continue** or **Play Again**. Continue drops the hero back into Cedar Rapids at normal size (180cm) with no boss: the whole crew (all four friends and the scooter vendor) hangs out in the pub for a quick hello, the scooter is unlocked for the stunt circuits, and city tendies are score-only snacks that no longer grow the hero. The win is saved, so after a reload the checkpoint button (`[C]`) goes straight to free roam. Test link: `?free_roam=1`.
 
 ---
 
@@ -87,24 +86,24 @@ Hop straight in with zero downloads! Compiled to Rust + WebAssembly + WebGL2 wit
 
 ---
 
-## Meet Stan, Sauce Buffs & the Grumpy Veggies
+## Meet the Plaid Hero, Sauce Buffs & the Grumpy Veggies
 
 <p align="center">
-  <img src="assets/readme/cast_and_powerups.png" alt="Meet Stan, Sauce Power-Ups & Veggie Monsters" width="100%" />
+  <img src="assets/readme/cast_and_powerups.png" alt="Meet the Plaid Hero, Sauce Power-Ups & Veggie Monsters" width="100%" />
 </p>
 
 | Entity | Role | Mechanics & Stats |
 | :--- | :--- | :--- |
-| **Stan (Plaid Hero)** | Playable Hero | Starts with **5 Hearts** at **17cm** in Level 1 (up to **180cm**) and **20 Hearts** in Level 2 (growing up to **6500cm Skyscraper Kaiju**). Features **Double-Jump**, **Belly Dash**, Estus healing, and scooter stunts. |
-| **Golden Tendy** | Growth Snack | **12** in the Apartment (`+150 pts` each) and **50** across Cedar Rapids to fuel Stan's kaiju growth. |
+| **The Plaid Hero** | Playable Hero | Starts with **5 Hearts** at **17cm** in Level 1 (up to **180cm**) and **20 Hearts** in Level 2 (growing up to **6500cm Skyscraper Kaiju**). Features **Double-Jump**, **Belly Dash**, Estus healing, and scooter stunts. |
+| **Golden Tendy** | Growth Snack | **12** in the Apartment (`+150 pts` each) and about **70** across Cedar Rapids (stunt trails included), of which **50** fuel the hero's kaiju growth. |
 | **Giant Refrigerator** | Level 1 Goal | Towering fridge by the North Kitchen wall—open at **180cm** (`+5,000 pts`) to unlock Cedar Rapids. |
 | **Honey Mustard Cup** | Speed Buff | Grants **10 seconds** of **1.75&times; movement speed** for zooming across the floor. |
-| **Ranch Bubble Shield** | Defense Buff | Wraps Stan in a creamy **1-hit protective bubble** that absorbs veggie damage and knocks attackers back. |
-| **Broccoli Brute** | Heavy Tank | Patrols key apartment zones at `2.2` speed and charges at `3.8` speed whenever Stan enters its `9.0m` range. |
+| **Ranch Bubble Shield** | Defense Buff | Wraps the hero in a creamy **1-hit protective bubble** that absorbs veggie damage and knocks attackers back. |
+| **Broccoli Brute** | Heavy Tank | Patrols key apartment zones at `2.2` speed and charges at `3.8` speed whenever the hero enters its `9.0m` range. |
 | **Carrot Lancer** | Fast Charger | Locks on within `10.5m`, telegraphs for `0.8s`, and lunges forward at `11.5` speed with a 4-tine fork! |
-| **Kale Slime** | Floor Hazard | Glides around leaving sticky **Fiber Puddles** every `1.4s` that slow down tiny Stan until he grows past them. |
-| **TJ, Derek, Nate & Glenn** | Cedar Rapids Crew | Encountered in Level 2 & Pub 217; each joins and follows Stan after their cutscene and appears in the finale! |
-| **Giant Pickled Garlic Lexie** | Final Kaiju Boss | Skyscraper-scale boss terrorizing Cedar Rapids with spiral-powered attacks and pickled garlic horror. |
+| **Kale Slime** | Floor Hazard | Glides around leaving sticky **Fiber Puddles** every `1.4s` that slow down the tiny hero until he grows past them. |
+| **The Crew (Four Friends)** | Cedar Rapids Crew | Encountered in Level 2 & the local pub; each joins and follows the hero after their cutscene and appears in the finale! |
+| **Giant Pickled Garlic Boss** | Final Kaiju Boss | Skyscraper-scale boss terrorizing Cedar Rapids with spiral-powered attacks and pickled garlic horror. |
 
 ---
 
@@ -112,9 +111,9 @@ Hop straight in with zero downloads! Compiled to Rust + WebAssembly + WebGL2 wit
 
 | Desktop (Mouse + Keyboard) | PC Controller (Gamepad) | Mobile / Tablet (Touch Screen) |
 | :--- | :--- | :--- |
-| <ul><li>**Move / Steer:** `W A S D` or Arrow Keys</li><li>**3D Camera Look:** Move Mouse (`Click` locks cursor)</li><li>**Camera Zoom:** Mouse Scroll Wheel</li><li>**Jump / Double-Jump:** `Space`</li><li>**Belly Dash / Boost:** `Shift` (Left or Right)</li><li>**Lightsaber (saber fights):** tap `Click` / `J` / `X` to slash, hold it to charge a heavy slash, `Shift` dodge roll</li><li>**Saber Block:** hold `Right-Click` or `R` (raise it just as a hit lands for a Perfect Block)</li><li>**Strafe:** hold `V` (automatic while blocking or locked on)</li><li>**Lock-On:** `Tab`</li><li>**Mount / Dismount Scooter or Car:** `F`</li><li>**Scooter Jump:** `Space` while riding (hold `Space` in the air to backflip)</li><li>**Phone / Veo Unlock:** `P`</li><li>**Estus Heal:** `Q`</li><li>**Pause Menu (controls, sound, restart):** `Esc` or `H`</li><li>**Mute / Unmute Audio:** `M`</li><li>**Skip Cutscene:** hold `Enter`</li><li>**Start / Play Again:** `Space`, `Enter`, or `Click`</li></ul> | <ul><li>**Move / Steer:** Left Stick or D-Pad</li><li>**3D Camera Look:** Right Stick</li><li>**Jump / Double-Jump / Confirm:** `A` (`Cross`)</li><li>**Belly Dash / Boost:** `B` (`Circle`)</li><li>**Mount / Dismount Scooter:** `X` (`Square`)</li><li>**Scooter Jump:** `A` (`Cross`) while riding (hold it in the air to backflip)</li><li>**Estus Heal:** `Y` (`Triangle`)</li><li>**Phone / Veo Unlock:** `LB` (`L1`)</li><li>**Attack:** `RB` (`R1`) or `RT` (`R2`), hold to charge a heavy slash</li><li>**Saber Block (hold, boss fights):** `LT` (`L2`)</li><li>**Strafe (hold):** `L3` (left stick click)</li><li>**Lock-On:** `R3` (right stick click)</li><li>**Pause Menu:** `Start` / `Options` (D-Pad to select, `A` to choose, `B` to resume)</li><li>**Skip Cutscene:** hold `Start` / `Options`</li></ul> | <ul><li>**Move:** Bottom-left **Virtual Thumbstick** (full 360&deg; analog speed)</li><li>**3D Camera Look:** **Swipe / Drag** anywhere on the viewport</li><li>**Camera Zoom:** Two-finger **Pinch** (when thumbstick is released)</li><li>**Jump / Double-Jump:** Tap **JUMP**</li><li>**Scooter Jump:** Tap **JUMP** while riding</li><li>**Belly Dash:** Tap **DASH**</li><li>**Lightsaber (saber fights):** Tap **SABER** to slash, hold it to charge a heavy slash, tap **ROLL** to dodge, hold **BLOCK** to guard and strafe</li><li>**Pause Menu:** Tap **HELP**</li><li>**Mute / Unmute Audio:** Tap **SOUND**</li><li>**Skip Cutscene:** hold **SKIP**</li><li>**Start / Play Again:** Tap **anywhere** on the overlay</li></ul> |
+| <ul><li>**Move / Steer:** `W A S D` or Arrow Keys</li><li>**3D Camera Look:** Move Mouse (`Click` locks cursor)</li><li>**Camera Zoom:** Mouse Scroll Wheel</li><li>**Jump / Double-Jump:** `Space`</li><li>**Belly Dash / Boost:** `Shift` (Left or Right)</li><li>**Lightsaber (saber fights):** tap `Click` / `J` / `X` to slash, hold it to charge a heavy slash, `Shift` dodge roll</li><li>**Saber Block:** hold `Right-Click` or `R` (raise it just as a hit lands for a Perfect Block)</li><li>**Strafe:** hold `V` (automatic while blocking or locked on)</li><li>**Lock-On:** `Tab`</li><li>**Mount / Dismount Scooter or Car:** `F`</li><li>**Scooter Jump:** `Space` while riding (hold `Space` in the air to backflip)</li><li>**Phone / Veo Unlock:** `P`</li><li>**Estus Heal:** `Q`</li><li>**Pause Menu (controls, sound, restart, clear save):** `Esc` or `H`</li><li>**Mute / Unmute Audio:** `M`</li><li>**Skip Cutscene:** hold `Enter`</li><li>**Start / Play Again:** `Space`, `Enter`, or `Click`</li></ul> | <ul><li>**Move / Steer:** Left Stick or D-Pad</li><li>**3D Camera Look:** Right Stick</li><li>**Jump / Double-Jump / Confirm:** `A` (`Cross`)</li><li>**Belly Dash / Boost:** `B` (`Circle`)</li><li>**Mount / Dismount Scooter:** `X` (`Square`)</li><li>**Scooter Jump:** `A` (`Cross`) while riding (hold it in the air to backflip)</li><li>**Estus Heal:** `Y` (`Triangle`)</li><li>**Phone / Veo Unlock:** `LB` (`L1`)</li><li>**Attack:** `RB` (`R1`) or `RT` (`R2`), hold to charge a heavy slash</li><li>**Saber Block (hold, boss fights):** `LT` (`L2`)</li><li>**Strafe (hold):** `L3` (left stick click)</li><li>**Lock-On:** `R3` (right stick click)</li><li>**Pause Menu:** `Start` / `Options` (D-Pad to select, `A` to choose, `B` to resume)</li><li>**Skip Cutscene:** hold `Start` / `Options`</li></ul> | <ul><li>**Move:** Bottom-left **Virtual Thumbstick** (full 360&deg; analog speed)</li><li>**3D Camera Look:** **Swipe / Drag** anywhere on the viewport</li><li>**Camera Zoom:** Two-finger **Pinch** (when thumbstick is released)</li><li>**Jump / Double-Jump:** Tap **JUMP**</li><li>**Scooter Jump:** Tap **JUMP** while riding</li><li>**Belly Dash:** Tap **DASH**</li><li>**Lightsaber (saber fights):** Tap **SABER** to slash, hold it to charge a heavy slash, tap **ROLL** to dodge, hold **BLOCK** to guard and strafe</li><li>**Pause Menu:** Tap **HELP**</li><li>**Mute / Unmute Audio:** Tap **SOUND**</li><li>**Skip Cutscene:** hold **SKIP**</li><li>**Start / Play Again:** Tap **anywhere** on the overlay</li></ul> |
 
-During play a small strip of key chips in the bottom-left corner lists the controls for the current situation (Level 1, saber fights, the city on foot, scooter, car) and switches to gamepad buttons when you use a controller. The pause menu (`Esc`, `H`, `Start` or **HELP**) stops the game and shows the full list for the current situation, plus **Resume**, **Sound on/off** and **Restart Level** (press it twice to confirm). If the browser releases the mouse (for example `Esc` while the cursor is locked), the game pauses; click **Resume** to lock the cursor again.
+During play a small strip of key chips in the bottom-left corner lists the controls for the current situation (Level 1, saber fights, the city on foot, scooter, car) and switches to gamepad buttons when you use a controller. The pause menu (`Esc`, `H`, `Start` or **HELP**) stops the game and shows the full list for the current situation, plus **Resume**, **Sound on/off**, **Restart Level** and **Clear Save** (each of the last two needs a second press to confirm). Clear Save erases all saved progress (checkpoint, Mom-defeated flag, crew, license, the final boss win) and fades back to the title screen at Level 1 with no Continue option. If the browser releases the mouse (for example `Esc` while the cursor is locked), the game pauses; click **Resume** to lock the cursor again.
 
 ---
 
@@ -124,7 +123,7 @@ Tendy Quest combines pre-baked stereo audio with a real-time WebAudio synthesize
 
 - **Apartment Music & Ambience:** [`assets/audio/tendies_from_the_sun.mp3`](assets/audio/tendies_from_the_sun.mp3) and [`assets/audio/kitchen_ambience.mp3`](assets/audio/kitchen_ambience.mp3).
 - **142 BPM Symphonic Metal Boss Anthem & Horror Audio:** Procedural WebAudio D Phrygian boss music, cutscene scores, and *Uzumaki*-style horror drones/squelch SFX in [`rust/index.html`](rust/index.html).
-- **Character Dialogue & Stereo SFX:** In-game TTS voice lines for Stan, Derek, TJ, Nate, Glenn, and Lexie alongside stereo `.wav` sound effects (`jump`, `double_jump`, `dash`, `tendy`, `powerup`, `hit`, `shield`, `step`, `lunge`, `win`, `lose`).
+- **Character Dialogue & Stereo SFX:** In-game TTS voice lines for the hero, the crew, and the final boss alongside stereo `.wav` sound effects (`jump`, `double_jump`, `dash`, `tendy`, `powerup`, `hit`, `shield`, `step`, `lunge`, `win`, `lose`).
 
 ---
 
@@ -171,6 +170,6 @@ python3 blender/build_readme_graphics.py
 ---
 
 <p align="center">
-  <strong>Grab a golden tendy, recruit the Pub 217 crew, and smash Giant Pickled Garlic Lexie!</strong><br/>
+  <strong>Grab a golden tendy, recruit the pub crew, and smash the Giant Pickled Garlic boss!</strong><br/>
   <a href="https://sircharlesxx.github.io/tendy-quest/">Play Tendy Quest Live &rarr;</a>
 </p>

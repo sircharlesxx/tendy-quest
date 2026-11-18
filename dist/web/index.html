@@ -41,6 +41,12 @@
           return false;
         }
       },
+      clearAllProgress() {
+        try {
+          localStorage.removeItem("tendy_quest_save_v1");
+          localStorage.removeItem("tendy_quest_mom_defeated_v1");
+        } catch (_) {}
+      },
     };
     window.tendyTelemetry = {
       state: "Tutorial",
@@ -1748,7 +1754,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-f6db74bfaf8e7994.js" crossorigin="anonymous" integrity="sha384-e/ckOeXs2YrGNnR7RUszgv7QrhgaQXnJ6ynMuDxnQ4KOHrh4L3VaC8oJW1egT1+r"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-a594f5552acaa07a_bg.wasm" crossorigin="anonymous" integrity="sha384-iqVDQsIrU2MjkzxD4O4LyKM1csrdqqOPRhWEQRgR1Yay/0FUh142addDTGJrivNc" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-cf626babaadf2c41.js" crossorigin="anonymous" integrity="sha384-CXGDiZY2/YhIakEYkvDVS4/Xcrmw/fAjAH4n0TUw6R26Nm4zEcsXP0WjClR9AEAn"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-817f389ad25e8b12_bg.wasm" crossorigin="anonymous" integrity="sha384-X6IjMVplOH647dgPCsMqUgrD07KU6qf8WSUiIH/r5bqnSxX+Hte+Q3mEak7Qbmw4" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -2570,6 +2576,12 @@
           const m = window.location.search.match(/[?&]combat_demo=([A-Za-z0-9.:_-]+)/);
           return m ? m[1] : "";
         },
+        // Debug: ?debug=1&city_start=pub (or pubin, door, sky, crew) drops Stan there on a fresh city entry.
+        cityStart() {
+          if (!debugKeysEnabled) return "";
+          const m = window.location.search.match(/[?&]city_start=([a-z]+)/);
+          return m ? m[1] : "";
+        },
         takeCutsceneStartTime() { const t = pendingCutsceneTime; pendingCutsceneTime = -1.0; return t; },
         skipHeld() { pollGamepad(); return skipTouchHeld || gpStartHeld; },
         skipTouchUi,
@@ -2582,6 +2594,8 @@
         usingGamepad() { return lastInputPad; },
         takePointerLockLost() { const v = pointerLockLost; pointerLockLost = false; return v; },
         takeDebugPause() { const v = debugPausePending; debugPausePending = false; return v; },
+        // Debug: ?debug=1&at_beer=1 starts Stan inside Pub 217 facing the beer tower.
+        atBeer() { return debugKeysEnabled && /[?&]at_beer=1(?:&|$)/.test(window.location.search); },
       };
     })();
   </script>
@@ -2603,8 +2617,8 @@
   </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-f6db74bfaf8e7994.js';
-const wasm = await init({ module_or_path: './tendy-quest-a594f5552acaa07a_bg.wasm' });
+import init, * as bindings from './tendy-quest-cf626babaadf2c41.js';
+const wasm = await init({ module_or_path: './tendy-quest-817f389ad25e8b12_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -3,7 +3,7 @@ use crate::audio::{
     is_voice_speaking, play_boss_music, play_cutscene_music, play_sfx, play_viking_chant_music,
     speak_voice,
 };
-use crate::city::{CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE};
+use crate::city::{CityWorldMarker, PUB217_SCALE};
 use crate::player::Player;
 use crate::state::{GameState, LevelEntity, PlayerStats};
 
@@ -332,9 +332,9 @@ pub fn spawn_city_glenn(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
 ) {
     let mats = make_glenn_materials(materials);
-    let pos = PUB217_ANCHOR + Vec3::new(-11.2, 0.0, 2.2);
     commands
         .spawn((
             LevelEntity,
@@ -360,6 +360,7 @@ pub fn update_city_glenn(
     mut glenn_q: Query<(&mut Transform, &mut CityGlenn), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut g_state: ResMut<GlennCutsceneState>,
+    spots: Option<Res<crate::city::CrewSpots>>,
 ) {
     let Ok((p_tf, player)) = player_q.get_single() else {
         return;
@@ -371,7 +372,7 @@ pub fn update_city_glenn(
         if stats.glenn_recruited && !glenn.recruited {
             glenn.recruited = true;
         }
-        // Post-game free roam: recruited crew skip following and idle at their pub spots.
+        // Post-game free roam: recruited crew skip following and idle in Pub 217.
         if glenn.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.76).clamp(1.75, 9.5);
             g_tf.scale = Vec3::splat(s);
@@ -402,13 +403,14 @@ pub fn update_city_glenn(
             continue;
         }
 
-        g_tf.translation = PUB217_ANCHOR + Vec3::new(-11.2, 0.0, 2.2) * pub_s;
-        g_tf.scale = Vec3::splat(pub_s);
+        // Waiting: at this build's scattered spot (free roam: in Pub 217), facing the street
+        // until Stan is close. Normal follower size outside, pub size inside.
+        let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_GLENN, &stats, spots.as_deref(), p_tf.translation);
+        g_tf.translation = pos;
+        g_tf.rotation = rot;
+        g_tf.scale = Vec3::splat(if stats.free_roam { pub_s } else { 1.75 });
         let to_p = p_tf.translation - g_tf.translation;
         let flat = Vec3::new(to_p.x, 0.0, to_p.z);
-        if flat.length_squared() > 0.01 {
-            g_tf.rotation = Quat::from_rotation_y(flat.x.atan2(flat.z));
-        }
 
         let dist = flat.length();
         let trigger_r = 2.0 * pub_s;
@@ -551,16 +553,13 @@ pub fn enter_glenn_cutscene(
     }
 
     // Beer Tower Pyramid pieces between them (Stan knocks these flying in Beat 2!)
-    let beer_gold = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.95, 0.68, 0.12, 0.92),
-        emissive: LinearRgba::new(0.95, 0.55, 0.08, 1.0),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
+    // Same "Bash Lyte" tall boys as the Pub 217 tower (shared mesh, one material per colourway).
+    let can_mesh = meshes.add(crate::beer_fx::can_mesh());
+    let can_mats = crate::beer_fx::can_materials(&mut materials);
     let mut tower_i = 0;
     for tier in 0..4 {
         let count = 4 - tier;
-        let y = 0.38 + tier as f32 * 0.68;
+        let y = crate::beer_fx::CAN_HALF_H + tier as f32 * (crate::beer_fx::CAN_HALF_H * 2.0 + 0.006);
         for c in 0..count {
             let x_off = (c as f32 - (count - 1) as f32 * 0.5) * 0.36;
             let pos = stage + Vec3::new(x_off, y, -0.2);
@@ -572,8 +571,8 @@ pub fn enter_glenn_cutscene(
                     vel: Vec3::new(side * (1.8 + (tower_i % 3) as f32), 4.5 + tier as f32, -2.5),
                     spin: Vec3::new(4.2, side * 5.0, 3.6),
                 },
-                Mesh3d(meshes.add(Cylinder::new(0.14, 0.64))),
-                MeshMaterial3d(beer_gold.clone()),
+                Mesh3d(can_mesh.clone()),
+                MeshMaterial3d(can_mats[tower_i % can_mats.len()].clone()),
                 Transform::from_translation(pos),
             ));
             tower_i += 1;
