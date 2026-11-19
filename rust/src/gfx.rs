@@ -733,6 +733,7 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         | GameState::HeadphoneCutscene
         | GameState::MikeCutscene
         | GameState::TjCutscene
+        | GameState::ChillaryCutscene
         | GameState::LexieVictoryCutscene => SceneKind::Stylized,
     }
 }

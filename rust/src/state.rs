@@ -22,6 +22,7 @@ pub enum GameState {
     DerekCutscene,
     NateCutscene,
     GlennCutscene,
+    ChillaryCutscene,
     LexieVictoryCutscene,
     StageClear,
     GameOver,
@@ -69,6 +70,8 @@ pub struct PlayerStats {
     pub derek_return_city: bool,
     pub nate_return_city: bool,
     pub glenn_return_city: bool,
+    pub chillary_return_city: bool,
+    pub chillary_chilled: bool,
     /// Crew recruitment flags (TJ uses `tj_recruited`). These are the source of truth for the
     /// Level 2 crew gate; the city NPC components mirror them.
     pub derek_recruited: bool,
@@ -171,6 +174,8 @@ impl Default for PlayerStats {
             derek_return_city: false,
             nate_return_city: false,
             glenn_return_city: false,
+            chillary_return_city: false,
+            chillary_chilled: false,
             derek_recruited: false,
             nate_recruited: false,
             glenn_recruited: false,

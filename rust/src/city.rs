@@ -1931,6 +1931,8 @@ pub fn spawn_nyc_world_if_needed(
 
     // Riverfront pier with the rideable RIVER STAR Ferris wheel in the river corner (ferris.rs).
     crate::ferris::spawn_ferris_wheel(commands, meshes, materials);
+    // Chillary Clinton waiting by the River Star Ferris wheel plaza (`chillary.rs`).
+    crate::chillary::spawn_city_chillary(commands, meshes, materials);
 
     // Spawn Colossal Overweight Blonde LEXIE atop Empire Citadel Tower Terrace!
     spawn_lexie_boss(
@@ -3197,16 +3199,19 @@ pub fn enter_city_play(
         || stats.mike_return_city
         || stats.derek_return_city
         || stats.nate_return_city
-        || stats.glenn_return_city;
+        || stats.glenn_return_city
+        || stats.chillary_return_city;
     let from_mike = stats.mike_return_city;
     let from_derek = stats.derek_return_city;
     let from_nate = stats.nate_return_city;
     let from_glenn = stats.glenn_return_city;
+    let from_chillary = stats.chillary_return_city;
     stats.tj_return_city = false;
     stats.mike_return_city = false;
     stats.derek_return_city = false;
     stats.nate_return_city = false;
     stats.glenn_return_city = false;
+    stats.chillary_return_city = false;
     let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
     stats.boss_mode = true;
@@ -3234,6 +3239,8 @@ pub fn enter_city_play(
             format!("NATE JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
         } else if from_glenn {
             format!("GLENN JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
+        } else if from_chillary {
+            "JUST CHILLIN' IN CEDAR RAPIDS! Chillary's Snapchat is live.".to_string()
         } else {
             format!("TJ JOINED YOUR SQUAD! {}", crew_line)
         };
@@ -5465,6 +5472,8 @@ pub enum PropAction {
     Car,
     /// The Ferris wheel (board / hop off); label and meaning come from `ferris::WheelPrompt`.
     Wheel,
+    /// Chillary Clinton NPC beside the Ferris wheel plaza (`chillary.rs`).
+    Chillary,
 }
 
 /// Beer tower and parked car interaction (CityPlay, normal play and free roam). Both use the city
@@ -5496,6 +5505,7 @@ pub fn update_city_props(
     btn_q: Query<&Interaction, (Changed<Interaction>, With<PropPromptButton>)>,
     mut text_q: Query<&mut Text, With<PropPromptText>>,
     mut wheel: ResMut<crate::ferris::WheelPrompt>,
+    mut chillary: ResMut<crate::chillary::ChillaryPrompt>,
     mut last: Local<Option<PropAction>>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -5528,6 +5538,8 @@ pub fn update_city_props(
             .any(|(t, c)| !c.occupied && flat(t.translation) < PARKED_CAR_REACH);
     let action = if wheel.label.is_some() {
         Some(PropAction::Wheel)
+    } else if chillary.label.is_some() {
+        Some(PropAction::Chillary)
     } else if near_beer {
         Some(PropAction::Beer)
     } else if near_car {
@@ -5561,6 +5573,7 @@ pub fn update_city_props(
         PropAction::Beer => "DRINK A BEER [F/E]".to_string(),
         PropAction::Car => "DRIVE [F/E]".to_string(),
         PropAction::Wheel => wheel.label.clone().unwrap_or_default(),
+        PropAction::Chillary => chillary.label.clone().unwrap_or_default(),
     };
     if prompt_q.is_empty() {
         commands
@@ -5648,6 +5661,7 @@ pub fn update_city_props(
         }
         // `ferris::ferris_ride_update` decides what the press means this frame.
         PropAction::Wheel => wheel.pressed = true,
+        PropAction::Chillary => chillary.pressed = true,
     }
 }
 

@@ -1,6 +1,7 @@
 mod audio;
 mod beer_fx;
 mod boss;
+mod chillary;
 mod city;
 mod controls;
 mod derek;
@@ -46,6 +47,10 @@ use derek::{
 use glenn::{
     GlennCutsceneState, enter_glenn_cutscene, exit_glenn_cutscene, update_city_glenn,
     update_glenn_cutscene,
+};
+use chillary::{
+    ChillaryCutsceneState, ChillaryPrompt, enter_chillary_cutscene, exit_chillary_cutscene,
+    update_chillary_cutscene, update_city_chillary,
 };
 use enemies::{animate_enemies, spawn_initial_enemies, update_enemies};
 use level::{retry_failed_scenes, setup_lighting_and_camera, spawn_kitchen_level};
@@ -121,6 +126,8 @@ fn main() {
         .init_resource::<LexieVictoryState>()
         .init_resource::<NateCutsceneState>()
         .init_resource::<GlennCutsceneState>()
+        .init_resource::<ChillaryCutsceneState>()
+        .init_resource::<ChillaryPrompt>()
         .init_resource::<stunts::StuntState>()
         // Fade-through-black scene transitions + in-game help pause (see transition.rs / ui.rs).
         .init_resource::<SceneFade>()
@@ -289,10 +296,12 @@ fn main() {
             // Beer tower, parked car and the license card. After the crew so a same-frame
             // interact hint from the bar wins over Glenn's free-roam line.
             (
+                update_city_chillary,
                 city::update_city_props,
                 city::update_license_card,
                 city::sync_parked_car_collider,
             )
+                .chain()
                 .after(update_city_glenn)
                 .before(update_city_driving)
                 .run_if(in_state(GameState::CityPlay))
@@ -386,6 +395,12 @@ fn main() {
         .add_systems(
             Update,
             update_glenn_cutscene.run_if(in_state(GameState::GlennCutscene)).run_if(sim_running),
+        )
+        .add_systems(OnEnter(GameState::ChillaryCutscene), enter_chillary_cutscene)
+        .add_systems(OnExit(GameState::ChillaryCutscene), exit_chillary_cutscene)
+        .add_systems(
+            Update,
+            update_chillary_cutscene.run_if(in_state(GameState::ChillaryCutscene)).run_if(sim_running),
         )
         .add_systems(OnEnter(GameState::LexieVictoryCutscene), enter_lexie_victory_cutscene)
         .add_systems(OnExit(GameState::LexieVictoryCutscene), exit_lexie_victory_cutscene)

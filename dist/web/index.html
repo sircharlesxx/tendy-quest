@@ -518,6 +518,16 @@
           }
           return true;
         }
+        if (name === "snap_shutter") {
+          mkResNoise("highpass", 0.0, 0.04, 0.26, 2800, 1400, 1.5);
+          mkOsc("sine", 880, 1175, 0.10, 0.16);
+          return true;
+        }
+        if (name === "snap_pop") {
+          mkOsc("sine", 520, 1040, 0.11, 0.18);
+          setTimeout(() => mkOsc("triangle", 780, 1320, 0.09, 0.15), 55);
+          return true;
+        }
         return false;
       }
 
@@ -1148,6 +1158,7 @@
           nate: { pitch: 1.28, rate: 1.12, volume: 1.0, g: "m" },
           glenn: { pitch: 0.62, rate: 0.88, volume: 1.0, g: "m" },
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
+          chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
         _VOICE_MOODS: {
@@ -1162,7 +1173,7 @@
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
-        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike"],
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary"],
         _voiceCast: null,
         _voiceCastKey: "",
         _voiceCastLocked: false,
@@ -1866,7 +1877,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-cdfe2fd0b7ebc85f.js" crossorigin="anonymous" integrity="sha384-49/3c3lWr4Q1QNEQainGrD6hA4LLlmYKsaqjRJGqa9cPD3NZW1otrCIE5pLNtFpG"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-cdfe2fd0b7ebc85f_bg.wasm" crossorigin="anonymous" integrity="sha384-yz2wGz0jDq08f7SoZGcqlk0y5FW6Jwdc1Yd6xW/OpbD82cgy0GLth0uM0PLwJtbW" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-4c5b653677974ede.js" crossorigin="anonymous" integrity="sha384-FIZCKsiKRqj7kAPX2vv5GD/i0NAW1sIa8ubB+2ajBppNdr7Mrz71fTR2ggLlwa9h"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-4c5b653677974ede_bg.wasm" crossorigin="anonymous" integrity="sha384-8PWBuzItVgYu3VkXdFil3kGmWDLKMM7UnH0iSv5DLFpjyJMtwXahBSZ1gl+OQb3F" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -2420,6 +2431,7 @@
         if (s.includes("glenn=1")) return 12;
         if (s.includes("mike=1")) return 13;
         if (s.includes("lexie_victory=1")) return 14;
+        if (s.includes("chillary=1")) return 18;
         return 0;
       })();
       const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);
@@ -3370,8 +3382,8 @@
   <!-- ===== END experimental free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-cdfe2fd0b7ebc85f.js';
-const wasm = await init({ module_or_path: './tendy-quest-cdfe2fd0b7ebc85f_bg.wasm' });
+import init, * as bindings from './tendy-quest-4c5b653677974ede.js';
+const wasm = await init({ module_or_path: './tendy-quest-4c5b653677974ede_bg.wasm' });
 
 
 window.wasmBindings = bindings;

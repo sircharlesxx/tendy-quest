@@ -518,6 +518,16 @@
           }
           return true;
         }
+        if (name === "snap_shutter") {
+          mkResNoise("highpass", 0.0, 0.04, 0.26, 2800, 1400, 1.5);
+          mkOsc("sine", 880, 1175, 0.10, 0.16);
+          return true;
+        }
+        if (name === "snap_pop") {
+          mkOsc("sine", 520, 1040, 0.11, 0.18);
+          setTimeout(() => mkOsc("triangle", 780, 1320, 0.09, 0.15), 55);
+          return true;
+        }
         return false;
       }
 
@@ -1148,6 +1158,7 @@
           nate: { pitch: 1.28, rate: 1.12, volume: 1.0, g: "m" },
           glenn: { pitch: 0.62, rate: 0.88, volume: 1.0, g: "m" },
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
+          chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
         _VOICE_MOODS: {
@@ -1162,7 +1173,7 @@
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
-        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike"],
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary"],
         _voiceCast: null,
         _voiceCastKey: "",
         _voiceCastLocked: false,
@@ -2420,6 +2431,7 @@
         if (s.includes("glenn=1")) return 12;
         if (s.includes("mike=1")) return 13;
         if (s.includes("lexie_victory=1")) return 14;
+        if (s.includes("chillary=1")) return 18;
         return 0;
       })();
       const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);

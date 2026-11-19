@@ -1089,6 +1089,17 @@ pub fn check_url_test_mode(
             stats.prepare_free_roam();
             next_state.set_from_black(GameState::CityPlay);
         }
+        // `chillary=1`: jump straight to Chillary Clinton's "just chillin in Cedar Rapids" cutscene.
+        18 => {
+            stats.in_city = true;
+            stats.tendies = 0;
+            stats.total_tendies = 50;
+            stats.player_scale = 1.8;
+            stats.wave = 4;
+            stats.chillary_return_city = true;
+            stats.saved_city_pos = crate::chillary::CHILLARY_POS + Vec3::new(3.0, 0.0, -2.5);
+            next_state.set_from_black(GameState::ChillaryCutscene);
+        }
         _ => {}
     }
 }

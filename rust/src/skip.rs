@@ -25,7 +25,7 @@ const AUTOSKIP_AFTER_SECS: f32 = 3.0;
 
 static SKIP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-pub const CUTSCENE_STATES: [GameState; 10] = [
+pub const CUTSCENE_STATES: [GameState; 11] = [
     GameState::HeadphoneCutscene,
     GameState::Cutscene,
     GameState::MomVictoryCutscene,
@@ -35,6 +35,7 @@ pub const CUTSCENE_STATES: [GameState; 10] = [
     GameState::DerekCutscene,
     GameState::NateCutscene,
     GameState::GlennCutscene,
+    GameState::ChillaryCutscene,
     GameState::LexieVictoryCutscene,
 ];
 
