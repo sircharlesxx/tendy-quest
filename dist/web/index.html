@@ -427,6 +427,88 @@
           mkOsc("sine", 55, 115, 0.24, 0.26);
           return true;
         }
+        // --- Body-horror Foley for John Carpenter's The Thing style Lexie meltdown ---
+        const mkResNoise = (filterType, delay, dur, gainPeak, f0, f1, q) => {
+          if (!sfxNoiseBuf || sfxNoiseBuf.sampleRate !== ac.sampleRate) {
+            const len = Math.floor(ac.sampleRate * 1.0);
+            sfxNoiseBuf = ac.createBuffer(1, len, ac.sampleRate);
+            const d = sfxNoiseBuf.getChannelData(0);
+            for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+          }
+          const t0 = now + delay;
+          const src = ac.createBufferSource();
+          src.buffer = sfxNoiseBuf;
+          src.loop = dur > 0.9;
+          const flt = ac.createBiquadFilter();
+          flt.type = filterType;
+          flt.frequency.setValueAtTime(f0, t0);
+          flt.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t0 + dur);
+          flt.Q.value = q;
+          const g = ac.createGain();
+          g.gain.setValueAtTime(0.001, t0);
+          g.gain.linearRampToValueAtTime(gainPeak, t0 + 0.012);
+          g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+          src.connect(flt);
+          flt.connect(g);
+          g.connect(masterGain);
+          src.start(t0);
+          src.stop(t0 + dur + 0.02);
+        };
+        if (name === "flesh_tear") {
+          // Layered ripping wet tissue & low meat tear thump
+          mkResNoise("bandpass", 0.0, 0.42, 0.36, 1800, 320, 4.5);
+          mkResNoise("bandpass", 0.09, 0.34, 0.30, 1250, 210, 6.5);
+          mkOsc("sawtooth", 195, 58, 0.32, 0.24);
+          mkOsc("sine", 95, 36, 0.36, 0.28);
+          return true;
+        }
+        if (name === "wet_squelch") {
+          // Staggered high-Q resonant bubble & gelatinous viscera bursts
+          const pops = [
+            [0.0, 0.14, 0.30, 240, 880, 9.5],
+            [0.06, 0.16, 0.28, 760, 220, 10.5],
+            [0.13, 0.15, 0.26, 310, 950, 8.5],
+            [0.20, 0.18, 0.24, 620, 180, 11.0],
+          ];
+          for (const [d, dur, pk, f0, f1, q] of pops) {
+            mkResNoise("bandpass", d, dur, pk, f0, f1, q);
+          }
+          mkOsc("triangle", 340, 115, 0.18, 0.16);
+          return true;
+        }
+        if (name === "bone_crack") {
+          // Crisp staggered skeletal snaps + low joint dislocation thud
+          mkResNoise("highpass", 0.0, 0.055, 0.42, 2400, 1400, 1.8);
+          mkResNoise("highpass", 0.035, 0.065, 0.36, 2600, 1100, 2.2);
+          mkResNoise("highpass", 0.075, 0.050, 0.28, 2100, 900, 2.0);
+          mkOsc("square", 1400, 180, 0.06, 0.26);
+          mkOsc("sine", 110, 38, 0.16, 0.30);
+          return true;
+        }
+        if (name === "thing_shriek") {
+          // Detuned dual-sawtooth multi-stage alien shriek + raspy band-pass roar
+          for (const [type, f0, f1, f2, f3, pk] of [
+            ["sawtooth", 1450, 520, 1680, 180, 0.24],
+            ["sawtooth", 1412, 545, 1610, 174, 0.22],
+          ]) {
+            const osc = ac.createOscillator();
+            const g = ac.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(f0, now);
+            osc.frequency.exponentialRampToValueAtTime(f1, now + 0.24);
+            osc.frequency.exponentialRampToValueAtTime(f2, now + 0.52);
+            osc.frequency.exponentialRampToValueAtTime(f3, now + 0.90);
+            g.gain.setValueAtTime(0.001, now);
+            g.gain.linearRampToValueAtTime(pk, now + 0.03);
+            g.gain.exponentialRampToValueAtTime(0.001, now + 0.92);
+            osc.connect(g);
+            g.connect(masterGain);
+            osc.start(now);
+            osc.stop(now + 0.94);
+          }
+          mkResNoise("bandpass", 0.0, 0.85, 0.32, 1600, 420, 3.2);
+          return true;
+        }
         return false;
       }
 
@@ -1775,7 +1857,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-c15091ab723a3c9b.js" crossorigin="anonymous" integrity="sha384-5xKs7Cx43MyZC+Ah9uPF8d3SBTq306EXi/euWKW+NLZsYeMZjEI19nfDK/UWhqsW"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-6cf9d718a7e514f4_bg.wasm" crossorigin="anonymous" integrity="sha384-zc4VeIQj8Varg7uSuFIoEVQstmZZ6g8SIha02d2p86MmRQU2n6jwjoqk9er4q9lT" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-5bbce59e8b1834d5.js" crossorigin="anonymous" integrity="sha384-49/3c3lWr4Q1QNEQainGrD6hA4LLlmYKsaqjRJGqa9cPD3NZW1otrCIE5pLNtFpG"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-5bbce59e8b1834d5_bg.wasm" crossorigin="anonymous" integrity="sha384-XV/98ZApGFBmVZ0tqCDjw7EDah4G5U9vphVrNB+Wm9glGBSqEjQZsKtEWunRNQ5n" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3279,8 +3361,8 @@
   <!-- ===== END experimental free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-c15091ab723a3c9b.js';
-const wasm = await init({ module_or_path: './tendy-quest-6cf9d718a7e514f4_bg.wasm' });
+import init, * as bindings from './tendy-quest-5bbce59e8b1834d5.js';
+const wasm = await init({ module_or_path: './tendy-quest-5bbce59e8b1834d5_bg.wasm' });
 
 
 window.wasmBindings = bindings;
