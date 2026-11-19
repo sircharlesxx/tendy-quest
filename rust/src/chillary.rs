@@ -1,11 +1,15 @@
 //! Chillary Clinton NPC by the River Star Ferris wheel & her "Just Chillin' in Cedar Rapids"
-//! viral Snapchat re-enactment cutscene (`GameState::ChillaryCutscene`).
+//! viral Snapchat re-enactment + John Carpenter's *They Live* 1-second reptile reveal cutscene
+//! (`GameState::ChillaryCutscene`).
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
 
-use crate::audio::{is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, speak_voice};
+use crate::audio::{
+    is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, set_they_live_mode,
+    speak_voice, stop_voice,
+};
 use crate::city::CityWorldMarker;
 use crate::player::Player;
 use crate::state::{city_body_scale, GameState, LevelEntity, PlayerStats};
@@ -15,6 +19,9 @@ use crate::ui::HudOverlay;
 /// arch pillar (local `(-4.8, 0.35, 8.8)` rotated by `3*FRAC_PI_4`).
 pub const CHILLARY_POS: Vec3 = Vec3::new(-104.38, 0.35, 111.17);
 const CHILLARY_INTERACT_RANGE: f32 = 4.2;
+
+const REPTILE_GLITCH_START: f32 = 0.65;
+const REPTILE_GLITCH_END: f32 = 1.65;
 
 #[derive(Resource, Default)]
 pub struct ChillaryPrompt {
@@ -27,6 +34,7 @@ pub struct ChillaryCutsceneState {
     pub beat: u8,
     pub beat_t: f32,
     pub total_t: f32,
+    pub reptile_stage: u8,
 }
 
 #[derive(Component)]
@@ -42,13 +50,22 @@ pub struct ChillaryCutsceneEntity;
 pub struct ChillaryCutsceneOverlay;
 
 #[derive(Component)]
+pub struct ChillaryKitchenLight {
+    pub base_color: Color,
+    pub base_intensity: f32,
+}
+
+#[derive(Component)]
 pub struct ChillarySpeakerText;
 
 #[derive(Component)]
 pub struct ChillarySubText;
 
-#[derive(Component)]
-pub struct ChillarySnapCaptionBox;
+#[derive(Component, Clone, Copy)]
+pub enum ChillaryUiSlot {
+    SnapChrome,
+    SnapCaption,
+}
 
 #[derive(Component)]
 pub struct ChillarySnapCaptionText;
@@ -65,35 +82,59 @@ pub struct ChillaryAnim {
 pub enum ChillaryPart {
     BodyRoot,
     Head,
+    HumanHead,
+    ReptileHead,
+    ReptileTongue,
     Brow { side: f32 },
     Mouth,
     SelfieArm,
     LeftArm,
-    StanPhotobomb,
+    StanActor,
 }
 
-/// (speaker, line, voice, min_secs, snap_caption)
-const CHILLARY_BEATS: [(&str, &str, &str, f32, &str); 3] = [
+/// (speaker, line, voice, min_secs, snap_caption) - strictly ASCII for Bevy's default font.
+const CHILLARY_BEATS: [(&str, &str, &str, f32, &str); 6] = [
     (
-        "CHILLARY CLINTON (ADJUSTING SNAPCHAT)",
-        "Wait... is the little red light blinking? Okay, hold on... let me angle this camera up...",
-        "chillary",
-        2.8,
+        "STAN (WALKING INTO THE KITCHEN)",
+        "Wait a second... is that Hillary Clinton standing alone in a Cedar Rapids kitchen filming herself?",
+        "stan",
+        4.2,
         "",
     ),
     (
-        "CHILLARY CLINTON (CEDAR RAPIDS, JULY 2015)",
+        "CHILLARY CLINTON (FILMING SNAPCHAT)",
         "I'm just chillin' in Cedar Rapids.",
         "chillary",
-        4.6,
+        4.2,
         "just chillin in Cedar Rapids",
     ),
     (
-        "STAN (PHOTOBOMBING IN THE KITCHEN)",
-        "Uh... just chillin' in Cedar Rapids? Cool Snapchat, Chillary. I'll catch you out by the Ferris wheel.",
+        "STAN (UTTERLY CONFUSED)",
+        "Uh... WTF are you doing?! Why are you filming a selfie two inches from your face in a random kitchen?!",
         "stan",
-        4.4,
-        "JUST CHILLIN' IN CEDAR RAPIDS  |  #CHILLARY",
+        4.2,
+        "",
+    ),
+    (
+        "CHILLARY CLINTON (STOPS AND TURNS)",
+        "(Chillary lowers her phone and locks eyes with Stan...)",
+        "",
+        2.75,
+        "",
+    ),
+    (
+        "STAN (LOSING HIS MIND)",
+        "WHOA!! WHAT THE HELL?! YOU JUST TURNED INTO A REPTILE FOR A FULL SECOND!! YOUR EYES WENT SIDEWAYS AND A FORKED TONGUE CAME OUT!!",
+        "stan",
+        4.6,
+        "",
+    ),
+    (
+        "CHILLARY CLINTON (COMPLETELY UNBOTHERED)",
+        "What's the problem, Stan? You must have had too many tendies. Relax... we're all just chillin' in Cedar Rapids.",
+        "chillary",
+        5.2,
+        "what's the problem? just chillin in Cedar Rapids",
     ),
 ];
 
@@ -114,6 +155,12 @@ pub struct ChillaryMaterials {
     phone_body: Handle<StandardMaterial>,
     phone_screen: Handle<StandardMaterial>,
     shoe: Handle<StandardMaterial>,
+    reptile_scale_dark: Handle<StandardMaterial>,
+    reptile_scale_light: Handle<StandardMaterial>,
+    reptile_eye_glow: Handle<StandardMaterial>,
+    reptile_gum: Handle<StandardMaterial>,
+    reptile_tongue: Handle<StandardMaterial>,
+    reptile_fang: Handle<StandardMaterial>,
 }
 
 pub fn make_chillary_materials(materials: &mut Assets<StandardMaterial>) -> ChillaryMaterials {
@@ -197,6 +244,40 @@ pub fn make_chillary_materials(materials: &mut Assets<StandardMaterial>) -> Chil
         shoe: materials.add(StandardMaterial {
             base_color: Color::srgb(0.08, 0.08, 0.10),
             perceptual_roughness: 0.35,
+            ..default()
+        }),
+        reptile_scale_dark: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.14, 0.34, 0.12),
+            perceptual_roughness: 0.32,
+            reflectance: 0.65,
+            emissive: LinearRgba::new(0.03, 0.11, 0.02, 1.0),
+            ..default()
+        }),
+        reptile_scale_light: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.46, 0.58, 0.24),
+            perceptual_roughness: 0.36,
+            emissive: LinearRgba::new(0.06, 0.09, 0.02, 1.0),
+            ..default()
+        }),
+        reptile_eye_glow: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.82, 0.08),
+            emissive: LinearRgba::new(3.6, 2.4, 0.1, 1.0),
+            ..default()
+        }),
+        reptile_gum: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.48, 0.05, 0.08),
+            perceptual_roughness: 0.20,
+            ..default()
+        }),
+        reptile_tongue: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.95, 0.10, 0.22),
+            emissive: LinearRgba::new(1.2, 0.08, 0.14, 1.0),
+            perceptual_roughness: 0.18,
+            ..default()
+        }),
+        reptile_fang: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.94, 0.92, 0.78),
+            perceptual_roughness: 0.22,
             ..default()
         }),
     }
@@ -363,30 +444,12 @@ pub fn spawn_chillary_rig(
     }
     let (hr, jaw) = (0.255_f32, 0.14_f32);
     head_root.with_children(|hd| {
-        hd.spawn((
-            Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
-            MeshMaterial3d(mats.skin.clone()),
-        ));
-        for sx in [-1.0_f32, 1.0] {
-            hd.spawn((
-                Mesh3d(sh::add(meshes, sh::ear(0.105, sx))),
-                MeshMaterial3d(mats.skin.clone()),
-                Transform::from_xyz(sx * 0.235, -0.01, -0.01),
-            ));
-            // Pearl stud earring
-            hd.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.016))),
-                MeshMaterial3d(mats.pearl.clone()),
-                Transform::from_xyz(sx * 0.245, -0.06, 0.01),
-            ));
-        }
-
-        // Voluminous feathered blonde campaign bob + swept forehead bangs + side locks
+        // Hair & pearl stud earrings remain anchored to the skull even during the 1-second
+        // They Live reptilian glitch for uncanny pantsuit camouflage contrast.
         hd.spawn((
             Mesh3d(sh::add(meshes, sh::hair_cap(hr, jaw, 0.34, -0.45, 0.14, 0.26))),
             MeshMaterial3d(mats.hair.clone()),
         ));
-        // Side-swept feathered bangs across top-left forehead
         hd.spawn((
             Mesh3d(sh::add(
                 meshes,
@@ -396,11 +459,9 @@ pub fn spawn_chillary_rig(
             MeshMaterial3d(mats.hair.clone()),
             Transform::from_xyz(0.055, 0.145, 0.225).with_rotation(Quat::from_rotation_z(-0.22)),
         ));
-        // Chin-length feathered blonde side flips framing both cheeks
         let bob_side = sh::add(
             meshes,
             sh::limb_profile(0.32, &[0.095, 0.11, 0.125, 0.075], 1.1).deformed(|p| {
-                // Flare outward softly near the bottom like her classic bob
                 let flare = (-p.y * 0.35).max(0.0);
                 Vec3::new(p.x * (1.0 + flare), p.y, p.z)
             }),
@@ -412,68 +473,255 @@ pub fn spawn_chillary_rig(
                 Transform::from_xyz(sx * 0.225, -0.01, -0.05)
                     .with_rotation(Quat::from_rotation_z(sx * 0.16)),
             ));
+            // Pearl stud earring
+            hd.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.016))),
+                MeshMaterial3d(mats.pearl.clone()),
+                Transform::from_xyz(sx * 0.245, -0.06, 0.01),
+            ));
         }
-        // Back bob fullness
         hd.spawn((
             Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.24, 0.22, 0.16), 0.8, 0.8, 16, 12))),
             MeshMaterial3d(mats.hair.clone()),
             Transform::from_xyz(0.0, -0.06, -0.18),
         ));
 
-        // Nose, eyes & expressive arched eyebrows
-        hd.spawn((
-            Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.032, 0.048, 0.040), 1.0, 1.0, 12, 8))),
-            MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(0.0, -0.008, 0.255),
-        ));
-        let brow_mesh = sh::add(meshes, sh::arc_bar(0.095, &[0.008, 0.015, 0.016, 0.010], 0.014, 0.012, 0.7));
-        let eye_w = meshes.add(Sphere::new(0.034));
-        let eye_i = meshes.add(Sphere::new(0.021));
-        let eye_p = meshes.add(Sphere::new(0.012));
-        for sx in [-1.0_f32, 1.0] {
-            hd.spawn((
-                Mesh3d(eye_w.clone()),
-                MeshMaterial3d(mats.eye_white.clone()),
-                Transform::from_xyz(sx * 0.088, 0.046, 0.222).with_scale(Vec3::new(1.1, 0.92, 0.65)),
-            ));
-            hd.spawn((
-                Mesh3d(eye_i.clone()),
-                MeshMaterial3d(mats.eye_iris.clone()),
-                Transform::from_xyz(sx * 0.088, 0.046, 0.236),
-            ));
-            hd.spawn((
-                Mesh3d(eye_p.clone()),
-                MeshMaterial3d(mats.eye_pupil.clone()),
-                Transform::from_xyz(sx * 0.088, 0.046, 0.248),
-            ));
-            let mut br = hd.spawn((
-                Mesh3d(brow_mesh.clone()),
-                MeshMaterial3d(mats.brow.clone()),
-                Transform::from_xyz(sx * 0.088, 0.094, 0.234)
-                    .with_rotation(Quat::from_rotation_z(-sx * 0.08)),
-            ));
-            if is_cutscene {
-                br.insert(ChillaryAnim { kind: ChillaryPart::Brow { side: sx } });
-            }
-        }
-
-        // Wide bright campaign smile (pink lips + white teeth bar)
-        let mut mouth = hd.spawn((Transform::from_xyz(0.0, -0.092, 0.232), Visibility::default()));
+        // Normal human face assembly (hidden during Beat 3's 1.0-second reptile flash)
+        let mut human_face = hd.spawn((Transform::default(), Visibility::Inherited));
         if is_cutscene {
-            mouth.insert(ChillaryAnim { kind: ChillaryPart::Mouth });
+            human_face.insert(ChillaryAnim { kind: ChillaryPart::HumanHead });
         }
-        mouth.with_children(|m| {
-            m.spawn((
-                Mesh3d(sh::add(meshes, sh::arc_bar(0.128, &[0.012, 0.022, 0.024, 0.022, 0.012], -0.012, 0.018, 0.75))),
-                MeshMaterial3d(mats.lip.clone()),
+        human_face.with_children(|hf| {
+            hf.spawn((
+                Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
+                MeshMaterial3d(mats.skin.clone()),
             ));
-            m.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.084, 0.022, 0.024))),
-                MeshMaterial3d(mats.teeth.clone()),
-                Transform::from_xyz(0.0, 0.002, 0.006),
+            for sx in [-1.0_f32, 1.0] {
+                hf.spawn((
+                    Mesh3d(sh::add(meshes, sh::ear(0.105, sx))),
+                    MeshMaterial3d(mats.skin.clone()),
+                    Transform::from_xyz(sx * 0.235, -0.01, -0.01),
+                ));
+            }
+
+            // Nose, eyes & expressive arched eyebrows
+            hf.spawn((
+                Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.032, 0.048, 0.040), 1.0, 1.0, 12, 8))),
+                MeshMaterial3d(mats.skin.clone()),
+                Transform::from_xyz(0.0, -0.008, 0.255),
+            ));
+            let brow_mesh = sh::add(meshes, sh::arc_bar(0.095, &[0.008, 0.015, 0.016, 0.010], 0.014, 0.012, 0.7));
+            let eye_w = meshes.add(Sphere::new(0.034));
+            let eye_i = meshes.add(Sphere::new(0.021));
+            let eye_p = meshes.add(Sphere::new(0.012));
+            for sx in [-1.0_f32, 1.0] {
+                hf.spawn((
+                    Mesh3d(eye_w.clone()),
+                    MeshMaterial3d(mats.eye_white.clone()),
+                    Transform::from_xyz(sx * 0.088, 0.046, 0.222).with_scale(Vec3::new(1.1, 0.92, 0.65)),
+                ));
+                hf.spawn((
+                    Mesh3d(eye_i.clone()),
+                    MeshMaterial3d(mats.eye_iris.clone()),
+                    Transform::from_xyz(sx * 0.088, 0.046, 0.236),
+                ));
+                hf.spawn((
+                    Mesh3d(eye_p.clone()),
+                    MeshMaterial3d(mats.eye_pupil.clone()),
+                    Transform::from_xyz(sx * 0.088, 0.046, 0.248),
+                ));
+                let mut br = hf.spawn((
+                    Mesh3d(brow_mesh.clone()),
+                    MeshMaterial3d(mats.brow.clone()),
+                    Transform::from_xyz(sx * 0.088, 0.094, 0.234)
+                        .with_rotation(Quat::from_rotation_z(-sx * 0.08)),
+                ));
+                if is_cutscene {
+                    br.insert(ChillaryAnim { kind: ChillaryPart::Brow { side: sx } });
+                }
+            }
+
+            // Wide bright campaign smile (pink lips + white teeth bar)
+            let mut mouth = hf.spawn((Transform::from_xyz(0.0, -0.092, 0.232), Visibility::default()));
+            if is_cutscene {
+                mouth.insert(ChillaryAnim { kind: ChillaryPart::Mouth });
+            }
+            mouth.with_children(|m| {
+                m.spawn((
+                    Mesh3d(sh::add(meshes, sh::arc_bar(0.128, &[0.012, 0.022, 0.024, 0.022, 0.012], -0.012, 0.018, 0.75))),
+                    MeshMaterial3d(mats.lip.clone()),
+                ));
+                m.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.084, 0.022, 0.024))),
+                    MeshMaterial3d(mats.teeth.clone()),
+                    Transform::from_xyz(0.0, 0.002, 0.006),
+                ));
+            });
+        });
+
+        if is_cutscene {
+            spawn_reptile_head(hd, meshes, mats, hr, jaw);
+        }
+    });
+}
+
+/// Spawns the hidden 1-second *They Live* reptilian humanoid skull underneath Chillary's blonde bob:
+/// scaly green cranium, protruding snout, heavy brow crests, glowing amber vertical-slit eyes,
+/// fanged gaping maw, throat frills, and a flicking forked crimson tongue.
+fn spawn_reptile_head(
+    parent: &mut ChildBuilder,
+    meshes: &mut Assets<Mesh>,
+    mats: &ChillaryMaterials,
+    hr: f32,
+    jaw: f32,
+) {
+    use crate::shapes as sh;
+
+    parent
+        .spawn((
+            ChillaryAnim { kind: ChillaryPart::ReptileHead },
+            Transform::default(),
+            Visibility::Hidden,
+        ))
+        .with_children(|rh| {
+            // Scaly deformed cranium with sunken cheekbones & sinusoidal dermal bumps
+            let scaly_skull = sh::head(hr * 0.96, jaw * 1.16).deformed(|p| {
+                let cheek = sh::smoothstep(-0.14, 0.04, p.y)
+                    * sh::smoothstep(0.08, -0.06, p.y)
+                    * sh::smoothstep(0.06, 0.20, p.x.abs());
+                let bumps = ((p.x * 48.0).sin() * (p.y * 44.0).cos() * (p.z * 42.0).sin()) * 0.008;
+                let brow_shelf = if p.z > 0.14 && p.y > 0.05 && p.y < 0.16 { 0.026 } else { 0.0 };
+                Vec3::new(p.x * (1.0 - 0.12 * cheek), p.y, p.z + brow_shelf) + p.normalize_or_zero() * bumps
+            });
+            rh.spawn((
+                Mesh3d(sh::add(meshes, scaly_skull)),
+                MeshMaterial3d(mats.reptile_scale_dark.clone()),
+            ));
+
+            // Protruding scaly lizard snout + nasal ridge
+            let snout = sh::superellipsoid(Vec3::new(0.115, 0.072, 0.145), 0.75, 0.85, 18, 12).deformed(|p| {
+                let scale = ((p.x * 54.0).sin() * (p.z * 50.0).cos()) * 0.006;
+                let taper = (1.0 - p.z.max(0.0) * 1.8).clamp(0.68, 1.0);
+                Vec3::new(p.x * taper, p.y, p.z) + p.normalize_or_zero() * scale
+            });
+            rh.spawn((
+                Mesh3d(sh::add(meshes, snout)),
+                MeshMaterial3d(mats.reptile_scale_light.clone()),
+                Transform::from_xyz(0.0, -0.032, 0.245),
+            ));
+
+            // Flared reptilian nostrils + 3 forehead/snout dorsal spines
+            let nostril_mesh = meshes.add(Sphere::new(0.016));
+            for sx in [-1.0_f32, 1.0] {
+                rh.spawn((
+                    Mesh3d(nostril_mesh.clone()),
+                    MeshMaterial3d(mats.eye_pupil.clone()),
+                    Transform::from_xyz(sx * 0.044, 0.004, 0.355).with_scale(Vec3::new(1.0, 0.75, 1.3)),
+                ));
+            }
+            let crest_mesh = meshes.add(Cone::new(0.018, 0.055));
+            for (cy, cz, pitch) in [(0.195_f32, 0.165_f32, 0.35_f32), (0.125, 0.235, 0.58), (0.048, 0.295, 0.82)] {
+                rh.spawn((
+                    Mesh3d(crest_mesh.clone()),
+                    MeshMaterial3d(mats.reptile_scale_light.clone()),
+                    Transform::from_xyz(0.0, cy, cz).with_rotation(Quat::from_rotation_x(pitch)),
+                ));
+            }
+
+            // Heavy menacing brow crests, glowing amber eyeballs, razor vertical slit pupils & eyelids
+            let crest_bar = sh::add(meshes, sh::arc_bar(0.14, &[0.016, 0.028, 0.024, 0.014], 0.018, 0.024, 0.9));
+            let eye_glow = meshes.add(Sphere::new(0.042));
+            let slit_pupil = meshes.add(Cuboid::new(0.011, 0.068, 0.024));
+            let lid_mesh = meshes.add(Cuboid::new(0.095, 0.016, 0.040));
+            for sx in [-1.0_f32, 1.0] {
+                rh.spawn((
+                    Mesh3d(crest_bar.clone()),
+                    MeshMaterial3d(mats.reptile_scale_light.clone()),
+                    Transform::from_xyz(sx * 0.098, 0.102, 0.242)
+                        .with_rotation(Quat::from_rotation_z(-sx * 0.34)),
+                ));
+                rh.spawn((
+                    Mesh3d(eye_glow.clone()),
+                    MeshMaterial3d(mats.reptile_eye_glow.clone()),
+                    Transform::from_xyz(sx * 0.095, 0.052, 0.228).with_scale(Vec3::new(1.08, 0.95, 0.80)),
+                ));
+                rh.spawn((
+                    Mesh3d(slit_pupil.clone()),
+                    MeshMaterial3d(mats.eye_pupil.clone()),
+                    Transform::from_xyz(sx * 0.095, 0.052, 0.258),
+                ));
+                for sy in [-0.036_f32, 0.038] {
+                    rh.spawn((
+                        Mesh3d(lid_mesh.clone()),
+                        MeshMaterial3d(mats.reptile_scale_dark.clone()),
+                        Transform::from_xyz(sx * 0.095, 0.052 + sy, 0.242)
+                            .with_rotation(Quat::from_rotation_z(-sx * 0.16)),
+                    ));
+                }
+                // Cheek / jaw frill plates flare out laterally
+                rh.spawn((
+                    Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.055, 0.095, 0.045), 0.7, 0.7, 12, 8))),
+                    MeshMaterial3d(mats.reptile_scale_dark.clone()),
+                    Transform::from_xyz(sx * 0.165, -0.075, 0.11)
+                        .with_rotation(Quat::from_euler(EulerRot::XYZ, 0.0, sx * 0.45, sx * 0.24)),
+                ));
+            }
+
+            // Gaping red reptile maw + hinged lower mandible + 10 conical fangs
+            rh.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.175, 0.095, 0.12))),
+                MeshMaterial3d(mats.reptile_gum.clone()),
+                Transform::from_xyz(0.0, -0.095, 0.240),
+            ));
+            rh.spawn((
+                Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.105, 0.045, 0.135), 0.8, 0.8, 16, 10))),
+                MeshMaterial3d(mats.reptile_scale_light.clone()),
+                Transform::from_xyz(0.0, -0.145, 0.242).with_rotation(Quat::from_rotation_x(0.32)),
+            ));
+            let fang_small = meshes.add(Cone::new(0.009, 0.038));
+            let fang_viper = meshes.add(Cone::new(0.012, 0.052));
+            for (fx, fz, is_viper) in [
+                (-0.072_f32, 0.305_f32, false),
+                (-0.052, 0.338, true),
+                (-0.020, 0.352, false),
+                (0.020, 0.352, false),
+                (0.052, 0.338, true),
+                (0.072, 0.305, false),
+            ] {
+                rh.spawn((
+                    Mesh3d(if is_viper { fang_viper.clone() } else { fang_small.clone() }),
+                    MeshMaterial3d(mats.reptile_fang.clone()),
+                    Transform::from_xyz(fx, -0.078, fz).with_rotation(Quat::from_rotation_x(PI)),
+                ));
+            }
+            for (fx, fz) in [(-0.058_f32, 0.322_f32), (-0.022, 0.338), (0.022, 0.338), (0.058, 0.322)] {
+                rh.spawn((
+                    Mesh3d(fang_small.clone()),
+                    MeshMaterial3d(mats.reptile_fang.clone()),
+                    Transform::from_xyz(fx, -0.118, fz),
+                ));
+            }
+
+            // Scaly neck collar visible just above her pearl necklace & lapels
+            rh.spawn((
+                Mesh3d(sh::add(meshes, sh::limb(0.16, 0.088, 0.095))),
+                MeshMaterial3d(mats.reptile_scale_dark.clone()),
+                Transform::from_xyz(0.0, -0.22, 0.02),
+            ));
+
+            // Flicking forked crimson reptile tongue
+            let mut tongue_mesh = sh::rod(Vec3::ZERO, Vec3::new(0.0, 0.0, 0.165), 0.020);
+            tongue_mesh = tongue_mesh
+                .merged(sh::rod(Vec3::new(0.0, 0.0, 0.160), Vec3::new(-0.038, 0.008, 0.255), 0.011))
+                .merged(sh::rod(Vec3::new(0.0, 0.0, 0.160), Vec3::new(0.038, 0.008, 0.255), 0.011));
+            rh.spawn((
+                ChillaryAnim { kind: ChillaryPart::ReptileTongue },
+                Mesh3d(sh::add(meshes, tongue_mesh)),
+                MeshMaterial3d(mats.reptile_tongue.clone()),
+                Transform::from_xyz(0.0, -0.102, 0.265),
+                Visibility::Inherited,
             ));
         });
-    });
 }
 
 /// Spawns Chillary Clinton on the River Star Ferris wheel stone plaza (`CityPlay`).
@@ -582,7 +830,8 @@ pub fn update_city_chillary(
     }
 }
 
-/// Enters the bright Cedar Rapids kitchen stage to re-enact "just chillin' in Cedar Rapids".
+/// Enters the bright Cedar Rapids kitchen stage to re-enact "just chillin' in Cedar Rapids"
+/// with a 1-second *They Live* reptilian reveal.
 pub fn enter_chillary_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -594,6 +843,7 @@ pub fn enter_chillary_cutscene(
     mut clear_col: ResMut<ClearColor>,
 ) {
     *c_state = ChillaryCutsceneState::default();
+    set_they_live_mode(false);
     for mut hv in &mut hud_q {
         *hv = Visibility::Hidden;
     }
@@ -601,22 +851,34 @@ pub fn enter_chillary_cutscene(
     clear_col.0 = Color::srgb(0.76, 0.86, 0.96);
     let stage = Vec3::new(0.0, 0.0, -760.0);
 
-    // Bright domestic kitchen lighting + soft front selfie-cam fill
+    // Bright domestic kitchen lighting + soft front fill (snaps to stark horror glare on glitch)
+    let key_color = Color::srgb(1.0, 0.96, 0.88);
+    let key_intensity = 620_000.0;
     commands.spawn((
         ChillaryCutsceneEntity,
+        ChillaryKitchenLight {
+            base_color: key_color,
+            base_intensity: key_intensity,
+        },
         PointLight {
-            color: Color::srgb(1.0, 0.96, 0.88),
-            intensity: 620_000.0,
+            color: key_color,
+            intensity: key_intensity,
             range: 26.0,
             ..default()
         },
         Transform::from_translation(stage + Vec3::new(0.0, 3.2, 1.4)),
     ));
+    let fill_color = Color::srgb(0.95, 0.98, 1.0);
+    let fill_intensity = 340_000.0;
     commands.spawn((
         ChillaryCutsceneEntity,
+        ChillaryKitchenLight {
+            base_color: fill_color,
+            base_intensity: fill_intensity,
+        },
         PointLight {
-            color: Color::srgb(0.95, 0.98, 1.0),
-            intensity: 340_000.0,
+            color: fill_color,
+            intensity: fill_intensity,
             range: 22.0,
             ..default()
         },
@@ -784,28 +1046,30 @@ pub fn enter_chillary_cutscene(
             spawn_chillary_rig(p, &mut meshes, &mats, true);
         });
 
-    // Real Stan (`plaid_hero.glb` faces -Z at IDENTITY, so rotate PI to face +Z toward Chillary's selfie cam!)
+    // Real Stan (`plaid_hero.glb` faces -Z at IDENTITY, so negate delta to face Chillary at origin)
     let hero_scene: Handle<Scene> = asset_server.load("models/plaid_hero.glb#Scene0");
+    let stan_start = Vec3::new(-2.25, 0.0, 1.60);
+    let stan_yaw = stan_start.x.atan2(stan_start.z); // (-(-dx)).atan2(-(-dz)) = x.atan2(z) toward origin
     commands.spawn((
         ChillaryCutsceneEntity,
-        ChillaryAnim { kind: ChillaryPart::StanPhotobomb },
+        ChillaryAnim { kind: ChillaryPart::StanActor },
         SceneRoot(hero_scene),
-        Transform::from_translation(stage + Vec3::new(-0.92, 0.0, -1.35))
-            .with_rotation(Quat::from_rotation_y(PI - 0.18))
-            .with_scale(Vec3::splat(1.06)),
-        Visibility::Hidden,
+        Transform::from_translation(stage + stan_start)
+            .with_rotation(Quat::from_rotation_y(stan_yaw))
+            .with_scale(Vec3::splat(1.08)),
+        Visibility::Inherited,
     ));
 
-    // Initial low-angle selfie camera
+    // Beat 0 wide kitchen establishing shot as Stan walks in and spots Chillary filming
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        c_tf.translation = stage + Vec3::new(0.18, 1.42, 0.92);
-        c_tf.look_at(stage + Vec3::new(0.0, 1.92, 0.0), Vec3::Y);
+        c_tf.translation = stage + Vec3::new(-0.65, 1.94, 3.45);
+        c_tf.look_at(stage + Vec3::new(-0.45, 1.50, 0.20), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = 0.70;
+            p.fov = 0.72;
         }
     }
 
-    // Authentic 2015 vertical Snapchat phone frame UI (strictly ASCII)
+    // Authentic 2015 vertical Snapchat chrome (visible on filming beat) + widescreen dialogue card
     let (spk, line, voice, _, cap) = CHILLARY_BEATS[0];
     commands
         .spawn((
@@ -821,9 +1085,10 @@ pub fn enter_chillary_cutscene(
             },
         ))
         .with_children(|root| {
-            // Left & right dark sidebars creating a vertical phone-story silhouette
+            // Left & right dark sidebars creating a vertical phone-story silhouette in Beat 1
             for is_left in [true, false] {
                 root.spawn((
+                    ChillaryUiSlot::SnapChrome,
                     Node {
                         position_type: PositionType::Absolute,
                         top: Val::Px(0.0),
@@ -834,11 +1099,13 @@ pub fn enter_chillary_cutscene(
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.03, 0.04, 0.06, 0.72)),
+                    Visibility::Hidden,
                 ));
             }
 
             // Top row: SNAP STORY pill on left + classic Snapchat countdown circle on right
             root.spawn((
+                ChillaryUiSlot::SnapChrome,
                 Node {
                     width: Val::Percent(52.0),
                     justify_content: JustifyContent::SpaceBetween,
@@ -846,6 +1113,7 @@ pub fn enter_chillary_cutscene(
                     margin: UiRect::top(Val::Px(18.0)),
                     ..default()
                 },
+                Visibility::Hidden,
             ))
             .with_children(|top| {
                 top.spawn((
@@ -902,7 +1170,7 @@ pub fn enter_chillary_cutscene(
             ))
             .with_children(|bot| {
                 bot.spawn((
-                    ChillarySnapCaptionBox,
+                    ChillaryUiSlot::SnapCaption,
                     Node {
                         width: Val::Percent(56.0),
                         justify_content: JustifyContent::Center,
@@ -944,7 +1212,7 @@ pub fn enter_chillary_cutscene(
                     ));
                     card.spawn((
                         ChillarySubText,
-                        Text::new(format!("\"{}\"", line)),
+                        Text::new(format_sub_line(line, voice)),
                         TextFont { font_size: 15.5, ..default() },
                         TextColor(Color::WHITE),
                     ));
@@ -954,7 +1222,17 @@ pub fn enter_chillary_cutscene(
 
     play_cutscene_music();
     play_sfx("snap_pop");
-    speak_voice(line, voice);
+    if !voice.is_empty() {
+        speak_voice(line, voice);
+    }
+}
+
+fn format_sub_line(line: &str, voice: &str) -> String {
+    if voice.is_empty() {
+        line.to_string()
+    } else {
+        format!("\"{}\"", line)
+    }
 }
 
 #[allow(clippy::type_complexity)]
@@ -962,8 +1240,10 @@ pub fn update_chillary_cutscene(
     time: Res<Time>,
     mut c_state: ResMut<ChillaryCutsceneState>,
     mut next_state: crate::transition::SceneTransition,
-    mut anim_q: Query<(&mut Transform, &mut Visibility, &ChillaryAnim), Without<Camera3d>>,
+    mut anim_q: Query<(&mut Transform, &mut Visibility, &ChillaryAnim), (Without<Camera3d>, Without<ChillaryUiSlot>)>,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<ChillaryAnim>)>,
+    mut light_q: Query<(&mut PointLight, &ChillaryKitchenLight)>,
+    mut ui_vis_q: Query<(&mut Visibility, &ChillaryUiSlot), (Without<ChillaryAnim>, Without<Camera3d>)>,
     mut spk_q: Query<
         &mut Text,
         (
@@ -982,7 +1262,6 @@ pub fn update_chillary_cutscene(
             Without<ChillarySnapTimerText>,
         ),
     >,
-    mut cap_box_q: Query<&mut Visibility, (With<ChillarySnapCaptionBox>, Without<ChillaryAnim>)>,
     mut cap_txt_q: Query<
         &mut Text,
         (
@@ -1009,43 +1288,41 @@ pub fn update_chillary_cutscene(
     let skipping = crate::skip::skipping();
     if skipping {
         c_state.beat = (CHILLARY_BEATS.len() as u8).saturating_sub(1);
-        c_state.beat_t = c_state.beat_t.max(4.4);
+        c_state.beat_t = c_state.beat_t.max(6.0);
     }
 
     let idx = (c_state.beat as usize).min(CHILLARY_BEATS.len() - 1);
     let min_t = CHILLARY_BEATS[idx].3;
     if c_state.beat_t >= min_t && (skipping || !is_voice_speaking() || c_state.beat_t >= 16.0) {
         if c_state.beat + 1 >= CHILLARY_BEATS.len() as u8 {
+            set_they_live_mode(false);
             next_state.set(GameState::CityPlay);
             return;
         }
         c_state.beat += 1;
         c_state.beat_t = 0.0;
+        c_state.reptile_stage = 0;
+        set_they_live_mode(false);
+
         let (spk, line, voice, _, cap) = CHILLARY_BEATS[c_state.beat as usize];
-        if c_state.beat == 1 {
-            play_sfx("snap_shutter");
-        } else {
-            play_sfx("snap_pop");
+        match c_state.beat {
+            1 => play_sfx("snap_shutter"),
+            3 => stop_voice(),
+            4 => play_sfx("hit"),
+            _ => play_sfx("snap_pop"),
         }
-        speak_voice(line, voice);
+        if !voice.is_empty() {
+            speak_voice(line, voice);
+        }
         if let Ok(mut s) = spk_q.get_single_mut() {
             s.0 = spk.to_string();
         }
         if let Ok(mut sub) = sub_q.get_single_mut() {
-            sub.0 = format!("\"{}\"", line);
-        }
-        if let Ok(mut cb_vis) = cap_box_q.get_single_mut() {
-            *cb_vis = if cap.is_empty() { Visibility::Hidden } else { Visibility::Inherited };
+            sub.0 = format_sub_line(line, voice);
         }
         if let Ok(mut ct) = cap_txt_q.get_single_mut() {
             ct.0 = cap.to_string();
         }
-    }
-
-    // Update top-right Snapchat story countdown badge (10 -> 1)
-    let rem = (11.8 - c_state.total_t).ceil().clamp(1.0, 10.0) as u32;
-    if let Ok(mut tm) = timer_q.get_single_mut() {
-        tm.0 = rem.to_string();
     }
 
     let beat = c_state.beat;
@@ -1053,79 +1330,234 @@ pub fn update_chillary_cutscene(
     let t = time.elapsed_secs();
     let stage = Vec3::new(0.0, 0.0, -760.0);
 
+    // Exact 1.0-second *They Live* reptile glitch trigger & snap-back inside Beat 3
+    let is_reptile = beat == 3 && (REPTILE_GLITCH_START..REPTILE_GLITCH_END).contains(&bt);
+    if beat == 3 && bt >= REPTILE_GLITCH_START && c_state.reptile_stage == 0 {
+        c_state.reptile_stage = 1;
+        set_they_live_mode(true);
+        play_sfx("they_live_glitch");
+        play_sfx("reptile_hiss");
+        if let Ok(mut s) = spk_q.get_single_mut() {
+            s.0 = "[SIGNAL GLITCH - OBEY / CONFORM / STAY ASLEEP]".to_string();
+        }
+        if let Ok(mut sub) = sub_q.get_single_mut() {
+            sub.0 = "[HISSING REPTILIAN STATIC]".to_string();
+        }
+    } else if beat == 3 && bt >= REPTILE_GLITCH_END && c_state.reptile_stage == 1 {
+        c_state.reptile_stage = 2;
+        set_they_live_mode(false);
+        play_sfx("they_live_snapback");
+        if let Ok(mut s) = spk_q.get_single_mut() {
+            s.0 = "CHILLARY CLINTON".to_string();
+        }
+        if let Ok(mut sub) = sub_q.get_single_mut() {
+            sub.0 = "(Blinks pleasantly and smiles as if nothing happened.)".to_string();
+        }
+    }
+
+    // Kitchen light snaps to cold flickering green-white glare during the 1-second reveal
+    for (mut pl, kl) in &mut light_q {
+        if is_reptile {
+            pl.color = Color::srgb(0.80, 1.0, 0.84);
+            pl.intensity = kl.base_intensity * (1.55 + (t * 47.0).sin() * 0.25);
+        } else {
+            pl.color = kl.base_color;
+            pl.intensity = kl.base_intensity;
+        }
+    }
+
+    // Snapchat frame chrome only on the selfie take (Beat 1); caption pill on Beats 1 & 5
+    let cur_cap = CHILLARY_BEATS[(beat as usize).min(CHILLARY_BEATS.len() - 1)].4;
+    for (mut vis, slot) in &mut ui_vis_q {
+        *vis = match slot {
+            ChillaryUiSlot::SnapChrome => {
+                if beat == 1 {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                }
+            }
+            ChillaryUiSlot::SnapCaption => {
+                if !cur_cap.is_empty() {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                }
+            }
+        };
+    }
+
+    if beat == 1 {
+        let rem = (10.0 - bt * 2.0).ceil().clamp(1.0, 10.0) as u32;
+        if let Ok(mut tm) = timer_q.get_single_mut() {
+            tm.0 = rem.to_string();
+        }
+    }
+
+    // Stan walks in during Beat 0, stands in Beats 1..3, stumbles back in panic in Beat 4
+    let stan_idle = Vec3::new(-1.10, 0.0, 0.85);
+    let stan_back = Vec3::new(-1.62, 0.0, 1.25);
+    let stan_pos = match beat {
+        0 => {
+            let walk_u = (bt / 2.7).clamp(0.0, 1.0);
+            let smooth_u = walk_u * walk_u * (3.0 - 2.0 * walk_u);
+            let xz = Vec3::new(-2.25, 0.0, 1.60).lerp(stan_idle, smooth_u);
+            let stride_bob = if walk_u < 0.98 { (bt * 9.5).sin().abs() * 0.07 } else { 0.0 };
+            xz + Vec3::Y * stride_bob
+        }
+        1..=3 => stan_idle,
+        4 => {
+            let recoil = (bt / 0.65).clamp(0.0, 1.0);
+            let smooth_r = 1.0 - (1.0 - recoil) * (1.0 - recoil);
+            let jump_y = (recoil * PI).sin() * 0.09;
+            stan_idle.lerp(stan_back, smooth_r) + Vec3::Y * jump_y
+        }
+        _ => stan_back,
+    };
+
     for (mut tf, mut vis, anim) in &mut anim_q {
         match anim.kind {
             ChillaryPart::BodyRoot => {
-                let sway = match beat {
-                    0 => (t * 2.4).sin() * 0.03,
+                let yaw = match beat {
+                    0 => (t * 1.8).sin() * 0.03,
                     1 => 0.04,
-                    _ => (t * 4.5).sin() * 0.04,
+                    2 => {
+                        let turn = (bt / 0.8).clamp(0.0, 1.0);
+                        0.04 - turn * 0.59
+                    }
+                    3 => -0.58 + if is_reptile { (t * 44.0).sin() * 0.04 } else { 0.0 },
+                    4 => -0.55,
+                    _ => -0.30 + (t * 1.9).sin() * 0.04,
                 };
-                tf.translation = stage;
-                tf.rotation = Quat::from_rotation_y(sway);
+                let lunge = if is_reptile {
+                    Vec3::new(-0.06, 0.0, 0.05)
+                } else {
+                    Vec3::ZERO
+                };
+                tf.translation = stage + lunge;
+                tf.rotation = Quat::from_rotation_y(yaw);
             }
             ChillaryPart::Head => {
-                // Beat 1 mimics the iconic bright awkward side tilt & frozen campaign smile after speaking
-                let tilt_z = match beat {
-                    0 => (t * 3.1).sin() * 0.05,
-                    1 => -0.09 + (bt * 1.4).sin().max(0.0) * 0.02,
-                    _ => (t * 3.5).sin() * 0.06,
+                let (yaw_y, nod_x, tilt_z) = match beat {
+                    0 => (0.0, 0.06 - (bt / 2.6).min(1.0) * 0.10, (t * 2.5).sin() * 0.04),
+                    1 => (0.0, -0.04, -0.09 + (bt * 1.4).sin().max(0.0) * 0.02),
+                    2 => {
+                        let turn = (bt / 0.7).clamp(0.0, 1.0);
+                        (-turn * 0.30, (t * 3.0).sin() * 0.03, turn * 0.05)
+                    }
+                    3 => {
+                        if is_reptile {
+                            (
+                                -0.33 + (t * 51.0).sin() * 0.04,
+                                -0.06 + (t * 43.0).cos() * 0.04,
+                                -0.14 + (t * 37.0).sin() * 0.06,
+                            )
+                        } else if bt >= REPTILE_GLITCH_END {
+                            (-0.33, -0.02, 0.07)
+                        } else {
+                            (-0.33, 0.02, 0.03)
+                        }
+                    }
+                    4 => (-0.30, 0.0, 0.07),
+                    _ => (-0.18 + (t * 2.2).sin() * 0.06, -0.03, -0.06 + (t * 2.0).sin() * 0.03),
                 };
-                let nod_x = match beat {
-                    0 => 0.10 - (bt / 2.6).min(1.0) * 0.14,
-                    1 => -0.04,
-                    _ => (t * 6.0).sin() * 0.05,
-                };
-                tf.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, nod_x, tilt_z);
+                tf.rotation = Quat::from_euler(EulerRot::YXZ, yaw_y, nod_x, tilt_z);
+            }
+            ChillaryPart::HumanHead => {
+                *vis = if is_reptile { Visibility::Hidden } else { Visibility::Inherited };
+            }
+            ChillaryPart::ReptileHead => {
+                *vis = if is_reptile { Visibility::Inherited } else { Visibility::Hidden };
+            }
+            ChillaryPart::ReptileTongue => {
+                if is_reptile {
+                    let flick = ((bt - REPTILE_GLITCH_START) * 26.0).sin().abs();
+                    tf.scale = Vec3::new(1.0, 1.0, 0.45 + flick * 0.95);
+                    tf.rotation = Quat::from_euler(
+                        EulerRot::XYZ,
+                        (t * 36.0).sin() * 0.22,
+                        (t * 29.0).cos() * 0.28,
+                        0.0,
+                    );
+                } else {
+                    tf.scale = Vec3::ZERO;
+                }
             }
             ChillaryPart::Brow { side } => {
                 let lift = match beat {
                     0 => 0.0,
                     1 => 0.015,
-                    _ => 0.010 + (t * 5.0).sin() * 0.004,
+                    3 if bt >= REPTILE_GLITCH_END => 0.014,
+                    5 => 0.016 + ((t * 3.5).sin().max(0.0)) * 0.008,
+                    _ => 0.006,
                 };
                 tf.translation = Vec3::new(side * 0.088, 0.094 + lift, 0.234);
                 tf.rotation = Quat::from_rotation_z(-side * (0.08 + lift * 2.0));
             }
             ChillaryPart::Mouth => {
-                let speaking = beat == 1 && bt < 2.2 || beat == 0 && bt < 2.1;
-                let open_y = if speaking { 1.0 + (t * 16.0).sin().abs() * 0.45 } else if beat == 1 { 1.15 } else { 1.0 };
-                tf.scale = Vec3::new(if beat == 1 { 1.10 } else { 1.0 }, open_y, 1.0);
+                let speaking = (beat == 1 && bt < 2.2) || (beat == 5 && bt < 4.6);
+                let wide_smile = beat == 1 || (beat == 3 && bt >= REPTILE_GLITCH_END) || beat == 5;
+                let open_y = if speaking {
+                    1.0 + (t * 16.0).sin().abs() * 0.45
+                } else if wide_smile {
+                    1.15
+                } else {
+                    0.85
+                };
+                tf.scale = Vec3::new(if wide_smile { 1.10 } else { 0.96 }, open_y, 1.0);
             }
             ChillaryPart::SelfieArm => {
                 let base_x = match beat {
-                    0 => -0.95 - (bt / 2.5).min(1.0) * 0.25,
+                    0 => -1.16 + (t * 2.0).sin() * 0.04,
                     1 => -1.20 + (t * 2.2).sin() * 0.025,
-                    _ => -1.12,
+                    2 => {
+                        let drop = (bt / 0.7).clamp(0.0, 1.0);
+                        -1.18 + drop * 0.98
+                    }
+                    3 | 4 => -0.18,
+                    _ => {
+                        let raise = (bt / 0.7).clamp(0.0, 1.0);
+                        -0.18 - raise * 0.94 + (t * 2.0).sin() * 0.02
+                    }
                 };
                 tf.rotation = Quat::from_euler(EulerRot::XYZ, base_x, -0.22, -0.18);
             }
             ChillaryPart::LeftArm => {
-                if beat == 2 {
-                    let wave = (t * 9.0).sin() * 0.25;
-                    tf.rotation = Quat::from_euler(EulerRot::XYZ, -0.65, 0.0, -0.55 - wave);
+                if beat == 5 {
+                    let wave = (t * 6.5).sin() * 0.16;
+                    tf.rotation = Quat::from_euler(EulerRot::XYZ, -0.45, 0.0, -0.35 - wave);
                 } else {
                     tf.rotation = Quat::from_rotation_z(-0.08);
                 }
             }
-            ChillaryPart::StanPhotobomb => {
-                *vis = if beat == 2 { Visibility::Inherited } else { Visibility::Hidden };
+            ChillaryPart::StanActor => {
+                *vis = Visibility::Inherited;
+                tf.translation = stage + stan_pos;
+                let base_yaw = stan_pos.x.atan2(stan_pos.z);
+                let (pitch, roll) = match beat {
+                    0 => {
+                        let w = if bt < 2.65 { 1.0 } else { 0.0 };
+                        (-0.05 * w, (bt * 9.5).cos() * 0.06 * w)
+                    }
+                    2 => ((t * 7.5).sin().abs() * 0.06, (t * 4.5).sin() * 0.03),
+                    4 => (0.11 + (t * 26.0).sin() * 0.04, (t * 22.0).cos() * 0.05),
+                    _ => (0.0, 0.0),
+                };
+                tf.rotation = Quat::from_euler(EulerRot::YXZ, base_yaw, pitch, roll);
             }
         }
     }
 
-    // Authentic handheld vertical smartphone selfie camera angles
+    // Dynamic shot blocking: establishing walk-in, Snapchat selfie, Stan reverse shots, and *They Live* glitch
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         let push = (bt / 4.2).min(1.0);
         match beat {
             0 => {
-                // Shaky low "boomer angle" rising onto her face
-                let rise = (bt / 2.6).clamp(0.0, 1.0);
-                let wobble = Vec3::new((t * 7.0).sin() * 0.025, (t * 9.0).cos() * 0.025, 0.0);
-                c_tf.translation = stage + Vec3::new(0.18 - rise * 0.14, 1.42 + rise * 0.44, 0.94 - rise * 0.18) + wobble;
-                c_tf.look_at(stage + Vec3::new(0.0, 1.92, 0.0), Vec3::Y);
+                // Wide kitchen establishing shot as Stan enters from the left and spots Chillary
+                c_tf.translation = stage + Vec3::new(-0.65 + push * 0.14, 1.94, 3.45 - push * 0.25);
+                c_tf.look_at(stage + Vec3::new(-0.45, 1.50, 0.20), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.68 - rise * 0.18;
+                    p.fov = 0.72 - push * 0.04;
                 }
             }
             1 => {
@@ -1139,12 +1571,47 @@ pub fn update_chillary_cutscene(
                     p.fov = 0.46 - push * 0.02;
                 }
             }
-            _ => {
-                // Slightly pulled-back kitchen shot revealing bewildered Stan photobombing behind her!
-                c_tf.translation = stage + Vec3::new(-0.08, 1.74, 1.48 - push * 0.10);
-                c_tf.look_at(stage + Vec3::new(-0.28, 1.62, -0.35), Vec3::Y);
+            2 => {
+                // Unobstructed front 3/4 reverse shot on bewildered Stan: "WTF are you doing?!"
+                c_tf.translation = stage + Vec3::new(0.14 - push * 0.08, 1.92, 0.62);
+                c_tf.look_at(stage + stan_idle + Vec3::Y * 1.92, Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.64;
+                    p.fov = 0.56;
+                }
+            }
+            3 => {
+                // Stan's POV onto Chillary -> sudden 1.0-second *They Live* reptile snap-in!
+                if is_reptile {
+                    let jitter = Vec3::new((t * 61.0).sin() * 0.012, (t * 73.0).cos() * 0.012, 0.0);
+                    c_tf.translation = stage + Vec3::new(-0.66, 1.90, 0.50) + jitter;
+                    c_tf.look_at(stage + Vec3::new(0.0, 1.91, 0.0), Vec3::Y);
+                    c_tf.rotate_local_z(0.075);
+                    if let Projection::Perspective(ref mut p) = *proj {
+                        p.fov = 0.54;
+                    }
+                } else {
+                    c_tf.translation = stage + Vec3::new(-0.76, 1.91, 0.58);
+                    c_tf.look_at(stage + Vec3::new(0.0, 1.93, 0.0), Vec3::Y);
+                    if let Projection::Perspective(ref mut p) = *proj {
+                        p.fov = 0.56;
+                    }
+                }
+            }
+            4 => {
+                // Unobstructed reverse shot on Stan stumbling backward in total disbelief
+                let panic_wobble = Vec3::new((t * 28.0).sin() * 0.014, (t * 34.0).cos() * 0.014, 0.0);
+                c_tf.translation = stage + Vec3::new(-0.18, 1.92, 0.55) + panic_wobble;
+                c_tf.look_at(stage + stan_pos + Vec3::Y * 1.90, Vec3::Y);
+                if let Projection::Perspective(ref mut p) = *proj {
+                    p.fov = 0.54;
+                }
+            }
+            _ => {
+                // Calm, gaslighting close-up on normal smiling Chillary raising her phone again
+                c_tf.translation = stage + Vec3::new(-0.34, 1.88, 0.96 - push * 0.06);
+                c_tf.look_at(stage + Vec3::new(0.0, 1.91, 0.0), Vec3::Y);
+                if let Projection::Perspective(ref mut p) = *proj {
+                    p.fov = 0.50 - push * 0.02;
                 }
             }
         }
@@ -1159,6 +1626,8 @@ pub fn exit_chillary_cutscene(
     mut cam_q: Query<&mut Projection, With<Camera3d>>,
     mut hud_q: Query<&mut Visibility, With<HudOverlay>>,
 ) {
+    set_they_live_mode(false);
+    stop_voice();
     for e in &ent_q {
         commands.entity(e).despawn_recursive();
     }
