@@ -48,6 +48,7 @@ pub enum HorrorLightRole {
     CrimsonCore,
     BileRim,
     CrewFill,
+    QuakerInferno { base_intensity: f32, seed: f32 },
 }
 
 #[derive(Component)]
@@ -80,6 +81,9 @@ pub enum ThingPart {
     VisceraJet { base_pos: Vec3, vel: Vec3, phase: f32, speed: f32 },
     StinkCloud { base_pos: Vec3, phase: f32 },
     SpiralRing { speed: f32, base_scale: f32 },
+    QuakerFlame { base_pos: Vec3, base_scale: Vec3, phase: f32, speed: f32 },
+    QuakerSmoke { base_pos: Vec3, phase: f32, speed: f32, max_scale: f32 },
+    QuakerEmber { base_pos: Vec3, phase: f32, speed: f32, drift: Vec2 },
 }
 
 #[derive(Resource, Default)]
@@ -712,6 +716,436 @@ fn solve_horror_rig(stage: Vec3, beat: u8, bt: f32, t: f32) -> RigPose {
     }
 }
 
+// =================================================================================================
+// Cedar Rapids Quaker Oats Factory Sign, Meshes & Inferno Spawner
+// =================================================================================================
+
+fn glyph_5x7(ch: char) -> [u8; 7] {
+    match ch {
+        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'C' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+        'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
+        'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        'I' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111],
+        'K' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+        'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        'Q' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
+        'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
+        'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        _ => [0; 7],
+    }
+}
+
+/// Generates a 512x128 vintage industrial `"QUAKER OATS / CEDAR RAPIDS"` rooftop sign texture.
+fn make_quaker_sign_texture(images: &mut Assets<Image>) -> Handle<Image> {
+    const W: usize = 512;
+    const H: usize = 128;
+    let mut data = vec![0u8; W * H * 4];
+    for y in 0..H {
+        let ny = y as f32 / H as f32;
+        for x in 0..W {
+            let nx = x as f32 / W as f32;
+            let border = x < 6 || x >= W - 6 || y < 6 || y >= H - 6;
+            let scorch = tile_fbm(nx * 2.0, ny * 2.0, 4, 711) * (ny * ny) * 0.72;
+            let (mut r, mut g, mut b) = if border {
+                (0.92, 0.72, 0.28)
+            } else if ny < 0.66 {
+                (0.56, 0.10, 0.09)
+            } else {
+                (0.08, 0.14, 0.30)
+            };
+            r = (r - scorch * 0.48).max(0.04);
+            g = (g - scorch * 0.42).max(0.02);
+            b = (b - scorch * 0.42).max(0.02);
+            let p = (y * W + x) * 4;
+            data[p] = (r * 255.0) as u8;
+            data[p + 1] = (g * 255.0) as u8;
+            data[p + 2] = (b * 255.0) as u8;
+            data[p + 3] = 255;
+        }
+    }
+
+    let draw_text = |buf: &mut [u8], text: &str, top_y: usize, scale: usize, col: [u8; 3]| {
+        let adv = 6 * scale;
+        let total_w = text.chars().count() * adv - scale;
+        let start_x = (W.saturating_sub(total_w)) / 2;
+        for (ci, ch) in text.chars().enumerate() {
+            let rows = glyph_5x7(ch);
+            for (ry, bits) in rows.iter().enumerate() {
+                for cx in 0..5 {
+                    if (bits >> (4 - cx)) & 1 == 1 {
+                        let px0 = start_x + ci * adv + cx * scale;
+                        let py0 = top_y + ry * scale;
+                        for dy in 0..scale {
+                            for dx in 0..scale {
+                                let x = px0 + dx;
+                                let y = py0 + dy;
+                                if x < W && y < H {
+                                    let i = (y * W + x) * 4;
+                                    buf[i] = col[0];
+                                    buf[i + 1] = col[1];
+                                    buf[i + 2] = col[2];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    draw_text(&mut data, "QUAKER OATS", 16, 7, [255, 240, 200]);
+    draw_text(&mut data, "CEDAR RAPIDS", 88, 3, [255, 195, 105]);
+
+    let mut img = Image::new(
+        Extent3d {
+            width: W as u32,
+            height: H as u32,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::ClampToEdge,
+        address_mode_v: ImageAddressMode::ClampToEdge,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    images.add(img)
+}
+
+/// Quad facing -Z (toward the camera looking +Z from `z < 0`) so `+X` is screen-left
+/// (`u = 0`) and `"QUAKER OATS"` reads left-to-right without mirroring.
+fn build_neg_z_sign_quad(w: f32, h: f32) -> Mesh {
+    let hw = w * 0.5;
+    let hh = h * 0.5;
+    let pos = vec![
+        [hw, hh, 0.0],
+        [-hw, hh, 0.0],
+        [-hw, -hh, 0.0],
+        [hw, -hh, 0.0],
+    ];
+    let norm = vec![[0.0, 0.0, -1.0]; 4];
+    let uv = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+    let idx = vec![0, 3, 2, 0, 2, 1];
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, norm)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_indices(Indices::U32(idx))
+}
+
+fn spawn_quaker_oats_factory(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
+    stage: Vec3,
+) {
+    use crate::shapes as sh;
+
+    // Complex sits across z = stage.z + 21.5 directly behind Stan & friends (facing -Z toward them).
+    let factory = stage + Vec3::new(-3.5, 0.0, 21.5);
+
+    let concrete_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.42, 0.40, 0.38),
+        perceptual_roughness: 0.88,
+        ..default()
+    });
+    let brick_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.46, 0.16, 0.11),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let dark_steel = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.10, 0.12),
+        metallic: 0.6,
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let glow_win_hot = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.72, 0.18),
+        emissive: LinearRgba::new(4.2, 1.35, 0.12, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let glow_win_char = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.05, 0.04, 0.04),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    let sign_tex = make_quaker_sign_texture(images);
+    let sign_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(sign_tex.clone()),
+        emissive: LinearRgba::new(1.35, 1.05, 0.65, 1.0),
+        emissive_texture: Some(sign_tex),
+        perceptual_roughness: 0.45,
+        ..default()
+    });
+
+    // 1. Towering Concrete Grain Silos (two staggered rows) + headhouse gallery
+    for row in 0..2 {
+        let rz = 0.2 + row as f32 * 2.3;
+        for col in 0..3 {
+            let sx = -10.8 + col as f32 * 2.25;
+            let h = 10.6 + ((row + col) % 2) as f32 * 1.1;
+            commands.spawn((
+                LexieVictoryEntity,
+                Mesh3d(meshes.add(Cylinder::new(1.06, h))),
+                MeshMaterial3d(concrete_mat.clone()),
+                Transform::from_translation(factory + Vec3::new(sx, h * 0.5, rz)),
+            ));
+        }
+    }
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(Cuboid::new(6.8, 1.8, 3.6))),
+        MeshMaterial3d(concrete_mat.clone()),
+        Transform::from_translation(factory + Vec3::new(-8.5, 11.4, 1.2)),
+    ));
+
+    // 2. Main Multi-Story Red-Brick Oat Mill + Steel Cornice + Glowing Fire Windows
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(Cuboid::new(11.8, 8.8, 6.2))),
+        MeshMaterial3d(brick_mat.clone()),
+        Transform::from_translation(factory + Vec3::new(3.8, 4.4, 0.6)),
+    ));
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(Cuboid::new(12.2, 0.42, 6.6))),
+        MeshMaterial3d(dark_steel.clone()),
+        Transform::from_translation(factory + Vec3::new(3.8, 8.85, 0.6)),
+    ));
+    let win_mesh = meshes.add(Cuboid::new(1.22, 1.15, 0.14));
+    for floor in 0..3 {
+        let wy = 2.2 + floor as f32 * 2.4;
+        for col in 0..5 {
+            let wx = -0.6 + col as f32 * 2.2;
+            let charred = (floor == 0 && col == 2) || (floor == 2 && col == 4);
+            commands.spawn((
+                LexieVictoryEntity,
+                Mesh3d(win_mesh.clone()),
+                MeshMaterial3d(if charred { glow_win_char.clone() } else { glow_win_hot.clone() }),
+                Transform::from_translation(factory + Vec3::new(wx, wy, -2.52)),
+            ));
+        }
+    }
+
+    // 3. East Warehouse Annex + Windows
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(Cuboid::new(6.8, 5.4, 5.5))),
+        MeshMaterial3d(brick_mat.clone()),
+        Transform::from_translation(factory + Vec3::new(12.8, 2.7, 1.2)),
+    ));
+    for col in 0..2 {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(win_mesh.clone()),
+            MeshMaterial3d(glow_win_hot.clone()),
+            Transform::from_translation(factory + Vec3::new(11.6 + col as f32 * 2.4, 3.2, -1.56)),
+        ));
+    }
+
+    // 4. Twin Tall Brick Smokestacks belching smoke & embers
+    for (sx, sz, h) in [(7.2_f32, 3.8_f32, 14.8_f32), (10.6, 3.4, 13.0)] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(Cylinder::new(0.68, h))),
+            MeshMaterial3d(brick_mat.clone()),
+            Transform::from_translation(factory + Vec3::new(sx, h * 0.5, sz)),
+        ));
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(Cylinder::new(0.80, 0.45))),
+            MeshMaterial3d(dark_steel.clone()),
+            Transform::from_translation(factory + Vec3::new(sx, h - 0.15, sz)),
+        ));
+    }
+
+    // 5. Rooftop Steel Truss & Non-Mirrored `"QUAKER OATS"` Billboard facing -Z
+    let sign_center = factory + Vec3::new(3.8, 10.6, -2.35);
+    for sx in [-4.0_f32, -1.3, 1.3, 4.0] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(Cuboid::new(0.22, 2.0, 0.22))),
+            MeshMaterial3d(dark_steel.clone()),
+            Transform::from_translation(sign_center + Vec3::new(sx, -1.35, 0.15)),
+        ));
+    }
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(Cuboid::new(10.6, 2.8, 0.18))),
+        MeshMaterial3d(dark_steel.clone()),
+        Transform::from_translation(sign_center + Vec3::new(0.0, 0.0, 0.12)),
+    ));
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(build_neg_z_sign_quad(10.2, 2.55))),
+        MeshMaterial3d(sign_mat),
+        Transform::from_translation(sign_center + Vec3::new(0.0, 0.0, -0.02)),
+    ));
+
+    // 6. 34 Multi-layered Roaring Flames erupting across roof, windows, silos & annex
+    let flame_mesh = meshes.add(sh::limb_profile(1.0, &[0.02, 0.20, 0.46, 0.36], 0.85).at(0.0, 0.5, 0.0).mesh());
+    let flame_core_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.96, 0.65, 0.92),
+        emissive: LinearRgba::new(4.8, 3.2, 0.5, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let flame_orange_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.48, 0.06, 0.86),
+        emissive: LinearRgba::new(4.2, 1.15, 0.08, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let flame_crimson_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.92, 0.12, 0.04, 0.78),
+        emissive: LinearRgba::new(3.0, 0.28, 0.03, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let flame_mats = [flame_core_mat, flame_orange_mat, flame_crimson_mat];
+
+    let mut add_flame = |pos: Vec3, scale: Vec3, phase: f32, speed: f32, mat_idx: usize| {
+        commands.spawn((
+            LexieVictoryEntity,
+            ThingAnim { kind: ThingPart::QuakerFlame { base_pos: pos, base_scale: scale, phase, speed } },
+            Mesh3d(flame_mesh.clone()),
+            MeshMaterial3d(flame_mats[mat_idx % 3].clone()),
+            Transform::from_translation(pos).with_scale(scale),
+        ));
+    };
+
+    // Silo top flames
+    for si in 0..6 {
+        let sx = -10.6 + (si % 3) as f32 * 2.25;
+        let sz = 0.2 + (si / 3) as f32 * 2.2;
+        add_flame(factory + Vec3::new(sx, 10.6, sz), Vec3::new(1.5, 3.6, 1.5), si as f32 * 0.9, 6.2, 1);
+        add_flame(factory + Vec3::new(sx + 0.2, 10.6, sz - 0.1), Vec3::new(0.95, 2.5, 0.95), si as f32 * 1.4, 7.8, 0);
+    }
+    // Mill rooftop inferno behind & flanking the "QUAKER OATS" sign
+    for ri in 0..14 {
+        let rx = -1.6 + ri as f32 * 0.82;
+        let rz = if ri % 2 == 0 { -1.2 } else { 0.8 };
+        let h = 3.2 + (ri % 4) as f32 * 0.9;
+        add_flame(factory + Vec3::new(rx, 8.85, rz), Vec3::new(1.4, h, 1.4), ri as f32 * 0.65, 5.8 + (ri % 3) as f32, ri % 3);
+    }
+    // Window jet flames + East annex roof flames
+    for wi in 0..4 {
+        let wx = -0.2 + wi as f32 * 2.6;
+        add_flame(factory + Vec3::new(wx, 4.4 + (wi % 2) as f32 * 2.2, -2.55), Vec3::new(0.85, 2.2, 0.85), wi as f32 * 1.2, 8.1, wi % 2);
+    }
+    for ai in 0..4 {
+        add_flame(factory + Vec3::new(10.5 + ai as f32 * 1.5, 5.4, 0.2), Vec3::new(1.4, 3.0, 1.4), ai as f32 * 0.8, 6.7, ai % 3);
+    }
+
+    // 7. 24 Billowing Soot & Amber-Lit Smoke Plumes rising from the factory & stacks
+    let smoke_mesh = meshes.add(Sphere::new(0.95));
+    let soot_dark_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.08, 0.07, 0.07, 0.72),
+        perceptual_roughness: 0.95,
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let soot_ember_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.32, 0.14, 0.06, 0.62),
+        emissive: LinearRgba::new(0.45, 0.12, 0.02, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    for k in 0..24 {
+        let base_pos = if k < 6 {
+            factory + Vec3::new(if k % 2 == 0 { 7.2 } else { 10.6 }, 14.8, 3.6)
+        } else if k < 12 {
+            factory + Vec3::new(-8.6 + (k % 3) as f32 * 2.0, 11.4, 1.0)
+        } else {
+            factory + Vec3::new(-0.5 + ((k - 12) as f32) * 1.05, 9.6, 0.4)
+        };
+        commands.spawn((
+            LexieVictoryEntity,
+            ThingAnim {
+                kind: ThingPart::QuakerSmoke {
+                    base_pos,
+                    phase: k as f32 * 0.37,
+                    speed: 0.32 + (k % 4) as f32 * 0.08,
+                    max_scale: 2.2 + (k % 3) as f32 * 0.85,
+                },
+            },
+            Mesh3d(smoke_mesh.clone()),
+            MeshMaterial3d(if k % 3 == 0 { soot_ember_mat.clone() } else { soot_dark_mat.clone() }),
+            Transform::from_translation(base_pos),
+        ));
+    }
+
+    // 8. 36 Drifting Glowing Embers across the burning skyline & crew background
+    let ember_mesh = meshes.add(Sphere::new(0.075));
+    let ember_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.25),
+        emissive: LinearRgba::new(4.5, 1.8, 0.2, 1.0),
+        unlit: true,
+        ..default()
+    });
+    for e_i in 0..36 {
+        let ex = stage.x - 11.5 + ((e_i as f32 * 4.37) % 21.0);
+        let ez = stage.z + 6.5 + ((e_i as f32 * 5.91) % 14.5);
+        let ey = 0.6 + ((e_i % 5) as f32) * 1.4;
+        commands.spawn((
+            LexieVictoryEntity,
+            ThingAnim {
+                kind: ThingPart::QuakerEmber {
+                    base_pos: Vec3::new(ex, ey, ez),
+                    phase: e_i as f32 * 0.29,
+                    speed: 0.45 + (e_i % 4) as f32 * 0.16,
+                    drift: Vec2::new(((e_i % 3) as f32 - 1.0) * 1.4, -1.6 - (e_i % 3) as f32 * 0.5),
+                },
+            },
+            Mesh3d(ember_mesh.clone()),
+            MeshMaterial3d(ember_mat.clone()),
+            Transform::from_translation(Vec3::new(ex, ey, ez)),
+        ));
+    }
+
+    // 9. Roaring Inferno Lights (illuminates factory facade + gives the 5 crew avatars warm orange rim light!)
+    commands.spawn((
+        LexieVictoryEntity,
+        LexieHorrorLight { role: HorrorLightRole::QuakerInferno { base_intensity: 2_800_000.0, seed: 1.7 } },
+        PointLight {
+            color: Color::srgb(1.0, 0.45, 0.08),
+            intensity: 2_800_000.0,
+            range: 55.0,
+            ..default()
+        },
+        Transform::from_translation(factory + Vec3::new(3.5, 9.6, -3.2)),
+    ));
+    commands.spawn((
+        LexieVictoryEntity,
+        LexieHorrorLight { role: HorrorLightRole::QuakerInferno { base_intensity: 520_000.0, seed: 4.3 } },
+        PointLight {
+            color: Color::srgb(1.0, 0.40, 0.08),
+            intensity: 520_000.0,
+            range: 24.0,
+            ..default()
+        },
+        Transform::from_translation(stage + Vec3::new(-0.5, 3.6, 8.5)),
+    ));
+}
+
 pub fn enter_lexie_victory_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -939,13 +1373,14 @@ pub fn enter_lexie_victory_cutscene(
         ));
     }
 
-    // Wet asphalt stage + live CPU vertex-deformed boiling biomass puddle/mound
+    // Wet asphalt stage (expanded under the Cedar Rapids Quaker Oats inferno) + boiling biomass mound
     commands.spawn((
         LexieVictoryEntity,
-        Mesh3d(meshes.add(Cuboid::new(32.0, 0.2, 32.0))),
+        Mesh3d(meshes.add(Cuboid::new(68.0, 0.2, 68.0))),
         MeshMaterial3d(street_mat),
-        Transform::from_translation(stage + Vec3::new(0.0, -0.1, 0.0)),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.1, 12.0)),
     ));
+    spawn_quaker_oats_factory(&mut commands, &mut meshes, &mut materials, &mut images, stage);
     let mound_handle = meshes.add(build_melt_mound_mesh());
     commands.spawn((
         LexieVictoryEntity,
@@ -1599,6 +2034,7 @@ pub fn update_lexie_victory_cutscene(
         match v_state.beat {
             1 => {
                 play_sfx("wet_squelch");
+                play_sfx("fire_roar");
             }
             2 => {
                 play_sfx("flesh_tear");
@@ -1611,6 +2047,7 @@ pub fn update_lexie_victory_cutscene(
             }
             _ => {
                 play_sfx("wet_squelch");
+                play_sfx("fire_roar");
             }
         }
         speak_voice(line, voice);
@@ -1672,6 +2109,10 @@ pub fn update_lexie_victory_cutscene(
             }
             HorrorLightRole::CrewFill => {
                 pl.intensity = 380_000.0;
+            }
+            HorrorLightRole::QuakerInferno { base_intensity, seed } => {
+                let fire_flicker = 0.78 + 0.22 * (t * 13.0 + seed).sin() * (t * 21.0 + seed * 1.7).cos();
+                pl.intensity = base_intensity * fire_flicker;
             }
         }
     }
@@ -1851,6 +2292,30 @@ pub fn update_lexie_victory_cutscene(
                 let pulse = 1.0 + (t * 2.4 + base_scale).sin() * 0.07;
                 tf.scale = Vec3::splat(base_scale * pulse);
             }
+            ThingPart::QuakerFlame { base_pos, base_scale, phase, speed } => {
+                let w1 = (t * speed + phase).sin();
+                let w2 = (t * (speed * 1.43) + phase * 1.9).cos();
+                tf.translation = base_pos + Vec3::new(w1 * 0.16, 0.0, w2 * 0.12);
+                tf.rotation = Quat::from_euler(EulerRot::XYZ, w2 * 0.18, 0.0, w1 * 0.22);
+                tf.scale = Vec3::new(
+                    base_scale.x * (0.85 + w2.abs() * 0.35),
+                    base_scale.y * (0.78 + (w1 * 0.5 + 0.5) * 0.52),
+                    base_scale.z * (0.85 + w1.abs() * 0.30),
+                );
+            }
+            ThingPart::QuakerSmoke { base_pos, phase, speed, max_scale } => {
+                let cyc = (t * speed + phase) % 1.0;
+                let sway = (t * 0.9 + phase).sin() * (0.6 + cyc * 2.2);
+                tf.translation = base_pos + Vec3::new(sway + cyc * 1.4, cyc * 11.5, -cyc * 2.6);
+                tf.scale = Vec3::splat(0.75 + cyc * max_scale);
+            }
+            ThingPart::QuakerEmber { base_pos, phase, speed, drift } => {
+                let cyc = (t * speed + phase) % 1.0;
+                let swirl_x = (t * 3.4 + phase * 2.1).sin() * 0.95;
+                tf.translation = base_pos + Vec3::new(drift.x * cyc + swirl_x, cyc * 9.5, drift.y * cyc);
+                let twinkle = (1.0 - (cyc - 0.5).abs() * 1.7).clamp(0.2, 1.4);
+                tf.scale = Vec3::splat(twinkle);
+            }
         }
     }
 
@@ -1880,9 +2345,9 @@ pub fn update_lexie_victory_cutscene(
                 }
             }
             1 => {
-                // Beat 1: Wide low-angle reaction shot framing all 5 crew avatars!
-                c_tf.translation = stage + Vec3::new(0.0, 1.92, -1.25 + push * 0.22) + cam_shake;
-                c_tf.look_at(stage + Vec3::new(0.0, 1.55, 2.75), Vec3::Y);
+                // Beat 1: Wide low-angle reaction shot framing all 5 crew avatars against the burning Quaker Oats factory!
+                c_tf.translation = stage + Vec3::new(0.0, 1.58, -1.35 + push * 0.22) + cam_shake;
+                c_tf.look_at(stage + Vec3::new(0.0, 2.05, 2.75), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
                     p.fov = 0.88;
                 }
@@ -1906,11 +2371,11 @@ pub fn update_lexie_victory_cutscene(
                 }
             }
             _ => {
-                // Beat 4: Wide 3/4 survivor shot showing all 5 crew members & the steaming liquefied remains
-                c_tf.translation = stage + Vec3::new(4.5 - push * 0.4, 2.55, 0.65);
-                c_tf.look_at(stage + Vec3::new(-0.15, 1.35, 0.85), Vec3::Y);
+                // Beat 4: Wide 3/4 survivor shot framing melted remains, all 5 crew members, and the burning Quaker Oats complex
+                c_tf.translation = stage + Vec3::new(2.6 - push * 0.35, 2.10, -3.8);
+                c_tf.look_at(stage + Vec3::new(0.2, 1.85, 2.5), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.76;
+                    p.fov = 0.80;
                 }
             }
         }
