@@ -109,7 +109,8 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             v
         }
         ControlContext::Scooter => vec![
-            bind("WASD", "L-STICK", "Steer", true),
+            bind("W / S", "L-STICK", "Go / brake", true),
+            bind("MOUSE or A / D", "R-STICK", "Steer", true),
             bind("SHIFT", "B", "Turbo", true),
             bind("SPACE", "A", "Jump / grind (air: hold to flip)", true),
             bind("F", "X", "Hop off", true),
@@ -117,7 +118,8 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             LOOK,
             // Skate park extras (skatepark.rs), listed in the pause menu.
             bind("SPACE", "A", "Park air: tap for a tailwhip", false),
-            bind("A / D", "L-STICK", "Park: air spin, grind balance", false),
+            bind("A / D", "L-STICK", "In the air: spin (360s)", false),
+            bind("A / D", "L-STICK", "Park: grind balance", false),
             bind("W", "L-STICK", "Park: hold dropping in to pump", false),
         ],
         ControlContext::Car => vec![

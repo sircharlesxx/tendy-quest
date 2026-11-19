@@ -406,7 +406,7 @@ pub fn update_city_derek(
         // Post-game free roam: recruited crew skip following and idle in Pub 217.
         if derek.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.72).clamp(1.65, 9.0);
-            d_tf.scale = Vec3::splat(s);
+            d_tf.scale = Vec3::splat(crate::state::city_body_scale(s));
             // Flank Stan on his left, out of the camera line at every scale.
             let target = crate::player::crew_follow_target(
                 crate::player::CrewSlot::LeftInner,
@@ -439,7 +439,7 @@ pub fn update_city_derek(
         let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_DEREK, &stats, spots.as_deref(), p_tf.translation);
         d_tf.translation = pos;
         d_tf.rotation = rot;
-        d_tf.scale = Vec3::splat(if stats.free_roam { pub_s } else { 1.65 });
+        d_tf.scale = Vec3::splat(crate::state::city_body_scale(if stats.free_roam { pub_s } else { 1.65 }));
         let to_p = p_tf.translation - d_tf.translation;
         let flat = Vec3::new(to_p.x, 0.0, to_p.z);
 

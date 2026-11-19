@@ -314,7 +314,7 @@ fn main() {
                 animate_player_limbs.after(skatepark::ParkWalkSet),
                 update_camera.in_set(CameraSet::Follow),
                 (update_city_crew_gate, update_pub217_door, city::update_crew_callouts),
-                update_city_traffic,
+                update_city_traffic.before(stunts::update_ramp_cars),
                 update_city_npcs,
                 update_city_tj,
                 update_city_derek,
@@ -334,6 +334,20 @@ fn main() {
             stunts::update_scooter_stunts
                 .after(update_city_scooter_and_phone)
                 .in_set(CameraSet::Motion)
+                .run_if(in_state(GameState::CityPlay))
+                .run_if(gameplay_running),
+        )
+        .add_systems(
+            Update,
+            // Wedge ramps are solid: on foot with the skate park's on-foot pass, cars after every
+            // system that moves them (driving, traffic, park blocking), all before the camera.
+            (
+                stunts::update_ramp_walking.in_set(skatepark::ParkWalkSet),
+                stunts::update_ramp_cars
+                    .after(update_city_driving)
+                    .in_set(CameraSet::Motion),
+                stunts::debug_ramp_car.before(update_city_driving),
+            )
                 .run_if(in_state(GameState::CityPlay))
                 .run_if(gameplay_running),
         )

@@ -176,7 +176,7 @@ impl SaberTarget {
 }
 
 fn saber_reach(stats: &PlayerStats, heavy: bool) -> f32 {
-    (SABER_REACH + if heavy { HEAVY_REACH_BONUS } else { 0.0 }) * stats.player_scale.max(0.55)
+    (SABER_REACH + if heavy { HEAVY_REACH_BONUS } else { 0.0 }) * stats.body_scale().max(0.55)
 }
 
 /// Geometry part of the saber test: the target's surface is within `reach`, its body overlaps
@@ -227,7 +227,7 @@ pub fn saber_contact(player: &Player, stats: &PlayerStats, hero_pos: Vec3, targe
     if p < a || p > b {
         return None;
     }
-    let scale = stats.player_scale.max(0.55);
+    let scale = stats.body_scale().max(0.55);
     let arc = if heavy { HEAVY_ARC_COS } else { LIGHT_ARC_COS };
     let (_, dir) = saber_covers(hero_forward(player), hero_pos, scale, target, saber_reach(stats, heavy), arc)?;
     let y = (hero_pos.y + 1.3 * scale).clamp(target.pos.y, target.pos.y + target.height);
@@ -269,7 +269,7 @@ fn attack_assist(
     targets: &[SaberTarget],
     heavy: bool,
 ) -> Option<f32> {
-    let scale = stats.player_scale.max(0.55);
+    let scale = stats.body_scale().max(0.55);
     let reach = saber_reach(stats, heavy);
     let fwd = hero_forward(player);
     let mut best: Option<(f32, f32, Vec3)> = None;
@@ -738,19 +738,17 @@ pub fn player_movement(
     }
     let squash_y = 1.0 - 0.5 * player.squash;
     let squash_xz = 1.0 + 0.3 * player.squash;
+    // Drawn size: human-proportioned beside pedestrians and cars in the city (`body_scale`).
+    let body = stats.body_scale();
     if stats.enraged && !stats.in_city {
         let throb = 1.0 + stats.rage_pulse_flash * 0.16;
         tf.scale = Vec3::new(
-            stats.player_scale * throb * squash_xz,
-            stats.player_scale * (1.0 + stats.rage_pulse_flash * 0.22) * squash_y,
-            stats.player_scale * throb * squash_xz,
+            body * throb * squash_xz,
+            body * (1.0 + stats.rage_pulse_flash * 0.22) * squash_y,
+            body * throb * squash_xz,
         );
     } else {
-        tf.scale = Vec3::new(
-            stats.player_scale * squash_xz,
-            stats.player_scale * squash_y,
-            stats.player_scale * squash_xz,
-        );
+        tf.scale = Vec3::new(body * squash_xz, body * squash_y, body * squash_xz);
     }
     let size_ratio = (stats.player_scale / 0.55).max(1.0);
 
@@ -1550,6 +1548,9 @@ pub fn update_camera(
     >,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
+    // The camera frames the drawn body (smaller than the gameplay scale at human size in the
+    // city), so the framing matches what it was tuned for.
+    let cam_ps = stats.body_scale();
     let (Ok((p_tf, player)), Ok((mut c_tf, mut proj))) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
@@ -1577,7 +1578,7 @@ pub fn update_camera(
     // Damped follow point: quick horizontally, softer vertically, lag capped relative to scale.
     // Snaps on state entry (flag) or on a teleport-sized jump in the raw player position.
     let p_pos = p_tf.translation;
-    let follow_scale = stats.player_scale.max(0.55);
+    let follow_scale = cam_ps.max(0.55);
     let teleport_dist = 6.0 + follow_scale * 1.5;
     let snapping = orbit.snap_follow || p_pos.distance(orbit.last_player_pos) > teleport_dist;
     if snapping {
@@ -1611,7 +1612,7 @@ pub fn update_camera(
     let anchor_y = if stats.driving_car.is_some() {
         1.95
     } else {
-        0.55 + stats.player_scale * 0.92
+        0.55 + cam_ps * 0.92
     };
     let anchor = follow + Vec3::Y * anchor_y;
     // Widen camera distance slightly on narrow portrait viewports (mobile) so Stan stays framed.
@@ -1625,12 +1626,12 @@ pub fn update_camera(
     let cam_scale_mul = if stats.driving_car.is_some() {
         0.92
     } else if stats.in_city {
-        0.72 + stats.player_scale * 0.24
+        0.72 + cam_ps * 0.24
     } else {
-        0.82 + stats.player_scale.sqrt() * 0.34
+        0.82 + cam_ps.sqrt() * 0.34
     };
     // Pub 217 has a fixed size; `is_in_pub217` only counts its interior (not the roof).
-    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_pos, stats.player_scale);
+    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_pos, cam_ps);
     let pub_s = crate::city::PUB217_SCALE;
     let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
     // Clamp distance & pitch inside Pub 217 so the bar ceiling/walls don't occlude the player.
@@ -1638,9 +1639,9 @@ pub fn update_camera(
         desired_dist = desired_dist.min(4.2 * pub_s);
     }
     let min_cam_dist = if stats.in_city {
-        (2.2 + stats.player_scale * 1.8).min(desired_dist)
+        (2.2 + cam_ps * 1.8).min(desired_dist)
     } else {
-        (2.2 + stats.player_scale * 0.45).min(desired_dist)
+        (2.2 + cam_ps * 0.45).min(desired_dist)
     };
     // The boom never pitches below BOOM_PITCH_MIN; any further "look up" tilts the view instead.
     let mut eff_pitch = (orbit.pitch.max(BOOM_PITCH_MIN) + (orbit.distance - 10.6).max(0.0) * 0.008)
@@ -1661,7 +1662,7 @@ pub fn update_camera(
     // yank the camera in. Skipped for the NYC Skyscraper Titan, which looks over the city.
     let mut safe_dist = desired_dist;
     let sweep_pad = Vec3::splat(0.22);
-    if !(stats.in_city && stats.player_scale >= 8.0) {
+    if !(stats.in_city && cam_ps >= 8.0) {
         for (p_tf_box, p_box) in &platform_q {
             if !stats.in_city && p_tf_box.translation.z > 46.5 {
                 continue;
@@ -1732,7 +1733,7 @@ pub fn update_camera(
     // `push_offset` instead of applied in one frame, and skipped entirely for the city kaiju
     // (it would hop the camera onto skyscraper roofs; passing through is less jarring).
     let mut push_target = Vec3::ZERO;
-    if !(stats.in_city && stats.player_scale >= 8.0) {
+    if !(stats.in_city && cam_ps >= 8.0) {
         let mut pushed = cam_pos;
         let cam_margin = Vec3::splat(0.38);
         for _ in 0..2 {
@@ -1792,7 +1793,7 @@ pub fn update_camera(
     cam_pos = cam_pos.clamp(room_min, room_max);
 
     let zoom_ratio = (orbit.current_dist / desired_dist.max(0.01)).clamp(0.15, 1.0);
-    let look_fwd = 1.0 * (0.45 + stats.player_scale.sqrt() * 0.22) * zoom_ratio;
+    let look_fwd = 1.0 * (0.45 + cam_ps.sqrt() * 0.22) * zoom_ratio;
     let mut look_target = follow
         + Vec3::new(0.0, anchor_y * 0.88, 0.0)
         - Vec3::new(orbit.yaw.sin(), 0.0, orbit.yaw.cos()) * look_fwd;
@@ -1826,7 +1827,14 @@ pub fn update_camera(
     let beer_amp = orbit.beer_amp;
 
     // Small FOV kick while dashing.
-    let kick_target = if player.dash_timer > 0.0 { 0.06 } else { 0.0 };
+    orbit.speed_kick_t = (orbit.speed_kick_t - dt).max(0.0);
+    let kick_target = if orbit.speed_kick_t > 0.0 {
+        0.11
+    } else if player.dash_timer > 0.0 {
+        0.06
+    } else {
+        0.0
+    };
     let kick_rate = if kick_target > orbit.fov_kick { 18.0 } else { 6.0 };
     orbit.fov_kick += (kick_target - orbit.fov_kick) * smooth_factor(kick_rate, dt);
 

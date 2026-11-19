@@ -611,7 +611,7 @@ pub fn update_hud(
             HudField::Hearts => format!("{}/{}", stats.hearts.max(0), stats.max_hearts),
             HudField::Tendies => {
                 if stats.in_city && stats.free_roam {
-                    format!("TENDY SNACKS {} (SCORE ONLY)", stats.roam_tendies)
+                    "CITY CLEARED".to_string()
                 } else if unlocked {
                     format!("TENDIES {}/{}", stats.tendies, stats.total_tendies)
                 } else {
@@ -691,9 +691,9 @@ pub fn update_hud(
         node.width = Val::Percent(stats.dash_energy.clamp(0.0, 100.0));
     }
     if let Ok((mut node, mut bg)) = tendy_bar_q.get_single_mut() {
-        // Free-roam tendies are score-only, so the growth bar stays empty.
+        // Free roam has no tendies; the bar reads as complete.
         let frac = if stats.in_city && stats.free_roam {
-            0.0
+            1.0
         } else {
             stats.tendies as f32 / stats.total_tendies.max(1) as f32
         };

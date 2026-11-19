@@ -128,8 +128,6 @@ pub struct PlayerStats {
     /// Lexie has been beaten at least once (persisted as checkpoint field 7, see
     /// `ui::save_game_checkpoint`). Survives restarts so a later save never drops the win.
     pub game_beaten: bool,
-    /// Score-only tendies eaten this free-roam run (they never touch `tendies` or Stan's size).
-    pub roam_tendies: u32,
 }
 
 impl Default for PlayerStats {
@@ -207,7 +205,6 @@ impl Default for PlayerStats {
             shake_request: 0.0,
             free_roam: false,
             game_beaten: false,
-            roam_tendies: 0,
         }
     }
 }
@@ -330,7 +327,6 @@ impl PlayerStats {
         self.in_city = true;
         self.boss_mode = false;
         self.tendies = 0;
-        self.roam_tendies = 0;
         self.total_tendies = 50;
         self.player_scale = 1.8;
         self.wave = 4;
@@ -339,6 +335,16 @@ impl PlayerStats {
         self.crew_unlock_announced = true;
         self.restore_gate_mask = 0;
         self.test_crew_preset = None;
+    }
+
+    /// Scale Stan's model is drawn at (and his saber and camera are sized for): `player_scale`
+    /// in the apartment, `city_body_scale(player_scale)` in the city.
+    pub fn body_scale(&self) -> f32 {
+        if self.in_city {
+            city_body_scale(self.player_scale)
+        } else {
+            self.player_scale
+        }
     }
 
     /// City tendies can be eaten once the gate is open. A run that already holds every tendy
@@ -433,6 +439,8 @@ pub struct CameraOrbit {
     pub blend_from_fov: f32,
     /// Smoothed FOV widening while dashing.
     pub fov_kick: f32,
+    /// Seconds of vehicle speed kick left (scooter turbo / boost re-arm it every frame).
+    pub speed_kick_t: f32,
     /// Smoothed collision push-out offset (eases instead of snapping the camera out of boxes).
     pub push_offset: Vec3,
     /// Hero facing recorded when leaving `CityPlay`, restored when resuming from a city cutscene.
@@ -440,6 +448,20 @@ pub struct CameraOrbit {
     /// Decaying camera-shake intensity (0 = none). Hits and kaiju footsteps raise it; it decays
     /// quickly in `update_camera`, which turns it into a small rotational jitter.
     pub shake: f32,
+}
+
+/// Share of the gameplay scale that hero and crew models are drawn at while human-sized in the
+/// city. Their models stand about 1.65 m per unit of scale, so the "180 cm" city scale of 1.8
+/// drew them close to 3 m tall beside 1.8 m pedestrians and 1.7 m cars.
+pub const CITY_HUMAN_SIZE: f32 = 0.68;
+
+/// Drawn scale for a hero or crew member whose gameplay scale in the city is `s`:
+/// `CITY_HUMAN_SIZE` x at the 1.8 starting size, easing back to 1x by scale 6 so the kaiju
+/// sizes against the skyline are unchanged. Gameplay numbers (speed, reach of pickups, growth
+/// thresholds) keep using the gameplay scale.
+pub fn city_body_scale(s: f32) -> f32 {
+    let t = ((s - 1.8) / 4.2).clamp(0.0, 1.0);
+    s * (CITY_HUMAN_SIZE + (1.0 - CITY_HUMAN_SIZE) * t)
 }
 
 /// Duration of the ease from a cutscene's last shot back into the gameplay follow camera.
@@ -473,6 +495,7 @@ impl Default for CameraOrbit {
             blend_from_rot: Quat::IDENTITY,
             blend_from_fov: std::f32::consts::FRAC_PI_4,
             fov_kick: 0.0,
+            speed_kick_t: 0.0,
             push_offset: Vec3::ZERO,
             saved_city_facing: 0.0,
             shake: 0.0,
