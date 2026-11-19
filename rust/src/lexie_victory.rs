@@ -1,12 +1,19 @@
 //! Kaiju Showdown victory meltdown cutscene (`GameState::LexieVictoryCutscene`):
 //! John Carpenter's *The Thing* (1982) practical-effects body horror in vivid color.
 //!
-//! Features procedural 256x256 PBR textures (necrotic veined flesh, striated viscera, boiling
-//! fermented garlic brine, and bloodshot sclera) with manual orthogonal vertex tangents (because
-//! `mikktspace` is disabled in `Cargo.toml`), a live CPU vertex-deforming biomass mound, an
-//! articulated chest rib-maw that splits open to unleash tentacles and throbbing organs, a
-//! detaching Spider-Head with telescoping eyestalks and unhinging jaw connected by dynamic
-//! mucus/tendon strands, swelling gas blisters, and all 5 crew avatars witnessing the meltdown.
+//! Why this was added:
+//! - Upgrades the post-Lexie finale into a grotesque, memorable set-piece featuring procedural
+//!   256x256 PBR flesh/viscera/brine/eye textures with manual tangents (since `mikktspace` is not
+//!   enabled in `Cargo.toml`), a live CPU vertex-deforming biomass mound, chest rib-maw rupture,
+//!   detaching Spider-Head with eyestalks and tendon strands, Stan + all 4 pub crew reacting, the
+//!   burning Cedar Rapids Quaker Oats complex on the distant horizon, and the surrounding dusk
+//!   Cedar Rapids cityscape (`spawn_victory_cityscape`).
+//!
+//! Gameplay impact:
+//! - Purely cinematic finale between defeating the Level 2 boss and `GameState::StageClear`; does
+//!   not alter boss HP, win conditions, score, checkpoints, or Post-Game Free Roam unlocking.
+//! - Every spawned 3D entity and UI node carries `LexieVictoryEntity` / `LexieVictoryOverlay` for
+//!   complete cleanup on exit, and the sequence remains hold-to-skip compatible via `crate::skip`.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -269,6 +276,9 @@ struct BioTextures {
     eye_albedo: Handle<Image>,
 }
 
+/// Procedural 256x256 PBR textures (necrotic flesh albedo/normal/roughness, striated viscera,
+/// fermented garlic brine, and bloodshot sclera). Why: delivers high-detail practical-effects body
+/// horror on WebGL2 without shipping large external image files. Gameplay impact: visual only.
 fn make_bio_textures(images: &mut Assets<Image>) -> BioTextures {
     const N: usize = 256;
     let nf = N as f32;
@@ -842,6 +852,11 @@ fn build_neg_z_sign_quad(w: f32, h: f32) -> Mesh {
         .with_inserted_indices(Indices::U32(idx))
 }
 
+/// Builds the distant burning Cedar Rapids Quaker Oats grain silos, brick oat mill, and rooftop
+/// `"QUAKER OATS"` billboard at `stage + (-46, 0, 185)` (`2.3x` scale). Why: adds a dramatic,
+/// unmistakable local Cedar Rapids skyline landmark burning behind Stan and his crew while keeping
+/// downtown towers visible beside it. Gameplay impact: purely atmospheric scenery + fire SFX, zero
+/// colliders, and fully despawned on exit via `LexieVictoryEntity`.
 fn spawn_quaker_oats_factory(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -1181,7 +1196,18 @@ fn spawn_quaker_oats_factory(
 
 /// Spawns the surrounding downtown Cedar Rapids dusk cityscape (streets, Cedar River & bridge,
 /// brick/limestone/glass high-rises, glowing office window bands, streetlights & skyline backdrop)
-/// around the combat plaza and distant burning Quaker Oats factory so nothing borders black void.
+/// around the combat plaza and distant burning Quaker Oats factory.
+///
+/// Why this was added:
+/// - `stage` sits at `(0, 0, -420)` far outside `CityWorldMarker`'s `±135m` playable city grid, so
+///   pushing Quaker Oats to the distant horizon originally left black empty void beside and behind it.
+///   Spawning a self-contained skyline here fills every camera frustum (Beat 1 `fov = 0.86` and Beat 4
+///   `fov = 0.80`) both after `CityPlay` and via `?lexie_victory=1` while preserving the riverfront
+///   sightline corridor to Quaker Oats and stopping cleanly at `stage.z + 254` short of `-135`.
+///
+/// Gameplay impact:
+/// - Purely visual atmosphere (`NotShadowCaster` on distant towers for WebGL2 performance, no
+///   `CityBuilding` ghosting and no `PlatformBox` colliders). 100% cleaned up by `LexieVictoryEntity`.
 fn spawn_victory_cityscape(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -1777,6 +1803,9 @@ fn spawn_victory_cityscape(
     }
 }
 
+/// Enters the finale stage with Cedar Rapids dusk lighting and spawns the procedural horror rig,
+/// surrounding downtown skyline (`spawn_victory_cityscape`), burning Quaker Oats horizon complex,
+/// live deforming mound, and all five crew witnesses. Gameplay impact: pure cutscene; cleanup runs on exit.
 pub fn enter_lexie_victory_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -3018,6 +3047,8 @@ pub fn update_lexie_victory_cutscene(
     }
 }
 
+/// Restores HUD visibility and default perspective FOV while despawning all `LexieVictoryEntity`
+/// horror rigs, distant Quaker Oats complex, and Cedar Rapids cityscape props before `StageClear`.
 pub fn exit_lexie_victory_cutscene(
     mut commands: Commands,
     ent_q: Query<Entity, With<LexieVictoryEntity>>,

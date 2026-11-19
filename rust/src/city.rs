@@ -1931,7 +1931,8 @@ pub fn spawn_nyc_world_if_needed(
 
     // Riverfront pier with the rideable RIVER STAR Ferris wheel in the river corner (ferris.rs).
     crate::ferris::spawn_ferris_wheel(commands, meshes, materials);
-    // Chillary Clinton waiting by the River Star Ferris wheel plaza (`chillary.rs`).
+    // Why: spawns an optional local Cedar Rapids easter-egg NPC just outside the Ferris wheel pier
+    // to reward boardwalk exploration (`chillary.rs`). Gameplay impact: non-essential; does not gate crew/boss.
     crate::chillary::spawn_city_chillary(commands, meshes, materials);
 
     // Spawn Colossal Overweight Blonde LEXIE atop Empire Citadel Tower Terrace!
@@ -3240,6 +3241,7 @@ pub fn enter_city_play(
         } else if from_glenn {
             format!("GLENN JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
         } else if from_chillary {
+            // Optional boardwalk easter egg completed; crew gate stays unchanged.
             "JUST CHILLIN' IN CEDAR RAPIDS! Chillary's Snapchat is live.".to_string()
         } else {
             format!("TJ JOINED YOUR SQUAD! {}", crew_line)
@@ -5539,6 +5541,8 @@ pub fn update_city_props(
     let action = if wheel.label.is_some() {
         Some(PropAction::Wheel)
     } else if chillary.label.is_some() {
+        // Yield to Ferris wheel boarding (`PropAction::Wheel`) so players riding or hopping onto
+        // the wheel are never hijacked into the optional boardwalk easter-egg cutscene.
         Some(PropAction::Chillary)
     } else if near_beer {
         Some(PropAction::Beer)

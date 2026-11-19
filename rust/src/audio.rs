@@ -101,6 +101,8 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setUzumakiMode)]
         fn js_set_uzumaki_mode(level: u8);
 
+        // Why: toggles the crisp browser-DPI *They Live* CSS contrast filter and subliminal placard
+        // overlay during Chillary's 1-second reptile flash (`index.html`). Gameplay impact: visual only.
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setTheyLiveMode)]
         fn js_set_they_live_mode(active: bool);
 
@@ -387,6 +389,8 @@ mod imp {
         js_set_uzumaki_mode(level);
     }
 
+    /// Toggles crisp HTML/CSS *They Live* contrast grading and subliminal placards (`index.html`).
+    /// Gameplay impact: purely visual overlay (`pointer-events: none`), zero effect on controls.
     pub fn set_they_live_mode(active: bool) {
         js_set_they_live_mode(active);
     }
@@ -641,6 +645,7 @@ mod imp {
 
     pub fn set_uzumaki_mode(_level: u8) {}
 
+    /// Native check stub mirroring the wasm32 *They Live* DOM overlay toggle.
     pub fn set_they_live_mode(_active: bool) {}
 
     pub fn set_tutorial_visible(_active: bool) {}

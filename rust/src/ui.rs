@@ -1089,7 +1089,8 @@ pub fn check_url_test_mode(
             stats.prepare_free_roam();
             next_state.set_from_black(GameState::CityPlay);
         }
-        // `chillary=1`: jump straight to Chillary Clinton's "just chillin in Cedar Rapids" cutscene.
+        // `?chillary=1`: QA/dev direct-preview link for the optional boardwalk NPC cutscene so it can
+        // be verified without walking to the River Star pier; has zero effect on normal gameplay.
         18 => {
             stats.in_city = true;
             stats.tendies = 0;

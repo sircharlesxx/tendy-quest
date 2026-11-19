@@ -1,6 +1,21 @@
-//! Chillary Clinton NPC by the River Star Ferris wheel & her "Just Chillin' in Cedar Rapids"
-//! viral Snapchat re-enactment + John Carpenter's *They Live* 1-second reptile reveal cutscene
-//! (`GameState::ChillaryCutscene`).
+//! Optional Cedar Rapids easter-egg NPC by the River Star Ferris wheel & her "Just Chillin' in
+//! Cedar Rapids" viral Snapchat re-enactment + John Carpenter's *They Live* 1-second reptile
+//! reveal cutscene (`GameState::ChillaryCutscene`).
+//!
+//! Why this was added:
+//! - Gives exploring the River Star boardwalk plaza a humorous Cedar Rapids homage that opens with
+//!   Stan walking in on her filming the selfie video, escalates with a sudden 1.0-second *They Live*
+//!   reptilian reveal (`OBEY / CONFORM / STAY ASLEEP`), and ends with her calmly gaslighting Stan
+//!   so the gag has full comedic pacing instead of ending abruptly.
+//!
+//! Gameplay impact:
+//! - Completely optional secret interaction: **does NOT affect the Level 2 crew recruitment gate**,
+//!   tendy unlocking, boss fight rules, or checkpoint save requirements.
+//! - Interaction guards (`!riding_wheel`, no vehicle/phone, `player_scale < 4.5`, `y < 3.0`) and
+//!   `city.rs` prompt priority ensure it never blocks boarding the Ferris wheel or Kaiju combat.
+//! - First completion awards a modest one-time `+250` score and `+1` heart (clamped to
+//!   `max_hearts`, guarded by `stats.chillary_chilled`), returns Stan safely to `saved_city_pos`,
+//!   and cleanly clears all overlay/voice state even when skipped via `crate::skip`.
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
@@ -21,19 +36,23 @@ pub const CHILLARY_POS: Vec3 = Vec3::new(-104.38, 0.35, 111.17);
 const CHILLARY_INTERACT_RANGE: f32 = 4.2;
 
 const REPTILE_GLITCH_START: f32 = 0.65;
+/// Glitch runs for 1.00s (`0.65..1.65`) before snapping right back to normal smiling Chillary.
 const REPTILE_GLITCH_END: f32 = 1.65;
 
+/// Optional boardwalk interaction state bridged into `city::update_city_props`.
 #[derive(Resource, Default)]
 pub struct ChillaryPrompt {
     pub label: Option<String>,
     pub pressed: bool,
 }
 
+/// Beat clock and one-shot SFX edge gate (`reptile_stage`) for `GameState::ChillaryCutscene`.
 #[derive(Resource, Default)]
 pub struct ChillaryCutsceneState {
     pub beat: u8,
     pub beat_t: f32,
     pub total_t: f32,
+    /// `0` = pre-glitch, `1` = 1.0s *They Live* reptile SFX fired, `2` = snap-back SFX fired.
     pub reptile_stage: u8,
 }
 
@@ -61,6 +80,8 @@ pub struct ChillarySpeakerText;
 #[derive(Component)]
 pub struct ChillarySubText;
 
+/// Groups UI elements whose `Visibility` toggles between selfie framing and widescreen reaction
+/// shots (`update_chillary_cutscene`) under one query to avoid Bevy B0001 mutable-visibility aliasing.
 #[derive(Component, Clone, Copy)]
 pub enum ChillaryUiSlot {
     SnapChrome,
@@ -78,6 +99,8 @@ pub struct ChillaryAnim {
     pub kind: ChillaryPart,
 }
 
+/// Unified animated-part tags queried cleanly without camera/UI alias conflicts; `HumanHead` and
+/// `ReptileHead` swap visibility beneath the shared hair/earring `Head` root during Beat 3.
 #[derive(Clone, Copy)]
 pub enum ChillaryPart {
     BodyRoot,
@@ -804,6 +827,8 @@ pub fn update_city_chillary(
         b_tf.rotate_y(time.delta_secs() * 2.2);
     }
 
+    // Only offer the boardwalk easter egg while Stan is standing on foot at normal scale so it
+    // never fires during Kaiju rampages, gondola rides, driving, or aerial stunts.
     let can_interact = !stats.riding_wheel
         && stats.driving_car.is_none()
         && stats.riding_scooter.is_none()
@@ -843,6 +868,8 @@ pub fn enter_chillary_cutscene(
     mut clear_col: ResMut<ClearColor>,
 ) {
     *c_state = ChillaryCutsceneState::default();
+    // Defensive cleanup: guarantees *They Live* contrast grading and Beat 3 silence never linger
+    // across restarts or mid-glitch skips (`crate::skip`) back into `CityPlay`.
     set_they_live_mode(false);
     for mut hv in &mut hud_q {
         *hv = Visibility::Hidden;
@@ -1626,6 +1653,8 @@ pub fn exit_chillary_cutscene(
     mut cam_q: Query<&mut Projection, With<Camera3d>>,
     mut hud_q: Query<&mut Visibility, With<HudOverlay>>,
 ) {
+    // Defensive cleanup: guarantees *They Live* contrast grading and Beat 3 silence never linger
+    // across restarts or mid-glitch skips (`crate::skip`) back into `CityPlay`.
     set_they_live_mode(false);
     stop_voice();
     for e in &ent_q {
@@ -1642,6 +1671,7 @@ pub fn exit_chillary_cutscene(
             p.fov = std::f32::consts::FRAC_PI_4;
         }
     }
+    // Modest one-time exploration bonus (`+250` score, `+1` heart); leaves crew gate and tendies untouched.
     if !stats.chillary_chilled {
         stats.chillary_chilled = true;
         stats.score += 250;

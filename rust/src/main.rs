@@ -126,6 +126,7 @@ fn main() {
         .init_resource::<LexieVictoryState>()
         .init_resource::<NateCutsceneState>()
         .init_resource::<GlennCutsceneState>()
+        // Optional boardwalk easter-egg cutscene resources; independent of crew/boss progression.
         .init_resource::<ChillaryCutsceneState>()
         .init_resource::<ChillaryPrompt>()
         .init_resource::<stunts::StuntState>()
@@ -295,6 +296,9 @@ fn main() {
             Update,
             // Beer tower, parked car and the license card. After the crew so a same-frame
             // interact hint from the bar wins over Glenn's free-roam line.
+            // Why `.chain()` includes `update_city_chillary` ahead of `update_city_props`:
+            // populates `ChillaryPrompt` same-frame with zero 1-frame UI lag, while `update_city_props`
+            // keeps Ferris wheel boarding higher priority so players trying to ride aren't interrupted.
             (
                 update_city_chillary,
                 city::update_city_props,

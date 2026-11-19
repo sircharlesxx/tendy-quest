@@ -35,6 +35,8 @@ pub const CUTSCENE_STATES: [GameState; 11] = [
     GameState::DerekCutscene,
     GameState::NateCutscene,
     GameState::GlennCutscene,
+    // Registered so hold-to-skip jumps cleanly out of the optional boardwalk cutscene and restores
+    // CityPlay position, audio, and DOM filters via `exit_chillary_cutscene`.
     GameState::ChillaryCutscene,
     GameState::LexieVictoryCutscene,
 ];

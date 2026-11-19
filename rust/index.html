@@ -427,6 +427,10 @@
           mkOsc("sine", 55, 115, 0.24, 0.26);
           return true;
         }
+        // Why: procedural WebAudio body-horror Foley (`flesh_tear`, `wet_squelch`, `bone_crack`,
+        // `thing_shriek`), distant industrial fire roar (`fire_roar`), and optional cutscene camera/
+        // glitch SFX (`snap_*`, `they_live_*`, `reptile_hiss`) avoid shipping extra audio assets
+        // while keeping mute/skip behavior intact. Gameplay impact: atmospheric audio only.
         // --- Body-horror Foley for John Carpenter's The Thing style Lexie meltdown ---
         const mkResNoise = (filterType, delay, dur, gainPeak, f0, f1, q) => {
           if (!sfxNoiseBuf || sfxNoiseBuf.sampleRate !== ac.sampleRate) {
@@ -1177,6 +1181,7 @@
           nate: { pitch: 1.28, rate: 1.12, volume: 1.0, g: "m" },
           glenn: { pitch: 0.62, rate: 0.88, volume: 1.0, g: "m" },
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
+          // Voice profile for the optional River Star boardwalk easter-egg NPC.
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
@@ -1854,6 +1859,9 @@
       from { margin-left: -2px; margin-top: -1px; }
       to { margin-left: 2px; margin-top: 2px; }
     }
+    /* Why: *They Live* visual filter & subliminal cards live in HTML/CSS so text stays crisp at
+       native browser DPI during the 1.0-second reptile flash (`setTheyLiveMode`). Gameplay impact:
+       purely visual (`pointer-events: none`), zero effect on input or controls. */
     body.they-live-mode canvas {
       filter: saturate(0.42) contrast(195%) brightness(1.03);
     }
@@ -2498,6 +2506,7 @@
         if (s.includes("glenn=1")) return 12;
         if (s.includes("mike=1")) return 13;
         if (s.includes("lexie_victory=1")) return 14;
+        // QA/dev direct-preview mode (mode 18); zero effect during standard play.
         if (s.includes("chillary=1")) return 18;
         return 0;
       })();

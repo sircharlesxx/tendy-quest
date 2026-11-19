@@ -22,6 +22,7 @@ pub enum GameState {
     DerekCutscene,
     NateCutscene,
     GlennCutscene,
+    /// Optional boardwalk NPC easter-egg cutscene (`chillary.rs`); non-blocking for Level 2 progress.
     ChillaryCutscene,
     LexieVictoryCutscene,
     StageClear,
@@ -70,7 +71,10 @@ pub struct PlayerStats {
     pub derek_return_city: bool,
     pub nate_return_city: bool,
     pub glenn_return_city: bool,
+    /// Restores Stan to the River Star pier after `ChillaryCutscene` without resetting the city run.
     pub chillary_return_city: bool,
+    /// Caps the optional boardwalk easter-egg reward (`+250` score, `+1` heart) to once per run;
+    /// does not affect Level 2 crew recruitment or boss progression.
     pub chillary_chilled: bool,
     /// Crew recruitment flags (TJ uses `tj_recruited`). These are the source of truth for the
     /// Level 2 crew gate; the city NPC components mirror them.

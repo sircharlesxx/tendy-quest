@@ -729,11 +729,16 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         | GameState::DerekCutscene
         | GameState::NateCutscene
         | GameState::GlennCutscene
+        // Why: `LexieVictoryCutscene` needs the 900m Cedar Rapids twilight `SkyDome`, warm
+        // atmospheric fog, and city sun light so the burning Quaker Oats plant and surrounding
+        // downtown skyline sit against dusk sky instead of black void. Gameplay impact: visual only.
         | GameState::LexieVictoryCutscene => SceneKind::City,
         GameState::Cutscene
         | GameState::HeadphoneCutscene
         | GameState::MikeCutscene
         | GameState::TjCutscene
+        // Why: Chillary's cutscene takes place inside a bright daytime sunlit kitchen (`SceneKind::Stylized`
+        // keeps indoor lighting crisp without rendering an outdoor dusk sky dome behind walls).
         | GameState::ChillaryCutscene => SceneKind::Stylized,
     }
 }
@@ -822,6 +827,9 @@ fn apply_scene_rig(
 
     // Sun: direction (pointing from), colour, illuminance and a cascade fitted to the camera's
     // working distance so a single WebGL2 cascade stays crisp at any hero scale.
+    // Why: pin `city_sf = 1.0` during `LexieVictoryCutscene` so a 6500cm finale run (`scale = 18.0`)
+    // keeps identical exposure, shadow cascade (70m), and dusk fog range (60..420m) to `?lexie_victory=1`
+    // rather than washing out the burning factory and cityscape. Gameplay impact: purely visual.
     let city_sf = if *state.get() == GameState::LexieVictoryCutscene {
         1.0
     } else {
