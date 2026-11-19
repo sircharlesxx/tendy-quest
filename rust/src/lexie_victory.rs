@@ -895,11 +895,14 @@ fn spawn_quaker_oats_factory(
     });
     let win_mesh = meshes.add(Cuboid::new(1.22, 1.15, 0.14));
     let sign_quad_mesh = meshes.add(build_neg_z_sign_quad(10.2, 2.55));
-    let pad_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.06, 0.06, 0.08),
-        perceptual_roughness: 0.85,
-        ..default()
-    });
+    let pad_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.46, 0.44, 0.41),
+            perceptual_roughness: 0.88,
+            ..default()
+        },
+        crate::gfx::CityTex::Pavers,
+    ));
 
     // Static Quaker Oats silos, oat mill, smokestacks & rooftop sign under one `2.3x` scaled root
     commands
@@ -909,11 +912,11 @@ fn spawn_quaker_oats_factory(
             Visibility::default(),
         ))
         .with_children(|fac| {
-            // Ground foundation pad beneath the distant factory complex
+            // Concrete foundation pad sitting cleanly above the surrounding street slab (`top_y = -0.05`)
             fac.spawn((
-                Mesh3d(meshes.add(Cuboid::new(34.0, 0.4, 16.0))),
+                Mesh3d(meshes.add(Cuboid::new(34.0, 0.16, 16.0))),
                 MeshMaterial3d(pad_mat),
-                Transform::from_xyz(1.5, -0.2, 1.5),
+                Transform::from_xyz(1.5, 0.04, 1.5),
             ));
 
             // 1. Towering Concrete Grain Silos (two staggered rows) + headhouse gallery
@@ -1176,6 +1179,604 @@ fn spawn_quaker_oats_factory(
     ));
 }
 
+/// Spawns the surrounding downtown Cedar Rapids dusk cityscape (streets, Cedar River & bridge,
+/// brick/limestone/glass high-rises, glowing office window bands, streetlights & skyline backdrop)
+/// around the combat plaza and distant burning Quaker Oats factory so nothing borders black void.
+fn spawn_victory_cityscape(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    stage: Vec3,
+) {
+    let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
+    let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
+    let unit_sphere = meshes.add(Sphere::new(1.0));
+    let lamp_sphere = meshes.add(Sphere::new(0.28));
+    let beacon_sphere = meshes.add(Sphere::new(0.42));
+
+    let asphalt_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.22, 0.23, 0.25),
+            perceptual_roughness: 0.86,
+            ..default()
+        },
+        crate::gfx::CityTex::Asphalt,
+    ));
+    let paver_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.62, 0.60, 0.56),
+            perceptual_roughness: 0.88,
+            ..default()
+        },
+        crate::gfx::CityTex::Pavers,
+    ));
+    let brick_walk_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.52, 0.27, 0.22),
+            perceptual_roughness: 0.90,
+            ..default()
+        },
+        crate::gfx::CityTex::Brick,
+    ));
+    let bike_lane_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.24, 0.56, 0.30),
+            perceptual_roughness: 0.82,
+            ..default()
+        },
+        crate::gfx::CityTex::Paint,
+    ));
+    let yellow_stripe = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.95, 0.74, 0.14),
+            perceptual_roughness: 0.55,
+            ..default()
+        },
+        crate::gfx::CityTex::Paint,
+    ));
+    let water_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgba(0.06, 0.22, 0.40, 0.94),
+            metallic: 0.35,
+            perceptual_roughness: 0.18,
+            ..default()
+        },
+        crate::gfx::CityTex::Water,
+    ));
+    let trunk_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.32, 0.22, 0.14),
+            perceptual_roughness: 0.90,
+            ..default()
+        },
+        crate::gfx::CityTex::Bark,
+    ));
+    let leaf_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.20, 0.52, 0.22),
+            perceptual_roughness: 0.85,
+            uv_transform: bevy::math::Affine2::from_scale(Vec2::new(4.0, 2.0)),
+            ..default()
+        },
+        crate::gfx::CityTex::Foliage,
+    ));
+
+    // Exact downtown Cedar Rapids facade palette matching `city.rs`
+    let building_mats = [
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.48, 0.23, 0.18),
+                perceptual_roughness: 0.82,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeBrick,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.58, 0.46, 0.36),
+                perceptual_roughness: 0.78,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeConcrete,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.72, 0.68, 0.60),
+                perceptual_roughness: 0.72,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeConcrete,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.36, 0.22, 0.20),
+                perceptual_roughness: 0.84,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeBrick,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.32, 0.44, 0.50),
+                metallic: 0.45,
+                perceptual_roughness: 0.28,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeGlass,
+        )),
+    ];
+    let roof_mats = building_mats.clone().map(|h| {
+        let c = materials.get(&h).map(|m| m.base_color).unwrap_or(Color::WHITE);
+        materials.add(crate::gfx::city_roof_material(c))
+    });
+    let window_base_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.20, 0.26),
+        metallic: 0.55,
+        perceptual_roughness: 0.22,
+        ..default()
+    });
+    let billboard_mats = [
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.86, 0.76, 0.52),
+                perceptual_roughness: 0.6,
+                ..default()
+            },
+            crate::gfx::CityTex::Billboard,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.16, 0.44, 0.26),
+                perceptual_roughness: 0.7,
+                ..default()
+            },
+            crate::gfx::CityTex::Billboard,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.68, 0.22, 0.18),
+                perceptual_roughness: 0.7,
+                ..default()
+            },
+            crate::gfx::CityTex::Billboard,
+        )),
+    ];
+    let pole_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.12, 0.14, 0.17),
+        metallic: 0.7,
+        perceptual_roughness: 0.4,
+        ..default()
+    });
+    let street_lamp_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.86, 0.55),
+        emissive: LinearRgba::new(3.2, 2.1, 0.65, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let spire_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.86, 0.88, 0.92),
+        metallic: 0.55,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let beacon_red_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.18, 0.12),
+        emissive: LinearRgba::new(4.2, 0.25, 0.15, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let parapet_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.84, 0.83, 0.80),
+        perceptual_roughness: 0.75,
+        ..default()
+    });
+
+    // 1. Continuous 760m x 620m asphalt city ground slab (`top_y = -0.05` below the 32x32 combat plaza)
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(760.0, 1.0, 620.0),
+            Vec3::new(760.0, 1.0, 620.0),
+            Vec2::splat(14.0),
+            -1.0,
+            None,
+        ))),
+        MeshMaterial3d(asphalt_mat.clone()),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.55, 130.0)),
+    ));
+
+    // 2. 3rd St SE Avenue corridor (`z = 16..270`), bike lanes, brick walks, cross streets & amber streetlights
+    let ave_len = 254.0_f32;
+    let ave_z = 143.0_f32;
+    for off in [-0.28_f32, 0.28] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::ONE,
+                Vec3::new(0.22, 0.02, ave_len),
+                Vec2::splat(1.5),
+                0.0,
+                None,
+            ))),
+            MeshMaterial3d(yellow_stripe.clone()),
+            Transform::from_translation(stage + Vec3::new(off, 0.005, ave_z))
+                .with_scale(Vec3::new(0.22, 0.02, ave_len)),
+        ));
+    }
+    for sx in [-5.8_f32, 5.8] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::ONE,
+                Vec3::new(1.8, 0.02, ave_len),
+                Vec2::splat(3.0),
+                0.0,
+                None,
+            ))),
+            MeshMaterial3d(bike_lane_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(sx, 0.006, ave_z))
+                .with_scale(Vec3::new(1.8, 0.02, ave_len)),
+        ));
+    }
+    for sx in [-9.2_f32, 9.2] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::ONE,
+                Vec3::new(2.4, 0.06, ave_len),
+                Vec2::splat(1.2),
+                0.0,
+                None,
+            ))),
+            MeshMaterial3d(brick_walk_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(sx, -0.01, ave_z))
+                .with_scale(Vec3::new(2.4, 0.06, ave_len)),
+        ));
+    }
+    let cross_mesh = meshes.add(crate::gfx::tiled_box(
+        Vec3::ONE,
+        Vec3::new(420.0, 0.02, 0.24),
+        Vec2::splat(1.5),
+        0.0,
+        None,
+    ));
+    for &cz in &[44.0_f32, 84.0, 122.0, 168.0, 212.0] {
+        for off in [-0.30_f32, 0.30] {
+            commands.spawn((
+                LexieVictoryEntity,
+                Mesh3d(cross_mesh.clone()),
+                MeshMaterial3d(yellow_stripe.clone()),
+                Transform::from_translation(stage + Vec3::new(0.0, -0.03, cz + off))
+                    .with_scale(Vec3::new(420.0, 0.02, 0.24)),
+            ));
+        }
+    }
+    for &lz in &[22.0_f32, 46.0, 70.0, 94.0, 118.0, 164.0] {
+        for sx in [-10.5_f32, 10.5] {
+            commands.spawn((
+                LexieVictoryEntity,
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(pole_mat.clone()),
+                Transform::from_translation(stage + Vec3::new(sx, 3.1, lz))
+                    .with_scale(Vec3::new(0.14, 6.2, 0.14)),
+            ));
+            commands.spawn((
+                LexieVictoryEntity,
+                Mesh3d(lamp_sphere.clone()),
+                MeshMaterial3d(street_lamp_mat.clone()),
+                Transform::from_translation(stage + Vec3::new(sx - sx.signum() * 0.55, 6.25, lz)),
+            ));
+        }
+    }
+
+    // 3. Cedar River waterfront (`z = 148`) + concrete seawalls + 3rd Ave Bridge
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(720.0, 0.06, 24.0),
+            Vec3::new(720.0, 0.06, 24.0),
+            Vec2::splat(10.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(water_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, 0.01, 148.0)),
+    ));
+    let seawall_mesh = meshes.add(crate::gfx::tiled_box(
+        Vec3::ONE,
+        Vec3::new(720.0, 0.6, 0.8),
+        Vec2::splat(3.0),
+        0.0,
+        None,
+    ));
+    for wall_z in [135.8_f32, 160.2] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(seawall_mesh.clone()),
+            MeshMaterial3d(paver_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(0.0, 0.25, wall_z))
+                .with_scale(Vec3::new(720.0, 0.6, 0.8)),
+        ));
+    }
+    commands.spawn((
+        LexieVictoryEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(20.0, 0.24, 26.0),
+            Vec3::new(20.0, 0.24, 26.0),
+            Vec2::splat(8.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(asphalt_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, 0.16, 148.0)),
+    ));
+    for bx in [-9.8_f32, 9.8] {
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(parapet_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(bx, 0.72, 148.0))
+                .with_scale(Vec3::new(0.45, 0.9, 26.2)),
+        ));
+        for bz in [140.0_f32, 156.0] {
+            commands.spawn((
+                LexieVictoryEntity,
+                Mesh3d(lamp_sphere.clone()),
+                MeshMaterial3d(street_lamp_mat.clone()),
+                Transform::from_translation(stage + Vec3::new(bx, 2.25, bz)),
+            ));
+        }
+    }
+
+    // 4. Downtown towers with tiled facades, lit CityWindowBand strips, penthouses & aviation beacons
+    let mut add_tower = |x: f32, z: f32, w: f32, d: f32, h: f32, mat_i: usize, has_spire: bool, has_billboard: bool| {
+        let m = mat_i % building_mats.len();
+        let b_mat = building_mats[m].clone();
+        let r_mat = roof_mats[m].clone();
+        let no_shadow = z.abs() > 65.0;
+
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::new(w + 5.0, 0.12, d + 5.0),
+                Vec3::new(w + 5.0, 0.12, d + 5.0),
+                Vec2::splat(3.0),
+                0.0,
+                None,
+            ))),
+            MeshMaterial3d(paver_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(x, 0.01, z)),
+        ));
+
+        let mut root = commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::new(w, h, d),
+                Vec3::new(w, h, d),
+                crate::gfx::FACADE_TILE,
+                0.0,
+                Some(crate::gfx::FACADE_FLAT_UV),
+            ))),
+            MeshMaterial3d(b_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(x, h * 0.5, z)),
+        ));
+        if no_shadow {
+            root.insert(bevy::pbr::NotShadowCaster);
+        }
+
+        root.with_children(|b| {
+            // Roof membrane cap
+            let mut rc = b.spawn((
+                Mesh3d(meshes.add(crate::gfx::tiled_box(
+                    Vec3::ONE,
+                    Vec3::new(w, 0.06, d),
+                    Vec2::splat(6.0),
+                    0.0,
+                    None,
+                ))),
+                MeshMaterial3d(r_mat.clone()),
+                Transform::from_xyz(0.0, h * 0.5 + 0.03, 0.0).with_scale(Vec3::new(w, 0.06, d)),
+            ));
+            if no_shadow {
+                rc.insert(bevy::pbr::NotShadowCaster);
+            }
+
+            // Setback penthouse + cap
+            if h >= 22.0 {
+                let (pw, pd) = (w * 0.60, d * 0.60);
+                let mut ph = b.spawn((
+                    Mesh3d(meshes.add(crate::gfx::tiled_box(
+                        Vec3::ONE,
+                        Vec3::new(pw, 5.6, pd),
+                        crate::gfx::FACADE_TILE,
+                        h,
+                        Some(crate::gfx::FACADE_FLAT_UV),
+                    ))),
+                    MeshMaterial3d(b_mat.clone()),
+                    Transform::from_xyz(0.0, h * 0.5 + 2.8, 0.0).with_scale(Vec3::new(pw, 5.6, pd)),
+                ));
+                if no_shadow {
+                    ph.insert(bevy::pbr::NotShadowCaster);
+                }
+                let mut pr = b.spawn((
+                    Mesh3d(meshes.add(crate::gfx::tiled_box(
+                        Vec3::ONE,
+                        Vec3::new(pw, 0.06, pd),
+                        Vec2::splat(6.0),
+                        0.0,
+                        None,
+                    ))),
+                    MeshMaterial3d(r_mat.clone()),
+                    Transform::from_xyz(0.0, h * 0.5 + 5.63, 0.0).with_scale(Vec3::new(pw, 0.06, pd)),
+                ));
+                if no_shadow {
+                    pr.insert(bevy::pbr::NotShadowCaster);
+                }
+            }
+
+            if has_spire {
+                let top_y = if h >= 22.0 { h * 0.5 + 5.6 } else { h * 0.5 };
+                let mut sp = b.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(spire_mat.clone()),
+                    Transform::from_xyz(0.0, top_y + 4.2, 0.0).with_scale(Vec3::new(0.28, 8.4, 0.28)),
+                ));
+                if no_shadow {
+                    sp.insert(bevy::pbr::NotShadowCaster);
+                }
+                b.spawn((
+                    Mesh3d(beacon_sphere.clone()),
+                    MeshMaterial3d(beacon_red_mat.clone()),
+                    Transform::from_xyz(0.0, top_y + 8.5, 0.0),
+                    bevy::pbr::NotShadowCaster,
+                ));
+            }
+
+            // Illuminated CityWindowBand rows aligned to 5.2m FACADE_TILE pitch on all 4 walls
+            let bands = ((h - 6.0) / 5.5).floor() as i32;
+            for floor_i in 0..bands.min(8) {
+                let ly = -h * 0.5 + 4.5 + floor_i as f32 * 5.2;
+                let mut wx = b.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(window_base_mat.clone()),
+                    crate::gfx::CityWindowBand,
+                    Transform::from_xyz(0.0, ly, 0.0).with_scale(Vec3::new(w + 0.22, 1.35, d * 0.84)),
+                ));
+                if no_shadow {
+                    wx.insert(bevy::pbr::NotShadowCaster);
+                }
+                let mut wz = b.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(window_base_mat.clone()),
+                    crate::gfx::CityWindowBand,
+                    Transform::from_xyz(0.0, ly, 0.0).with_scale(Vec3::new(w * 0.84, 1.35, d + 0.22)),
+                ));
+                if no_shadow {
+                    wz.insert(bevy::pbr::NotShadowCaster);
+                }
+            }
+
+            if has_billboard {
+                b.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(billboard_mats[m % billboard_mats.len()].clone()),
+                    Transform::from_xyz(0.0, -h * 0.5 + 11.0, -d * 0.5 - 0.35)
+                        .with_scale(Vec3::new(10.5, 4.4, 0.4)),
+                ));
+            }
+        });
+    };
+
+    // Left Downtown Canyon (+X on screen, z = 26..130)
+    for (x, z, w, d, h, m, spire, bb) in [
+        (24.0_f32, 30.0_f32, 17.0_f32, 17.0_f32, 24.0_f32, 0_usize, false, true),
+        (24.0, 62.0, 18.0, 17.0, 32.0, 4, true, true),
+        (24.0, 96.0, 17.0, 18.0, 28.0, 1, false, false),
+        (22.0, 124.0, 18.0, 16.0, 36.0, 2, true, false),
+        (54.0, 34.0, 18.0, 18.0, 30.0, 2, false, false),
+        (56.0, 68.0, 19.0, 18.0, 42.0, 4, true, false),
+        (58.0, 102.0, 18.0, 18.0, 34.0, 0, false, false),
+        (54.0, 126.0, 20.0, 16.0, 46.0, 4, true, false),
+        (92.0, 48.0, 20.0, 20.0, 26.0, 3, false, false),
+        (94.0, 88.0, 20.0, 20.0, 38.0, 1, false, false),
+        (96.0, 124.0, 22.0, 18.0, 32.0, 2, false, false),
+        (134.0, 96.0, 22.0, 20.0, 28.0, 0, false, false),
+    ] {
+        add_tower(x, z, w, d, h, m, spire, bb);
+    }
+
+    // Right Downtown & Westside (-X on screen, clear of Quaker Oats sightline cone)
+    for (x, z, w, d, h, m, spire, bb) in [
+        (-30.0_f32, 30.0_f32, 16.0_f32, 16.0_f32, 22.0_f32, 3_usize, false, true),
+        (-52.0, 62.0, 18.0, 18.0, 28.0, 1, false, false),
+        (-82.0, 66.0, 18.0, 18.0, 34.0, 4, true, false),
+        (-70.0, 98.0, 18.0, 18.0, 30.0, 0, false, false),
+        (-106.0, 98.0, 20.0, 18.0, 38.0, 2, true, false),
+        (-142.0, 102.0, 20.0, 20.0, 28.0, 3, false, false),
+        (-88.0, 126.0, 18.0, 16.0, 26.0, 1, false, false),
+        (-124.0, 126.0, 20.0, 18.0, 36.0, 4, true, false),
+        (-162.0, 126.0, 22.0, 18.0, 30.0, 0, false, false),
+    ] {
+        add_tower(x, z, w, d, h, m, spire, bb);
+    }
+
+    // Low Riverfront Midground Depots (h <= 5.6m keeps sightline to distant burning factory wide open)
+    for (x, z, w, d, h, m) in [
+        (-16.0_f32, 82.0_f32, 10.0_f32, 9.0_f32, 5.2_f32, 0_usize),
+        (-30.0, 114.0, 12.0, 9.0, 5.6, 3),
+        (-8.0, 118.0, 10.0, 8.0, 4.8, 1),
+    ] {
+        add_tower(x, z, w, d, h, m, false, false);
+    }
+
+    // Direct Skyline Neighbors Left & Right of Burning Quaker Oats (`z = 172..204`)
+    for (x, z, w, d, h, m, spire) in [
+        (14.0_f32, 178.0_f32, 20.0_f32, 18.0_f32, 44.0_f32, 4_usize, true),
+        (44.0, 180.0, 22.0, 20.0, 56.0, 2, true),
+        (76.0, 176.0, 20.0, 20.0, 38.0, 0, false),
+        (110.0, 184.0, 22.0, 20.0, 48.0, 4, true),
+        (146.0, 180.0, 24.0, 20.0, 36.0, 1, false),
+        (184.0, 186.0, 24.0, 22.0, 32.0, 3, false),
+        (-96.0, 180.0, 20.0, 18.0, 34.0, 0, false),
+        (-128.0, 176.0, 22.0, 20.0, 46.0, 4, true),
+        (-162.0, 182.0, 22.0, 20.0, 38.0, 2, false),
+        (-198.0, 178.0, 24.0, 20.0, 42.0, 1, true),
+        (-236.0, 184.0, 24.0, 22.0, 32.0, 3, false),
+        (-274.0, 188.0, 24.0, 22.0, 28.0, 0, false),
+    ] {
+        add_tower(x, z, w, d, h, m, spire, false);
+    }
+
+    // Continuous Far Horizon Skyline Curtain behind Quaker Oats (`z = 224..254`, clear of CityWorldMarker)
+    for (i, &hx) in [
+        -305.0_f32, -265.0, -225.0, -185.0, -145.0, -105.0, -68.0, -36.0, -4.0, 32.0, 68.0, 108.0,
+        148.0, 188.0, 220.0,
+    ]
+    .iter()
+    .enumerate()
+    {
+        let hz = if i % 2 == 0 { 228.0 } else { 246.0 };
+        let behind_quaker = (-80.0..=-4.0).contains(&hx);
+        let h = if behind_quaker {
+            15.5 + (i % 3) as f32 * 2.5
+        } else {
+            28.0 + ((i * 13) % 24) as f32
+        };
+        add_tower(hx, hz, 26.0, 22.0, h, i, !behind_quaker && i % 3 == 0, false);
+    }
+
+    // Rear -Z Horizon Backdrop behind Lexie (`z = -58..-118`, well behind the spiral rings at `z = -5.2`)
+    for (x, z, w, d, h, m, spire) in [
+        (-52.0_f32, -62.0_f32, 20.0_f32, 20.0_f32, 26.0_f32, 1_usize, false),
+        (52.0, -62.0, 20.0, 20.0, 28.0, 0, false),
+        (-84.0, -95.0, 22.0, 20.0, 34.0, 4, true),
+        (84.0, -95.0, 22.0, 20.0, 32.0, 2, true),
+        (-26.0, -112.0, 22.0, 20.0, 24.0, 3, false),
+        (28.0, -112.0, 22.0, 20.0, 22.0, 1, false),
+    ] {
+        add_tower(x, z, w, d, h, m, spire, false);
+    }
+
+    // Leafy riverbank trees along the south bank of the Cedar River
+    for (i, tx) in [-56.0_f32, -42.0, -28.0, -14.0, 10.0, 22.0].iter().enumerate() {
+        let tz = 131.0 - (i % 2) as f32 * 2.5;
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(trunk_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(*tx, 1.5, tz))
+                .with_scale(Vec3::new(0.24, 3.0, 0.24)),
+        ));
+        commands.spawn((
+            LexieVictoryEntity,
+            Mesh3d(unit_sphere.clone()),
+            MeshMaterial3d(leaf_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(*tx, 3.6, tz))
+                .with_scale(Vec3::new(2.0, 1.5, 2.0)),
+        ));
+    }
+}
+
 pub fn enter_lexie_victory_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -1193,8 +1794,12 @@ pub fn enter_lexie_victory_cutscene(
     for mut hv in &mut hud_q {
         *hv = Visibility::Hidden;
     }
-    // Deep cold dark-slate night horizon contrasting with vivid crimson viscera & acid-green bile.
-    clear_col.0 = Color::srgb(0.02, 0.015, 0.035);
+    // Match Cedar Rapids dusk clear color + fill light so `SceneKind::City` SkyDome renders rich dusk sky.
+    clear_col.0 = Color::srgb(0.03, 0.04, 0.09);
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.72, 0.78, 0.94),
+        brightness: 380.0,
+    });
     let stage = Vec3::new(0.0, 0.0, -420.0);
 
     // 4-point practical John Carpenter horror lighting rig
@@ -1403,13 +2008,14 @@ pub fn enter_lexie_victory_cutscene(
         ));
     }
 
-    // Compact wet asphalt stage so the downtown Cedar Rapids skyline remains clear on the horizon
+    // Compact wet asphalt stage sitting atop the surrounding downtown street grid (`top_y = -0.05`)
     commands.spawn((
         LexieVictoryEntity,
         Mesh3d(meshes.add(Cuboid::new(32.0, 0.2, 32.0))),
         MeshMaterial3d(street_mat),
         Transform::from_translation(stage + Vec3::new(0.0, -0.1, 0.0)),
     ));
+    spawn_victory_cityscape(&mut commands, &mut meshes, &mut materials, stage);
     spawn_quaker_oats_factory(&mut commands, &mut meshes, &mut materials, &mut images, stage);
     let mound_handle = meshes.add(build_melt_mound_mesh());
     commands.spawn((

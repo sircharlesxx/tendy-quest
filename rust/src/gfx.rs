@@ -728,13 +728,13 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         | GameState::CityPlay
         | GameState::DerekCutscene
         | GameState::NateCutscene
-        | GameState::GlennCutscene => SceneKind::City,
+        | GameState::GlennCutscene
+        | GameState::LexieVictoryCutscene => SceneKind::City,
         GameState::Cutscene
         | GameState::HeadphoneCutscene
         | GameState::MikeCutscene
         | GameState::TjCutscene
-        | GameState::ChillaryCutscene
-        | GameState::LexieVictoryCutscene => SceneKind::Stylized,
+        | GameState::ChillaryCutscene => SceneKind::Stylized,
     }
 }
 
@@ -822,7 +822,11 @@ fn apply_scene_rig(
 
     // Sun: direction (pointing from), colour, illuminance and a cascade fitted to the camera's
     // working distance so a single WebGL2 cascade stays crisp at any hero scale.
-    let city_sf = (scale / 1.8).max(1.0);
+    let city_sf = if *state.get() == GameState::LexieVictoryCutscene {
+        1.0
+    } else {
+        (scale / 1.8).max(1.0)
+    };
     let (illum, color, from, shadow_far) = match kind {
         SceneKind::Apartment => (
             11_000.0,
