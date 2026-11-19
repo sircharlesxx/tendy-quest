@@ -737,8 +737,9 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         | GameState::HeadphoneCutscene
         | GameState::MikeCutscene
         | GameState::TjCutscene
-        // Why: Chillary's cutscene takes place inside a bright daytime sunlit kitchen (`SceneKind::Stylized`
-        // keeps indoor lighting crisp without rendering an outdoor dusk sky dome behind walls).
+        // Why: Chillary's cutscene takes place outdoors along the bright sunlit Cedar River waterfront
+        // (`SceneKind::Stylized` gives crisp 20k noon sunlight and bright blue ClearColor sky instead
+        // of `SceneKind::City`'s dusk sunset dome). Gameplay impact: visual lighting/sky only.
         | GameState::ChillaryCutscene => SceneKind::Stylized,
     }
 }

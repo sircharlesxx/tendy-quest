@@ -427,6 +427,10 @@
           mkOsc("sine", 55, 115, 0.24, 0.26);
           return true;
         }
+        // Why: procedural WebAudio body-horror Foley (`flesh_tear`, `wet_squelch`, `bone_crack`,
+        // `thing_shriek`), distant industrial fire roar (`fire_roar`), and optional cutscene camera/
+        // glitch SFX (`snap_*`, `they_live_*`, `reptile_hiss`) avoid shipping extra audio assets
+        // while keeping mute/skip behavior intact. Gameplay impact: atmospheric audio only.
         // --- Body-horror Foley for John Carpenter's The Thing style Lexie meltdown ---
         const mkResNoise = (filterType, delay, dur, gainPeak, f0, f1, q) => {
           if (!sfxNoiseBuf || sfxNoiseBuf.sampleRate !== ac.sampleRate) {
@@ -1177,6 +1181,7 @@
           nate: { pitch: 1.28, rate: 1.12, volume: 1.0, g: "m" },
           glenn: { pitch: 0.62, rate: 0.88, volume: 1.0, g: "m" },
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
+          // Voice profile for the optional River Star boardwalk easter-egg NPC.
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
@@ -1854,6 +1859,9 @@
       from { margin-left: -2px; margin-top: -1px; }
       to { margin-left: 2px; margin-top: 2px; }
     }
+    /* Why: *They Live* visual filter & subliminal cards live in HTML/CSS so text stays crisp at
+       native browser DPI during the 1.0-second reptile flash (`setTheyLiveMode`). Gameplay impact:
+       purely visual (`pointer-events: none`), zero effect on input or controls. */
     body.they-live-mode canvas {
       filter: saturate(0.42) contrast(195%) brightness(1.03);
     }
@@ -1938,7 +1946,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-b78b7c85e58e3062.js" crossorigin="anonymous" integrity="sha384-iIL9bSZANBopOA5tD/Jvfr0m4Dl7gsO9u41VN1RxLTbhlKOWuUvSZKyzkZOLpmT/"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-b78b7c85e58e3062_bg.wasm" crossorigin="anonymous" integrity="sha384-loU0ixkXYEmgka952e1Y2D1O9fyP9A5gP56/U1Ewk42EW9QcpMgSW37S5KAQSejM" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-5e62999d8415998c.js" crossorigin="anonymous" integrity="sha384-iIL9bSZANBopOA5tD/Jvfr0m4Dl7gsO9u41VN1RxLTbhlKOWuUvSZKyzkZOLpmT/"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-5e62999d8415998c_bg.wasm" crossorigin="anonymous" integrity="sha384-3EwNbDGiDkLJzd7+/ahcsCWO5zQHR/o1p9ckA7Srz90h+AVDcdJ9viPy0gY/EmXN" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -2498,6 +2506,7 @@
         if (s.includes("glenn=1")) return 12;
         if (s.includes("mike=1")) return 13;
         if (s.includes("lexie_victory=1")) return 14;
+        // QA/dev direct-preview mode (mode 18); zero effect during standard play.
         if (s.includes("chillary=1")) return 18;
         return 0;
       })();
@@ -3454,8 +3463,8 @@
   <!-- ===== END experimental free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-b78b7c85e58e3062.js';
-const wasm = await init({ module_or_path: './tendy-quest-b78b7c85e58e3062_bg.wasm' });
+import init, * as bindings from './tendy-quest-5e62999d8415998c.js';
+const wasm = await init({ module_or_path: './tendy-quest-5e62999d8415998c_bg.wasm' });
 
 
 window.wasmBindings = bindings;

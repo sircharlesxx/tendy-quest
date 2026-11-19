@@ -68,8 +68,10 @@ pub struct ChillaryCutsceneEntity;
 #[derive(Component)]
 pub struct ChillaryCutsceneOverlay;
 
+/// Tracks local stage fill lights so Beat 3's 1.0-second *They Live* flash can snap them to
+/// cold greenish glare and restore sunny riverfront bounce immediately afterward.
 #[derive(Component)]
-pub struct ChillaryKitchenLight {
+pub struct ChillaryStageLight {
     pub base_color: Color,
     pub base_intensity: f32,
 }
@@ -118,8 +120,8 @@ pub enum ChillaryPart {
 /// (speaker, line, voice, min_secs, snap_caption) - strictly ASCII for Bevy's default font.
 const CHILLARY_BEATS: [(&str, &str, &str, f32, &str); 6] = [
     (
-        "STAN (WALKING INTO THE KITCHEN)",
-        "Wait a second... is that Hillary Clinton standing alone in a Cedar Rapids kitchen filming herself?",
+        "STAN (WALKING UP TO THE RIVERFRONT)",
+        "Wait a second... is that Hillary Clinton standing alone by the Cedar River filming herself?",
         "stan",
         4.2,
         "",
@@ -133,7 +135,7 @@ const CHILLARY_BEATS: [(&str, &str, &str, f32, &str); 6] = [
     ),
     (
         "STAN (UTTERLY CONFUSED)",
-        "Uh... WTF are you doing?! Why are you filming a selfie two inches from your face in a random kitchen?!",
+        "Uh... WTF are you doing?! Why are you filming a selfie two inches from your face down by the river?!",
         "stan",
         4.2,
         "",
@@ -855,7 +857,522 @@ pub fn update_city_chillary(
     }
 }
 
-/// Enters the bright Cedar Rapids kitchen stage to re-enact "just chillin' in Cedar Rapids"
+/// Spawns the sunlit outdoor Cedar Rapids Cedar River riverfront stage at `stage = (0, 0, -760)`:
+/// riverside boardwalk & wrought-iron railing behind Chillary, wide shimmering Cedar River with
+/// sun-glint ripples, arched concrete bridge, lush green Iowa trees across both banks, daytime
+/// downtown skyline + Mays Island courthouse, grassy riverfront park behind Stan, and summer clouds.
+///
+/// Why this was added:
+/// - Places Chillary Clinton outdoors beside the Cedar River (fitting the boardwalk encounter)
+///   instead of inside a closed kitchen, keeping every selfie and reverse camera angle framed by
+///   river water, green trees, park benches, and skyline buildings with zero empty black void.
+///
+/// Gameplay impact:
+/// - Purely visual cutscene backdrop with no physics colliders; every entity carries
+///   `ChillaryCutsceneEntity` and despawns cleanly on cutscene exit.
+fn spawn_cedar_riverfront(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    stage: Vec3,
+) {
+    let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
+    let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
+    let unit_sphere = meshes.add(Sphere::new(1.0));
+    let lamp_globe = meshes.add(Sphere::new(0.22));
+    let cloud_sphere = meshes.add(Sphere::new(1.0));
+
+    let paver_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.76, 0.73, 0.68),
+            perceptual_roughness: 0.86,
+            ..default()
+        },
+        crate::gfx::CityTex::Pavers,
+    ));
+    let grass_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.28, 0.58, 0.24),
+            perceptual_roughness: 0.90,
+            ..default()
+        },
+        crate::gfx::CityTex::Grass,
+    ));
+    let water_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgba(0.10, 0.42, 0.68, 0.96),
+            metallic: 0.22,
+            perceptual_roughness: 0.16,
+            reflectance: 0.85,
+            ..default()
+        },
+        crate::gfx::CityTex::Water,
+    ));
+    let sparkle_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.72, 0.90, 1.0, 0.52),
+        emissive: LinearRgba::new(0.45, 0.72, 0.92, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let iron_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.09, 0.11),
+        metallic: 0.78,
+        perceptual_roughness: 0.36,
+        ..default()
+    });
+    let concrete_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.78, 0.76, 0.72),
+            perceptual_roughness: 0.80,
+            ..default()
+        },
+        crate::gfx::CityTex::FacadeConcrete,
+    ));
+    let asphalt_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.28, 0.29, 0.32),
+            perceptual_roughness: 0.85,
+            ..default()
+        },
+        crate::gfx::CityTex::Asphalt,
+    ));
+    let wood_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.54, 0.34, 0.18),
+            perceptual_roughness: 0.78,
+            ..default()
+        },
+        crate::gfx::CityTex::Wood,
+    ));
+    let bark_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgb(0.32, 0.22, 0.14),
+            perceptual_roughness: 0.90,
+            ..default()
+        },
+        crate::gfx::CityTex::Bark,
+    ));
+    let leaf_mats = [
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.20, 0.54, 0.22),
+                perceptual_roughness: 0.82,
+                uv_transform: bevy::math::Affine2::from_scale(Vec2::new(3.5, 2.0)),
+                ..default()
+            },
+            crate::gfx::CityTex::Foliage,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.26, 0.62, 0.25),
+                perceptual_roughness: 0.80,
+                uv_transform: bevy::math::Affine2::from_scale(Vec2::new(3.5, 2.0)),
+                ..default()
+            },
+            crate::gfx::CityTex::Foliage,
+        )),
+    ];
+    let lamp_glow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.96, 0.82),
+        emissive: LinearRgba::new(1.4, 1.3, 0.9, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let cloud_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.99, 1.0),
+        emissive: LinearRgba::new(0.45, 0.50, 0.58, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let skyline_mats = [
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.56, 0.28, 0.22),
+                perceptual_roughness: 0.80,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeBrick,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.76, 0.72, 0.64),
+                perceptual_roughness: 0.72,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeConcrete,
+        )),
+        materials.add(crate::gfx::city_textured(
+            StandardMaterial {
+                base_color: Color::srgb(0.40, 0.56, 0.68),
+                metallic: 0.42,
+                perceptual_roughness: 0.26,
+                ..default()
+            },
+            crate::gfx::CityTex::FacadeGlass,
+        )),
+    ];
+    let roof_mats = skyline_mats.clone().map(|h| {
+        let c = materials.get(&h).map(|m| m.base_color).unwrap_or(Color::WHITE);
+        materials.add(crate::gfx::city_roof_material(c))
+    });
+    let courthouse_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.86, 0.68, 0.24),
+        metallic: 0.75,
+        perceptual_roughness: 0.30,
+        ..default()
+    });
+
+    // 1. Riverfront boardwalk promenade (`z = -2.0..+4.8`, `top_y = 0.0`) + concrete seawall cap
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(92.0, 0.30, 6.8),
+            Vec3::new(92.0, 0.30, 6.8),
+            Vec2::splat(3.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(paver_mat.clone()),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.15, 1.4)),
+    ));
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(92.0, 1.36, 0.55),
+            Vec3::new(92.0, 1.36, 0.55),
+            Vec2::splat(3.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(concrete_mat.clone()),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.56, -2.0)),
+    ));
+
+    // Black wrought-iron riverwalk railing along the water edge (`z = -1.85`)
+    for ry in [0.56_f32, 1.02] {
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(iron_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(0.0, ry, -1.85))
+                .with_scale(Vec3::new(76.0, 0.055, 0.055)),
+        ));
+    }
+    for pi in -15..=15 {
+        let px = pi as f32 * 2.4;
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(iron_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(px, 0.54, -1.85))
+                .with_scale(Vec3::new(0.075, 1.08, 0.075)),
+        ));
+        if pi < 15 {
+            for bal in 1..4 {
+                commands.spawn((
+                    ChillaryCutsceneEntity,
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(iron_mat.clone()),
+                    Transform::from_translation(stage + Vec3::new(px + bal as f32 * 0.6, 0.52, -1.85))
+                        .with_scale(Vec3::new(0.028, 0.92, 0.028)),
+                ));
+            }
+        }
+    }
+
+    // Riverfront lampposts & wooden park benches along `z = +4.25` (clear of cameras/walk path)
+    for lx in [-14.0_f32, -6.5, 6.5, 14.0] {
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(iron_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(lx, 1.9, 4.4))
+                .with_scale(Vec3::new(0.085, 3.8, 0.085)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(lamp_globe.clone()),
+            MeshMaterial3d(lamp_glow_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(lx, 3.92, 4.4)),
+        ));
+    }
+    for bx in [-9.5_f32, 8.0] {
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(wood_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(bx, 0.48, 4.25))
+                .with_scale(Vec3::new(2.1, 0.08, 0.60)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(wood_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(bx, 0.82, 4.50))
+                .with_scale(Vec3::new(2.1, 0.42, 0.07)),
+        ));
+        for sx in [-0.85_f32, 0.85] {
+            commands.spawn((
+                ChillaryCutsceneEntity,
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(iron_mat.clone()),
+                Transform::from_translation(stage + Vec3::new(bx + sx, 0.24, 4.25))
+                    .with_scale(Vec3::new(0.09, 0.48, 0.56)),
+            ));
+        }
+    }
+
+    // 2. Wide sunlit Cedar River (`z = -2.0..-54.0`) + bright horizontal water sun-glints
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(260.0, 0.12, 52.0),
+            Vec3::new(260.0, 0.12, 52.0),
+            Vec2::splat(9.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(water_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.95, -28.0)),
+    ));
+    for ri in 0..16 {
+        let rx = -28.0 + ((ri * 17) % 56) as f32;
+        let rz = -7.0 - ri as f32 * 2.8;
+        let rw = 3.2 + (ri % 4) as f32 * 1.4;
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(sparkle_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(rx, -0.88, rz))
+                .with_scale(Vec3::new(rw, 0.02, 0.24)),
+        ));
+    }
+
+    // 3. Arched concrete Cedar River bridge spanning across the river (`x = +18.0`, `z = -2..-54`)
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(7.5, 0.55, 56.0),
+            Vec3::new(7.5, 0.55, 56.0),
+            Vec2::splat(6.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(asphalt_mat),
+        Transform::from_translation(stage + Vec3::new(18.0, 2.65, -28.0)),
+    ));
+    for px in [-3.55_f32, 3.55] {
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(concrete_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(18.0 + px, 3.30, -28.0))
+                .with_scale(Vec3::new(0.42, 0.90, 56.0)),
+        ));
+    }
+    let pier_zs = [-8.0_f32, -19.0, -30.0, -41.0, -50.0];
+    for &pz in &pier_zs {
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(concrete_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(18.0, 0.80, pz))
+                .with_scale(Vec3::new(6.8, 3.8, 1.5)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(iron_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(14.5, 4.9, pz))
+                .with_scale(Vec3::new(0.08, 2.4, 0.08)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(lamp_globe.clone()),
+            MeshMaterial3d(lamp_glow_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(14.5, 6.2, pz)),
+        ));
+    }
+    // Arched concrete ribs tucked underneath each bridge span (`z = -8..-50`)
+    for w in pier_zs.windows(2) {
+        let mid_z = (w[0] + w[1]) * 0.5;
+        let span = (w[0] - w[1]).abs();
+        for side_z in [-1.0_f32, 1.0] {
+            commands.spawn((
+                ChillaryCutsceneEntity,
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(concrete_mat.clone()),
+                Transform::from_translation(stage + Vec3::new(18.0, 1.85, mid_z + side_z * span * 0.24))
+                    .with_rotation(Quat::from_rotation_x(-side_z * 0.34))
+                    .with_scale(Vec3::new(6.6, 0.72, span * 0.56)),
+            ));
+        }
+    }
+
+    // 4. South grassy riverfront park behind Stan (`z = +4.8..+54.0`, frames Beats 2 & 4 reverse shots)
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(150.0, 0.20, 50.0),
+            Vec3::new(150.0, 0.20, 50.0),
+            Vec2::splat(4.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(grass_mat.clone()),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.12, 29.8)),
+    ));
+
+    // 5. Far riverbank embankment & concrete shoreline (`z = -54..-122`, spawned before tree closure)
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(meshes.add(crate::gfx::tiled_box(
+            Vec3::new(280.0, 1.6, 80.0),
+            Vec3::new(280.0, 1.6, 80.0),
+            Vec2::splat(4.0),
+            0.0,
+            None,
+        ))),
+        MeshMaterial3d(grass_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.55, -94.0)),
+    ));
+    commands.spawn((
+        ChillaryCutsceneEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(concrete_mat.clone()),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.55, -54.0))
+            .with_scale(Vec3::new(280.0, 1.5, 0.8)),
+    ));
+
+    // Helper closure for leafy Iowa park & far-riverbank shade trees
+    let mut spawn_tree = |tx: f32, ty: f32, tz: f32, h: f32, idx: usize| {
+        let trunk_h = h * 0.48;
+        let crown_r = h * 0.36;
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(bark_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(tx, ty + trunk_h * 0.5, tz))
+                .with_scale(Vec3::new(0.24, trunk_h, 0.24)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_sphere.clone()),
+            MeshMaterial3d(leaf_mats[idx % leaf_mats.len()].clone()),
+            Transform::from_translation(stage + Vec3::new(tx, ty + trunk_h + crown_r * 0.62, tz))
+                .with_scale(Vec3::new(crown_r * 1.15, crown_r * 0.92, crown_r * 1.15)),
+        ));
+    };
+
+    for (i, &(tx, tz, h)) in [
+        (-7.5_f32, 9.0_f32, 6.2_f32),
+        (-13.5, 11.5, 7.0),
+        (-19.5, 10.0, 5.8),
+        (-26.0, 15.0, 7.6),
+        (-11.0, 18.5, 6.8),
+        (-17.5, 22.0, 7.4),
+        (-25.5, 24.5, 6.4),
+        (-34.0, 18.0, 7.2),
+        (-6.0, 22.0, 6.0),
+        (7.5, 10.5, 6.4),
+        (16.0, 14.0, 7.2),
+    ]
+    .iter()
+    .enumerate()
+    {
+        spawn_tree(tx, -0.02, tz, h, i);
+    }
+
+    for i in 0..22 {
+        let tx = -66.0 + i as f32 * 6.3 + ((i % 3) as f32 - 1.0) * 1.1;
+        let tz = -56.5 - (i % 3) as f32 * 2.8;
+        let h = 5.0 + (i % 4) as f32 * 1.15;
+        spawn_tree(tx, 0.25, tz, h, i);
+    }
+
+    // Daytime downtown Cedar Rapids skyline across the far riverbank (`z = -72..-106`)
+    for (i, &(bx, bz, w, d, h)) in [
+        (-64.0_f32, -88.0_f32, 14.0_f32, 12.0_f32, 16.0_f32),
+        (-46.0, -82.0, 15.0, 13.0, 22.0),
+        (-28.0, -90.0, 14.0, 14.0, 26.0),
+        (-10.0, -68.0, 16.0, 11.0, 14.0), // Mays Island / Linn County Courthouse silhouette
+        (4.0, -96.0, 16.0, 14.0, 31.0),
+        (26.0, -86.0, 15.0, 14.0, 24.0),
+        (44.0, -94.0, 16.0, 13.0, 29.0),
+        (64.0, -84.0, 15.0, 12.0, 19.0),
+        (-48.0, 36.0, 16.0, 14.0, 17.0), // Distant park-side neighborhood blocks behind Beat 4
+        (-28.0, 44.0, 16.0, 14.0, 15.0),
+        (-8.0, 48.0, 15.0, 14.0, 14.0),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mat_i = if i == 3 { 1 } else { i % skyline_mats.len() };
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(meshes.add(crate::gfx::tiled_box(
+                Vec3::new(w, h, d),
+                Vec3::new(w, h, d),
+                crate::gfx::FACADE_TILE,
+                0.0,
+                Some(crate::gfx::FACADE_FLAT_UV),
+            ))),
+            MeshMaterial3d(skyline_mats[mat_i].clone()),
+            Transform::from_translation(stage + Vec3::new(bx, 0.25 + h * 0.5, bz)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(roof_mats[mat_i].clone()),
+            Transform::from_translation(stage + Vec3::new(bx, 0.25 + h + 0.04, bz))
+                .with_scale(Vec3::new(w, 0.08, d)),
+        ));
+        // Limestone courthouse clock cupola above Mays Island silhouette (`i == 3`)
+        if i == 3 {
+            commands.spawn((
+                ChillaryCutsceneEntity,
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(concrete_mat.clone()),
+                Transform::from_translation(stage + Vec3::new(bx, 0.25 + h + 2.2, bz))
+                    .with_scale(Vec3::new(3.2, 4.4, 3.2)),
+            ));
+            commands.spawn((
+                ChillaryCutsceneEntity,
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(courthouse_gold.clone()),
+                Transform::from_translation(stage + Vec3::new(bx, 0.25 + h + 4.4, bz))
+                    .with_scale(Vec3::new(3.1, 2.2, 3.1)),
+            ));
+        }
+    }
+
+    // Soft white summer clouds floating overhead in the Cedar Rapids sky
+    for (cx, cy, cz, rx, rz) in [
+        (-48.0_f32, 26.0_f32, -96.0_f32, 11.0_f32, 6.0_f32),
+        (-12.0, 29.0, -112.0, 14.0, 7.0),
+        (24.0, 25.0, -92.0, 12.0, 6.5),
+        (56.0, 28.0, -108.0, 13.0, 6.5),
+        (-36.0, 24.0, 42.0, 10.0, 6.0),
+    ] {
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(cloud_sphere.clone()),
+            MeshMaterial3d(cloud_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(cx, cy, cz))
+                .with_scale(Vec3::new(rx, 2.8, rz)),
+        ));
+        commands.spawn((
+            ChillaryCutsceneEntity,
+            Mesh3d(cloud_sphere.clone()),
+            MeshMaterial3d(cloud_mat.clone()),
+            Transform::from_translation(stage + Vec3::new(cx + rx * 0.45, cy + 0.8, cz + 1.0))
+                .with_scale(Vec3::new(rx * 0.72, 2.4, rz * 0.8)),
+        ));
+    }
+}
+
+/// Enters the sunlit Cedar River boardwalk stage to re-enact "just chillin' in Cedar Rapids"
 /// with a 1-second *They Live* reptilian reveal.
 pub fn enter_chillary_cutscene(
     mut commands: Commands,
@@ -874,16 +1391,20 @@ pub fn enter_chillary_cutscene(
     for mut hv in &mut hud_q {
         *hv = Visibility::Hidden;
     }
-    // Bright daytime window glow outside the Cedar Rapids home kitchen
-    clear_col.0 = Color::srgb(0.76, 0.86, 0.96);
+    // Bright July afternoon Cedar Rapids sky + crisp outdoor daylight fill across river & skyline
+    clear_col.0 = Color::srgb(0.54, 0.78, 0.96);
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.86, 0.92, 1.0),
+        brightness: 460.0,
+    });
     let stage = Vec3::new(0.0, 0.0, -760.0);
 
-    // Bright domestic kitchen lighting + soft front fill (snaps to stark horror glare on glitch)
+    // Local rim/bounce lights (snap to stark cold glare during Beat 3's 1.0-second reptile flash)
     let key_color = Color::srgb(1.0, 0.96, 0.88);
-    let key_intensity = 620_000.0;
+    let key_intensity = 520_000.0;
     commands.spawn((
         ChillaryCutsceneEntity,
-        ChillaryKitchenLight {
+        ChillaryStageLight {
             base_color: key_color,
             base_intensity: key_intensity,
         },
@@ -895,11 +1416,11 @@ pub fn enter_chillary_cutscene(
         },
         Transform::from_translation(stage + Vec3::new(0.0, 3.2, 1.4)),
     ));
-    let fill_color = Color::srgb(0.95, 0.98, 1.0);
-    let fill_intensity = 340_000.0;
+    let fill_color = Color::srgb(0.88, 0.95, 1.0);
+    let fill_intensity = 300_000.0;
     commands.spawn((
         ChillaryCutsceneEntity,
-        ChillaryKitchenLight {
+        ChillaryStageLight {
             base_color: fill_color,
             base_intensity: fill_intensity,
         },
@@ -912,155 +1433,9 @@ pub fn enter_chillary_cutscene(
         Transform::from_translation(stage + Vec3::new(1.8, 2.5, -1.2)),
     ));
 
-    // Sunlit Cedar Rapids home kitchen set (off-white plaster, cabinets, speckled counter, fridge, window blinds)
-    let wall_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.93, 0.90, 0.84),
-        perceptual_roughness: 0.86,
-        ..default()
-    });
-    let floor_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.68, 0.56, 0.42),
-        perceptual_roughness: 0.68,
-        ..default()
-    });
-    let cab_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.95, 0.93),
-        perceptual_roughness: 0.48,
-        ..default()
-    });
-    let counter_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.76, 0.72, 0.66),
-        perceptual_roughness: 0.35,
-        ..default()
-    });
-    let fridge_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.74, 0.77, 0.80),
-        metallic: 0.75,
-        perceptual_roughness: 0.30,
-        ..default()
-    });
-    let tile_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.84, 0.88, 0.89),
-        perceptual_roughness: 0.32,
-        ..default()
-    });
-    let steel_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.55, 0.58, 0.62),
-        metallic: 0.85,
-        perceptual_roughness: 0.28,
-        ..default()
-    });
-    let window_sun = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.98, 1.0),
-        emissive: LinearRgba::new(1.6, 1.7, 1.8, 1.0),
-        unlit: true,
-        ..default()
-    });
-    let mag_red = materials.add(StandardMaterial { base_color: Color::srgb(0.88, 0.16, 0.16), ..default() });
-    let mag_blue = materials.add(StandardMaterial { base_color: Color::srgb(0.14, 0.36, 0.86), ..default() });
+    spawn_cedar_riverfront(&mut commands, &mut meshes, &mut materials, stage);
 
-    // Room shell (floor, ceiling, back/side walls)
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(10.0, 0.2, 10.0))),
-        MeshMaterial3d(floor_mat),
-        Transform::from_translation(stage + Vec3::new(0.0, -0.1, 0.0)),
-    ));
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(10.0, 0.2, 10.0))),
-        MeshMaterial3d(wall_mat.clone()),
-        Transform::from_translation(stage + Vec3::new(0.0, 3.7, 0.0)),
-    ));
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(10.0, 3.8, 0.25))),
-        MeshMaterial3d(wall_mat.clone()),
-        Transform::from_translation(stage + Vec3::new(0.0, 1.9, -2.85)),
-    ));
-    for sx in [-4.5_f32, 4.5] {
-        commands.spawn((
-            ChillaryCutsceneEntity,
-            Mesh3d(meshes.add(Cuboid::new(0.25, 3.8, 10.0))),
-            MeshMaterial3d(wall_mat.clone()),
-            Transform::from_translation(stage + Vec3::new(sx, 1.9, 0.0)),
-        ));
-    }
-
-    // Back counter + tile backsplash + upper shaker cabinets + handles
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(6.8, 0.95, 1.05))),
-        MeshMaterial3d(cab_mat.clone()),
-        Transform::from_translation(stage + Vec3::new(0.5, 0.475, -2.25)),
-    ));
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(6.9, 0.08, 1.12))),
-        MeshMaterial3d(counter_mat),
-        Transform::from_translation(stage + Vec3::new(0.5, 0.98, -2.25)),
-    ));
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(6.8, 0.85, 0.06))),
-        MeshMaterial3d(tile_mat),
-        Transform::from_translation(stage + Vec3::new(0.5, 1.44, -2.71)),
-    ));
-    // Upper cabinets flanking kitchen window
-    for (cx, w) in [(-1.85_f32, 1.85_f32), (2.75, 2.2)] {
-        commands.spawn((
-            ChillaryCutsceneEntity,
-            Mesh3d(meshes.add(Cuboid::new(w, 1.15, 0.55))),
-            MeshMaterial3d(cab_mat.clone()),
-            Transform::from_translation(stage + Vec3::new(cx, 2.52, -2.48)),
-        ));
-        commands.spawn((
-            ChillaryCutsceneEntity,
-            Mesh3d(meshes.add(Cuboid::new(0.03, 0.24, 0.04))),
-            MeshMaterial3d(steel_mat.clone()),
-            Transform::from_translation(stage + Vec3::new(cx + 0.15, 2.22, -2.18)),
-        ));
-    }
-    // Bright kitchen window with crisp horizontal venetian blinds
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(2.1, 1.25, 0.06))),
-        MeshMaterial3d(window_sun),
-        Transform::from_translation(stage + Vec3::new(0.35, 2.48, -2.70)),
-    ));
-    let slat_mesh = meshes.add(Cuboid::new(2.12, 0.035, 0.05));
-    for bi in 0..7 {
-        commands.spawn((
-            ChillaryCutsceneEntity,
-            Mesh3d(slat_mesh.clone()),
-            MeshMaterial3d(cab_mat.clone()),
-            Transform::from_translation(stage + Vec3::new(0.35, 1.98 + bi as f32 * 0.16, -2.64)),
-        ));
-    }
-
-    // Stainless refrigerator on left side with campaign magnets + mug on counter
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cuboid::new(1.25, 2.55, 1.15))),
-        MeshMaterial3d(fridge_mat),
-        Transform::from_translation(stage + Vec3::new(-3.55, 1.275, -2.20)),
-    ));
-    for (mx, my, mat) in [(-3.25_f32, 1.92_f32, mag_red), (-3.55, 1.72, mag_blue)] {
-        commands.spawn((
-            ChillaryCutsceneEntity,
-            Mesh3d(meshes.add(Cuboid::new(0.14, 0.10, 0.03))),
-            MeshMaterial3d(mat),
-            Transform::from_translation(stage + Vec3::new(mx, my, -1.61)),
-        ));
-    }
-    commands.spawn((
-        ChillaryCutsceneEntity,
-        Mesh3d(meshes.add(Cylinder::new(0.09, 0.18))),
-        MeshMaterial3d(cab_mat),
-        Transform::from_translation(stage + Vec3::new(1.15, 1.11, -2.10)),
-    ));
-
-    // Chillary Clinton front and center holding her selfie phone
+    // Chillary Clinton front and center on the boardwalk holding her selfie phone
     let mats = make_chillary_materials(&mut materials);
     commands
         .spawn((
@@ -1087,7 +1462,7 @@ pub fn enter_chillary_cutscene(
         Visibility::Inherited,
     ));
 
-    // Beat 0 wide kitchen establishing shot as Stan walks in and spots Chillary filming
+    // Beat 0 wide riverfront establishing shot as Stan walks up and spots Chillary filming
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         c_tf.translation = stage + Vec3::new(-0.65, 1.94, 3.45);
         c_tf.look_at(stage + Vec3::new(-0.45, 1.50, 0.20), Vec3::Y);
@@ -1269,7 +1644,7 @@ pub fn update_chillary_cutscene(
     mut next_state: crate::transition::SceneTransition,
     mut anim_q: Query<(&mut Transform, &mut Visibility, &ChillaryAnim), (Without<Camera3d>, Without<ChillaryUiSlot>)>,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<ChillaryAnim>)>,
-    mut light_q: Query<(&mut PointLight, &ChillaryKitchenLight)>,
+    mut light_q: Query<(&mut PointLight, &ChillaryStageLight)>,
     mut ui_vis_q: Query<(&mut Visibility, &ChillaryUiSlot), (Without<ChillaryAnim>, Without<Camera3d>)>,
     mut spk_q: Query<
         &mut Text,
@@ -1382,7 +1757,7 @@ pub fn update_chillary_cutscene(
         }
     }
 
-    // Kitchen light snaps to cold flickering green-white glare during the 1-second reveal
+    // Stage bounce lights snap to cold flickering green-white glare during the 1-second reveal
     for (mut pl, kl) in &mut light_q {
         if is_reptile {
             pl.color = Color::srgb(0.80, 1.0, 0.84);
@@ -1580,7 +1955,7 @@ pub fn update_chillary_cutscene(
         let push = (bt / 4.2).min(1.0);
         match beat {
             0 => {
-                // Wide kitchen establishing shot as Stan enters from the left and spots Chillary
+                // Wide riverfront establishing shot as Stan enters from the left and spots Chillary
                 c_tf.translation = stage + Vec3::new(-0.65 + push * 0.14, 1.94, 3.45 - push * 0.25);
                 c_tf.look_at(stage + Vec3::new(-0.45, 1.50, 0.20), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
