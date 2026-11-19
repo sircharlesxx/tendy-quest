@@ -366,7 +366,7 @@ pub fn update_city_nate(
         // Post-game free roam: recruited crew skip following and idle in Pub 217.
         if nate.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.72).clamp(1.65, 9.0);
-            n_tf.scale = Vec3::splat(s);
+            n_tf.scale = Vec3::splat(crate::state::city_body_scale(s));
             // Outer left flank, beyond Derek, out of the camera line at every scale.
             let target = crate::player::crew_follow_target(
                 crate::player::CrewSlot::LeftOuter,
@@ -399,7 +399,7 @@ pub fn update_city_nate(
         let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_NATE, &stats, spots.as_deref(), p_tf.translation);
         n_tf.translation = pos;
         n_tf.rotation = rot;
-        n_tf.scale = Vec3::splat(if stats.free_roam { pub_s } else { 1.65 });
+        n_tf.scale = Vec3::splat(crate::state::city_body_scale(if stats.free_roam { pub_s } else { 1.65 }));
         let to_p = p_tf.translation - n_tf.translation;
         let flat = Vec3::new(to_p.x, 0.0, to_p.z);
 

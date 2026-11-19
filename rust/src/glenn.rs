@@ -375,7 +375,7 @@ pub fn update_city_glenn(
         // Post-game free roam: recruited crew skip following and idle in Pub 217.
         if glenn.recruited && !stats.free_roam {
             let s = (stats.player_scale * 0.76).clamp(1.75, 9.5);
-            g_tf.scale = Vec3::splat(s);
+            g_tf.scale = Vec3::splat(crate::state::city_body_scale(s));
             // Outer right flank, beyond TJ, out of the camera line at every scale.
             let target = crate::player::crew_follow_target(
                 crate::player::CrewSlot::RightOuter,
@@ -408,7 +408,7 @@ pub fn update_city_glenn(
         let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_GLENN, &stats, spots.as_deref(), p_tf.translation);
         g_tf.translation = pos;
         g_tf.rotation = rot;
-        g_tf.scale = Vec3::splat(if stats.free_roam { pub_s } else { 1.75 });
+        g_tf.scale = Vec3::splat(crate::state::city_body_scale(if stats.free_roam { pub_s } else { 1.75 }));
         let to_p = p_tf.translation - g_tf.translation;
         let flat = Vec3::new(to_p.x, 0.0, to_p.z);
 

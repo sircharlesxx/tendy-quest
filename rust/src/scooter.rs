@@ -30,6 +30,9 @@ pub struct CityScooter {
     pub air_t: f32,
     pub flip: f32,
     pub boost_t: f32,
+    /// Top speed of the boost that is burning (set by the pad or ring that started it):
+    /// `BOOST_TOP_SPEED` for ordinary pads and rings, more for the one mega pad.
+    pub boost_top: f32,
     // Hop (jump while riding), driven by `stunts.rs`
     /// Seconds a jump press stays queued, so a press just before touchdown still hops.
     pub jump_buf: f32,
@@ -53,6 +56,19 @@ pub struct CityScooter {
     /// The skate park (`skatepark.rs`) is driving this scooter: on a park piece, airborne from
     /// one, grinding, or in the park's lot. Street driving and street stunts stand down.
     pub park: bool,
+    // Street handling (`update_city_scooter_and_phone`)
+    /// Smoothed steering input (-1..1, + = left): keys ramp in over ~0.15 s instead of snapping.
+    pub steer_s: f32,
+    /// Seconds the brake has been held at a standstill; reverse only engages after a short hold,
+    /// so braking hard to a stop never rolls straight on into reverse.
+    pub rev_hold: f32,
+    /// Touch DASH tap: seconds of turbo left (touch has no held Shift).
+    pub turbo_t: f32,
+    /// Shift turbo is burning right now (street or park): lights the boost flame.
+    pub turbo_on: bool,
+    /// Yaw spun in the air with A/D (360s). Visual only: the flight path keeps `yaw`. Scored
+    /// and cleared on touchdown.
+    pub air_spin: f32,
 }
 
 impl CityScooter {
@@ -70,6 +86,7 @@ impl CityScooter {
             air_t: 0.0,
             flip: 0.0,
             boost_t: 0.0,
+            boost_top: 0.0,
             jump_buf: 0.0,
             crouch_t: 0.0,
             hopped: false,
@@ -81,6 +98,11 @@ impl CityScooter {
             on_car: false,
             car_hop: false,
             park: false,
+            steer_s: 0.0,
+            rev_hold: 0.0,
+            turbo_t: 0.0,
+            turbo_on: false,
+            air_spin: 0.0,
         }
     }
 
@@ -97,6 +119,11 @@ impl CityScooter {
         self.on_car = false;
         self.car_hop = false;
         self.park = false;
+        self.steer_s = 0.0;
+        self.rev_hold = 0.0;
+        self.turbo_t = 0.0;
+        self.turbo_on = false;
+        self.air_spin = 0.0;
     }
 }
 
@@ -211,6 +238,25 @@ impl Default for PhoneMazeState {
     }
 }
 
+/// Where the city's free scooters stand (position, yaw).
+pub(crate) const SCOOTER_SPOTS: [(Vec3, f32); 11] = [
+    // Beside 3rd St SE (x = 0), off the Gauntlet's landing line.
+    (Vec3::new(-6.6, 0.0, 40.0), 0.25_f32),
+    (Vec3::new(-6.6, 0.0, 46.0), -0.4),
+    (Vec3::new(6.6, 0.0, 33.0), std::f32::consts::PI),
+    (Vec3::new(8.0, 0.0, 49.5), std::f32::consts::FRAC_PI_2),
+    // Stunt course starts (see `stunts::RUNS`): Greene Square Flyby (north on x = 92),
+    // Cross-Street Send (west on z = -46), Mays Island Mega Send (east off the bridge),
+    // 3rd St SE Gauntlet (south on x = 0, the (0, -42) one).
+    (Vec3::new(98.5, 0.0, 70.0), std::f32::consts::PI),
+    (Vec3::new(42.0, 0.0, 42.0), 1.2),
+    (Vec3::new(-42.0, 0.0, 42.0), -1.1),
+    (Vec3::new(30.0, 0.0, 7.5), 1.57),
+    (Vec3::new(-95.0, 0.0, 0.0), 1.57),
+    (Vec3::new(0.0, 0.0, -42.0), 0.0),
+    (Vec3::new(72.0, 0.0, -39.5), -1.57),
+];
+
 pub fn spawn_city_scooters(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -240,20 +286,7 @@ pub fn spawn_city_scooters(
         ..default()
     });
 
-    let spots = [
-        (Vec3::new(-1.8, 0.0, 40.0), 0.25_f32),
-        (Vec3::new(-4.5, 0.0, 46.0), -0.4),
-        // Stunt course starts: 3rd St SE Gauntlet (north), Cross-Street Send (east), Greene Square Park
-        (Vec3::new(1.8, 0.0, 33.0), std::f32::consts::PI),
-        (Vec3::new(8.0, 0.0, 49.5), std::f32::consts::FRAC_PI_2),
-        (Vec3::new(58.0, 0.0, 50.0), 0.0),
-        (Vec3::new(42.0, 0.0, 42.0), 1.2),
-        (Vec3::new(-42.0, 0.0, 42.0), -1.1),
-        (Vec3::new(42.0, 0.0, 0.0), 1.57),
-        (Vec3::new(-42.0, 0.0, 0.0), -1.57),
-        (Vec3::new(0.0, 0.0, -42.0), 0.0),
-        (Vec3::new(42.0, 0.0, -46.0), 2.4),
-    ];
+    let spots = SCOOTER_SPOTS;
 
     let flame_mesh = meshes.add(Cone::new(0.2, 1.1));
     let flame_mat = materials.add(StandardMaterial {
@@ -834,7 +867,7 @@ pub fn update_city_scooter_and_phone(
     // Check Mike inside Pub 217 (fixed pub size) and auto-trigger the Uzumaki cutscene when bumped!
     let pub_s = crate::city::PUB217_SCALE;
     for (mut m_tf, mut mike) in &mut mike_q {
-        m_tf.scale = Vec3::splat(pub_s);
+        m_tf.scale = Vec3::splat(crate::state::city_body_scale(pub_s));
         m_tf.translation = crate::city::mike_pub_spot();
         let d = Vec2::new(
             m_tf.translation.x - p_tf.translation.x,
@@ -1032,9 +1065,15 @@ pub fn update_city_scooter_and_phone(
     if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
         if sc.park {
             // The skate park drives it (`skatepark::update_park_ride`).
+            sc.air_spin = 0.0;
             return;
         }
-        let mut throttle = touch_move_y();
+        // --- Input ------------------------------------------------------------------------------
+        // Touch stick and gamepad left stick arrive as one analog vector. Both are round (a full
+        // diagonal reads ~0.7 on each axis), so they are stretched to a square: a stick pushed to
+        // the rim at 45 degrees is full throttle and full steer, like W+A on the keyboard.
+        let (ax, ay) = square_stick(touch_move_x(), touch_move_y());
+        let mut throttle = ay;
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
             throttle += 1.0;
         }
@@ -1042,20 +1081,62 @@ pub fn update_city_scooter_and_phone(
             throttle -= 1.0;
         }
         throttle = throttle.clamp(-1.0, 1.0);
-        let mut steer = -touch_move_x();
+        // Mild response curve on the analog steer for fine corrections near centre.
+        let mut steer = -ax * (0.55 + 0.45 * ax.abs());
         if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
             steer += 1.0;
         }
         if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
             steer -= 1.0;
         }
+        let airborne = !sc.grounded;
+        if airborne {
+            // In the air A/D spin the scooter (360s) instead of turning it, and nothing steers
+            // the flight path: it leaves the ground in a straight line and stays on it.
+            sc.air_spin += steer.clamp(-1.0, 1.0) * AIR_SPIN_RATE * dt;
+            steer = 0.0;
+            sc.steer_s = 0.0;
+        } else if steer.abs() > 0.05 {
+            // Steering by hand: the chase camera follows straight away, even right after a look.
+            orbit.since_look = orbit.since_look.max(99.0);
+        } else if sc.speed > -0.5 && (throttle > 0.05 || sc.speed > 1.0) {
+            // Aim steering: look with the mouse (or right stick / touch drag) and the scooter
+            // turns to head where the camera points, so W + mouse is enough to ride.
+            steer = aim_steer(orbit.yaw, sc.yaw, orbit.auto_align_weight());
+        }
+        if !airborne && sc.air_spin != 0.0 {
+            // Touchdown: every full turn (within ~35 degrees) scores, then the scooter squares up.
+            let turns = ((sc.air_spin.abs() + 0.6) / std::f32::consts::TAU).floor() as u32;
+            if turns > 0 {
+                let pts = 800 * turns;
+                stats.score += pts;
+                stats.dash_energy = (stats.dash_energy + 10.0 * turns as f32).min(100.0);
+                stats.hint_text = format!("{} SPIN! +{}", turns * 360, pts);
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                play_sfx("powerup");
+            }
+            sc.air_spin = 0.0;
+        }
         if stats.drunk_timer > 0.0 && throttle.abs() > 0.1 {
             // Beer: a gentle wandering bias you have to steer against.
             steer += crate::player::drunk_steer_drift(time.elapsed_secs(), stats.drunk_timer) * 0.22;
         }
         steer = steer.clamp(-1.0, 1.0);
+        // Steering ramps in over ~0.15 s and recentres a little faster, so a key tap is a small
+        // correction instead of a twitch.
+        let steer_rate = if steer.abs() > sc.steer_s.abs() && steer * sc.steer_s >= 0.0 {
+            STEER_IN_RATE
+        } else {
+            STEER_OUT_RATE
+        };
+        sc.steer_s += (steer - sc.steer_s).clamp(-steer_rate * dt, steer_rate * dt);
 
-        let turbo = (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight))
+        // Turbo: held Shift (keyboard, gamepad B / RT) or a touch DASH tap (a short burst).
+        if crate::audio::take_touch_dash() && stats.dash_energy > 2.0 {
+            sc.turbo_t = TOUCH_TURBO_SECS;
+        }
+        sc.turbo_t = (sc.turbo_t - dt).max(0.0);
+        let turbo = (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) || sc.turbo_t > 0.0)
             && stats.dash_energy > 2.0
             && throttle > 0.1;
         if turbo {
@@ -1063,47 +1144,116 @@ pub fn update_city_scooter_and_phone(
         }
 
         let boosting = sc.boost_t > 0.0;
+        // Turbo shows like a boost pad: flame off the back wheel, a whoosh, a wider view.
+        if turbo && !sc.turbo_on {
+            play_sfx("dash");
+        }
+        sc.turbo_on = turbo;
+        if turbo || boosting {
+            orbit.speed_kick_t = 0.15;
+        }
+        // Ordinary boosts leave the throttle to the rider; only the mega pad holds it open
+        // (braking still overrides it).
+        let mega = boosting && sc.boost_top > BOOST_TOP_SPEED + 1.0;
         if boosting {
             sc.boost_t = (sc.boost_t - dt).max(0.0);
-            if throttle > -0.05 {
+            if mega && throttle > -0.05 {
                 throttle = 1.0;
             }
         }
+
+        // --- Speed -----------------------------------------------------------------------------
         let max_spd = if boosting {
-            58.0
+            // Shift turbo stacks on an ordinary pad boost (not on the mega pad, which is already
+            // as fast as its landing zone allows).
+            let stack = if turbo && !mega { TURBO_TOP_SPEED - STREET_TOP_SPEED } else { 0.0 };
+            sc.boost_top.max(BOOST_TOP_SPEED) + stack
         } else if turbo {
-            42.0
+            TURBO_TOP_SPEED
         } else {
-            30.0
+            STREET_TOP_SPEED
         };
         let max_spd = crate::skatepark::zone_speed_cap(stf.translation, max_spd, boosting);
-        let accel = if boosting { 95.0 } else { 36.0 };
+        let coast = COAST_DECEL + COAST_DRAG * sc.speed.abs();
         if throttle > 0.05 {
-            if sc.speed > max_spd {
-                // Coming down from a boost: bleed speed off smoothly instead of snapping
-                sc.speed = (sc.speed - 18.0 * dt).max(max_spd);
+            sc.rev_hold = 0.0;
+            if sc.speed < -0.3 {
+                // Rolling backwards: forward throttle brakes first.
+                sc.speed = (sc.speed + BRAKE_DECEL * dt).min(0.0);
             } else {
-                sc.speed = (sc.speed + accel * dt).min(max_spd);
+                // Analog throttle picks a cruise speed; the keyboard always asks for the top.
+                let target = max_spd * throttle;
+                if sc.speed > max_spd {
+                    // Coming down from a boost (or into the park): bleed off smoothly.
+                    sc.speed = (sc.speed - 18.0 * dt).max(max_spd);
+                } else if sc.speed < target {
+                    // Punchy launch that tapers toward the top: 0-10 m/s in ~0.6 s, top in ~1.4 s.
+                    let accel = if mega {
+                        95.0
+                    } else if boosting {
+                        40.0
+                    } else {
+                        let a = STREET_ACCEL * (1.0 - 0.7 * (sc.speed / max_spd).clamp(0.0, 1.0));
+                        if turbo {
+                            a * 1.35
+                        } else {
+                            a
+                        }
+                    };
+                    sc.speed = (sc.speed + accel * dt).min(target);
+                } else {
+                    sc.speed = (sc.speed - coast * dt).max(target);
+                }
             }
         } else if throttle < -0.05 {
-            sc.speed = (sc.speed - 38.0 * dt).max(-12.0);
+            let amt = (-throttle).max(0.35);
+            if sc.speed > 0.3 {
+                sc.rev_hold = 0.0;
+                sc.speed = (sc.speed - BRAKE_DECEL * amt * dt).max(0.0);
+            } else {
+                // Stopped with the brake held: reverse (slowly) after a short beat.
+                sc.rev_hold += dt;
+                if sc.rev_hold > REVERSE_DELAY {
+                    sc.speed = (sc.speed - REVERSE_ACCEL * amt * dt).max(-REVERSE_TOP_SPEED * amt);
+                } else {
+                    sc.speed = (sc.speed - coast * dt).max(0.0);
+                }
+            }
         } else {
-            sc.speed *= (1.0 - 4.0 * dt).max(0.0);
+            sc.rev_hold = 0.0;
+            // Coasting: gentle rolling resistance so letting off to set up a corner keeps flow.
+            // Above the current top (just after a boost) it bleeds off as fast as with the
+            // throttle held, so letting go after the mega jump never coasts 130 m at 50 m/s.
+            sc.speed = if sc.speed > max_spd {
+                (sc.speed - coast.max(18.0) * dt).max(max_spd)
+            } else if sc.speed > 0.0 {
+                (sc.speed - coast * dt).max(0.0)
+            } else {
+                (sc.speed + coast * 2.0 * dt).min(0.0)
+            };
         }
 
-        let turn_scale = (sc.speed.abs() / 6.0).clamp(0.25, 1.0);
-        sc.yaw += steer * 3.1 * turn_scale * dt;
+        // --- Steering --------------------------------------------------------------------------
+        // Speed-sensitive yaw rate: a ~2-3 m turning circle at walking pace, ~10 m at top speed
+        // (one intersection), widening with turbo and boost but never below a floor that keeps
+        // stunt-circuit air corrections possible. Reversing flips it like a car.
+        let dir = if sc.speed < -0.5 { -1.0 } else { 1.0 };
+        if !airborne {
+            sc.yaw += sc.steer_s * street_turn_rate(sc.speed) * dir * dt;
+        }
 
-        let fwd = Vec2::new(sc.yaw.sin(), sc.yaw.cos());
+        let mut fwd = Vec2::new(sc.yaw.sin(), sc.yaw.cos());
         stf.translation.y = sc.y;
 
-        // Sub-stepped move + wall push-out: at boost speed (~58 m/s) one frame can travel several
-        // times the 0.82 collision radius, and the shallowest-axis push-out would then pop the
-        // scooter out the far side of a thin wall. Steps stay under half the radius.
+        // --- Move + walls ----------------------------------------------------------------------
+        // Sub-stepped so a boost-speed frame can't skip through a thin wall (steps stay under
+        // half the collision radius). On contact the scooter is pushed out and its motion is
+        // split along the wall: a glancing scrape turns it parallel and scrubs a little speed in
+        // proportion to the angle; only a near head-on hit stops it (with a small bounce back).
         let wall_r = 0.82;
         let substeps = ((sc.speed.abs() * dt / (wall_r * 0.5)).ceil() as u32).clamp(1, 16);
         let sub_dt = dt / substeps as f32;
-        let mut bumped = false;
+        let mut hard_hit = 0.0_f32;
         for _ in 0..substeps {
             stf.translation.x = (stf.translation.x + fwd.x * sc.speed * sub_dt).clamp(-126.0, 126.0);
             stf.translation.z = (stf.translation.z + fwd.y * sc.speed * sub_dt).clamp(-126.0, 126.0);
@@ -1127,31 +1277,64 @@ pub fn update_city_scooter_and_phone(
                     let dz_b = stf.translation.z - min_z;
                     let dz_f = max_z - stf.translation.z;
                     let m = dx_l.min(dx_r).min(dz_b).min(dz_f);
-                    if (m - dx_l).abs() < 0.001 {
+                    let n = if (m - dx_l).abs() < 0.001 {
                         stf.translation.x = min_x;
+                        Vec2::NEG_X
                     } else if (m - dx_r).abs() < 0.001 {
                         stf.translation.x = max_x;
+                        Vec2::X
                     } else if (m - dz_b).abs() < 0.001 {
                         stf.translation.z = min_z;
+                        Vec2::NEG_Y
                     } else {
                         stf.translation.z = max_z;
-                    }
-                    // Same 0.35x speed loss per wall contact as before, applied once per frame.
-                    if !bumped {
-                        sc.speed *= 0.35;
-                        bumped = true;
+                        Vec2::Y
+                    };
+                    let v = fwd * sc.speed;
+                    let vn = v.dot(n);
+                    if vn < -0.05 {
+                        let spd = v.length();
+                        let sin_t = (-vn / spd).clamp(0.0, 1.0);
+                        if sin_t > HEAD_ON_SIN {
+                            // Near head-on: stop with a little bounce back off the wall.
+                            hard_hit = hard_hit.max(spd);
+                            let bounce = (0.18 * spd).min(3.0);
+                            sc.speed = if sc.speed > 0.0 { -bounce } else { bounce };
+                        } else {
+                            // Glancing: slide along the wall, keeping the tangential speed.
+                            let t = v - n * vn;
+                            let tl = t.length();
+                            if tl > 0.01 {
+                                let d = if sc.speed >= 0.0 { t / tl } else { -t / tl };
+                                sc.yaw = d.x.atan2(d.y);
+                                sc.speed = tl * (1.0 - WALL_SCRUB * sin_t) * sc.speed.signum();
+                            }
+                            if sin_t > 0.45 {
+                                hard_hit = hard_hit.max(-vn);
+                            }
+                        }
+                        fwd = Vec2::new(sc.yaw.sin(), sc.yaw.cos());
                     }
                 }
             }
         }
+        if hard_hit > 7.0 {
+            stats.shake_request = stats.shake_request.max((0.04 + hard_hit * 0.006).min(0.14));
+            play_sfx("step");
+        }
 
-        let lean = (-steer * sc.speed * 0.006).clamp(-0.16, 0.16);
-        stf.rotation = Quat::from_rotation_y(sc.yaw) * Quat::from_rotation_z(lean);
+        // Lean into the turn with the actual lateral acceleration (speed x yaw rate).
+        let lat = sc.steer_s * street_turn_rate(sc.speed) * sc.speed.abs() * dir;
+        let lean = (-lat * 0.0075).clamp(-0.2, 0.2);
+        stf.rotation = Quat::from_rotation_y(sc.yaw + sc.air_spin) * Quat::from_rotation_z(lean);
 
         p_tf.translation = stf.translation + Vec3::Y * 0.25;
-        p_tf.rotation = Quat::from_rotation_y(sc.yaw + std::f32::consts::PI);
+        p_tf.rotation = Quat::from_rotation_y(sc.yaw + sc.air_spin + std::f32::consts::PI);
 
-        if sc.speed.abs() > 2.0 {
+        // Chase camera: eases in above walking pace and follows faster the faster you go, so in a
+        // full-speed corner it trails by ~15 degrees instead of swinging wide.
+        let cam_w = ((sc.speed.abs() - 1.0) / 3.0).clamp(0.0, 1.0);
+        if cam_w > 0.0 {
             let target_cam_yaw = sc.yaw + std::f32::consts::PI;
             let mut diff = (target_cam_yaw - orbit.yaw) % std::f32::consts::TAU;
             if diff > std::f32::consts::PI {
@@ -1159,10 +1342,80 @@ pub fn update_city_scooter_and_phone(
             } else if diff < -std::f32::consts::PI {
                 diff += std::f32::consts::TAU;
             }
+            let rate = (3.0 + 0.18 * sc.speed.abs()).min(7.0);
             // Paused for ~1.5 s after manual look input, then eases back in.
-            orbit.yaw += diff * (1.0 - (-3.0 * dt).exp()) * orbit.auto_align_weight();
+            orbit.yaw += diff * (1.0 - (-rate * dt).exp()) * orbit.auto_align_weight() * cam_w;
         }
     }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Street handling constants (the skate park has its own model in `skatepark.rs`)
+// -------------------------------------------------------------------------------------------------
+
+/// Street top speed (m/s). City blocks are 26.5 m with 20 m roads every 46 m, so a block goes by
+/// in ~2.3 s. `skatepark::zone_speed_cap` keys its turbo check off this value.
+pub const STREET_TOP_SPEED: f32 = 20.0;
+/// Held Shift (gamepad B / RT) or a touch DASH burst.
+pub const TURBO_TOP_SPEED: f32 = 26.0;
+/// Ordinary boost pads and rings (stunt circuits): a controllable push a little above turbo
+/// (was 58, which nobody could steer). At 28 m/s full steer still turns on `TURN_FLOOR` (an
+/// ~19 m circle). The one mega pad sets its own, higher `CityScooter::boost_top`.
+pub const BOOST_TOP_SPEED: f32 = 28.0;
+/// Launch acceleration at a standstill; tapers to 30% of this at top speed.
+const STREET_ACCEL: f32 = 22.0;
+/// Rolling resistance while coasting: constant plus per m/s (at 17 m/s about 5.5 m/s^2).
+const COAST_DECEL: f32 = 3.0;
+const COAST_DRAG: f32 = 0.15;
+/// Full brake: 17 m/s to a stop in ~0.6 s over ~5 m.
+const BRAKE_DECEL: f32 = 30.0;
+const REVERSE_DELAY: f32 = 0.2;
+const REVERSE_ACCEL: f32 = 9.0;
+const REVERSE_TOP_SPEED: f32 = 5.5;
+const STEER_IN_RATE: f32 = 7.0;
+const STEER_OUT_RATE: f32 = 10.0;
+const TOUCH_TURBO_SECS: f32 = 1.5;
+/// Turning radius R(v) = TURN_R0 + TURN_K v^2; yaw rate = v / R, floored at TURN_FLOOR.
+const TURN_R0: f32 = 1.9;
+const TURN_K: f32 = 0.028;
+/// Minimum yaw rate (rad/s): lets a stopped scooter pivot and keeps boost-speed (air) steering
+/// usable on the circuits.
+const TURN_FLOOR: f32 = 1.45;
+/// Above this sine of the impact angle (~53 degrees) a wall hit stops the scooter.
+const HEAD_ON_SIN: f32 = 0.8;
+/// Extra speed lost on a glancing wall hit, times the sine of the impact angle.
+const WALL_SCRUB: f32 = 0.2;
+
+/// Yaw rate (rad/s) at full steer for a given speed.
+fn street_turn_rate(speed: f32) -> f32 {
+    let v = speed.abs();
+    (v / (TURN_R0 + TURN_K * v * v)).max(TURN_FLOOR)
+}
+
+/// Steering input (-1..1, + = left) that turns a scooter heading `yaw` toward where the camera
+/// looks. The chase camera sits at `yaw + PI`, so its forward heading is `orbit_yaw - PI`.
+/// `align_weight` is `CameraOrbit::auto_align_weight()`: aim steering is full while the player
+/// is looking around and hands back to the chase camera's auto-align as that eases in.
+pub fn aim_steer(orbit_yaw: f32, yaw: f32, align_weight: f32) -> f32 {
+    use std::f32::consts::{PI, TAU};
+    let diff = (orbit_yaw - PI - yaw + PI).rem_euclid(TAU) - PI;
+    (diff * AIM_STEER_GAIN).clamp(-1.0, 1.0) * (1.0 - align_weight)
+}
+
+/// Air spin rate with A/D held (rad/s): a 360 in about 0.9 s, so one fits in a flat hop.
+const AIR_SPIN_RATE: f32 = 7.0;
+
+/// Full steering lock once the camera points this far off the heading (1 / gain radians, ~19 deg).
+const AIM_STEER_GAIN: f32 = 3.0;
+
+/// Maps a round analog stick onto a square, so a full diagonal reads 1.0 on both axes.
+fn square_stick(x: f32, y: f32) -> (f32, f32) {
+    let m = x.abs().max(y.abs());
+    if m < 1e-4 {
+        return (0.0, 0.0);
+    }
+    let k = (x * x + y * y).sqrt() / m;
+    ((x * k).clamp(-1.0, 1.0), (y * k).clamp(-1.0, 1.0))
 }
 
 #[derive(Component)]

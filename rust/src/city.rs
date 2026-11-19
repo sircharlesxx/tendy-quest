@@ -115,7 +115,7 @@ pub fn crew_wait_pose(i: usize, stats: &PlayerStats, spots: Option<&CrewSpots>, 
 /// facing the street (yaw), away from the stunt circuits, Greene Square, Pub 217 and the
 /// sidewalk NPC patrols.
 /// (x, z, yaw)
-const CREW_SPOT_CANDIDATES: [(f32, f32, f32); 16] = [
+pub(crate) const CREW_SPOT_CANDIDATES: [(f32, f32, f32); 16] = [
     (-80.0, -23.0, -std::f32::consts::FRAC_PI_2),
     (-69.0, 34.0, 0.0),
     (-23.0, -34.0, std::f32::consts::PI),
@@ -406,6 +406,18 @@ pub struct CityCar {
     pub car_hp: f32,
     /// Height of the highest part of the roof: `CAR_ROOF_TOP`, or `CAR_CAB_SIGN_TOP` for cabs.
     pub roof_h: f32,
+    /// Wedge ramp ride state (`stunts::update_ramp_cars`): body height, vertical speed, airborne,
+    /// and the ground's nose-up pitch / right-up roll under the wheels.
+    pub ride: CarRide,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct CarRide {
+    pub y: f32,
+    pub vy: f32,
+    pub air: bool,
+    pub pitch: f32,
+    pub roll: f32,
 }
 
 // Car dimensions as built by `car_meshes` (cars spawn at scale 1, origin on the road):
@@ -1023,9 +1035,13 @@ pub fn exit_mom_victory_cutscene(
 // PART 2: NEW YORK CITY LEVEL GENERATION & LEXIE COLOSSAL BOSS MODEL
 // =========================================================================
 
-fn is_clear_of_skyscrapers(x: f32, z: f32, margin: f32) -> bool {
+pub(crate) fn is_clear_of_skyscrapers(x: f32, z: f32, margin: f32) -> bool {
     // The riverfront Ferris wheel's plaza and kiosks (ferris.rs).
     if crate::ferris::blocks_spot(x, z, margin) {
+        return false;
+    }
+    // Five Seasons Park (terraces and the avenue stubs it absorbed).
+    if crate::skatepark::in_bigpark(x, z, margin) {
         return false;
     }
     // Pub 217 (its own low building on the (-23, 23) block)
@@ -1325,8 +1341,8 @@ pub fn spawn_nyc_world_if_needed(
         metallic: 0.4,
         ..default()
     });
-    for tz in [-64.0_f32, -32.0, -10.0, 12.0, 32.0, 56.0] {
-        for tx in [-8.2_f32, 8.2_f32] {
+    for tz in STREET_TREE_Z {
+        for tx in [-STREET_TREE_X, STREET_TREE_X] {
             commands.spawn((
                 LevelEntity,
                 CityWorldMarker,
@@ -1709,6 +1725,13 @@ pub fn spawn_nyc_world_if_needed(
                     MeshMaterial3d(kerb_mat.clone()),
                     Transform::from_xyz(bx, 0.0, bz),
                 ));
+                continue;
+            }
+            // Five Seasons Park's three blocks: `skatepark::spawn_skate_park` builds the ground, terraces
+            // and greenery. Each still takes its turn in the tower sequence so every other tower
+            // keeps its height and look.
+            if crate::skatepark::is_bigpark_block(bx, bz) {
+                b_idx += 1;
                 continue;
             }
             // Greene Square (69, 69) and the lot south of it (69, 114) are the skate park:
@@ -2516,7 +2539,11 @@ fn spawn_city_traffic(
         let road = ROAD_COORDS[(i / 3) % ROAD_COORDS.len()];
         let lane_offset = if dir > 0.0 { 3.6 } else { -3.6 };
         let lane_coord = road + lane_offset;
-        let progress = -120.0 + ((i as f32 * 37.0) % 240.0);
+        let mut progress = -120.0 + ((i as f32 * 37.0) % 240.0);
+        // Avenues whose north stub is Five Seasons Park: start south of the U-turn point.
+        if !axis_x && crate::skatepark::bigpark_uturn_z(road).is_some_and(|z0| progress < z0) {
+            progress = -progress;
+        }
         let pos = if axis_x {
             Vec3::new(progress, 0.0, lane_coord)
         } else {
@@ -2557,6 +2584,7 @@ fn spawn_city_traffic(
                     drift_sfx_cooldown: 0.0,
                     car_hp: 100.0,
                     roof_h: if i % body_colors.len() < 2 { CAR_CAB_SIGN_TOP } else { CAR_ROOF_TOP },
+                    ride: CarRide::default(),
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
@@ -2646,6 +2674,28 @@ fn car_meshes(meshes: &mut Assets<Mesh>) -> CarMeshes {
         tyre: sh::add(meshes, sh::tyre()),
         hub: meshes.add(Cylinder::new(0.58, 1.04)),
     }
+}
+
+/// Street trees along 3rd St SE (x = +-`STREET_TREE_X`, at these z).
+pub(crate) const STREET_TREE_X: f32 = 8.2;
+pub(crate) const STREET_TREE_Z: [f32; 6] = [-64.0, -32.0, -10.0, 12.0, 32.0, 56.0];
+
+/// Home spots of the 38 sidewalk pedestrians (same formula as `spawn_city_npcs`, without the
+/// Pub 217 skip). Each wanders +-2.2 m in x and +-4.7 m in z around its home.
+pub(crate) fn npc_homes() -> Vec<Vec2> {
+    (0..38_usize)
+        .map(|i| {
+            let bx = BLOCK_COORDS[i % BLOCK_COORDS.len()];
+            let bz = BLOCK_COORDS[(i / 4) % BLOCK_COORDS.len()];
+            let offset = 10.6;
+            match i % 4 {
+                0 => Vec2::new(bx + offset, bz),
+                1 => Vec2::new(bx - offset, bz),
+                2 => Vec2::new(bx, bz + offset),
+                _ => Vec2::new(bx, bz - offset),
+            }
+        })
+        .collect()
 }
 
 fn spawn_city_npcs(
@@ -3535,7 +3585,11 @@ fn debug_city_start(
         }
         m => match crate::skatepark::debug_start_pose(m) {
             Some((pos, face, _, _)) => (pos, face),
-            None => return,
+            // `ramp`, `rampback`, `rampside`, `rampcar`: at a stunt wedge ramp (stunts.rs).
+            None => match crate::stunts::debug_start_pose(m) {
+                Some(p) => p,
+                None => return,
+            },
         },
     };
     p_tf.translation = pos;
@@ -4140,6 +4194,34 @@ pub fn update_city_traffic(
             } else if car_tf.translation.x < -CITY_HALF_EXTENT {
                 car_tf.translation.x = CITY_HALF_EXTENT;
             }
+        } else if let Some(z0) = crate::skatepark::bigpark_uturn_z((car_tf.translation.x / 46.0).round() * 46.0) {
+            // Avenue stub absorbed by Five Seasons Park: northbound cars U-turn on a 3.6 m arc
+            // north of `z0` into the southbound lane; at the south edge they swap lanes and come
+            // back north instead of wrapping into the park.
+            let road = (car_tf.translation.x / 46.0).round() * 46.0;
+            let r = 3.6;
+            let (x, z) = (car_tf.translation.x, car_tf.translation.z);
+            if car.dir < 0.0 && z <= z0 {
+                let phi = (z0 - z).atan2(x - road) - car.speed * dt / r;
+                if phi <= 0.0 {
+                    car_tf.translation.x = road + r;
+                    car_tf.translation.z = z0;
+                    car.dir = 1.0;
+                    car.yaw = 0.0;
+                } else {
+                    car_tf.translation.x = road + r * phi.cos();
+                    car_tf.translation.z = z0 - r * phi.sin();
+                    car.yaw = phi;
+                }
+            } else {
+                car_tf.translation.z += car.dir * car.speed * dt;
+                if car.dir > 0.0 && car_tf.translation.z > CITY_HALF_EXTENT {
+                    car_tf.translation.z = CITY_HALF_EXTENT;
+                    car_tf.translation.x = road - r;
+                    car.dir = -1.0;
+                    car.yaw = std::f32::consts::PI;
+                }
+            }
         } else {
             car_tf.translation.z += car.dir * car.speed * dt;
             if car_tf.translation.z > CITY_HALF_EXTENT {
@@ -4263,6 +4345,15 @@ pub fn update_city_pickups(
     let pickup_r = 2.1 + stats.player_scale * 0.45;
     let mid_y = 0.55 * stats.player_scale;
 
+    if stats.free_roam {
+        // Post-game free roam has no tendies at all: clear any the city spawned with (a fresh
+        // free-roam entry, or the world carried over from the run that beat Lexie).
+        for (entity, _, _) in &tendy_q {
+            commands.entity(entity).despawn_recursive();
+        }
+        return;
+    }
+
     let unlocked = stats.city_tendies_unlocked();
     *lock_hint_cd = (*lock_hint_cd - dt).max(0.0);
     for (entity, mut tf, tendy) in &mut tendy_q {
@@ -4289,15 +4380,6 @@ pub fn update_city_pickups(
         if d < pickup_r {
             commands.entity(entity).remove::<(TendyPickup, CityTendy)>();
             crate::player::start_pickup_pop(&mut commands, entity, tf.scale);
-            if stats.free_roam {
-                // Post-game: score-only snack. Never touches `tendies`, so Stan stays 180 cm.
-                stats.roam_tendies += 1;
-                stats.tendy_credits += 2;
-                stats.score += 400;
-                play_sfx("tendy");
-                stats.hint_text = format!("Tendy snack! +400 score ({} eaten in free roam)", stats.roam_tendies);
-                continue;
-            }
             stats.tendies = (stats.tendies + 2).min(stats.total_tendies);
             stats.tendy_credits += 2;
             stats.score += 400;
@@ -5197,6 +5279,7 @@ fn spawn_parked_car(
                 drift_sfx_cooldown: 0.0,
                 car_hp: 100.0,
                 roof_h: CAR_ROOF_TOP,
+                ride: CarRide::default(),
             },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             Visibility::default(),
@@ -5270,7 +5353,7 @@ pub fn sync_parked_car_collider(
         let (s, c) = car.yaw.sin_cos();
         let (hx, hz) = (1.12_f32, 2.3_f32);
         let half = Vec3::new(c.abs() * hx + s.abs() * hz, 0.95, s.abs() * hx + c.abs() * hz);
-        b_tf.translation = Vec3::new(c_tf.translation.x, 0.95, c_tf.translation.z);
+        b_tf.translation = Vec3::new(c_tf.translation.x, c_tf.translation.y + 0.95, c_tf.translation.z);
         pbox.half_extents = half;
     }
 }

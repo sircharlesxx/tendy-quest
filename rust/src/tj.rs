@@ -360,7 +360,7 @@ pub fn update_city_tj(
     let Ok((_, mut tj_tf)) = tj_q.get_single_mut() else {
         return;
     };
-    tj_tf.scale = Vec3::splat(stats.player_scale.max(1.8));
+    tj_tf.scale = Vec3::splat(crate::state::city_body_scale(stats.player_scale.max(1.8)));
 
     for mut c_vis in &mut cast_q {
         *c_vis = if stats.tj_recruited {
@@ -376,7 +376,7 @@ pub fn update_city_tj(
         let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_TJ, &stats, spots.as_deref(), p_tf.translation);
         tj_tf.translation = pos;
         tj_tf.rotation = rot;
-        tj_tf.scale = Vec3::splat(1.8);
+        tj_tf.scale = Vec3::splat(crate::state::city_body_scale(1.8));
         let flat = p_tf.translation - tj_tf.translation;
         let dist = Vec2::new(flat.x, flat.z).length();
         if dist < 5.5 && p_tf.translation.y < 4.0 {
@@ -393,7 +393,7 @@ pub fn update_city_tj(
         let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_TJ, &stats, spots.as_deref(), p_tf.translation);
         tj_tf.translation = pos;
         tj_tf.rotation = rot;
-        tj_tf.scale = Vec3::splat(1.8);
+        tj_tf.scale = Vec3::splat(crate::state::city_body_scale(1.8));
         let flat = p_tf.translation - tj_tf.translation;
         let dist = Vec2::new(flat.x, flat.z).length();
         if dist < 5.5 && p_tf.translation.y < 4.0 {
@@ -432,7 +432,7 @@ pub fn update_city_tj(
         } else {
             tj_tf.translation.y = 0.0;
         }
-        tj_tf.scale = Vec3::splat(follow_scale);
+        tj_tf.scale = Vec3::splat(crate::state::city_body_scale(follow_scale));
     }
 }
 

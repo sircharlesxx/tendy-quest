@@ -54,6 +54,36 @@ pub fn is_park_block(bx: f32, bz: f32) -> bool {
     near(PLAZA) || near(LOT)
 }
 
+/// Five Seasons Park: the north edge row (blocks x = -69, -23, 23 at z = -114) plus the avenue
+/// stubs between them north of 5th St (x = -46 and x = 0), one 118.5 m x 26.5 m hillside park.
+/// Local coordinates used by the layout: u = x - centre.x (east), v = z - centre.z (south, toward
+/// 5th St at z = -92).
+pub const BIGPARK_C: Vec2 = Vec2::new(-23.0, -114.0);
+pub const BIGPARK_HALF: Vec2 = Vec2::new(59.25, 13.25);
+
+/// True for the three blocks the park replaces (no sidewalk slab, kerb ring or tower).
+pub fn is_bigpark_block(bx: f32, bz: f32) -> bool {
+    (bz - BIGPARK_C.y).abs() < 1.0 && [-69.0_f32, -23.0, 23.0].iter().any(|&x| (bx - x).abs() < 1.0)
+}
+
+/// Inside the park footprint (plus `margin`).
+pub fn in_bigpark(x: f32, z: f32, margin: f32) -> bool {
+    (x - BIGPARK_C.x).abs() <= BIGPARK_HALF.x + margin && (z - BIGPARK_C.y).abs() <= BIGPARK_HALF.y + margin
+}
+
+/// Lane cars on an avenue whose north stub the park absorbs U-turn around this point (z) instead
+/// of driving on into the park: x = -46 at its 5th St intersection, x = 0 inside Empire Citadel
+/// (whose footprint already covers that avenue's 5th St intersection).
+pub fn bigpark_uturn_z(road_x: f32) -> Option<f32> {
+    if (road_x + 46.0).abs() < 1.0 {
+        Some(-93.0)
+    } else if road_x.abs() < 1.0 {
+        Some(-82.0)
+    } else {
+        None
+    }
+}
+
 fn in_rect(p: Vec2, c: Vec2, half: Vec2) -> bool {
     (p.x - c.x).abs() <= half.x && (p.y - c.y).abs() <= half.y
 }
@@ -68,12 +98,20 @@ fn in_lot(p: Vec2) -> bool {
 pub fn in_park_zone(p: Vec3) -> bool {
     let p = Vec2::new(p.x, p.z);
     let half = Vec2::splat(BLOCK_HALF + 5.5);
-    in_rect(p, PLAZA, half) || in_rect(p, LOT, half) || in_rect(p, CROSSING_C, CROSSING_HALF)
+    in_rect(p, PLAZA, half)
+        || in_rect(p, LOT, half)
+        || in_rect(p, CROSSING_C, CROSSING_HALF)
 }
 
 /// Close enough to the park that the on-foot / car / camera checks are worth running.
 fn near_park(p: Vec2, margin: f32) -> bool {
     in_rect(p, PLAZA, Vec2::splat(BLOCK_HALF + margin)) || in_rect(p, LOT, Vec2::splat(BLOCK_HALF + margin))
+}
+
+/// Near the park or any street grind line / stairs plaza piece (the broad-phase grid cell under
+/// `p` lists something within `GRID_PAD`, which covers every `margin` used here).
+fn near_pieces(p: Vec2, margin: f32) -> bool {
+    near_park(p, margin) || in_bigpark(p.x, p.y, margin) || !layout().grid.at(p).is_empty()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -89,6 +127,9 @@ enum Shape {
     /// Solid block with a top sloping linearly along local Z from `h0` (at -Z) to `h1` (ledges,
     /// manual pad, benches, posts).
     Block { len: f32, w: f32, h0: f32, h1: f32 },
+    /// Stair set: rides like `Block` (the surface runs through the step nosings, `h0` at -Z down
+    /// to `h1`) with `n` risers; the walking hero stands on the step tops (`step_h`).
+    Stairs { len: f32, w: f32, h0: f32, h1: f32, n: u32 },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -140,6 +181,24 @@ impl Piece {
         self.c + ax * l.x + az * l.y
     }
 
+    /// Plan-view bounding box (min, max) of the footprint.
+    fn bounds(&self) -> (Vec2, Vec2) {
+        let half = match self.shape {
+            Shape::HalfPipe { flat, r, h, deck, len } => Vec2::new(flat * 0.5 + trans_w(r, h) + deck, len * 0.5),
+            Shape::JumpBox { r, h, table, w } => Vec2::new(w * 0.5, table * 0.5 + trans_w(r, h)),
+            Shape::Kicker { r, h, w } => Vec2::new(w * 0.5, trans_w(r, h) * 0.5),
+            Shape::Block { len, w, .. } | Shape::Stairs { len, w, .. } => Vec2::new(w * 0.5, len * 0.5),
+        };
+        let mut lo = Vec2::splat(f32::MAX);
+        let mut hi = Vec2::splat(f32::MIN);
+        for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let w = self.to_world(Vec2::new(sx * half.x, sz * half.y));
+            lo = lo.min(w);
+            hi = hi.max(w);
+        }
+        (lo, hi)
+    }
+
     /// Height, local gradient and region at a world point, or `None` off the footprint.
     fn sample(&self, p: Vec2) -> Option<(f32, Vec2, Region)> {
         let l = self.to_local(p);
@@ -187,7 +246,7 @@ impl Piece {
                 let (hh, slope) = arc(r, l.y + kw * 0.5);
                 (hh, Vec2::new(0.0, slope), Region::Kicker)
             }
-            Shape::Block { len, w, h0, h1 } => {
+            Shape::Block { len, w, h0, h1 } | Shape::Stairs { len, w, h0, h1, .. } => {
                 if l.x.abs() > w * 0.5 || l.y.abs() > len * 0.5 {
                     return None;
                 }
@@ -197,6 +256,16 @@ impl Piece {
         };
         let (ax, az) = self.axes();
         Some((h, ax * g.x + az * g.y, r))
+    }
+
+    /// Step-top height under `p` for a stair set (the hero stands on the treads, not on the
+    /// nosing line the scooter rides).
+    fn step_h(&self, p: Vec2) -> Option<f32> {
+        let Shape::Stairs { len, h0, h1, n, .. } = self.shape else { return None };
+        let l = self.to_local(p);
+        let tread = len / n as f32;
+        let i = (((l.y + len * 0.5) / tread).floor() as i32 + 1).clamp(1, n as i32);
+        Some((h0 - i as f32 * (h0 - h1) / n as f32).max(h1))
     }
 }
 
@@ -270,13 +339,88 @@ struct Fence {
     a: Vec2,
     b: Vec2,
     base: f32,
+    /// Top of the fence at `a`.
     top: f32,
+    /// Top of the fence at `b` (differs from `top` under a sloped rail).
+    top_b: f32,
 }
 
 struct Layout {
     pieces: Vec<Piece>,
     rails: Vec<Rail>,
     fences: Vec<Fence>,
+    /// The park's own pieces / rails come first; everything after these is a street grind line
+    /// or part of the stairs plaza (`add_street_grinds`).
+    park_pieces: usize,
+    park_rails: usize,
+    /// How to draw each street / plaza item (built by the same calls that add its physics).
+    vis: Vec<StreetVis>,
+    grid: Grid,
+}
+
+// -------------------------------------------------------------------------------------------------
+// Broad-phase: a coarse grid over the map. Each cell lists the pieces, rails and fences whose plan
+// bounding box comes within `GRID_PAD` of it, so per-frame lookups only touch nearby items.
+// -------------------------------------------------------------------------------------------------
+
+const GRID_MIN: f32 = -136.0;
+const GRID_CELL: f32 = 8.0;
+const GRID_N: usize = 34;
+/// Covers the largest query reach: `ASSIST_R` (2.8 m) plus a step, the 4 m car / walking margins
+/// and a fence sweep (pad + one frame of motion).
+const GRID_PAD: f32 = 5.0;
+
+#[derive(Default, Clone)]
+struct Cell {
+    pieces: Vec<u16>,
+    rails: Vec<u16>,
+    fences: Vec<u16>,
+}
+
+impl Cell {
+    fn is_empty(&self) -> bool {
+        self.pieces.is_empty() && self.rails.is_empty() && self.fences.is_empty()
+    }
+}
+
+#[derive(Default)]
+struct Grid {
+    cells: Vec<Cell>,
+}
+
+impl Grid {
+    fn idx(v: f32) -> usize {
+        (((v - GRID_MIN) / GRID_CELL).floor().max(0.0) as usize).min(GRID_N - 1)
+    }
+
+    fn at(&self, p: Vec2) -> &Cell {
+        &self.cells[Self::idx(p.y) * GRID_N + Self::idx(p.x)]
+    }
+
+    fn insert(&mut self, lo: Vec2, hi: Vec2, f: impl Fn(&mut Cell)) {
+        for z in Self::idx(lo.y - GRID_PAD)..=Self::idx(hi.y + GRID_PAD) {
+            for x in Self::idx(lo.x - GRID_PAD)..=Self::idx(hi.x + GRID_PAD) {
+                f(&mut self.cells[z * GRID_N + x]);
+            }
+        }
+    }
+
+    fn build(pieces: &[Piece], rails: &[Rail], fences: &[Fence]) -> Grid {
+        let mut g = Grid { cells: vec![Cell::default(); GRID_N * GRID_N] };
+        for (i, pc) in pieces.iter().enumerate() {
+            let (lo, hi) = pc.bounds();
+            g.insert(lo, hi, |c| c.pieces.push(i as u16));
+        }
+        for (i, r) in rails.iter().enumerate() {
+            let lo = r.pts.iter().fold(Vec2::splat(f32::MAX), |a, p| a.min(xz(*p)));
+            let hi = r.pts.iter().fold(Vec2::splat(f32::MIN), |a, p| a.max(xz(*p)));
+            g.insert(lo, hi, |c| c.rails.push(i as u16));
+        }
+        for (i, f) in fences.iter().enumerate() {
+            g.insert(f.a.min(f.b), f.a.max(f.b), |c| c.fences.push(i as u16));
+        }
+        g
+    }
 }
 
 // Piece dimensions (shared by the layout and the mesh builders).
@@ -370,7 +514,7 @@ fn build_layout() -> Layout {
     rails.push(bar("FLAT RAIL", vec![fp(-3.5), fp(3.5)]));
     for r in &rails {
         for w in r.pts.windows(2) {
-            fences.push(Fence { a: Vec2::new(w[0].x, w[0].z), b: Vec2::new(w[1].x, w[1].z), base: 0.0, top: w[0].y.max(w[1].y) + 0.06 });
+            fences.push(Fence { a: Vec2::new(w[0].x, w[0].z), b: Vec2::new(w[1].x, w[1].z), base: 0.0, top: w[0].y + 0.06, top_b: w[1].y + 0.06 });
         }
     }
     // Steel-capped edges of the ledges and the manual pad.
@@ -400,11 +544,16 @@ fn build_layout() -> Layout {
         let outer = lip + side * PIPE_DECK;
         let inner = lip + side * 0.35;
         let top = PIPE_H + 1.05;
-        fences.push(Fence { a: Vec2::new(outer, z0), b: Vec2::new(outer, z1), base: PIPE_H - 0.3, top });
-        fences.push(Fence { a: Vec2::new(inner, z0), b: Vec2::new(outer, z0), base: PIPE_H - 0.3, top });
-        fences.push(Fence { a: Vec2::new(inner, z1), b: Vec2::new(outer, z1), base: PIPE_H - 0.3, top });
+        fences.push(Fence { a: Vec2::new(outer, z0), b: Vec2::new(outer, z1), base: PIPE_H - 0.3, top, top_b: top });
+        fences.push(Fence { a: Vec2::new(inner, z0), b: Vec2::new(outer, z0), base: PIPE_H - 0.3, top, top_b: top });
+        fences.push(Fence { a: Vec2::new(inner, z1), b: Vec2::new(outer, z1), base: PIPE_H - 0.3, top, top_b: top });
     }
-    Layout { pieces, rails, fences }
+    let (park_pieces, park_rails) = (pieces.len(), rails.len());
+    let mut l = Layout { pieces, rails, fences, park_pieces, park_rails, vis: Vec::new(), grid: Grid::default() };
+    add_street_grinds(&mut l);
+    add_big_park(&mut l);
+    l.grid = Grid::build(&l.pieces, &l.rails, &l.fences);
+    l
 }
 
 fn layout() -> &'static Layout {
@@ -412,21 +561,606 @@ fn layout() -> &'static Layout {
     L.get_or_init(build_layout)
 }
 
+// =================================================================================================
+// Street grind lines (city-wide) and the stairs plaza
+// =================================================================================================
+//
+// Everything here goes through the same piece / rail / fence model as the park, so street grinds
+// are ridden by the park physics: an airborne street rider within `ASSIST_R` of a street line (or
+// touching a street piece) is handed to `ParkRide` (`try_take_over`), the assist and `find_lock`
+// put them on the line, and coming off it onto plain street hands back to the street model
+// (`surface_step` -> `handback`) with the same position, heading and speed.
+
+/// How a street / plaza item is drawn. Each is pushed by the same `Layout` call that adds its
+/// physics (piece, rails, fences), so the visuals and the grind lines cannot drift apart.
+#[derive(Clone, Copy)]
+enum StreetVis {
+    /// Concrete block piece standing on `base`. `trim`: grindable (painted safety-yellow faces,
+    /// steel edges); terraces and the ramp are plain concrete.
+    Block { piece: usize, base: f32, trim: bool },
+    /// Stair set over a sloped `Shape::Block` piece (h0 at the top, h1 at the foot), `n` risers.
+    /// The ride surface runs through the step nosings.
+    Stairs { piece: usize, n: u32 },
+    /// Steel angle on a grindable concrete edge (`RailKind::Edge`).
+    Edge { rail: usize },
+    /// Yellow round rail on dark posts (`RailKind::Bar`, solid like the park's rails).
+    Bar { rail: usize },
+    /// Five Seasons Park terrace or ramp: concrete top, brick retaining walls down to `base`.
+    Terrace { piece: usize, base: f32 },
+    /// Park handrail / flat rail: green round rail on dark posts (`RailKind::Bar`).
+    Handrail { rail: usize },
+}
+
+impl Layout {
+    fn add_edge(&mut self, name: &'static str, a: Vec3, b: Vec3) {
+        self.vis.push(StreetVis::Edge { rail: self.rails.len() });
+        self.rails.push(Rail::new(name, vec![a, b], RailKind::Edge));
+    }
+
+    /// Solid block along local Z (`yaw`), top from `h0` (-Z end) to `h1` (+Z end) standing on
+    /// `base`. With a `name` it is a grindable ledge: both long top edges become grind lines.
+    #[allow(clippy::too_many_arguments)]
+    fn add_block(&mut self, name: Option<&'static str>, c: Vec2, yaw: f32, len: f32, w: f32, base: f32, h0: f32, h1: f32, prop: bool) {
+        let i = self.pieces.len();
+        let pc = Piece { c, yaw, shape: Shape::Block { len, w, h0, h1 }, prop };
+        self.pieces.push(pc);
+        self.vis.push(StreetVis::Block { piece: i, base, trim: name.is_some() });
+        if let Some(name) = name {
+            let inset = len * 0.5 - 0.1;
+            let hz = |lz: f32| h0 + (h1 - h0) * (lz + len * 0.5) / len;
+            for side in [-1.0_f32, 1.0] {
+                let e = |lz: f32| {
+                    let p = pc.to_world(Vec2::new(side * (w * 0.5 - 0.03), lz));
+                    Vec3::new(p.x, hz(lz), p.y)
+                };
+                self.add_edge(name, e(-inset), e(inset));
+            }
+        }
+    }
+
+    /// Round rail on posts; solid (a fence) from the ground to just over its top.
+    fn add_bar(&mut self, name: &'static str, pts: Vec<Vec3>) {
+        self.vis.push(StreetVis::Bar { rail: self.rails.len() });
+        self.add_rail_body(name, pts);
+    }
+
+    /// Park rail (green): same physics as `add_bar`.
+    fn add_handrail(&mut self, name: &'static str, pts: Vec<Vec3>) {
+        self.vis.push(StreetVis::Handrail { rail: self.rails.len() });
+        self.add_rail_body(name, pts);
+    }
+
+    fn add_rail_body(&mut self, name: &'static str, pts: Vec<Vec3>) {
+        for w in pts.windows(2) {
+            self.fences.push(Fence { a: xz(w[0]), b: xz(w[1]), base: 0.0, top: w[0].y + 0.06, top_b: w[1].y + 0.06 });
+        }
+        self.rails.push(Rail::new(name, pts, RailKind::Bar));
+    }
+
+    /// Park terrace or ramp (plain block, brick walls) standing on `base`.
+    #[allow(clippy::too_many_arguments)]
+    fn add_terrace(&mut self, c: Vec2, yaw: f32, len: f32, w: f32, base: f32, h0: f32, h1: f32) {
+        let i = self.pieces.len();
+        self.pieces.push(Piece { c, yaw, shape: Shape::Block { len, w, h0, h1 }, prop: false });
+        self.vis.push(StreetVis::Terrace { piece: i, base });
+    }
+
+    /// Solid decoration (tree trunk, lamp post, bench) with its top at `top`.
+    fn add_prop(&mut self, c: Vec2, yaw: f32, len: f32, w: f32, top: f32) {
+        self.pieces.push(Piece { c, yaw, shape: Shape::Block { len, w, h0: top, h1: top }, prop: true });
+    }
+
+    /// Stair set descending toward local +Z from `top` to `foot` in `n` risers over `len`.
+    #[allow(clippy::too_many_arguments)]
+    fn add_stairs(&mut self, c: Vec2, yaw: f32, len: f32, w: f32, top: f32, foot: f32, n: u32) {
+        let i = self.pieces.len();
+        self.pieces.push(Piece { c, yaw, shape: Shape::Stairs { len, w, h0: top, h1: foot, n }, prop: false });
+        self.vis.push(StreetVis::Stairs { piece: i, n });
+    }
+}
+
+/// Street lines sit on the sidewalk's street edge, this far out from the block centre (facades at
+/// 8.5, crew spots at 11, the old 11 cm kerb ring at 12.95..13.27, road lanes from 18.3).
+const KERB_LINE: f32 = 12.6;
+/// Used span of a block face (the corners are left open as run-in / run-out to the crossing).
+const KERB_SPAN: f32 = 11.25;
+/// Half the gap between the two lines of a split face (hop one to the next for a combo).
+const KERB_HALF_GAP: f32 = 1.4;
+/// Clear run beyond each end of a line (no trunk, wall or building).
+const RUN_OUT: f32 = 6.0;
+const MIN_LINE: f32 = 6.0;
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+fn road_name(n: Vec2, road: Vec2) -> &'static str {
+    // Road centres are at 0, +-46 and about +-92 (91.5 between the inner and outer blocks).
+    let k = |v: f32| (v / 46.0).round() as i32;
+    if n.y != 0.0 {
+        ["5TH ST", "6TH ST", "7TH ST", "8TH ST", "9TH ST"][(k(road.y) + 2).clamp(0, 4) as usize]
+    } else {
+        ["1ST AVE", "2ND AVE", "3RD ST", "4TH AVE", "5TH AVE"][(k(road.x) + 2).clamp(0, 4) as usize]
+    }
+}
+
+/// Removes (a, b) from a list of intervals.
+fn cut(iv: &mut Vec<(f32, f32)>, a: f32, b: f32) {
+    let mut out = Vec::with_capacity(iv.len() + 1);
+    for &(s0, s1) in iv.iter() {
+        if b <= s0 || a >= s1 {
+            out.push((s0, s1));
+            continue;
+        }
+        if a > s0 {
+            out.push((s0, a));
+        }
+        if b < s1 {
+            out.push((b, s1));
+        }
+    }
+    *iv = out;
+}
+
+/// Grind lines along the street edge of every block face that opens onto a street inside the map:
+/// low kerbs (0.25 / 0.3 m), ledges (0.45 / 0.6 m) and round rails (0.6 to 0.9 m), most faces split
+/// into two lines with a hop gap, some one long line. Lines are cut back from crew spots, scooter
+/// racks, pedestrian beats and the Pub 217 door, and kept `RUN_OUT` clear of trunks, buildings,
+/// the Ferris plaza, Empire Citadel and the parks. 3rd St SE (bike lanes, trees, the Gauntlet run)
+/// and the stunt runs' road centres are never used.
+fn add_street_grinds(l: &mut Layout) {
+    let mut soft: Vec<(Vec2, Vec2)> = Vec::new();
+    for &(x, z, _) in &crate::city::CREW_SPOT_CANDIDATES {
+        soft.push((Vec2::new(x, z), Vec2::splat(1.6)));
+    }
+    for (p, _) in crate::scooter::SCOOTER_SPOTS {
+        soft.push((xz(p), Vec2::splat(1.4)));
+    }
+    for h in crate::city::npc_homes() {
+        soft.push((h, Vec2::new(2.6, 5.1)));
+    }
+    let door = crate::city::PUB217_ANCHOR;
+    soft.push((Vec2::new(door.x + 4.0, door.z), Vec2::new(6.0, 5.0)));
+    let tx = crate::city::STREET_TREE_X;
+    let trees: Vec<Vec2> = crate::city::STREET_TREE_Z.iter().flat_map(|&z| [Vec2::new(-tx, z), Vec2::new(tx, z)]).collect();
+    // Component of a half-extent along an axis-aligned direction.
+    let comp = |h: Vec2, d: Vec2| h.x * d.x.abs() + h.y * d.y.abs();
+    let coords = [-114.0_f32, -69.0, -23.0, 23.0, 69.0, 114.0];
+    let faces = [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y];
+    for &bx in &coords {
+        for &bz in &coords {
+            if bx < -100.0 || is_park_block(bx, bz) || is_bigpark_block(bx, bz) {
+                continue;
+            }
+            let b = Vec2::new(bx, bz);
+            for (fi, &n) in faces.iter().enumerate() {
+                let road = b + n * 23.0;
+                if road.x.abs() > 100.0 || road.y.abs() > 100.0 || (n.x != 0.0 && road.x.abs() < 1.0) {
+                    continue;
+                }
+                let t = if n.x != 0.0 { Vec2::Y } else { Vec2::X };
+                let o = b + n * KERB_LINE;
+                let face_seed = (bx as i64) * 131 + (bz as i64) * 17 + fi as i64;
+                let mut iv = if hash01(0x0f_ace5, face_seed, 0) < 0.5 {
+                    vec![(-KERB_SPAN, KERB_SPAN)]
+                } else {
+                    vec![(-KERB_SPAN, -KERB_HALF_GAP), (KERB_HALF_GAP, KERB_SPAN)]
+                };
+                for &(c, h) in &soft {
+                    if (c - o).dot(n).abs() < comp(h, n) + 0.6 {
+                        let a = (c - b).dot(t);
+                        let ht = comp(h, t) + 0.6;
+                        cut(&mut iv, a - ht, a + ht);
+                    }
+                }
+                for &c in &trees {
+                    if (c - o).dot(n).abs() < 2.1 {
+                        let a = (c - b).dot(t);
+                        cut(&mut iv, a - RUN_OUT - 0.5, a + RUN_OUT + 0.5);
+                    }
+                }
+                let mut s = -KERB_SPAN - RUN_OUT;
+                while s <= KERB_SPAN + RUN_OUT {
+                    let p = o + t * s;
+                    if !crate::city::is_clear_of_skyscrapers(p.x, p.y, 1.5)
+                        || near_park(p, 3.0)
+                        || in_rect(p, CROSSING_C, CROSSING_HALF + Vec2::splat(2.0))
+                        || in_bigpark(p.x, p.y, 3.0)
+                    {
+                        cut(&mut iv, s - RUN_OUT, s + RUN_OUT);
+                    }
+                    s += 0.5;
+                }
+                let yaw = if t.x != 0.0 { FRAC_PI_2 } else { 0.0 };
+                let road_n = road_name(n, road);
+                for &(s0, s1) in &iv {
+                    let len = s1 - s0;
+                    if len < MIN_LINE {
+                        continue;
+                    }
+                    let mid = (s0 + s1) * 0.5;
+                    let dir = match (t.x != 0.0, mid < 0.0) {
+                        (true, true) => "WEST",
+                        (true, false) => "EAST",
+                        (false, true) => "NORTH",
+                        (false, false) => "SOUTH",
+                    };
+                    let pick = hash01(0x6e1d_5eed, face_seed, (mid * 10.0) as i64);
+                    let h2 = hash01(0x51de_ca7e, face_seed, (mid * 10.0) as i64);
+                    if pick < 0.55 {
+                        let h = if h2 < 0.5 { 0.25 } else { 0.3 };
+                        let name = leak(format!("{} {} KERB", road_n, dir));
+                        l.add_block(Some(name), o + t * mid, yaw, len, 0.4, 0.0, h, h, true);
+                    } else if pick < 0.85 {
+                        let h = if h2 < 0.5 { 0.45 } else { 0.6 };
+                        let name = leak(format!("{} {} LEDGE", road_n, dir));
+                        l.add_block(Some(name), b + n * (KERB_LINE - 0.05) + t * mid, yaw, len, 0.55, 0.0, h, h, true);
+                    } else {
+                        let h = [0.6, 0.75, 0.9][((h2 * 3.0) as usize).min(2)];
+                        let name = leak(format!("{} {} RAIL", road_n, dir));
+                        let p = |s: f32| {
+                            let q = o + t * s;
+                            Vec3::new(q.x, h, q.y)
+                        };
+                        l.add_bar(name, vec![p(s0 + 0.15), p(s1 - 0.15)]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Five Seasons Park heights: summit, mid terrace, fountain terrace (street level is 0).
+const BP_SUM: f32 = 5.4;
+const BP_MID: f32 = 3.0;
+const BP_FTN: f32 = 1.2;
+
+fn bp(u: f32, v: f32) -> Vec2 {
+    BIGPARK_C + Vec2::new(u, v)
+}
+
+fn bp3(u: f32, y: f32, v: f32) -> Vec3 {
+    Vec3::new(BIGPARK_C.x + u, y, BIGPARK_C.y + v)
+}
+
+/// Height of the promenade ramp R2 (summit -> mid terrace, north lane) at `u`.
+fn bp_r2(u: f32) -> f32 {
+    BP_SUM + (BP_MID - BP_SUM) * ((u + 40.0) / 26.0).clamp(0.0, 1.0)
+}
+
+/// Five Seasons Park (local u east, v south; see `BIGPARK_C`). West to east:
+///
+/// ```text
+///  u -59.25..-56.25  street-level walk (river side)          v 10.25..13.25 street walk (5th St)
+///  u -56.25..-40     SUMMIT 5.4 m (overlook)                 v  6.25..10.25 lawn + trees under
+///  u -40  ..-14      MID terrace 3.0 m                                      the terrace walls
+///  u -14  .. 20      FOUNTAIN terrace 1.2 m (fountain at u 8)
+///  u  20  .. 56.25   the GREEN at street level (amphitheatre seats, stage)
+///  north lane v -12.75..-7.75: ramps R2 (summit->mid, u -40..-14), R1 (mid->fountain, u -14..0),
+///  R0 (fountain->street, u 20..32), so every level can be rolled to.
+///  BIG STAIRS 14 risers (5.4->3.0) at u -40..-33.7, v -5..1: HILLSIDE RAIL (north), BIG HUBBA (south)
+///  MID STAIRS 10 risers (3.0->1.2) at u -14..-9.5, v -2..4: TERRACE HUBBA (north), TERRACE RAIL (south)
+///  SEATS 3 x 0.4 m (1.2->0) at u 20..22.7, v -6.75..2.25; EAST STAIRS 7 risers v 2.25..6.25, AMPHI RAIL
+/// ```
+///
+/// Main line: summit -> BIG HUBBA -> TERRACE RAIL -> FOUNTAIN LEDGE -> AMPHI RAIL -> GREEN RAIL.
+fn add_big_park(l: &mut Layout) {
+    let terrace = |l: &mut Layout, u0: f32, u1: f32, h: f32| {
+        l.add_terrace(bp((u0 + u1) * 0.5, -3.5), 0.0, 19.5, u1 - u0, 0.0, h, h);
+    };
+    terrace(l, -56.25, -40.0, BP_SUM);
+    terrace(l, -40.0, -14.0, BP_MID);
+    terrace(l, -14.0, 20.0, BP_FTN);
+    // North-lane ramps (local Z = east, h0 at the west end).
+    l.add_terrace(bp(-27.0, -10.25), FRAC_PI_2, 26.0, 5.0, BP_MID, BP_SUM, BP_MID);
+    l.add_terrace(bp(-7.0, -10.25), FRAC_PI_2, 14.0, 5.0, BP_FTN, BP_MID, BP_FTN);
+    l.add_terrace(bp(26.0, -10.25), FRAC_PI_2, 12.0, 5.0, 0.0, BP_FTN, 0.0);
+    // Stair sets descending east (rise ~0.17 m, tread 0.45 m; the seats 0.4 m x 0.9 m).
+    l.add_stairs(bp(-36.85, -2.0), FRAC_PI_2, 6.3, 6.0, BP_SUM, BP_MID, 14);
+    l.add_stairs(bp(-11.75, 1.0), FRAC_PI_2, 4.5, 6.0, BP_MID, BP_FTN, 10);
+    l.add_stairs(bp(21.35, -2.25), FRAC_PI_2, 2.7, 9.0, BP_FTN, 0.0, 3);
+    l.add_stairs(bp(21.575, 4.25), FRAC_PI_2, 3.15, 4.0, BP_FTN, 0.0, 7);
+    // Handrails 0.85 m over the nosing line with a flat lead-in and run-out.
+    let hr = 0.85;
+    let rail = |v: f32, u0: f32, len: f32, top: f32, foot: f32| {
+        vec![bp3(u0 - 1.5, top + hr, v), bp3(u0, top + hr, v), bp3(u0 + len, foot + hr, v), bp3(u0 + len + 0.8, foot + hr, v)]
+    };
+    l.add_handrail("HILLSIDE RAIL", rail(-4.75, -40.0, 6.3, BP_SUM, BP_MID));
+    l.add_handrail("TERRACE RAIL", rail(3.75, -14.0, 4.5, BP_MID, BP_FTN));
+    l.add_handrail("AMPHI RAIL", rail(6.0, 20.0, 3.15, BP_FTN, 0.0));
+    // Guard / grind rail down the promenade ramp's open side.
+    l.add_handrail(
+        "PROMENADE RAIL",
+        vec![bp3(-42.0, BP_SUM + 0.9, -8.0), bp3(-40.0, BP_SUM + 0.9, -8.0), bp3(-16.0, bp_r2(-16.0) + 0.9, -8.0)],
+    );
+    // Flat rails on the big levels.
+    l.add_handrail("MID RAIL", vec![bp3(-27.0, BP_MID + 0.6, -4.5), bp3(-20.5, BP_MID + 0.6, -4.5)]);
+    l.add_handrail("GREEN RAIL", vec![bp3(33.0, 0.55, 8.5), bp3(47.0, 0.55, 8.5)]);
+    // Hubbas beside the stairs (top 0.45 m over the nosing line) and ledges / kerbs.
+    l.add_block(Some("BIG HUBBA"), bp(-36.85, 1.4), FRAC_PI_2, 6.3, 0.8, BP_MID, BP_SUM + 0.45, BP_MID + 0.45, false);
+    l.add_block(Some("TERRACE HUBBA"), bp(-11.75, -2.4), FRAC_PI_2, 4.5, 0.8, BP_FTN, BP_MID + 0.45, BP_FTN + 0.45, false);
+    l.add_block(Some("FOUNTAIN LEDGE"), bp(4.5, 3.5), FRAC_PI_2, 11.0, 0.6, BP_FTN, BP_FTN + 0.45, BP_FTN + 0.45, false);
+    l.add_block(Some("MID KERB"), bp(-21.0, 5.2), FRAC_PI_2, 8.0, 0.5, BP_MID, BP_MID + 0.3, BP_MID + 0.3, false);
+    // Fountain (solid basin, grind its rim) and the stage (hop up, or walk up the back steps).
+    let (fc, fr) = (bp(8.0, -4.5), 3.4);
+    l.add_block(Some("FOUNTAIN RIM"), fc, 0.0, fr * 2.0, fr * 2.0, BP_FTN, BP_FTN + 0.55, BP_FTN + 0.55, false);
+    l.add_prop(fc, 0.0, 1.4, 1.4, BP_FTN + 2.6);
+    let sc = bp(32.5, -0.75);
+    l.add_block(Some("STAGE EDGE"), sc, 0.0, 6.0, 6.0, 0.0, 0.75, 0.75, false);
+    l.add_stairs(bp(36.1, -0.75), FRAC_PI_2, 1.2, 1.8, 0.75, 0.0, 3);
+    for (dx, dz) in [(-2.7, -2.7), (2.7, -2.7), (-2.7, 2.7), (2.7, 2.7)] {
+        l.add_prop(sc + Vec2::new(dx, dz), 0.0, 0.25, 0.25, 4.2);
+    }
+    // Trees (solid trunks): under the terrace walls, on the summit, at the Green's far corner.
+    for (u, v, base) in bp_trees() {
+        l.add_prop(bp(u, v), 0.0, 0.4, 0.4, base + 3.0);
+    }
+    for (u, v, base) in bp_lamps() {
+        l.add_prop(bp(u, v), 0.0, 0.3, 0.3, base + 5.6);
+    }
+    for (u, v, base) in bp_benches() {
+        l.add_prop(bp(u, v), 0.0, 2.4, 0.62, base + 0.48);
+    }
+}
+
+/// Five Seasons Park trees: (u, v, ground height).
+fn bp_trees() -> Vec<(f32, f32, f32)> {
+    let mut t: Vec<(f32, f32, f32)> = [-52.0, -44.0, -36.0, -28.0, -20.0, -12.0, -4.0, 4.0, 12.0].iter().map(|&u| (u, 8.3, 0.0)).collect();
+    t.extend([(-57.75, -10.0, 0.0), (-57.75, -2.0, 0.0), (-57.75, 6.0, 0.0), (-54.0, -11.5, BP_SUM), (-54.0, 4.5, BP_SUM)]);
+    t.extend([(53.5, -11.5, 0.0), (57.5, -10.0, 0.0), (55.5, 3.5, 0.0)]);
+    t
+}
+
+/// Lamp posts (u, v, ground height): the north edge and the lawn strip under the south walls.
+fn bp_lamps() -> Vec<(f32, f32, f32)> {
+    let mut t = vec![(-50.0, -13.0, BP_SUM), (-30.0, -13.0, BP_MID), (-6.0, -13.0, BP_FTN), (12.0, -13.0, BP_FTN), (35.0, -13.0, 0.0)];
+    t.extend([-48.0_f32, -32.0, -16.0, 0.0].iter().map(|&u| (u, 9.6, 0.0)));
+    t.push((58.0, 9.0, 0.0));
+    t
+}
+
+/// Benches (u, v, ground height), all running along v: summit overlook and the fountain sides.
+fn bp_benches() -> Vec<(f32, f32, f32)> {
+    vec![(-54.5, -3.5, BP_SUM), (-54.5, -0.5, BP_SUM), (2.6, -4.5, BP_FTN), (13.4, -4.5, BP_FTN)]
+}
+
+/// Draws every street grind line and the stairs plaza from `Layout::vis`: concrete bodies, yellow
+/// painted faces and steel edges are merged into one mesh per material; round rails get posts.
+fn spawn_street_grinds(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, unit_cyl: &Handle<Mesh>, unit_box: &Handle<Mesh>, unit_sphere: &Handle<Mesh>) {
+    let l = layout();
+    let kerb_mat = concrete_mat(materials, Vec3::new(0.72, 0.71, 0.68), 0.8);
+    let terrace_mat = concrete_mat(materials, Vec3::new(0.58, 0.57, 0.55), 0.86);
+    let yellow = materials.add(crate::gfx::city_textured(
+        StandardMaterial { base_color: Color::srgb(0.98, 0.76, 0.12), perceptual_roughness: 0.6, ..default() },
+        crate::gfx::CityTex::Paint,
+    ));
+    let steel = mat(materials, Color::srgb(0.86, 0.87, 0.90), 0.92, 0.2);
+    let steel_dark = mat(materials, Color::srgb(0.24, 0.25, 0.28), 0.75, 0.42);
+    let bar_mat = mat(materials, Color::srgb(0.98, 0.74, 0.10), 0.45, 0.38);
+    let green_bar = mat(materials, Color::srgb(0.10, 0.46, 0.32), 0.45, 0.38);
+    let top_mat = concrete_mat(materials, Vec3::new(0.70, 0.69, 0.66), 0.82);
+    let brick_mat = materials.add(crate::gfx::city_textured(
+        StandardMaterial { base_color: Color::srgb(0.58, 0.34, 0.27), perceptual_roughness: 0.88, ..default() },
+        crate::gfx::CityTex::Brick,
+    ));
+    let (mut kerb, mut terr, mut paint, mut edge) = (MB::default(), MB::default(), MB::default(), MB::default());
+    let (mut ttop, mut twall) = (MB::default(), MB::default());
+    for v in &l.vis {
+        match *v {
+            StreetVis::Block { piece, base, trim } => {
+                let pc = &l.pieces[piece];
+                let Shape::Block { len, w, h0, h1 } = pc.shape else { continue };
+                let tf = Transform::from_xyz(pc.c.x, base, pc.c.y).with_rotation(Quat::from_rotation_y(pc.yaw));
+                let mut body = MB::default();
+                body.sloped_block(len, w, h0 - base, h1 - base, CONCRETE_TILE);
+                if trim {
+                    kerb.append(body, &tf);
+                    let mut skin = MB::default();
+                    skin.sloped_block(len + 0.012, w + 0.012, h0 - base - 0.05, h1 - base - 0.05, 1.5);
+                    paint.append(skin, &tf);
+                } else {
+                    terr.append(body, &tf);
+                }
+            }
+            StreetVis::Terrace { piece, base } => {
+                let pc = &l.pieces[piece];
+                let Shape::Block { len, w, h0, h1 } = pc.shape else { continue };
+                let tf = Transform::from_xyz(pc.c.x, base, pc.c.y).with_rotation(Quat::from_rotation_y(pc.yaw));
+                // Top quad (the first 4 vertices / 6 indices) in concrete, the walls in brick.
+                let mut top = MB::default();
+                top.sloped_block(len, w, h0 - base, h1 - base, CONCRETE_TILE);
+                top.pos.truncate(4);
+                top.nrm.truncate(4);
+                top.uv.truncate(4);
+                top.idx.truncate(6);
+                ttop.append(top, &tf);
+                let mut walls = MB::default();
+                walls.sloped_block(len, w, h0 - base, h1 - base, 1.2);
+                walls.pos.drain(..4);
+                walls.nrm.drain(..4);
+                walls.uv.drain(..4);
+                walls.idx = walls.idx[6..].iter().map(|i| i - 4).collect();
+                twall.append(walls, &tf);
+            }
+            StreetVis::Stairs { piece, n } => {
+                let pc = &l.pieces[piece];
+                let Shape::Stairs { len, w, h0, h1, .. } = pc.shape else { continue };
+                let tf = Transform::from_xyz(pc.c.x, 0.0, pc.c.y).with_rotation(Quat::from_rotation_y(pc.yaw));
+                let rise = (h0 - h1) / n as f32;
+                let tread = len / n as f32;
+                let mut b = MB::default();
+                for i in 1..n {
+                    let top = h0 - i as f32 * rise;
+                    let zc = -len * 0.5 + (i as f32 - 0.5) * tread;
+                    b.cuboid(Vec3::new(0.0, (top + h1) * 0.5, zc), Vec3::new(w, top - h1, tread), CONCRETE_TILE);
+                }
+                terr.append(b, &tf);
+            }
+            StreetVis::Edge { rail } => {
+                let r = &l.rails[rail];
+                let (a, b) = (r.pts[0], r.pts[r.pts.len() - 1]);
+                let d = b - a;
+                let tf = Transform::from_translation((a + b) * 0.5 - Vec3::Y * 0.012).looking_to(d.normalize_or(Vec3::Z), Vec3::Y);
+                let mut sb = MB::default();
+                sb.cuboid(Vec3::ZERO, Vec3::new(0.075, 0.035, d.length() + 0.18), 1.0);
+                edge.append(sb, &tf);
+            }
+            StreetVis::Bar { rail } | StreetVis::Handrail { rail } => {
+                let r = &l.rails[rail];
+                let bar_mat = if matches!(v, StreetVis::Handrail { .. }) { green_bar.clone() } else { bar_mat.clone() };
+                for w in r.pts.windows(2) {
+                    put(commands, unit_cyl.clone(), bar_mat.clone(), rod_tf(w[0], w[1], 0.048));
+                    let up = Vec3::Y * 0.036;
+                    put(commands, unit_cyl.clone(), steel.clone(), rod_tf(w[0] + up, w[1] + up, 0.018));
+                }
+                let mut posts = vec![0.3, r.len() - 0.3];
+                let n_mid = (r.len() / 3.0).floor() as i32;
+                for i in 1..n_mid {
+                    posts.push(r.len() * i as f32 / n_mid as f32);
+                }
+                for (i, c) in r.cum.iter().enumerate() {
+                    if i > 0 && i + 1 < r.cum.len() {
+                        posts.push(*c);
+                        put(commands, unit_sphere.clone(), bar_mat.clone(), Transform::from_translation(r.pts[i]).with_scale(Vec3::splat(0.05)));
+                    }
+                }
+                for s in posts {
+                    let (p, _) = r.point(s);
+                    let g = surface(xz(p)).h;
+                    if p.y - g < 0.1 {
+                        continue;
+                    }
+                    put(commands, unit_cyl.clone(), steel_dark.clone(), rod_tf(Vec3::new(p.x, g, p.z), p - Vec3::Y * 0.03, 0.04));
+                    put(commands, unit_box.clone(), steel_dark.clone(), Transform::from_xyz(p.x, g + 0.03, p.z).with_scale(Vec3::new(0.22, 0.03, 0.22)));
+                }
+            }
+        }
+    }
+    for (b, m) in [(kerb, kerb_mat), (terr, terrace_mat), (paint, yellow), (edge, steel), (ttop, top_mat), (twall, brick_mat)] {
+        if !b.idx.is_empty() {
+            put(commands, meshes.add(b.mesh()), m, Transform::IDENTITY);
+        }
+    }
+}
+
+/// Five Seasons Park dressing that has no physics of its own: paved ground, lawns, trees, lamps,
+/// benches, fountain water, the stage roof and point lights (pieces come from `add_big_park`).
+#[allow(clippy::too_many_arguments)]
+fn spawn_big_park(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    unit_cyl: &Handle<Mesh>,
+    unit_box: &Handle<Mesh>,
+    unit_sphere: &Handle<Mesh>,
+    grass_mat: &Handle<StandardMaterial>,
+    bark_mat: &Handle<StandardMaterial>,
+    leaf_mat: &Handle<StandardMaterial>,
+    wood_mat: &Handle<StandardMaterial>,
+    steel_dark: &Handle<StandardMaterial>,
+    lamp_glow: &Handle<StandardMaterial>,
+) {
+    let pavers = materials.add(crate::gfx::city_textured(
+        StandardMaterial { base_color: Color::srgb(0.66, 0.63, 0.58), perceptual_roughness: 0.88, ..default() },
+        crate::gfx::CityTex::Pavers,
+    ));
+    // Paved ground over the whole footprint (top 0.09, over the old road paint and bike lanes).
+    let mut g = MB::default();
+    g.cuboid(Vec3::new(BIGPARK_C.x, 0.045, BIGPARK_C.y), Vec3::new(BIGPARK_HALF.x * 2.0, 0.09, BIGPARK_HALF.y * 2.0), 3.0);
+    put(commands, meshes.add(g.mesh()), pavers, Transform::IDENTITY);
+    // Lawns: the strip under the south walls, the Green, beds on the summit, mid and fountain terraces.
+    let mut lawn = MB::default();
+    let gu = |x: f32, z: f32| Vec2::new(x / 4.0, z / 4.0);
+    for (u0, u1, v0, v1, y) in [
+        (-56.25_f32, 20.0_f32, 6.25_f32, 10.25_f32, 0.1_f32),
+        (23.2, 56.25, -13.25, 3.0, 0.1),
+        (-56.25, -42.0, 2.5, 6.25, BP_SUM + 0.02),
+        (-40.0, -34.0, 2.6, 6.25, BP_MID + 0.02),
+        (-1.0, 10.0, 4.0, 6.25, BP_FTN + 0.02),
+    ] {
+        let q = [bp3(u0, y, v0), bp3(u1, y, v0), bp3(u1, y, v1), bp3(u0, y, v1)];
+        lawn.quad(q, Vec3::Y, [gu(q[0].x, q[0].z), gu(q[1].x, q[1].z), gu(q[2].x, q[2].z), gu(q[3].x, q[3].z)]);
+    }
+    put(commands, meshes.add(lawn.mesh()), grass_mat.clone(), Transform::IDENTITY);
+    for (u, v, base) in bp_trees() {
+        let p = bp3(u, base, v);
+        spawn_tree(commands, unit_cyl, unit_sphere, bark_mat, leaf_mat, p, 0.85);
+    }
+    for (u, v, base) in bp_lamps() {
+        let to_c = if v < 0.0 { Vec2::Y } else { Vec2::NEG_Y };
+        let pole_top = bp3(u, base + 5.4, v);
+        put(commands, unit_cyl.clone(), steel_dark.clone(), rod_tf(bp3(u, base, v), pole_top, 0.09));
+        let head = pole_top + Vec3::new(to_c.x, 0.0, to_c.y) * 0.9 + Vec3::Y * 0.1;
+        put(commands, unit_cyl.clone(), steel_dark.clone(), rod_tf(pole_top - Vec3::Y * 0.1, head, 0.05));
+        put(commands, unit_box.clone(), lamp_glow.clone(), Transform::from_translation(head - Vec3::Y * 0.08).with_scale(Vec3::new(0.7, 0.1, 0.34)));
+    }
+    let (mut wood, mut legs) = (MB::default(), MB::default());
+    for (u, v, base) in bp_benches() {
+        let c = bp3(u, base, v);
+        for i in 0..4 {
+            let x = -0.23 + i as f32 * 0.153;
+            wood.cuboid(c + Vec3::new(x, 0.455, 0.0), Vec3::new(0.12, 0.05, 2.4), 2.0);
+        }
+        for z in [-0.95, 0.95] {
+            legs.cuboid(c + Vec3::new(0.0, 0.21, z), Vec3::new(0.56, 0.42, 0.06), 1.0);
+        }
+    }
+    put(commands, meshes.add(wood.mesh()), wood_mat.clone(), Transform::IDENTITY);
+    put(commands, meshes.add(legs.mesh()), steel_dark.clone(), Transform::IDENTITY);
+    // Fountain: water inside the rim, a stone column with a bowl and a jet.
+    let water = materials.add(crate::gfx::city_textured(
+        StandardMaterial {
+            base_color: Color::srgba(0.18, 0.46, 0.66, 0.85),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.1,
+            ..default()
+        },
+        crate::gfx::CityTex::Water,
+    ));
+    let stone = concrete_mat(materials, Vec3::new(0.78, 0.76, 0.72), 0.6);
+    let fc = bp3(8.0, BP_FTN, -4.5);
+    put(commands, unit_box.clone(), water.clone(), Transform::from_translation(fc + Vec3::Y * 0.57).with_scale(Vec3::new(6.2, 0.02, 6.2)));
+    put(commands, unit_cyl.clone(), stone.clone(), Transform::from_translation(fc + Vec3::Y * 1.3).with_scale(Vec3::new(0.55, 2.6, 0.55)));
+    put(commands, unit_cyl.clone(), stone.clone(), Transform::from_translation(fc + Vec3::Y * 2.1).with_scale(Vec3::new(1.6, 0.18, 1.6)));
+    put(commands, unit_cyl.clone(), water.clone(), Transform::from_translation(fc + Vec3::Y * 3.1).with_scale(Vec3::new(0.16, 1.4, 0.16)));
+    // Bandstand roof over the stage posts.
+    let roof = materials.add(StandardMaterial { base_color: Color::srgb(0.14, 0.36, 0.24), perceptual_roughness: 0.6, ..default() });
+    let sc = bp3(32.5, 0.0, -0.75);
+    let white = mat(materials, Color::srgb(0.92, 0.91, 0.88), 0.0, 0.6);
+    for (dx, dz) in [(-2.7, -2.7), (2.7, -2.7), (-2.7, 2.7), (2.7, 2.7)] {
+        put(commands, unit_cyl.clone(), white.clone(), rod_tf(sc + Vec3::new(dx, 0.75, dz), sc + Vec3::new(dx, 4.2, dz), 0.12));
+    }
+    put(commands, meshes.add(Cone::new(4.6, 1.8)), roof, Transform::from_translation(sc + Vec3::Y * 5.1));
+    put(commands, unit_box.clone(), white, Transform::from_translation(sc + Vec3::Y * 4.25).with_scale(Vec3::new(6.4, 0.2, 6.4)));
+    for (u, y, v) in [(-48.0, 10.0, -2.0), (8.0, 8.0, -4.5), (32.5, 8.0, 0.0)] {
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            PointLight { color: Color::srgb(1.0, 0.88, 0.68), intensity: 70000.0, range: 32.0, ..default() },
+            Transform::from_translation(bp3(u, y, v)),
+        ));
+    }
+}
+
 /// Scoreboard legs (x) at the lot's north edge (z).
 const SIGN_LEGS: [f32; 2] = [62.6, 75.4];
 const SIGN_Z: f32 = 126.6;
 
+/// Lamp posts (solid). Kept off every grind line and its run-in and run-out: the plaza ones sit
+/// in the extreme block corners, 4.6 m behind the corner rails and ledges; the lot ones stand at
+/// the ends of the half pipe decks, clear of the long rail (x = 57.9) and the bench ledge
+/// (x = 80.8) lines they used to flank.
 fn lamp_spots() -> [Vec2; 8] {
-    let d = 12.3;
+    let d = 12.9;
     [
         PLAZA + Vec2::new(d, d),
         PLAZA + Vec2::new(-d, d),
         PLAZA + Vec2::new(-d, -d),
         PLAZA + Vec2::new(d, -d),
-        LOT + Vec2::new(-12.8, -12.6),
-        LOT + Vec2::new(12.8, -12.6),
-        LOT + Vec2::new(-12.8, 9.0),
-        LOT + Vec2::new(12.8, 9.0),
+        LOT + Vec2::new(-7.8, -12.8),
+        LOT + Vec2::new(7.8, -12.8),
+        LOT + Vec2::new(-7.8, 8.8),
+        LOT + Vec2::new(7.8, 8.8),
     ]
 }
 
@@ -450,10 +1184,10 @@ impl Surf {
 
 fn surface_ex(p: Vec2, props: bool) -> Surf {
     let mut best = Surf { h: 0.0, grad: Vec2::ZERO, piece: None, region: Region::Ground };
-    if !near_park(p, 1.0) {
-        return best;
-    }
-    for (i, pc) in layout().pieces.iter().enumerate() {
+    let l = layout();
+    for &i in &l.grid.at(p).pieces {
+        let i = i as usize;
+        let pc = &l.pieces[i];
         if pc.prop && !props {
             continue;
         }
@@ -473,10 +1207,9 @@ fn surface(p: Vec2) -> Surf {
 /// Does moving from `a` to `b` (plan view) cross a fence that is solid at height `y`?
 /// Returns the fence's unit normal pointing back toward `a`.
 fn fence_hit(a: Vec2, b: Vec2, y: f32, pad: f32) -> Option<Vec2> {
-    for f in &layout().fences {
-        if y < f.base - 0.05 || y > f.top - 0.05 {
-            continue;
-        }
+    let l = layout();
+    for &i in &l.grid.at(b).fences {
+        let f = &l.fences[i as usize];
         let d = f.b - f.a;
         let len = d.length();
         if len < 1e-4 {
@@ -490,8 +1223,17 @@ fn fence_hit(a: Vec2, b: Vec2, y: f32, pad: f32) -> Option<Vec2> {
         if along < -pad || along > len + pad {
             continue;
         }
-        let crossed = sa.signum() != sb.signum();
-        if crossed || sb.abs() < pad {
+        // Height under a sloped rail follows the rail, so the low end is not as tall as the
+        // high end.
+        let top = f.top + (f.top_b - f.top) * (along / len).clamp(0.0, 1.0);
+        if y < f.base - 0.05 || y > top - 0.05 {
+            continue;
+        }
+        // Blocked when the move crosses the fence, or ends beside it having come closer. A move
+        // along the line or away from it is never blocked: coming off the end of a grind, the
+        // rider drops down right on the rail's line and used to be held there every frame.
+        let crossed = sa.signum() != sb.signum() && sa.abs() > 1e-3 && sb.abs() > 1e-3;
+        if crossed || (sb.abs() < pad && sb.abs() < sa.abs() - 1e-3) {
             let side = if sa.abs() > 1e-4 { sa.signum() } else { -sb.signum() };
             return Some(n * side);
         }
@@ -883,6 +1625,15 @@ impl MB {
         }
     }
 
+    /// Appends another builder's triangles moved by `tf` (rotation + translation only).
+    fn append(&mut self, o: MB, tf: &Transform) {
+        let base = self.pos.len() as u32;
+        self.pos.extend(o.pos.iter().map(|p| tf.transform_point(Vec3::from(*p)).to_array()));
+        self.nrm.extend(o.nrm.iter().map(|n| (tf.rotation * Vec3::from(*n)).to_array()));
+        self.uv.extend(o.uv);
+        self.idx.extend(o.idx.iter().map(|i| i + base));
+    }
+
     fn mesh(self) -> Mesh {
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
@@ -1240,11 +1991,15 @@ pub fn spawn_skate_park(commands: &mut Commands, meshes: &mut Assets<Mesh>, mate
             border_mat.clone(),
             Transform::from_translation(mid + Vec3::Y * 0.1).with_rotation(Quat::from_rotation_y(yaw)),
         );
-        let tree = PLAZA + Vec2::new(sx, sz) * 11.2;
-        spawn_tree(commands, &unit_cyl, &unit_sphere, &bark_mat, &leaf_mat, Vec3::new(tree.x, 0.14, tree.y), 1.0);
+        // Small tree deep in the corner: its canopy stays 2.3 m clear of the corner's rail or
+        // ledge line (it used to hang over it and fill the chase camera).
+        let tree = PLAZA + Vec2::new(sx, sz) * 12.2;
+        spawn_tree(commands, &unit_cyl, &unit_sphere, &bark_mat, &leaf_mat, Vec3::new(tree.x, 0.14, tree.y), 0.8);
     }
-    for (x, z) in [(56.9, 101.9), (81.1, 101.9)] {
-        spawn_tree(commands, &unit_cyl, &unit_sphere, &bark_mat, &leaf_mat, Vec3::new(x, 0.0, z), 0.85);
+    // Lot trees stand in the far north corners, past the benches (they used to sit on the run-in
+    // to the long rail's kicker and to the bench ledge).
+    for (x, z) in [(56.3, 125.6), (81.7, 125.6)] {
+        spawn_tree(commands, &unit_cyl, &unit_sphere, &bark_mat, &leaf_mat, Vec3::new(x, 0.0, z), 0.7);
     }
     // Hedges along the lot's north edge (the city boundary) either side of the sign.
     for (x0, x1) in [(55.9_f32, 61.9_f32), (76.1, 82.1)] {
@@ -1447,7 +2202,7 @@ pub fn spawn_skate_park(commands: &mut Commands, meshes: &mut Assets<Mesh>, mate
     }
 
     // --- Benches with spectators at the lot's north corners ------------------------------------
-    for p in &layout().pieces {
+    for p in &layout().pieces[..layout().park_pieces] {
         if !p.prop {
             continue;
         }
@@ -1476,6 +2231,12 @@ pub fn spawn_skate_park(commands: &mut Commands, meshes: &mut Assets<Mesh>, mate
         put(commands, stripe.clone(), paint_white.clone(), Transform::from_xyz(CROSSING_C.x, 0.018, z));
         z += 1.2;
     }
+
+    // --- Street grind lines across the city and the stairs plaza ------------------------------
+    spawn_street_grinds(commands, meshes, materials, &unit_cyl, &unit_box, &unit_sphere);
+    spawn_big_park(
+        commands, meshes, materials, &unit_cyl, &unit_box, &unit_sphere, &grass_mat, &bark_mat, &leaf_mat, &wood_mat, &steel_dark, &lamp_glow,
+    );
 
     // --- Spark pool --------------------------------------------------------------------------
     let spark_mat = materials.add(StandardMaterial {
@@ -1684,7 +2445,43 @@ const WHIP_SECS: f32 = 0.42;
 const GRIND_FRICTION: f32 = 0.9;
 const GRIND_MAX: f32 = 15.0;
 const LOCK_R: f32 = 0.55;
+/// Grind assist: an airborne rider this close to a rail (plan view) and heading roughly along it
+/// is pulled over it, so a hop near a rail lands the grind.
+const ASSIST_R: f32 = 2.8;
+/// Sideways closing speed of the assist per metre of offset (closes most of the gap in ~0.2 s).
+const ASSIST_PULL: f32 = 6.0;
 const JUMP_BUFFER: f32 = 0.12;
+
+/// (throttle cap, turbo cap, hard ceiling) for park-model riding at `p`: the park's own limits in
+/// the park zone, street limits on street grind lines (so a kerb or ledge never brakes a rider
+/// coming off the street at 20 m/s; grinds still top out at `GRIND_MAX`).
+fn ride_caps(p: Vec2) -> (f32, f32, f32) {
+    if let Some(c) = zone_caps(p) {
+        c
+    } else {
+        (
+            crate::scooter::STREET_TOP_SPEED,
+            crate::scooter::TURBO_TOP_SPEED,
+            crate::scooter::BOOST_TOP_SPEED.max(crate::scooter::TURBO_TOP_SPEED),
+        )
+    }
+}
+
+/// Five Seasons Park is roomy: a higher throttle cap than the skate park (16 / 18.5 turbo, 20 max).
+const BIG_CAP: f32 = 16.0;
+const BIG_TURBO: f32 = 18.5;
+const BIG_MAX: f32 = 20.0;
+
+/// (throttle cap, turbo cap, hard ceiling) inside the skate park zone or Five Seasons Park.
+fn zone_caps(p: Vec2) -> Option<(f32, f32, f32)> {
+    if in_park_zone(Vec3::new(p.x, 0.0, p.y)) {
+        Some((FLAT_CAP, TURBO_CAP, MAX_PARK_SPEED))
+    } else if in_bigpark(p.x, p.y, 0.0) {
+        Some((BIG_CAP, BIG_TURBO, BIG_MAX))
+    } else {
+        None
+    }
+}
 
 /// Same hop speed as the street scooter (`stunts::scooter_hop_speed`).
 fn hop_speed(scale: f32) -> f32 {
@@ -1760,6 +2557,8 @@ pub struct ParkRide {
     line_pts: u32,
     pub best_line: u32,
     hinted: bool,
+    /// The street grind hint has been shown.
+    street_hinted: bool,
     cheer: f32,
     last_key: String,
     repeats: u32,
@@ -1807,6 +2606,7 @@ impl Default for ParkRide {
             line_pts: 0,
             best_line: 0,
             hinted: false,
+            street_hinted: false,
             cheer: 0.0,
             last_key: String::new(),
             repeats: 0,
@@ -1818,6 +2618,8 @@ impl Default for ParkRide {
 struct RideInput {
     throttle: f32,
     steer: f32,
+    /// No hand steering this frame: surface riding may steer toward the camera instead.
+    aim: bool,
     turbo: bool,
     jump: bool,
     jump_held: bool,
@@ -1838,12 +2640,14 @@ fn read_input(keys: &ButtonInput<KeyCode>, stats: &PlayerStats, t: f32, touch_ju
     if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::ArrowRight) {
         steer -= 1.0;
     }
+    let aim_ok = steer.abs() <= 0.05;
     if stats.drunk_timer > 0.0 && throttle.abs() > 0.1 {
         steer += crate::player::drunk_steer_drift(t, stats.drunk_timer) * 0.22;
     }
     let throttle = throttle.clamp(-1.0, 1.0);
     RideInput {
         throttle,
+        aim: aim_ok,
         steer: steer.clamp(-1.0, 1.0),
         turbo: (keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight)) && stats.dash_energy > 2.0 && throttle > 0.1,
         jump: keys.just_pressed(KeyCode::Space) || touch_jump,
@@ -1884,7 +2688,10 @@ fn find_lock(prev_y: f32, pos: Vec3, vel: Vec3, cool: (usize, f32)) -> Option<Lo
     if hs < 1.5 || vel.y > 1.2 {
         return None;
     }
-    for (i, rail) in layout().rails.iter().enumerate() {
+    let l = layout();
+    for &i in &l.grid.at(xz(pos)).rails {
+        let i = i as usize;
+        let rail = &l.rails[i];
         if cool.0 == i && cool.1 > 0.0 {
             continue;
         }
@@ -1915,11 +2722,63 @@ fn find_lock(prev_y: f32, pos: Vec3, vel: Vec3, cool: (usize, f32)) -> Option<Lo
     None
 }
 
+/// Rail the grind assist would bend an airborne rider onto.
+struct Assist {
+    rail: usize,
+    /// Plan distance to the rail.
+    dist: f32,
+    /// Unit vector (plan) from the rider to the rail.
+    to: Vec2,
+    /// Travel direction along the rail.
+    dir: Vec2,
+}
+
+/// The nearest non-coping rail within `ASSIST_R` (plan view) that an airborne rider at `pos`
+/// moving with `vel` is heading roughly along and can still come down onto.
+fn assist_pick(pos: Vec3, vel: Vec3, cool: (usize, f32)) -> Option<Assist> {
+    let hv = Vec2::new(vel.x, vel.z);
+    let hs = hv.length();
+    if hs < 1.5 {
+        return None;
+    }
+    let p = xz(pos);
+    let l = layout();
+    let mut best: Option<Assist> = None;
+    for &i in &l.grid.at(p).rails {
+        let i = i as usize;
+        let rail = &l.rails[i];
+        if rail.kind == RailKind::Coping || (cool.0 == i && cool.1 > 0.0) {
+            continue;
+        }
+        let (s, dh) = rail.closest_xz(p);
+        if dh > ASSIST_R || dh < 0.03 {
+            continue;
+        }
+        let (rp, d) = rail.point(s);
+        // Still rising, or already above the rail: it can be landed on.
+        if vel.y <= 0.0 && pos.y < rp.y - 0.1 {
+            continue;
+        }
+        let dd = Vec2::new(d.x, d.z).normalize_or_zero();
+        let along = hv.dot(dd);
+        let left = if along >= 0.0 { rail.len() - s } else { s };
+        if along.abs() / hs < 0.45 || left < 1.0 {
+            continue;
+        }
+        if best.as_ref().map_or(true, |b| dh < b.dist) {
+            best = Some(Assist { rail: i, dist: dh, to: (xz(rp) - p) / dh, dir: dd * along.signum() });
+        }
+    }
+    best
+}
+
 impl ParkRide {
     /// Back to street riding (keeps the best line and the hint flag).
     fn reset_motion(&mut self) {
         let keep = (self.best_line, self.hinted, self.line_pts, self.log, std::mem::take(&mut self.last_key), self.repeats);
+        let street_hinted = self.street_hinted;
         *self = ParkRide::default();
+        self.street_hinted = street_hinted;
         self.best_line = keep.0;
         self.hinted = keep.1;
         self.line_pts = keep.2;
@@ -2213,6 +3072,7 @@ impl ParkRide {
             ft = face_t(self.face);
         }
         let sp = self.vel.dot(ft);
+        let (flat_cap, turbo_cap, max_speed) = ride_caps(p2);
         let turn_scale = (speed / 6.0).clamp(0.25, 1.0) * if slope0 > 1.2 { 0.6 } else { 1.0 };
         let ang = cx.inp.steer * 3.1 * turn_scale * h;
         if speed > 0.3 {
@@ -2223,7 +3083,7 @@ impl ParkRide {
         let mut a = g - n0 * g.dot(n0);
         let dirv = if speed > 0.05 { self.vel / speed } else { ft };
         if cx.inp.throttle > 0.05 {
-            let cap = if cx.inp.turbo { TURBO_CAP } else { FLAT_CAP };
+            let cap = if cx.inp.turbo { turbo_cap } else { flat_cap };
             if slope0 < 0.35 && sp < cap {
                 a += ft * MOTOR_ACCEL * cx.inp.throttle * (1.0 - slope0 / 0.35);
             }
@@ -2245,8 +3105,8 @@ impl ParkRide {
         if speed > 0.0 && self.vel.dot(before) < 0.0 && slope0 < 0.1 {
             self.vel = Vec3::ZERO;
         }
-        if self.vel.length() > MAX_PARK_SPEED {
-            self.vel = self.vel.normalize() * MAX_PARK_SPEED;
+        if self.vel.length() > max_speed {
+            self.vel = self.vel.normalize() * max_speed;
         }
         speed = self.vel.length();
 
@@ -2305,6 +3165,22 @@ impl ParkRide {
         }
     }
 
+    /// Grind assist: bends the airborne path onto the nearest rail or ledge within `ASSIST_R`
+    /// that the rider is heading roughly along and can still come down onto. Speed is kept; only
+    /// the horizontal direction changes. The normal `find_lock` then catches the rail.
+    fn grind_assist(&mut self, h: f32) {
+        let hv = Vec2::new(self.vel.x, self.vel.z);
+        let hs = hv.length();
+        let Some(a) = assist_pick(self.pos, self.vel, self.cool) else {
+            return;
+        };
+        let pull = a.to * (a.dist * ASSIST_PULL).min(hs * 0.9);
+        let target = (a.dir * hs + pull).normalize_or_zero() * hs;
+        let nv = hv.lerp(target, 1.0 - (-12.0 * h).exp());
+        self.vel.x = nv.x;
+        self.vel.z = nv.y;
+    }
+
     fn air_step(&mut self, h: f32, cx: &mut Ctx) {
         let p_prev = self.pos;
         self.vel.y -= PARK_G * h;
@@ -2313,6 +3189,9 @@ impl ParkRide {
         self.pos.z = self.pos.z.clamp(-EDGE_CLAMP, EDGE_CLAMP);
         self.air_t += h;
         self.peak = self.peak.max(self.pos.y);
+        if !self.vert {
+            self.grind_assist(h);
+        }
         if let Some(lk) = find_lock(p_prev.y, self.pos, self.vel, self.cool) {
             let (judged, clean, name, key, pts) = self.judge_air(true);
             if clean {
@@ -2482,7 +3361,7 @@ impl ParkRide {
     /// true once the park owns the scooter (`pos` may be pushed back out of a wall either way).
     fn try_take_over(&mut self, pos: &mut Vec3, cx: &mut Ctx) -> bool {
         let p2 = xz(*pos);
-        if !near_park(p2, 2.0) {
+        if !near_pieces(p2, 2.0) {
             return false;
         }
         let valid_prev = self.prev.filter(|q| xz(*q).distance(p2) < 4.0);
@@ -2511,7 +3390,7 @@ impl ParkRide {
                 self.pos = Vec3::new(p2.x, s.h, p2.y);
                 let n = s.normal();
                 let v = yaw_dir * cx.sc.speed;
-                self.vel = (v - n * v.dot(n)).normalize_or_zero() * cx.sc.speed.abs().min(MAX_PARK_SPEED);
+                self.vel = (v - n * v.dot(n)).normalize_or_zero() * cx.sc.speed.abs().min(ride_caps(p2).2);
                 self.face = cx.sc.yaw;
                 self.vis_face = self.face;
                 self.vis_up = n;
@@ -2536,13 +3415,21 @@ impl ParkRide {
             cx.sc.speed *= 0.35;
             return false;
         }
-        if lock.is_none() && !landing && !in_lot(p2) {
+        // Street grind lines: hand over as soon as the grind assist would act (within `ASSIST_R`,
+        // heading along a rail), so a street hop near a kerb is pulled onto it like in the park.
+        // The park's own rails still hand over only on the lock, as before.
+        let assist = lock.is_none()
+            && !landing
+            && assist_pick(at, vel, self.cool).is_some_and(|a| a.rail >= layout().park_rails);
+        if lock.is_none() && !landing && !assist && !in_lot(p2) {
             return false;
         }
         self.reset_motion();
         self.pos = at;
         self.vel = vel;
-        self.face = cx.sc.yaw;
+        // Keep a street air spin going (the street code drops `air_spin` once the park owns it).
+        self.face = wrap(cx.sc.yaw + cx.sc.air_spin);
+        self.spin = cx.sc.air_spin;
         self.vis_face = self.face;
         self.mode = RideMode::Air;
         self.air_t = cx.sc.air_t;
@@ -2660,8 +3547,28 @@ fn update_park_ride(
         return;
     };
     let touch_jump = if sc.park { crate::audio::take_touch_jump() } else { false };
-    let inp = read_input(&keys, &stats, t, touch_jump);
-    if !ride.hinted && in_park_zone(stf.translation) {
+    let mut inp = read_input(&keys, &stats, t, touch_jump);
+    if sc.park {
+        if inp.turbo && !sc.turbo_on {
+            play_sfx("dash");
+        }
+        sc.turbo_on = inp.turbo;
+        if inp.turbo {
+            orbit.speed_kick_t = 0.15;
+        }
+    }
+    // Aim steering on the park's flat ground (same as the street): no hand steering means the
+    // scooter turns to head where the camera looks. Off on ramps and in the pipe, where the
+    // camera frames the piece instead of sitting behind the rider.
+    if inp.aim
+        && ride.mode == RideMode::Surface
+        && (ride.pos.y < 0.3 || (!near_park(xz(ride.pos), 0.0) && surface(xz(ride.pos)).slope() < 0.05))
+        && (inp.throttle > 0.05 || ride.vel.length() > 1.0)
+    {
+        let aim = crate::scooter::aim_steer(orbit.yaw, ride.face, orbit.auto_align_weight());
+        inp.steer = (inp.steer + aim).clamp(-1.0, 1.0);
+    }
+    if !ride.hinted && in_park_zone(stf.translation) && near_park(xz(stf.translation), 5.5) {
         ride.hinted = true;
         stats.hint_text = "SKATE PARK! Pump the half pipe across the street (hold [W] on the way down) and JUMP onto rails and ledges to GRIND. In the air: hold JUMP to flip, tap it to tailwhip, steer to spin.".to_string();
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
@@ -2677,6 +3584,19 @@ fn update_park_ride(
             }
             ride.prev = Some(stf.translation);
             ride.prev_y = cx.sc.y;
+            if !ride.street_hinted && cx.sc.speed > 4.0 {
+                let p = xz(stf.translation);
+                let l = layout();
+                let near = l.grid.at(p).rails.iter().any(|&i| {
+                    let i = i as usize;
+                    i >= l.park_rails && !in_bigpark(p.x, p.y, 2.0) && l.rails[i].closest_xz(p).1 < 6.0
+                });
+                if near {
+                    ride.street_hinted = true;
+                    cx.stats.hint_text = "STREET GRIND! Yellow kerbs, ledges and rails all over town: ride along one and JUMP to lock on. Steer to balance, JUMP again to pop off.".to_string();
+                    cx.stats.hint_bump = cx.stats.hint_bump.wrapping_add(1);
+                }
+            }
             if ride.log && near_park(xz(stf.translation), 20.0) {
                 crate::audio::park_log(&format!(
                     "N t={:.2} p=({:.2},{:.2},{:.2}) y={:.2} vy={:.2} gr={} spd={:.2} yaw={:.2} boost={:.2} | {}",
@@ -2795,7 +3715,7 @@ fn update_park_walking(
     }
     let dt = time.delta_secs().min(0.05);
     let mut p = tf.translation;
-    if !near_park(xz(p), 3.0) {
+    if !near_pieces(xz(p), 3.0) {
         *prev = Some(p);
         *on_park = false;
         return;
@@ -2803,7 +3723,14 @@ fn update_park_walking(
     let scale = stats.player_scale.max(0.5);
     let giant = scale > 3.0;
     let step = if giant { 0.6 * scale } else { 0.45 };
-    let surf = |q: Vec2| surface_ex(q, !giant);
+    // Stair sets: stand on the step tops, not on the nosing line the scooter rides.
+    let surf = |q: Vec2| {
+        let mut s = surface_ex(q, !giant);
+        if let Some(h) = s.piece.and_then(|i| layout().pieces[i].step_h(q)) {
+            s.h = h;
+        }
+        s
+    };
     // A teleport (respawn, cutscene return, debug drop) is not a move through the pieces.
     let pv = prev.filter(|q| xz(*q).distance(xz(p)) < 3.0).unwrap_or(p);
     let prev_ok = prev.is_some() && pv != p;
@@ -2877,14 +3804,14 @@ fn block_driven_car(stats: Res<PlayerStats>, mut car_q: Query<(&mut Transform, &
     let Ok((mut tf, mut car)) = car_q.get_mut(ce) else {
         return;
     };
-    if !near_park(xz(tf.translation), 4.0) {
+    if !near_pieces(xz(tf.translation), 4.0) {
         *prev = Some(tf.translation);
         return;
     }
     let pv = prev.unwrap_or(tf.translation);
     let hit = [(-1.0, -2.2), (1.0, -2.2), (-1.0, 2.2), (1.0, 2.2), (0.0, 0.0)].iter().any(|&(x, z)| {
         let w = tf.transform_point(Vec3::new(x, 0.0, z));
-        surface(xz(w)).h > 0.45
+        surface(xz(w)).h > 0.45 || in_bigpark(w.x, w.z, 0.0)
     }) || fence_hit(xz(pv), xz(tf.translation), 0.4, 1.0).is_some();
     if hit && prev.is_some() {
         tf.translation.x = pv.x;
@@ -2907,7 +3834,7 @@ fn park_camera_clearance(
     let (Ok(p), Ok(mut c)) = (player_q.get_single(), cam_q.get_single_mut()) else {
         return;
     };
-    if !near_park(xz(c.translation), 2.0) {
+    if !near_pieces(xz(c.translation), 2.0) {
         return;
     }
     let s = surface(xz(c.translation));
@@ -3030,6 +3957,22 @@ fn add_park_radar_icon(
                 ZIndex(-1),
             ));
         }
+        // Five Seasons Park in park green, over the grid lines of the avenues it absorbed.
+        r.spawn((
+            ParkRadarIcon,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Percent(pct(BIGPARK_C.x - BIGPARK_HALF.x)),
+                top: Val::Percent(pct(BIGPARK_C.y - BIGPARK_HALF.y)),
+                width: Val::Percent(BIGPARK_HALF.x * 2.0 / 270.0 * 100.0),
+                height: Val::Percent(BIGPARK_HALF.y * 2.0 / 270.0 * 100.0),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.22, 0.62, 0.30, 0.55)),
+            BorderColor(Color::srgba(0.45, 0.85, 0.50, 0.9)),
+            BorderRadius::all(Val::Px(2.0)),
+        ));
     });
 }
 
@@ -3040,10 +3983,10 @@ fn add_park_radar_icon(
 /// Street scooter top speed inside the park zone: 13.5 m/s (15.5 with turbo), so the pieces are
 /// approached at speeds they're built for. Stunt-circuit boosts (boost pads, rings) are left alone.
 pub fn zone_speed_cap(pos: Vec3, max_spd: f32, boosting: bool) -> f32 {
-    if boosting || !in_park_zone(pos) {
+    let Some((flat, turbo, _)) = zone_caps(xz(pos)).filter(|_| !boosting) else {
         return max_spd;
-    }
-    max_spd.min(if max_spd > 30.5 { TURBO_CAP } else { FLAT_CAP })
+    };
+    max_spd.min(if max_spd > crate::scooter::STREET_TOP_SPEED + 0.5 { turbo } else { flat })
 }
 
 /// Hopping off in the park: the scooter is left resting on the surface (slid down to a gentle
@@ -3051,7 +3994,7 @@ pub fn zone_speed_cap(pos: Vec3, max_spd: f32, boosting: bool) -> f32 {
 pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec3) {
     sc.park = false;
     let mut p = xz(stf.translation);
-    if !near_park(p, 1.0) {
+    if !near_pieces(p, 1.0) {
         return;
     }
     for _ in 0..80 {
@@ -3076,7 +4019,8 @@ pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec
     *hero = spot;
 }
 
-/// `?debug=1&city_start=park|parksky|lot|pipe`: (hero position, facing, camera pitch, distance).
+/// `?debug=1&city_start=park|parksky|lot|pipe|plaza|stairs|curb`: (hero position, facing,
+/// camera pitch, distance).
 pub fn debug_start_pose(mode: &str) -> Option<(Vec3, Vec3, f32, f32)> {
     match mode {
         "park" => Some((Vec3::new(PLAZA.x, 0.0, 53.5), Vec3::Z, 0.42, 15.0)),
@@ -3084,8 +4028,37 @@ pub fn debug_start_pose(mode: &str) -> Option<(Vec3, Vec3, f32, f32)> {
         "lot" => Some((Vec3::new(PLAZA.x, 0.0, 98.5), Vec3::Z, 0.32, 13.0)),
         "pipe" => Some((Vec3::new(52.0, 0.0, 99.0), Vec3::new(1.0, 0.0, 0.75), 0.36, 12.0)),
         "plaza" => Some((Vec3::new(50.0, 0.0, 50.0), Vec3::new(1.0, 0.0, 1.0), 0.5, 14.0)),
+        // Five Seasons Park: on the summit at the top of the big stair set, looking down it.
+        "stairs" => Some((bp3(-45.0, 0.0, -2.0), Vec3::X, 0.36, 13.0)),
+        // On foot at the east entrance (4th Ave side) looking in along the park.
+        "bigpark" => Some((bp3(61.0, 0.0, 5.5), Vec3::NEG_X, 0.3, 13.0)),
+        // High over the north edge looking south across the whole park.
+        "bigparksky" => Some((bp3(0.0, 0.0, -6.0), Vec3::Z, 0.45, 80.0)),
+        "curb" => curb_pose(),
         _ => None,
     }
+}
+
+/// `city_start=curb`: 8 m back along the street kerb / ledge line nearest (-69, -56), just off it
+/// on the street side, facing along it.
+fn curb_pose() -> Option<(Vec3, Vec3, f32, f32)> {
+    let l = layout();
+    let target = Vec2::new(-69.0, -56.0);
+    let r = l.rails[l.park_rails..]
+        .iter()
+        .filter(|r| r.kind == RailKind::Edge && r.len() > 5.5 && !in_bigpark(r.pts[0].x, r.pts[0].z, 3.0))
+        .min_by(|a, b| xz(a.pts[0]).distance(target).total_cmp(&xz(b.pts[0]).distance(target)))?;
+    let (a, b) = (xz(r.pts[0]), xz(r.pts[1]));
+    let d = (b - a).normalize_or(Vec2::Y);
+    // The street side is the one nearer a road centre line.
+    let road_off = |q: Vec2| {
+        let snap = |v: f32| [-92.0_f32, -46.0, 0.0, 46.0, 92.0].into_iter().map(|r| (v - r).abs()).fold(f32::MAX, f32::min);
+        snap(q.x).min(snap(q.y))
+    };
+    let side = Vec2::new(d.y, -d.x);
+    let side = if road_off(a + side) < road_off(a - side) { side } else { -side };
+    let p = a - d * 8.0 + side * 1.8;
+    Some((Vec3::new(p.x, 0.0, p.y), Vec3::new(d.x, 0.0, d.y), 0.4, 11.0))
 }
 
 // =================================================================================================
@@ -3117,6 +4090,7 @@ fn demo_rails() -> Vec<usize> {
         .rails
         .iter()
         .enumerate()
+        .take(layout().park_rails)
         .filter(|(_, r)| r.kind != RailKind::Coping && r.name != "LONG RAIL")
         .filter(|(i, r)| !(r.kind == RailKind::Edge && i % 2 == 0))
         .map(|(i, _)| i)
