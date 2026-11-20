@@ -4,7 +4,7 @@ Status: shipped for Cedar Rapids Free Mode (`GameState::CityPlay` with `stats.fr
 
 ## 1. Architecture Overview
 
-When a player enters Free Mode (`FREE MODE: CEDAR RAPIDS [F]` from the start menu, post-victory `Continue`, or `?free_roam=1`) with Online mode enabled (default On, persisted in `localStorage.tendy_mp_online`), the browser automatically pairs them into a **4-player distributed WebRTC DataChannel mesh**:
+When a player clicks **`ENTER FREE MODE (MULTIPLAYER)`** on the Start Menu (explicitly enabling Online P2P), or enters Free Mode via post-victory `Continue` / `?free_roam=1` with Online mode enabled (`localStorage.tendy_mp_online`, default On unless entering via the Solo `FREE MODE: CEDAR RAPIDS [F]` button), the browser automatically pairs them into a **4-player distributed WebRTC DataChannel mesh**:
 
 1. **Zero-Server Bootstrap (`meshTransport` in [`rust/index.html`](../rust/index.html)):**
    - Connects in parallel to 4 independent public WebTorrent WebSocket trackers (`wss://tracker.openwebtorrent.com`, `wss://tracker.webtorrent.dev`, `wss://tracker.btorrent.xyz`, `wss://tracker.files.fm:7073/announce`) using deterministic 20-byte room shard hashes (`TQCR1-MAIN____-S000`, `...-S010`, ...) and public STUN servers (`stun:stun.l.google.com:19302`, `stun:stun1.l.google.com:19302`, `stun:stun.cloudflare.com:3478`).

@@ -19,10 +19,16 @@ pub struct StartButton;
 #[derive(Component)]
 pub struct ContinueButton;
 
-/// Start-menu button launching Cedar Rapids Free Mode directly (preparing for future Free Roam
-/// multiplayer). Always available; preserves unfinished story checkpoints.
+/// Start-menu button launching Solo Cedar Rapids Free Mode directly (`?mp=off` behavior).
+/// Always available; preserves unfinished story checkpoints.
 #[derive(Component)]
 pub struct FreeModeButton;
+
+/// Start-menu button launching Cedar Rapids Free Mode with distributed P2P networking enabled.
+/// Why: lets players jump straight into the 4-player WebRTC crew squad right from launch.
+/// Gameplay impact: activates `window.tendyNet` WebTorrent-tracker matchmaking before entering Cedar Rapids.
+#[derive(Component)]
+pub struct FreeModeMpButton;
 
 /// StageClear "Continue" (post-game free roam) button; shown only after the Lexie win.
 #[derive(Component)]
@@ -871,6 +877,26 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                             TextColor(Color::WHITE),
                         ));
                     });
+                    row.spawn((
+                        FreeModeMpButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(18.0), Val::Px(9.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.46, 0.24, 0.78)),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("ENTER FREE MODE (MULTIPLAYER)"),
+                            TextFont {
+                                font_size: 14.5,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
                 });
 
                 if !beaten && (mom_defeated || saved_stage == "boss") {
@@ -1161,6 +1187,36 @@ pub fn check_url_test_mode(
     }
 }
 
+/// Enters Cedar Rapids Free Mode from the Start Menu in either Solo or Online P2P mode while
+/// preserving unfinished campaign progress.
+fn enter_free_mode_from_menu(
+    stats: &mut PlayerStats,
+    next_state: &mut crate::transition::SceneTransition,
+    multiplayer: bool,
+) {
+    let saved = crate::audio::load_checkpoint();
+    let parts: Vec<&str> = saved.split('|').collect();
+    if saved_game_beaten(&saved) {
+        if let Some(s) = parts.get(1).and_then(|v| v.parse::<u32>().ok()) {
+            stats.score = s;
+        }
+        if let Some(c) = parts.get(3).and_then(|v| v.parse::<u32>().ok()) {
+            stats.tendy_credits = c;
+        }
+        if parts.get(8).copied() == Some("1") {
+            stats.has_license = true;
+        }
+        stats.game_beaten = true;
+    } else {
+        // Keep unfinished campaign progress untouched while entering Free Mode.
+        stats.game_beaten = false;
+    }
+    crate::audio::net_set_online(multiplayer);
+    stats.prepare_free_roam();
+    next_state.set(GameState::CityPlay);
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
@@ -1169,6 +1225,7 @@ pub fn handle_tutorial_input(
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     cont_q: Query<&Interaction, (Changed<Interaction>, With<ContinueButton>)>,
     free_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeButton>)>,
+    free_mp_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeMpButton>)>,
 ) {
     // Debug scene skips, only with `?debug=1` in the URL.
     if keys.just_pressed(KeyCode::KeyK) && crate::audio::debug_keys_enabled() {
@@ -1179,27 +1236,13 @@ pub fn handle_tutorial_input(
         next_state.set(GameState::BossFight);
         return;
     }
+    if free_mp_q.iter().any(|i| *i == Interaction::Pressed) {
+        enter_free_mode_from_menu(&mut stats, &mut next_state, true);
+        return;
+    }
     let free_clicked = free_q.iter().any(|i| *i == Interaction::Pressed);
     if free_clicked || keys.just_pressed(KeyCode::KeyF) {
-        let saved = crate::audio::load_checkpoint();
-        let parts: Vec<&str> = saved.split('|').collect();
-        if saved_game_beaten(&saved) {
-            if let Some(s) = parts.get(1).and_then(|v| v.parse::<u32>().ok()) {
-                stats.score = s;
-            }
-            if let Some(c) = parts.get(3).and_then(|v| v.parse::<u32>().ok()) {
-                stats.tendy_credits = c;
-            }
-            if parts.get(8).copied() == Some("1") {
-                stats.has_license = true;
-            }
-            stats.game_beaten = true;
-        } else {
-            // Keep unfinished campaign progress untouched while entering Free Mode.
-            stats.game_beaten = false;
-        }
-        stats.prepare_free_roam();
-        next_state.set(GameState::CityPlay);
+        enter_free_mode_from_menu(&mut stats, &mut next_state, false);
         return;
     }
     let cont_clicked = cont_q.iter().any(|i| *i == Interaction::Pressed);
