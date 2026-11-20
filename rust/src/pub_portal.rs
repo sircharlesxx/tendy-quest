@@ -13,6 +13,8 @@
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_asset::RenderAssetUsages;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 
 use crate::audio::{
@@ -44,6 +46,7 @@ impl Plugin for PubPortalPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BartenderPrompt>()
             .init_resource::<PubPortalCutsceneState>()
+            .init_resource::<EventHorizonFluidMesh>()
             .add_systems(OnExit(GameState::CityPlay), cleanup_bartender_on_exit)
             .add_systems(
                 Update,
@@ -768,6 +771,10 @@ fn cleanup_bartender_on_exit(
 // =================================================================================================
 
 const PORTAL_STAGE: Vec3 = Vec3::new(0.0, 0.0, -1080.0);
+const EVENT_HORIZON_CENTER: Vec3 = Vec3::new(0.0, 1.65, -6.45);
+const PATRON_COUNT: usize = 6;
+const PATRON_START_TIMES: [f32; PATRON_COUNT] = [0.1, 2.2, 4.6, 7.0, 9.6, 12.2];
+const PATRON_WALK_SECS: f32 = 3.8;
 
 #[derive(Component)]
 struct PubPortalCutsceneEntity;
@@ -781,9 +788,29 @@ struct PubPortalSpeakerText;
 #[derive(Component)]
 struct PubPortalSubText;
 
+#[derive(Component, Clone, Copy)]
+enum PortalLightRole {
+    PubWarm,
+    WalkwayFill,
+    CerenkovBlue,
+    HellCrimson,
+}
+
 #[derive(Component)]
 struct PubPortalLight {
-    is_portal: bool,
+    role: PortalLightRole,
+}
+
+#[derive(Component)]
+struct PatronLeg {
+    patron_idx: usize,
+    is_left: bool,
+}
+
+#[derive(Resource, Default)]
+struct EventHorizonFluidMesh {
+    handle: Option<Handle<Mesh>>,
+    base_pos: Vec<Vec3>,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -793,9 +820,17 @@ enum PubPortalAnim {
     Chair(usize),
     BeerCan { idx: usize, base: Vec3 },
     DoorPivot,
-    PortalCore,
-    PortalRing(usize),
+    /// Rippling dark liquid-mercury Event Horizon surface disc
+    HorizonFluid,
+    /// Pitch-black Event Horizon singularity sphere & blue/crimson lensing rings
+    HorizonCore { ring: bool },
+    /// Spiked metallic Event Horizon Gravity Drive gimbal rings (0..3)
+    DriveGimbal(usize),
+    /// Crackling electric Cerenkov arcs around the doorway & floor (0..8)
+    LightningArc(usize),
+    /// Attractive women patrons walking into the Women's Bathroom (0..6)
     Patron(usize),
+    /// Dark metallic shards & plasma motes sucked into the singularity (0..12)
     FlyingProp { idx: usize, base: Vec3 },
 }
 
@@ -855,11 +890,13 @@ const SEATED_SPOTS: [Vec3; 4] = [
     Vec3::new(1.55, 0.0, -0.35),
     Vec3::new(1.65, 0.0, 1.35),
 ];
+/// Positioned strictly north of `TABLE_CENTER` (north rim is `z = -0.72`) so when the guys stand
+/// and look at the Women's Bathroom door, the camera sits north of the beer tower with zero occlusion.
 const STAND_SPOTS: [Vec3; 4] = [
-    Vec3::new(-2.15, 0.0, 1.95),
-    Vec3::new(-1.05, 0.0, 1.80),
-    Vec3::new(1.05, 0.0, 1.80),
-    Vec3::new(2.15, 0.0, 1.95),
+    Vec3::new(-2.35, 0.0, -1.25),
+    Vec3::new(-1.25, 0.0, -1.65),
+    Vec3::new(1.25, 0.0, -1.65),
+    Vec3::new(2.35, 0.0, -1.25),
 ];
 
 fn yaw_toward(from: Vec3, target: Vec3, model_neg_z: bool) -> f32 {
@@ -872,12 +909,386 @@ fn yaw_toward(from: Vec3, target: Vec3, model_neg_z: bool) -> f32 {
     }
 }
 
+/// Evaluates the curved catwalk path of attractive woman `pi` toward the Women's Bathroom door.
+fn patron_walk_pose(pi: usize, total_t: f32) -> Option<(Vec3, f32, f32)> {
+    let start_t = PATRON_START_TIMES[pi];
+    let local_t = total_t - start_t;
+    if local_t < 0.0 || local_t > PATRON_WALK_SECS {
+        return None;
+    }
+    let u = (local_t / PATRON_WALK_SECS).clamp(0.0, 1.0);
+    let side = if pi % 2 == 0 { -1.0_f32 } else { 1.0_f32 };
+    let z_entry = -2.85 - (pi % 3) as f32 * 0.25;
+    let p0 = Vec3::new(side * 5.2, 0.0, z_entry);
+    let p1 = Vec3::new(side * 1.4, 0.0, -4.15);
+    let p2 = DOOR_POS + Vec3::new(0.0, 0.0, -0.55);
+    let eval = |s: f32| {
+        let inv = 1.0 - s;
+        p0 * (inv * inv) + p1 * (2.0 * inv * s) + p2 * (s * s)
+    };
+    let pos = eval(u);
+    let ahead = eval((u + 0.02).min(1.0));
+    let yaw = yaw_toward(pos, ahead, false);
+    Some((pos, yaw, u))
+}
+
+/// Builds a deform-ready polar liquid-mercury disc (`MAIN_WORLD | RENDER_WORLD`) facing `+Z`.
+fn build_fluid_horizon_disc(radius: f32) -> (Mesh, Vec<Vec3>) {
+    const RINGS: usize = 20;
+    const SEGS: usize = 32;
+    let mut base_pos = Vec::with_capacity(1 + RINGS * SEGS);
+    let mut uvs = Vec::with_capacity(1 + RINGS * SEGS);
+    base_pos.push(Vec3::ZERO);
+    uvs.push([0.5, 0.5]);
+    for r in 1..=RINGS {
+        let rad = radius * (r as f32 / RINGS as f32);
+        for s in 0..SEGS {
+            let a = (s as f32 / SEGS as f32) * TAU;
+            let x = a.cos() * rad;
+            let y = a.sin() * rad;
+            base_pos.push(Vec3::new(x, y, 0.0));
+            uvs.push([0.5 + x / (2.0 * radius), 0.5 - y / (2.0 * radius)]);
+        }
+    }
+    let idx_at = |r: usize, s: usize| -> u32 { (1 + r * SEGS + (s % SEGS)) as u32 };
+    let mut indices = Vec::with_capacity(SEGS * 3 + (RINGS - 1) * SEGS * 6);
+    for s in 0..SEGS {
+        let sn = (s + 1) % SEGS;
+        indices.extend_from_slice(&[0, idx_at(0, s), idx_at(0, sn)]);
+    }
+    for r in 0..(RINGS - 1) {
+        for s in 0..SEGS {
+            let sn = (s + 1) % SEGS;
+            let a = idx_at(r, s);
+            let b = idx_at(r + 1, s);
+            let c = idx_at(r + 1, sn);
+            let d = idx_at(r, sn);
+            indices.extend_from_slice(&[a, b, d, b, c, d]);
+        }
+    }
+    let pos_arr: Vec<[f32; 3]> = base_pos.iter().map(|v| v.to_array()).collect();
+    let norm_arr = vec![[0.0_f32, 0.0, 1.0]; base_pos.len()];
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos_arr);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, norm_arr);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+    (mesh, base_pos)
+}
+
+/// Builds a jagged crackling plasma lightning bolt chaining 6 `sh::rod` segments.
+fn build_lightning_bolt_geo(seed: u32, len: f32) -> sh::Geo {
+    let mut g = sh::Geo::default();
+    let mut prev = Vec3::ZERO;
+    let mut h = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    for seg in 1..=6 {
+        let frac = seg as f32 / 6.0;
+        h = h.wrapping_mul(277_803_737).wrapping_add(1);
+        let jx = ((((h >> 8) & 0xFF) as f32) / 127.5 - 1.0) * 0.16;
+        let jy = ((((h >> 16) & 0xFF) as f32) / 127.5 - 1.0) * 0.14;
+        let taper = if seg == 6 { 0.0 } else { 1.0 };
+        let next = Vec3::new(jx * taper, jy * taper, frac * len);
+        g = g.merged(sh::rod(prev, next, 0.022));
+        prev = next;
+    }
+    g
+}
+
+/// Builds a sculpted, glamorous woman NPC (`+Z` forward) in one of 4 cocktail-dress styles with
+/// articulated hip pivots (`PatronLeg`) for graceful walking strides into the Women's Bathroom.
+#[allow(clippy::too_many_lines)]
+fn spawn_attractive_woman_rig(
+    parent: &mut ChildBuilder,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    style_idx: usize,
+    patron_idx: usize,
+) {
+    let (hair_col, hair_hi_col, dress_col, heel_col, eye_col, skin_col, metal_col) = match style_idx % 4 {
+        0 => (
+            // Platinum blonde waves + emerald cocktail dress
+            Color::srgb(0.95, 0.84, 0.48),
+            Color::srgb(1.0, 0.94, 0.72),
+            Color::srgb(0.06, 0.60, 0.36),
+            Color::srgb(0.92, 0.76, 0.22),
+            Color::srgb(0.18, 0.56, 0.98),
+            Color::srgb(0.97, 0.80, 0.70),
+            Color::srgb(1.0, 0.82, 0.28),
+        ),
+        1 => (
+            // Espresso brunette + crimson velvet mini dress
+            Color::srgb(0.24, 0.12, 0.08),
+            Color::srgb(0.44, 0.22, 0.14),
+            Color::srgb(0.76, 0.07, 0.20),
+            Color::srgb(0.08, 0.08, 0.10),
+            Color::srgb(0.56, 0.40, 0.14),
+            Color::srgb(0.94, 0.74, 0.62),
+            Color::srgb(1.0, 0.82, 0.28),
+        ),
+        2 => (
+            // Jet black glossy waves + magenta satin dress
+            Color::srgb(0.06, 0.06, 0.09),
+            Color::srgb(0.22, 0.24, 0.36),
+            Color::srgb(0.84, 0.14, 0.56),
+            Color::srgb(0.90, 0.92, 0.96),
+            Color::srgb(0.32, 0.82, 1.0),
+            Color::srgb(0.95, 0.76, 0.66),
+            Color::srgb(0.90, 0.92, 0.98),
+        ),
+        _ => (
+            // Copper-auburn curls + little black dress + red stilettos
+            Color::srgb(0.62, 0.18, 0.10),
+            Color::srgb(0.86, 0.34, 0.16),
+            Color::srgb(0.08, 0.07, 0.11),
+            Color::srgb(0.86, 0.08, 0.18),
+            Color::srgb(0.14, 0.74, 0.42),
+            Color::srgb(0.97, 0.81, 0.72),
+            Color::srgb(0.98, 0.96, 0.94),
+        ),
+    };
+
+    let skin = materials.add(StandardMaterial {
+        base_color: skin_col,
+        perceptual_roughness: 0.52,
+        ..default()
+    });
+    let hair = materials.add(StandardMaterial {
+        base_color: hair_col,
+        perceptual_roughness: 0.38,
+        ..default()
+    });
+    let hair_hi = materials.add(StandardMaterial {
+        base_color: hair_hi_col,
+        perceptual_roughness: 0.30,
+        ..default()
+    });
+    let dress = materials.add(StandardMaterial {
+        base_color: dress_col,
+        perceptual_roughness: 0.30,
+        metallic: 0.14,
+        ..default()
+    });
+    let heel = materials.add(StandardMaterial {
+        base_color: heel_col,
+        perceptual_roughness: 0.24,
+        metallic: 0.28,
+        ..default()
+    });
+    let iris = materials.add(StandardMaterial {
+        base_color: eye_col,
+        emissive: eye_col.to_linear() * 0.22,
+        perceptual_roughness: 0.18,
+        ..default()
+    });
+    let eye_white = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.98, 1.0),
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    let lash = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.05, 0.04, 0.06),
+        ..default()
+    });
+    let lip = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.88, 0.10, 0.26),
+        perceptual_roughness: 0.18,
+        ..default()
+    });
+    let jewelry = materials.add(StandardMaterial {
+        base_color: metal_col,
+        metallic: 0.85,
+        perceptual_roughness: 0.18,
+        ..default()
+    });
+    let blush = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.98, 0.44, 0.54, 0.62),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    // Articulated slender legs under hip pivots (y = 0.72) for graceful catwalk strides
+    let thigh_mesh = sh::add(meshes, sh::limb_profile(0.38, &[0.092, 0.080, 0.064], 1.0));
+    let calf_mesh = sh::add(meshes, sh::limb_profile(0.38, &[0.062, 0.055, 0.038], 1.0));
+    let shoe_mesh = sh::add(meshes, sh::shoe(0.11, 0.075, 0.21));
+    let spike_mesh = meshes.add(Cylinder::new(0.013, 0.085));
+    for (idx, sx) in [-0.10_f32, 0.10].iter().enumerate() {
+        parent
+            .spawn((
+                PatronLeg {
+                    patron_idx,
+                    is_left: idx == 0,
+                },
+                Transform::from_xyz(*sx, 0.72, 0.0),
+                Visibility::default(),
+            ))
+            .with_children(|leg| {
+                leg.spawn((
+                    Mesh3d(thigh_mesh.clone()),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(0.0, -0.17, 0.0),
+                ));
+                leg.spawn((
+                    Mesh3d(calf_mesh.clone()),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(0.0, -0.49, 0.0),
+                ));
+                leg.spawn((
+                    Mesh3d(shoe_mesh.clone()),
+                    MeshMaterial3d(heel.clone()),
+                    Transform::from_xyz(0.0, -0.67, 0.04),
+                ));
+                leg.spawn((
+                    Mesh3d(spike_mesh.clone()),
+                    MeshMaterial3d(jewelry.clone()),
+                    Transform::from_xyz(0.0, -0.68, -0.045),
+                ));
+            });
+    }
+
+    // Hourglass fitted cocktail dress (skirt flare -> cinched waist -> sculpted bust -> collar)
+    let dress_mesh = sh::add(
+        meshes,
+        sh::loft(
+            &[
+                sh::ring(0.69, 0.0, 0.0),
+                sh::ring(0.70, 0.215, 0.165),
+                sh::ring(0.86, 0.195, 0.152),
+                sh::ring(1.06, 0.125, 0.098).dz(0.005),
+                sh::ring(1.24, 0.188, 0.148).dz(0.028),
+                sh::ring(1.37, 0.168, 0.110),
+                sh::ring(1.42, 0.115, 0.082),
+                sh::ring(1.43, 0.0, 0.0),
+            ],
+            2,
+            22,
+            1.0,
+        ),
+    );
+    parent.spawn((
+        Mesh3d(dress_mesh),
+        MeshMaterial3d(dress),
+        Transform::IDENTITY,
+    ));
+
+    // Neck & necklace
+    parent.spawn((
+        Mesh3d(meshes.add(Cylinder::new(0.052, 0.16))),
+        MeshMaterial3d(skin.clone()),
+        Transform::from_xyz(0.0, 1.48, 0.01),
+    ));
+    parent.spawn((
+        Mesh3d(meshes.add(Torus::new(0.011, 0.065))),
+        MeshMaterial3d(jewelry.clone()),
+        Transform::from_xyz(0.0, 1.42, 0.02).with_rotation(Quat::from_rotation_x(0.24)),
+    ));
+
+    // Slender arms + gleaming clutch purse in right hand
+    let arm_mesh = sh::add(meshes, sh::limb_profile(0.45, &[0.048, 0.040, 0.032], 1.0));
+    parent.spawn((
+        Mesh3d(arm_mesh.clone()),
+        MeshMaterial3d(skin.clone()),
+        Transform::from_xyz(-0.21, 1.19, 0.02).with_rotation(Quat::from_rotation_z(-0.18)),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::hand(0.075, -1.0, false))),
+        MeshMaterial3d(skin.clone()),
+        Transform::from_xyz(-0.25, 0.95, 0.04),
+    ));
+    parent.spawn((
+        Mesh3d(arm_mesh),
+        MeshMaterial3d(skin.clone()),
+        Transform::from_xyz(0.21, 1.21, 0.05)
+            .with_rotation(Quat::from_rotation_x(-0.28) * Quat::from_rotation_z(0.16)),
+    ));
+    parent.spawn((
+        Mesh3d(sh::add(meshes, sh::plate(0.10, 0.14, 0.22, 0.3))),
+        MeshMaterial3d(heel),
+        Transform::from_xyz(0.27, 0.95, 0.12),
+    ));
+
+    // Sculpted face, sparkling eyes with lashes, rosy cheeks, glossy lips, earrings & flowing hair
+    parent
+        .spawn((Transform::from_xyz(0.0, 1.55, 0.02), Visibility::default()))
+        .with_children(|h| {
+            h.spawn((
+                Mesh3d(sh::add(meshes, sh::head(0.180, 0.120))),
+                MeshMaterial3d(skin),
+                Transform::from_xyz(0.0, 0.14, 0.0),
+            ));
+            for sx in [-1.0_f32, 1.0_f32] {
+                h.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.030))),
+                    MeshMaterial3d(blush.clone()),
+                    Transform::from_xyz(sx * 0.092, 0.105, 0.142)
+                        .with_scale(Vec3::new(1.3, 0.75, 0.45)),
+                ));
+                h.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.028))),
+                    MeshMaterial3d(eye_white.clone()),
+                    Transform::from_xyz(sx * 0.065, 0.164, 0.158)
+                        .with_scale(Vec3::new(1.15, 0.92, 0.48)),
+                ));
+                h.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.020))),
+                    MeshMaterial3d(iris.clone()),
+                    Transform::from_xyz(sx * 0.065, 0.163, 0.170)
+                        .with_scale(Vec3::new(1.0, 1.0, 0.42)),
+                ));
+                h.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.010))),
+                    MeshMaterial3d(lash.clone()),
+                    Transform::from_xyz(sx * 0.065, 0.163, 0.176),
+                ));
+                h.spawn((
+                    Mesh3d(sh::add(meshes, sh::plate(0.064, 0.013, 0.011, 0.3))),
+                    MeshMaterial3d(lash.clone()),
+                    Transform::from_xyz(sx * 0.065, 0.192, 0.164)
+                        .with_rotation(Quat::from_rotation_z(-sx * 0.14)),
+                ));
+                h.spawn((
+                    Mesh3d(meshes.add(Torus::new(0.007, 0.032))),
+                    MeshMaterial3d(jewelry.clone()),
+                    Transform::from_xyz(sx * 0.180, 0.08, 0.01)
+                        .with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
+                ));
+            }
+            h.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.027))),
+                MeshMaterial3d(lip),
+                Transform::from_xyz(0.0, 0.068, 0.168).with_scale(Vec3::new(1.42, 0.45, 0.45)),
+            ));
+            // Hair crown + cascading shoulder-length waves
+            h.spawn((
+                Mesh3d(sh::add(meshes, sh::hair_cap(0.192, 0.130, 0.13, 0.25, 0.052, 0.044))),
+                MeshMaterial3d(hair.clone()),
+                Transform::from_xyz(0.0, 0.15, -0.01),
+            ));
+            h.spawn((
+                Mesh3d(meshes.add(Sphere::new(0.205))),
+                MeshMaterial3d(hair),
+                Transform::from_xyz(0.0, 0.06, -0.10).with_scale(Vec3::new(1.08, 1.48, 0.90)),
+            ));
+            for sx in [-1.0_f32, 1.0_f32] {
+                h.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.112))),
+                    MeshMaterial3d(hair_hi.clone()),
+                    Transform::from_xyz(sx * 0.155, 0.02, -0.01)
+                        .with_scale(Vec3::new(0.75, 1.90, 0.85)),
+                ));
+            }
+        });
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn enter_pub_portal_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     art: Option<Res<CasinoArt>>,
     mut p_state: ResMut<PubPortalCutsceneState>,
+    mut fluid: ResMut<EventHorizonFluidMesh>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
@@ -889,16 +1300,16 @@ fn enter_pub_portal_cutscene(
         *vis = Visibility::Hidden;
     }
 
-    clear_col.0 = Color::srgb(0.05, 0.03, 0.07);
+    clear_col.0 = Color::srgb(0.03, 0.02, 0.05);
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.95, 0.88, 0.92),
-        brightness: 460.0,
+        color: Color::srgb(0.95, 0.90, 0.96),
+        brightness: 440.0,
     });
 
-    // Warm pub chandelier light + hidden neon Women's Bathroom Portal light
+    // Pub lights + Event Horizon Gravity Drive Cerenkov Blue & Hell Crimson core lights
     commands.spawn((
         PubPortalCutsceneEntity,
-        PubPortalLight { is_portal: false },
+        PubPortalLight { role: PortalLightRole::PubWarm },
         PointLight {
             color: Color::srgb(1.0, 0.84, 0.62),
             intensity: 240_000.0,
@@ -909,20 +1320,41 @@ fn enter_pub_portal_cutscene(
     ));
     commands.spawn((
         PubPortalCutsceneEntity,
-        PubPortalLight { is_portal: true },
+        PubPortalLight { role: PortalLightRole::WalkwayFill },
         PointLight {
-            color: Color::srgb(0.95, 0.35, 1.0),
-            intensity: 0.0,
-            range: 34.0,
+            color: Color::srgb(1.0, 0.92, 0.88),
+            intensity: 150_000.0,
+            range: 18.0,
             ..default()
         },
-        Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 2.2, -5.2)),
+        Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 4.4, -3.5)),
+    ));
+    commands.spawn((
+        PubPortalCutsceneEntity,
+        PubPortalLight { role: PortalLightRole::CerenkovBlue },
+        PointLight {
+            color: Color::srgb(0.42, 0.78, 1.0),
+            intensity: 0.0,
+            range: 36.0,
+            ..default()
+        },
+        Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 2.1, -5.0)),
+    ));
+    commands.spawn((
+        PubPortalCutsceneEntity,
+        PubPortalLight { role: PortalLightRole::HellCrimson },
+        PointLight {
+            color: Color::srgb(1.0, 0.14, 0.05),
+            intensity: 0.0,
+            range: 24.0,
+            ..default()
+        },
+        Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER + Vec3::Z * 0.6),
     ));
 
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
-    let ring_mesh = meshes.add(Torus::new(0.16, 1.65));
 
     let floor_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.28, 0.16, 0.10),
@@ -961,22 +1393,38 @@ fn enter_pub_portal_cutscene(
         perceptual_roughness: 0.7,
         ..default()
     });
-    let neon_pink = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.34, 0.86),
-        emissive: LinearRgba::rgb(2.8, 0.75, 2.2),
+    let void_black = materials.add(StandardMaterial {
+        base_color: Color::BLACK,
         unlit: true,
         ..default()
     });
-    let neon_cyan = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.30, 0.94, 1.0),
-        emissive: LinearRgba::rgb(0.65, 2.4, 3.0),
+    let liquid_mercury = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.015, 0.022, 0.045),
+        metallic: 0.96,
+        perceptual_roughness: 0.06,
+        ..default()
+    });
+    let drive_brass = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.46, 0.36, 0.22),
+        metallic: 0.88,
+        perceptual_roughness: 0.24,
+        ..default()
+    });
+    let drive_steel = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.25, 0.31),
+        metallic: 0.90,
+        perceptual_roughness: 0.22,
+        ..default()
+    });
+    let cerenkov_blue = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.54, 0.90, 1.0),
+        emissive: LinearRgba::rgb(1.4, 3.0, 6.0),
         unlit: true,
         ..default()
     });
-    let portal_core = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.85, 0.42, 1.0, 0.88),
-        emissive: LinearRgba::rgb(2.8, 1.1, 3.8),
-        alpha_mode: AlphaMode::Blend,
+    let hell_crimson = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.22, 0.08),
+        emissive: LinearRgba::rgb(3.8, 0.55, 0.16),
         unlit: true,
         ..default()
     });
@@ -1007,6 +1455,36 @@ fn enter_pub_portal_cutscene(
         ));
     }
 
+    // Dark cosmic void chamber behind the Women's Bathroom doorway + riveted steel jamb collar
+    for (vx, vy, vz, sx, sy, sz) in [
+        (0.0_f32, 2.3_f32, -9.0_f32, 5.6_f32, 5.2_f32, 0.3_f32),
+        (-2.7, 2.3, -7.4, 0.3, 5.2, 3.4),
+        (2.7, 2.3, -7.4, 0.3, 5.2, 3.4),
+        (0.0, -0.1, -7.4, 5.6, 0.2, 3.4),
+        (0.0, 4.8, -7.4, 5.6, 0.2, 3.4),
+    ] {
+        commands.spawn((
+            PubPortalCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(void_black.clone()),
+            Transform::from_translation(PORTAL_STAGE + Vec3::new(vx, vy, vz))
+                .with_scale(Vec3::new(sx, sy, sz)),
+        ));
+    }
+    for (cx, cy, sx, sy) in [
+        (-1.02_f32, 1.40_f32, 0.14_f32, 2.86_f32),
+        (1.02, 1.40, 0.14, 2.86),
+        (0.0, 2.84, 2.18, 0.14),
+    ] {
+        commands.spawn((
+            PubPortalCutsceneEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(drive_steel.clone()),
+            Transform::from_translation(PORTAL_STAGE + Vec3::new(cx, cy, -5.66))
+                .with_scale(Vec3::new(sx, sy, 0.22)),
+        ));
+    }
+
     // Glowing WOMEN'S Bathroom plaque mounted right above the North doorway
     if let Some(ref art) = art {
         let sign_mat = materials.add(StandardMaterial {
@@ -1021,7 +1499,7 @@ fn enter_pub_portal_cutscene(
             PubPortalCutsceneEntity,
             Mesh3d(unit_box.clone()),
             MeshMaterial3d(sign_mat),
-            Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 3.22, -5.50))
+            Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 3.26, -5.50))
                 .with_scale(Vec3::new(1.65, 0.80, 0.08)),
         ));
     }
@@ -1047,27 +1525,91 @@ fn enter_pub_portal_cutscene(
             ));
         });
 
-    // Interdimensional Casino Portal Vortex behind the Women's Bathroom door
+    // *Event Horizon* Gravity Drive Singularity behind the Women's Bathroom door:
+    // 1. Rippling Obsidian Liquid-Mercury Event Horizon surface
+    let (disc_mesh, disc_base) = build_fluid_horizon_disc(1.25);
+    let disc_handle = meshes.add(disc_mesh);
+    fluid.handle = Some(disc_handle.clone());
+    fluid.base_pos = disc_base;
     commands.spawn((
         PubPortalCutsceneEntity,
-        PubPortalAnim::PortalCore,
-        Mesh3d(unit_cyl.clone()),
-        MeshMaterial3d(portal_core),
-        Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 1.65, -6.2))
+        PubPortalAnim::HorizonFluid,
+        Mesh3d(disc_handle),
+        MeshMaterial3d(liquid_mercury),
+        Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER).with_scale(Vec3::splat(0.001)),
+    ));
+
+    // 2. Pitch-black Singularity sphere + Cerenkov blue lensing ring + Crimson rift ring
+    commands.spawn((
+        PubPortalCutsceneEntity,
+        PubPortalAnim::HorizonCore { ring: false },
+        Mesh3d(unit_sphere.clone()),
+        MeshMaterial3d(void_black),
+        Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER - Vec3::Z * 0.12)
+            .with_scale(Vec3::splat(0.001)),
+    ));
+    commands.spawn((
+        PubPortalCutsceneEntity,
+        PubPortalAnim::HorizonCore { ring: true },
+        Mesh3d(meshes.add(Torus::new(0.055, 1.22))),
+        MeshMaterial3d(cerenkov_blue.clone()),
+        Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER)
             .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
             .with_scale(Vec3::splat(0.001)),
     ));
-    for (idx, mat) in [neon_pink.clone(), neon_cyan.clone(), gold_mat.clone()]
-        .into_iter()
-        .enumerate()
+    commands.spawn((
+        PubPortalCutsceneEntity,
+        PubPortalAnim::HorizonCore { ring: true },
+        Mesh3d(meshes.add(Torus::new(0.032, 0.92))),
+        MeshMaterial3d(hell_crimson),
+        Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER + Vec3::Z * 0.05)
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::splat(0.001)),
+    ));
+
+    // 3. 3 Interlocking Spiked Gravity Drive Gimbal Rings
+    let spike_mesh = meshes.add(Cone::new(0.048, 0.22));
+    let pip_mesh = meshes.add(Sphere::new(0.034));
+    for (idx, (radius, metal)) in [
+        (0.84_f32, drive_brass.clone()),
+        (1.08, drive_steel.clone()),
+        (1.32, drive_brass),
+    ]
+    .into_iter()
+    .enumerate()
     {
+        let ring_mesh = meshes.add(Torus::new(0.068, radius));
+        commands
+            .spawn((
+                PubPortalCutsceneEntity,
+                PubPortalAnim::DriveGimbal(idx),
+                Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER)
+                    .with_scale(Vec3::splat(0.001)),
+                Visibility::default(),
+            ))
+            .with_children(|g| {
+                crate::casino::spawn_gravity_drive_ring(
+                    g,
+                    ring_mesh,
+                    spike_mesh.clone(),
+                    pip_mesh.clone(),
+                    metal,
+                    cerenkov_blue.clone(),
+                    radius,
+                );
+            });
+    }
+
+    // 4. 8 Crackling Electric Cerenkov Plasma Arcs around the doorway threshold
+    for idx in 0..8 {
+        let bolt_mesh = sh::add(&mut meshes, build_lightning_bolt_geo(idx as u32 + 11, 1.8));
         commands.spawn((
             PubPortalCutsceneEntity,
-            PubPortalAnim::PortalRing(idx),
-            Mesh3d(ring_mesh.clone()),
-            MeshMaterial3d(mat),
-            Transform::from_translation(PORTAL_STAGE + Vec3::new(0.0, 1.65, -6.05 + idx as f32 * 0.08))
-                .with_scale(Vec3::splat(0.001)),
+            PubPortalAnim::LightningArc(idx),
+            Mesh3d(bolt_mesh),
+            MeshMaterial3d(cerenkov_blue.clone()),
+            Transform::from_translation(PORTAL_STAGE + EVENT_HORIZON_CENTER),
+            Visibility::Hidden,
         ));
     }
 
@@ -1221,55 +1763,46 @@ fn enter_pub_portal_cutscene(
             crate::glenn::spawn_glenn_rig(p, &mut meshes, &glenn_mats);
         });
 
-    // Background Pub Patrons filing into the Women's Bathroom door during Beats 1-3
-    let patron_colors = [
-        Color::srgb(0.24, 0.56, 0.88),
-        Color::srgb(0.92, 0.34, 0.62),
-        Color::srgb(0.32, 0.78, 0.48),
-    ];
-    let head_skin = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.92, 0.74, 0.60),
-        ..default()
-    });
-    for (idx, col) in patron_colors.into_iter().enumerate() {
-        let body_mat = materials.add(StandardMaterial {
-            base_color: col,
-            perceptual_roughness: 0.7,
-            ..default()
-        });
+    // Staggered parade of extremely attractive women walking gracefully into the Women's Bathroom
+    for idx in 0..PATRON_COUNT {
         commands
             .spawn((
                 PubPortalCutsceneEntity,
                 PubPortalAnim::Patron(idx),
-                Transform::from_translation(PORTAL_STAGE + Vec3::new(-4.5, 0.0, -3.5)),
+                Transform::from_translation(PORTAL_STAGE + Vec3::new(-5.2, 0.0, -3.2)),
                 Visibility::Hidden,
             ))
             .with_children(|p| {
-                p.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(body_mat),
-                    Transform::from_xyz(0.0, 0.80, 0.0).with_scale(Vec3::new(0.26, 1.30, 0.22)),
-                ));
-                p.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(head_skin.clone()),
-                    Transform::from_xyz(0.0, 1.65, 0.0).with_scale(Vec3::splat(0.21)),
-                ));
+                spawn_attractive_woman_rig(p, &mut meshes, &mut materials, idx, idx);
             });
     }
 
-    // Glowing flying poker chips / sparks whipped out when the portal erupts
-    for idx in 0..10 {
-        let base = Vec3::new(((idx as f32) - 4.5) * 0.85, 0.6 + (idx % 3) as f32 * 0.5, -2.5);
+    // Dark metallic gravity shards & streaking Cerenkov plasma motes whipped toward the core
+    for idx in 0..12 {
+        let base = Vec3::new(
+            ((idx as f32) - 5.5) * 0.72,
+            0.45 + (idx % 4) as f32 * 0.55,
+            -2.1 - (idx % 3) as f32 * 0.65,
+        );
+        let is_plasma = idx % 2 == 1;
         commands.spawn((
             PubPortalCutsceneEntity,
             PubPortalAnim::FlyingProp { idx, base },
-            Mesh3d(unit_cyl.clone()),
-            MeshMaterial3d(if idx % 2 == 0 { gold_mat.clone() } else { neon_pink.clone() }),
-            Transform::from_translation(PORTAL_STAGE + base).with_scale(Vec3::new(0.22, 0.05, 0.22)),
+            Mesh3d(if is_plasma { unit_sphere.clone() } else { unit_box.clone() }),
+            MeshMaterial3d(if is_plasma {
+                cerenkov_blue.clone()
+            } else {
+                drive_steel.clone()
+            }),
+            Transform::from_translation(PORTAL_STAGE + base).with_scale(if is_plasma {
+                Vec3::new(0.06, 0.06, 0.24)
+            } else {
+                Vec3::new(0.18, 0.04, 0.14)
+            }),
             Visibility::Hidden,
         ));
     }
+    let _ = gold_mat;
 
     // Initial Beat 0 camera establishing shot
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
@@ -1350,13 +1883,16 @@ fn enter_pub_portal_cutscene(
     speak_voice(line, voice);
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity, clippy::too_many_lines)]
 fn update_pub_portal_cutscene(
     time: Res<Time>,
     mut p_state: ResMut<PubPortalCutsceneState>,
+    fluid: Res<EventHorizonFluidMesh>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut next_state: SceneTransition,
-    mut anim_q: Query<(&mut Transform, &mut Visibility, &PubPortalAnim), Without<Camera3d>>,
-    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<PubPortalAnim>)>,
+    mut anim_q: Query<(&mut Transform, &mut Visibility, &PubPortalAnim), (Without<Camera3d>, Without<PatronLeg>)>,
+    mut leg_q: Query<(&PatronLeg, &mut Transform), (Without<PubPortalAnim>, Without<Camera3d>)>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<PubPortalAnim>, Without<PatronLeg>)>,
     mut light_q: Query<(&mut PointLight, &PubPortalLight)>,
     mut spk_q: Query<&mut Text, (With<PubPortalSpeakerText>, Without<PubPortalSubText>)>,
     mut sub_q: Query<&mut Text, (With<PubPortalSubText>, Without<PubPortalSpeakerText>)>,
@@ -1401,91 +1937,210 @@ fn update_pub_portal_cutscene(
         play_sfx("portal_suck");
     }
 
-    // Stand-up factor during Beat 4 (0 -> 1 over first 1.2s), full stand in Beat 5 before suction
+    // Ripple & recompute smooth normals on the black liquid-mercury Event Horizon surface
+    if beat >= 3 {
+        if let Some(ref handle) = fluid.handle {
+            if let Some(mesh) = meshes.get_mut(handle) {
+                let amp = match beat {
+                    3 => 0.035,
+                    4 => 0.075,
+                    _ => 0.14,
+                };
+                let tris: Vec<[usize; 3]> = match mesh.indices() {
+                    Some(Indices::U32(ids)) => ids
+                        .chunks_exact(3)
+                        .map(|c| [c[0] as usize, c[1] as usize, c[2] as usize])
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let mut pos_vec: Vec<Vec3> = fluid
+                    .base_pos
+                    .iter()
+                    .map(|&bp| {
+                        let r = (bp.x * bp.x + bp.y * bp.y).sqrt();
+                        let ang = bp.y.atan2(bp.x);
+                        let wave = (r * 13.0 - t * 9.5).sin() * 0.72
+                            + (ang * 5.0 + t * 5.4).cos() * 0.28;
+                        let falloff = (1.0 - (r / 1.25) * 0.35).clamp(0.15, 1.0);
+                        Vec3::new(bp.x, bp.y, wave * amp * falloff)
+                    })
+                    .collect();
+                let mut norms = vec![Vec3::ZERO; pos_vec.len()];
+                for [i0, i1, i2] in tris {
+                    let e1 = pos_vec[i1] - pos_vec[i0];
+                    let e2 = pos_vec[i2] - pos_vec[i0];
+                    let fnm = e1.cross(e2);
+                    norms[i0] += fnm;
+                    norms[i1] += fnm;
+                    norms[i2] += fnm;
+                }
+                let pos_arr: Vec<[f32; 3]> = pos_vec.drain(..).map(|v| v.to_array()).collect();
+                let norm_arr: Vec<[f32; 3]> = norms
+                    .into_iter()
+                    .map(|n| {
+                        let nn = if n.length_squared() > 1e-8 {
+                            n.normalize()
+                        } else {
+                            Vec3::Z
+                        };
+                        nn.to_array()
+                    })
+                    .collect();
+                mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos_arr);
+                mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, norm_arr);
+            }
+        }
+    }
+
+    // Stand-up factor during Beat 4 (0 -> 1 over first 1.5s), full stand in Beat 5 before suction
     let stand_u = if beat < 4 {
         0.0
     } else if beat == 4 {
-        (bt / 1.2).clamp(0.0, 1.0)
+        (bt / 1.5).clamp(0.0, 1.0)
     } else {
         1.0
     };
     let stand_smooth = stand_u * stand_u * (3.0 - 2.0 * stand_u);
 
-    // Suction factor in Beat 5 (door blows open in 0..0.3s, guys & props yanked in 0.35..4.6s)
+    // Suction factor in Beat 5 (door blows open in 0..0.28s, guys & props yanked in 0.32..4.6s)
     let suck_u = if beat == 5 {
-        ((bt - 0.35) / 4.25).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let door_slam = if beat == 5 {
-        let k = (bt / 0.28).clamp(0.0, 1.0);
-        2.15 * (1.0 - (1.0 - k).powi(3)) + ((t * 28.0).sin() * 0.06 * (1.0 - k))
-    } else if matches!(beat, 1..=3) {
-        // Subtle door ajar flicker as background patrons slip inside
-        let cycle = (bt % 2.4) / 2.4;
-        if cycle > 0.55 && cycle < 0.85 {
-            0.55
-        } else {
-            0.04
-        }
-    } else if beat == 4 {
-        // Door shaking/rattling ominously before it blows open!
-        (t * 42.0).sin() * 0.05
+        ((bt - 0.32) / 4.28).clamp(0.0, 1.0)
     } else {
         0.0
     };
 
-    for (mut pl, role) in &mut light_q {
-        if role.is_portal {
-            pl.intensity = match beat {
-                0..=2 => 4_000.0,
-                3 => 35_000.0 + (t * 8.0).sin() * 12_000.0,
-                4 => 110_000.0 + (t * 14.0).sin() * 35_000.0,
-                _ => 650_000.0 + (t * 20.0).sin() * 140_000.0,
-            };
-        } else {
-            pl.intensity = if beat == 5 { 90_000.0 } else { 240_000.0 };
+    // Door angle: swings open smoothly as any attractive woman enters in Beats 0..=3, rattles in Beat 4, slams open in Beat 5
+    let mut min_patron_door_d = f32::MAX;
+    if beat < 4 {
+        for pi in 0..PATRON_COUNT {
+            if let Some((pos, _, _)) = patron_walk_pose(pi, t) {
+                let d = Vec2::new(pos.x - DOOR_POS.x, pos.z - DOOR_POS.z).length();
+                min_patron_door_d = min_patron_door_d.min(d);
+            }
+        }
+    }
+    let door_slam = if beat == 5 {
+        let k = (bt / 0.28).clamp(0.0, 1.0);
+        2.22 * (1.0 - (1.0 - k).powi(3)) + ((t * 32.0).sin() * 0.06 * (1.0 - k))
+    } else if beat == 4 {
+        (t * 44.0).sin() * 0.06
+    } else {
+        let proximity = (1.0 - (min_patron_door_d / 1.45).clamp(0.0, 1.0)).powf(0.8);
+        0.04 + proximity * 0.92
+    };
+
+    for (mut pl, lcomp) in &mut light_q {
+        match lcomp.role {
+            PortalLightRole::PubWarm => {
+                pl.intensity = if beat == 5 { 36_000.0 } else if beat == 4 { 145_000.0 } else { 240_000.0 };
+            }
+            PortalLightRole::WalkwayFill => {
+                pl.intensity = if beat == 5 { 20_000.0 } else { 150_000.0 };
+            }
+            PortalLightRole::CerenkovBlue => {
+                let strobe = 0.78 + 0.22 * (t * 24.0).sin();
+                pl.intensity = match beat {
+                    0..=2 => 6_000.0,
+                    3 => 55_000.0 + (t * 8.0).sin() * 18_000.0,
+                    4 => 180_000.0 * strobe,
+                    _ => 760_000.0 * strobe,
+                };
+            }
+            PortalLightRole::HellCrimson => {
+                let flicker = (0.4 + 0.6 * (t * 17.0).sin().abs()).powf(1.5);
+                pl.intensity = match beat {
+                    0..=3 => 0.0,
+                    4 => 65_000.0 * flicker,
+                    _ => 290_000.0 * flicker,
+                };
+            }
         }
     }
 
-    let portal_target = PORTAL_STAGE + Vec3::new(0.0, 1.65, -6.05);
+    for (leg, mut tf) in &mut leg_q {
+        let phase = t * 7.4 + leg.patron_idx as f32 * 0.9;
+        let swing = phase.sin() * 0.42 * if leg.is_left { 1.0 } else { -1.0 };
+        tf.rotation = Quat::from_rotation_x(swing);
+    }
+
+    let portal_target = PORTAL_STAGE + EVENT_HORIZON_CENTER;
+    let gimbal_axes = [
+        Vec3::new(1.0, 0.7, 1.2),
+        Vec3::new(-0.9, 1.4, -0.6),
+        Vec3::new(0.6, -1.2, 1.6),
+    ];
+
     for (mut tf, mut vis, anim) in &mut anim_q {
         match *anim {
             PubPortalAnim::DoorPivot => {
                 tf.rotation = Quat::from_rotation_y(door_slam);
             }
-            PubPortalAnim::PortalCore => {
+            PubPortalAnim::HorizonFluid => {
                 let s = match beat {
                     0..=2 => 0.001,
-                    3 => 0.35 + (t * 6.0).sin() * 0.06,
-                    4 => 0.90 + (t * 9.0).sin() * 0.10,
-                    _ => 1.75 + (t * 12.0).sin() * 0.14,
-                };
-                tf.scale = Vec3::new(s, 0.16, s * 1.35);
-                tf.rotate_y(4.2 * dt);
-            }
-            PubPortalAnim::PortalRing(ri) => {
-                let s = match beat {
-                    0..=3 => 0.001,
-                    4 => 0.45 + (ri as f32) * 0.14,
-                    _ => (1.05 + (ri as f32) * 0.24) * (1.0 + (t * 9.0 + ri as f32).sin() * 0.08),
+                    3 => 0.55,
+                    4 => 0.92,
+                    _ => 1.38 + (t * 10.0).sin() * 0.05,
                 };
                 tf.scale = Vec3::splat(s);
-                let dir = if ri % 2 == 0 { 1.0 } else { -1.0 };
-                tf.rotate_z(dir * (3.2 + ri as f32 * 1.4) * dt);
+            }
+            PubPortalAnim::HorizonCore { ring } => {
+                let s = match beat {
+                    0..=2 => 0.001,
+                    3 => 0.45,
+                    4 => 0.90 + (t * 11.0).sin() * 0.04,
+                    _ => 1.34 + (t * 14.0).sin() * 0.07,
+                };
+                if ring {
+                    tf.scale = Vec3::splat(s);
+                    tf.rotate_z(2.8 * dt);
+                } else {
+                    tf.scale = Vec3::new(0.75 * s, 0.75 * s, 0.35 * s);
+                }
+            }
+            PubPortalAnim::DriveGimbal(ri) => {
+                let s = match beat {
+                    0..=2 => 0.001,
+                    3 => 0.35,
+                    4 => 0.78,
+                    _ => 1.15 + (t * 9.0 + ri as f32).sin() * 0.04,
+                };
+                tf.scale = Vec3::splat(s);
+                let rate = if beat == 5 { 3.4 } else if beat == 4 { 1.4 } else { 0.5 };
+                let av = gimbal_axes[ri % 3] * (rate * dt);
+                tf.rotate_x(av.x);
+                tf.rotate_y(av.y);
+                tf.rotate_z(av.z);
+            }
+            PubPortalAnim::LightningArc(li) => {
+                let active = (beat == 4 && bt > 1.5 && ((t * 19.0 + li as f32 * 1.7).sin() > 0.45))
+                    || (beat == 5 && ((t * 27.0 + li as f32 * 2.3).sin() > 0.05));
+                *vis = if active { Visibility::Inherited } else { Visibility::Hidden };
+                if active {
+                    let ang = (li as f32 / 8.0) * TAU + t * 3.1;
+                    tf.translation = PORTAL_STAGE + EVENT_HORIZON_CENTER
+                        + Vec3::new(ang.cos() * 0.45, ang.sin() * 0.45, 0.25);
+                    tf.rotation = Quat::from_euler(
+                        EulerRot::ZXY,
+                        ang,
+                        (t * 23.0 + li as f32).sin() * 0.65,
+                        (t * 17.0).cos() * 0.45,
+                    );
+                    tf.scale = Vec3::splat(if beat == 5 { 1.25 } else { 0.85 });
+                }
             }
             PubPortalAnim::Chair(ci) => {
                 let base = SEATED_SPOTS[ci];
                 let push_back = if stand_smooth > 0.0 {
                     let away = (base - TABLE_CENTER).normalize_or_zero();
-                    away * (stand_smooth * 0.45)
+                    away * (stand_smooth * 0.55)
                 } else {
                     Vec3::ZERO
                 };
                 if suck_u > 0.0 {
-                    let pull = (suck_u * 0.72).powf(1.3);
+                    let pull = (suck_u * 0.68).powf(1.3);
                     let pos = (PORTAL_STAGE + base + push_back).lerp(portal_target, pull);
-                    tf.translation = pos + Vec3::Y * (pull * 1.2 + (t * 7.0 + ci as f32).sin() * 0.25);
+                    tf.translation = pos + Vec3::Y * (pull * 1.1 + (t * 7.0 + ci as f32).sin() * 0.22);
                     tf.rotation = Quat::from_euler(
                         EulerRot::YXZ,
                         t * 4.5 + ci as f32,
@@ -1513,23 +2168,23 @@ fn update_pub_portal_cutscene(
             PubPortalAnim::FlyingProp { idx, base } => {
                 if beat == 5 {
                     *vis = Visibility::Inherited;
-                    let phase = ((t * 1.4 + idx as f32 * 0.19) % 1.0).clamp(0.0, 1.0);
-                    let p = (PORTAL_STAGE + base).lerp(portal_target, phase);
-                    let ang = t * 9.0 + idx as f32 * 0.9;
-                    tf.translation = p + Vec3::new(ang.cos() * (1.0 - phase) * 1.2, ang.sin() * 0.4, 0.0);
-                    tf.rotation = Quat::from_euler(EulerRot::YXZ, ang, ang * 1.5, ang * 0.7);
+                    let phase = ((t * 1.65 + idx as f32 * 0.17) % 1.0).clamp(0.0, 1.0);
+                    let p = (PORTAL_STAGE + base).lerp(portal_target, phase.powf(1.35));
+                    let ang = t * 11.0 + idx as f32 * 0.85;
+                    tf.translation = p + Vec3::new(ang.cos() * (1.0 - phase) * 0.9, ang.sin() * 0.35, 0.0);
+                    tf.rotation = Quat::from_euler(EulerRot::YXZ, ang, ang * 1.4, ang * 0.7);
                 } else {
                     *vis = Visibility::Hidden;
                 }
             }
             PubPortalAnim::Patron(pi) => {
-                if matches!(beat, 1..=3) && pi as u8 + 1 == beat {
-                    *vis = Visibility::Inherited;
-                    let prog = (bt / 3.4).clamp(0.0, 1.0);
-                    let start = Vec3::new(if pi % 2 == 0 { -5.5 } else { 5.5 }, 0.0, -3.4);
-                    let end = DOOR_POS + Vec3::new(0.0, 0.0, -0.35);
-                    tf.translation = PORTAL_STAGE + start.lerp(end, prog);
-                    if prog > 0.94 {
+                if beat < 4 {
+                    if let Some((pos, yaw, u)) = patron_walk_pose(pi, t) {
+                        *vis = if u > 0.94 { Visibility::Hidden } else { Visibility::Inherited };
+                        tf.translation = PORTAL_STAGE + pos;
+                        let hip_sway = (t * 7.4 + pi as f32 * 0.9).sin() * 0.045;
+                        tf.rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_z(hip_sway);
+                    } else {
                         *vis = Visibility::Hidden;
                     }
                 } else {
@@ -1544,21 +2199,30 @@ fn update_pub_portal_cutscene(
                     _ => 0.90,
                 };
                 if beat == 5 && suck_u > 0.0 {
-                    // Violent portal suction: spin and spiral straight into the neon vortex!
+                    // Torn forward from north of the table straight into the Event Horizon singularity
                     let delay = (gi as f32) * 0.06;
                     let p = ((suck_u - delay) / (1.0 - delay)).clamp(0.0, 1.0);
                     let start = PORTAL_STAGE + STAND_SPOTS[gi];
                     let curve = p.powf(1.45);
-                    let spiral_r = (1.0 - curve) * 0.85 * (curve * 4.5).min(1.0);
+                    let spiral_r = (1.0 - curve) * 0.75 * (curve * 4.5).min(1.0);
                     let ang = t * 8.5 + gi as f32 * FRAC_PI_2;
                     tf.translation = start.lerp(portal_target, curve)
-                        + Vec3::new(ang.cos() * spiral_r, (p * PI).sin() * 0.85 + curve * 0.5, ang.sin() * spiral_r);
+                        + Vec3::new(ang.cos() * spiral_r, (p * PI).sin() * 0.75 + curve * 0.35, ang.sin() * spiral_r);
                     tf.rotation = Quat::from_euler(EulerRot::YXZ, ang * 1.4, curve * 1.1, (t * 6.0).sin() * 0.45);
                     tf.scale = Vec3::splat(base_scale * (1.0 - curve * 0.88).max(0.08));
                 } else if beat >= 4 {
                     let seat_p = SEATED_SPOTS[gi] + Vec3::Y * -0.28;
                     let stand_p = STAND_SPOTS[gi];
-                    let pos = seat_p.lerp(stand_p, stand_smooth);
+                    let mut pos = seat_p.lerp(stand_p, stand_smooth);
+                    // Stan & Glenn walk smoothly around the left/right edges of the table in Beat 4
+                    let bow_x = if gi == 0 {
+                        -0.65 * (stand_smooth * PI).sin()
+                    } else if gi == 3 {
+                        0.65 * (stand_smooth * PI).sin()
+                    } else {
+                        0.0
+                    };
+                    pos.x += bow_x;
                     let y_table = yaw_toward(pos, TABLE_CENTER, model_neg_z);
                     let y_door = yaw_toward(pos, DOOR_POS, model_neg_z);
                     let mut diff = (y_door - y_table + PI).rem_euclid(TAU) - PI;
@@ -1586,7 +2250,7 @@ fn update_pub_portal_cutscene(
         }
     }
 
-    // Dynamic cinematic camera per Beat
+    // Dynamic unobstructed camera per Beat (Beats 2..=5 stay strictly north of the beer tower!)
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         match beat {
             0 => {
@@ -1599,48 +2263,49 @@ fn update_pub_portal_cutscene(
                 }
             }
             1 => {
-                // Frame TJ & Nate talking about the 1990 TMNT movie
+                // Frame TJ & Nate talking about the 1990 TMNT movie while attractive women pass behind
                 let k = (bt / 4.8).clamp(0.0, 1.0);
                 c_tf.translation = PORTAL_STAGE + Vec3::new(2.2 - k * 0.7, 2.35, 3.6);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(-0.2, 1.35, -0.35), Vec3::Y);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(-0.1, 1.40, -1.2), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.60;
+                    p.fov = 0.62;
                 }
             }
             2 => {
-                // Nate spots patrons walking into the Women's bathroom
+                // Clean northwest aisle view north of table framing attractive women entering doorway
                 let k = (bt / 5.2).clamp(0.0, 1.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(-2.4, 2.45, 3.3);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.4, 1.55, -2.5 - k * 2.4), Vec3::Y);
+                c_tf.translation = PORTAL_STAGE + Vec3::new(-2.9 + k * 0.6, 2.05, -0.95 - k * 0.45);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.1, 1.42, -4.6), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.64;
+                    p.fov = 0.66;
                 }
             }
             3 => {
-                // Glenn's magic portal theory: frame all 4 guys + glowing Women's door behind them
-                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.55, 5.4);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.65, -2.8), Vec3::Y);
+                // Clean diagonal view north of beer tower showing doorway Cerenkov glow & women
+                c_tf.translation = PORTAL_STAGE + Vec3::new(2.9, 2.10, -0.90);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(-0.1, 1.48, -4.5), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.68;
+                    p.fov = 0.66;
                 }
             }
             4 => {
-                // Guys stand up & glance together over their shoulders at the Women's door!
+                // Strictly north of the beer tower looking down center aisle past the 4 standing guys
                 let k = (bt / 4.0).clamp(0.0, 1.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.45 - k * 0.25, 5.1 - k * 1.4);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.85, -4.8), Vec3::Y);
+                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.02 - k * 0.14, -0.95 - k * 0.85);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.68, -5.8), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.64 - k * 0.08;
+                    p.fov = 0.68 - k * 0.06;
                 }
             }
             _ => {
-                // Door slams open & camera dives toward the neon portal with the swirling guys!
-                let pull = (suck_u * 1.1).clamp(0.0, 1.0);
-                let shake = Vec3::new((t * 53.0).sin() * 0.08, (t * 67.0).cos() * 0.08, 0.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.1, 4.4 - pull * 4.8) + shake;
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.65, -5.8), Vec3::Y);
+                // Strictly north of beer tower (z = -1.20 -> -4.15): pure unobstructed Event Horizon view!
+                let pull = (suck_u * 1.05).clamp(0.0, 1.0);
+                let shake = Vec3::new((t * 59.0).sin() * 0.085, (t * 71.0).cos() * 0.085, 0.0);
+                c_tf.translation =
+                    PORTAL_STAGE + Vec3::new(1.25 * (1.0 - pull), 1.88, -1.20 - pull * 2.95) + shake;
+                c_tf.look_at(PORTAL_STAGE + EVENT_HORIZON_CENTER, Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.70 + pull * 0.28;
+                    p.fov = 0.72 + pull * 0.30;
                 }
             }
         }
@@ -1649,12 +2314,15 @@ fn update_pub_portal_cutscene(
 
 fn exit_pub_portal_cutscene(
     mut commands: Commands,
+    mut fluid: ResMut<EventHorizonFluidMesh>,
     ent_q: Query<Entity, With<PubPortalCutsceneEntity>>,
     ov_q: Query<Entity, With<PubPortalCutsceneOverlay>>,
     mut hud_q: Query<&mut Visibility, With<HudOverlay>>,
     mut cam_q: Query<&mut Projection, With<Camera3d>>,
 ) {
     stop_voice();
+    fluid.handle = None;
+    fluid.base_pos.clear();
     for e in &ent_q {
         commands.entity(e).despawn_recursive();
     }
