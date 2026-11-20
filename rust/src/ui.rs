@@ -166,7 +166,8 @@ fn hud_label(text: &str, color: Color) -> impl Bundle {
     )
 }
 
-pub fn spawn_hud(mut commands: Commands) {
+pub fn spawn_hud(mut commands: Commands, mut stats: ResMut<PlayerStats>) {
+    stats.sync_tendy_wendies_from_save();
     commands
         .spawn((
             HudOverlay,
@@ -636,12 +637,12 @@ pub fn update_hud(
             }
             HudField::Tier => format!("{} | {}cm", stats.size_tier(), stats.height_cm()),
             HudField::Flask => format!("FLASK [Q] {}/{}", stats.estus_flasks, stats.max_estus_flasks),
-            // The license is saved with the checkpoint, so show when Stan is carrying it.
+            // The license is saved with the checkpoint; Tendy Wendies persist across modes.
             HudField::Credits => {
                 if stats.in_city && stats.has_license {
-                    format!("CREDITS {} | LICENSE", stats.tendy_credits)
+                    format!("TW {} | CR {} | LICENSE", stats.tendy_wendies, stats.tendy_credits)
                 } else {
-                    format!("CREDITS {}", stats.tendy_credits)
+                    format!("TW {} | CR {}", stats.tendy_wendies, stats.tendy_credits)
                 }
             }
             HudField::App => {
@@ -1718,6 +1719,7 @@ pub(crate) fn reset_world_for_restart(
     let beaten = stats.game_beaten;
     let license = stats.has_license;
     *stats = PlayerStats::default();
+    stats.sync_tendy_wendies_from_save();
     stats.audio_muted = was_muted;
     stats.game_beaten = beaten;
     // A found driver's license survives city retries (and free roam restarts).

@@ -731,7 +731,11 @@ pub fn update_city_scooter_and_phone(
     };
 
     // Toggle phone with [P]
-    if keys.just_pressed(KeyCode::KeyP) && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+    if keys.just_pressed(KeyCode::KeyP)
+        && stats.driving_car.is_none()
+        && stats.riding_scooter.is_none()
+        && !stats.casino_open
+    {
         if stats.phone_open {
             stats.phone_open = false;
             for e in &veo_ui.phone_ui_q {

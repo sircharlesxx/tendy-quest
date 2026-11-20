@@ -604,6 +604,7 @@ pub fn camera_snap_follow(mut orbit: ResMut<CameraOrbit>) {
 
 pub fn camera_mouse_look(
     time: Res<Time>,
+    stats: Res<PlayerStats>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     mouse_scroll: Res<AccumulatedMouseScroll>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
@@ -612,6 +613,9 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
+    if stats.casino_open {
+        return;
+    }
     if let Ok(mut window) = window_q.get_single_mut() {
         if mouse_buttons.just_pressed(MouseButton::Left) && touches.iter().next().is_none() {
             window.cursor_options.grab_mode = CursorGrabMode::Locked;
@@ -827,8 +831,13 @@ pub fn player_movement(
         }
     }
 
-    // Vehicles (and the Ferris wheel, which carries the hero itself) own his position.
-    if stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.riding_wheel || stats.phone_open {
+    // Vehicles (and the Ferris wheel / Casino tables) own Stan's position or UI focus.
+    if stats.driving_car.is_some()
+        || stats.riding_scooter.is_some()
+        || stats.riding_wheel
+        || stats.phone_open
+        || stats.casino_open
+    {
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
         player.jump_buffer = 0.0;
@@ -1630,8 +1639,9 @@ pub fn update_camera(
     } else {
         0.82 + cam_ps.sqrt() * 0.34
     };
-    // Pub 217 has a fixed size; `is_in_pub217` only counts its interior (not the roof).
-    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_pos, cam_ps);
+    // Pub 217 and the Casino share fixed interior scale; only count interior (not roof).
+    let in_pub217 = stats.in_city
+        && (crate::city::is_in_pub217(p_pos, cam_ps) || crate::casino::is_in_casino(p_pos, cam_ps));
     let pub_s = crate::city::PUB217_SCALE;
     let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
     // Clamp distance & pitch inside Pub 217 so the bar ceiling/walls don't occlude the player.
@@ -2024,6 +2034,7 @@ pub fn animate_and_collect_pickups(
                 commands.entity(entity).remove::<TendyPickup>();
                 start_pickup_pop(&mut commands, entity, tf.scale);
                 stats.tendies += 1;
+                stats.add_tendy_wendies(2);
                 stats.score += 150;
                 crate::audio::play_sfx("tendy");
                 if stats.tendies >= stats.total_tendies {

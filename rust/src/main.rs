@@ -1,6 +1,7 @@
 mod audio;
 mod beer_fx;
 mod boss;
+mod casino;
 mod chillary;
 mod city;
 mod controls;
@@ -112,6 +113,8 @@ fn main() {
         .add_plugins(controls::ControlsPlugin)
         // Riverfront Ferris wheel: spin, ride, ride camera (see ferris.rs).
         .add_plugins(ferris::FerrisPlugin)
+        // Cedar Rapids Casino: Blackjack & Buffalo / Lucky Ladies slots in Tendy Wendies (casino.rs).
+        .add_plugins(casino::CasinoPlugin)
         // Distributed Free Mode P2P multiplayer (WebRTC mesh via public WebTorrent trackers, inert outside Free Mode; see net.rs).
         .add_plugins(net::NetPlugin)
         // Skate park on Greene Square + the lot south of it: pieces, ride physics, grinds (skatepark.rs).

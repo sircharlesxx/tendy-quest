@@ -1058,8 +1058,10 @@ fn ghost_city_occluders(
     let hero = player_q.get_single().ok().map(|t| t.translation());
     let scale = stats.player_scale.max(0.1);
     let dt = time.delta_secs();
-    // Inside Pub 217 the camera is deliberately boxed in by its walls: leave the pub alone.
-    let hero_in_pub = hero.is_some_and(|h| crate::city::is_in_pub217(h, scale));
+    // Inside Pub 217 or the Casino the camera is deliberately boxed in by walls: leave them alone.
+    let hero_in_pub = hero.is_some_and(|h| {
+        crate::city::is_in_pub217(h, scale) || crate::casino::is_in_casino(h, scale)
+    });
 
     let mut units: Vec<(Entity, bool)> = building_q.iter().map(|e| (e, true)).collect();
     for children in &group_q {

@@ -169,6 +169,12 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearAllProgress)]
         fn js_clear_all_progress();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveTendyWendies)]
+        fn js_save_tendy_wendies(amount: u32);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = loadTendyWendies)]
+        fn js_load_tendy_wendies() -> u32;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyBoot"], js_name = ready)]
         fn js_boot_ready();
 
@@ -435,6 +441,16 @@ mod imp {
     /// Pause-menu Clear save: drops both localStorage keys (checkpoint + Mom-defeated).
     pub fn clear_all_progress() {
         js_clear_all_progress();
+    }
+
+    /// Persists the player's Tendy Wendies currency wallet for casino & future features.
+    pub fn save_tendy_wendies(amount: u32) {
+        js_save_tendy_wendies(amount);
+    }
+
+    /// Loads the persisted Tendy Wendies balance (defaults to 100 TW for new players).
+    pub fn load_tendy_wendies() -> u32 {
+        js_load_tendy_wendies()
     }
 
     /// Startup scenes are loaded: lets `index.html` fade its loading screen out.
@@ -705,6 +721,12 @@ mod imp {
 
     pub fn clear_all_progress() {}
 
+    pub fn save_tendy_wendies(_amount: u32) {}
+
+    pub fn load_tendy_wendies() -> u32 {
+        100
+    }
+
     pub fn notify_boot_ready() {}
 
     pub fn update_telemetry(
@@ -753,6 +775,8 @@ pub use imp::{
 };
 // Pause menu / controls strip bridge (controls.rs).
 pub use imp::{clear_all_progress, last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
+// Tendy Wendies persistent currency wallet (state.rs, casino.rs, ui.rs).
+pub use imp::{load_tendy_wendies, save_tendy_wendies};
 // Debug start at the Pub 217 beer tower (beer_fx.rs).
 pub use imp::debug_at_beer;
 // Skate park demo driver, touch jump hold and park telemetry (skatepark.rs).

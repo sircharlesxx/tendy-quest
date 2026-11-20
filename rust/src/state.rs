@@ -102,6 +102,13 @@ pub struct PlayerStats {
     pub heavy_attack: bool,
     pub lock_on_active: bool,
     pub tendy_credits: u32,
+    /// Persistent Tendy Wendies currency wallet wagered in the Cedar Rapids Casino and tracked
+    /// across Story Mode, Free Mode, reloads, and future features (`localStorage.tendy_wendies_v1`).
+    pub tendy_wendies: u32,
+    /// True while seated inside a Cedar Rapids Casino game table or slot cabinet (`casino.rs`).
+    pub casino_open: bool,
+    /// One-frame grace flag set when closing the casino modal so Esc doesn't also open Pause.
+    pub casino_esc_grace: bool,
     pub scooter_app_unlocked: bool,
     pub riding_scooter: Option<Entity>,
     /// On the riverfront Ferris wheel (boarding, riding or stepping out; see ferris.rs).
@@ -197,6 +204,9 @@ impl Default for PlayerStats {
             heavy_attack: false,
             lock_on_active: false,
             tendy_credits: 0,
+            tendy_wendies: 100,
+            casino_open: false,
+            casino_esc_grace: false,
             scooter_app_unlocked: false,
             riding_scooter: None,
             riding_wheel: false,
@@ -346,6 +356,27 @@ impl PlayerStats {
         self.crew_unlock_announced = true;
         self.restore_gate_mask = 0;
         self.test_crew_preset = None;
+    }
+
+    /// Credits `delta` Tendy Wendies to the player's persistent wallet (saved immediately).
+    pub fn add_tendy_wendies(&mut self, delta: u32) {
+        self.tendy_wendies = self.tendy_wendies.saturating_add(delta);
+        crate::audio::save_tendy_wendies(self.tendy_wendies);
+    }
+
+    /// Attempts to spend `cost` Tendy Wendies; returns `false` if balance is insufficient.
+    pub fn spend_tendy_wendies(&mut self, cost: u32) -> bool {
+        if self.tendy_wendies < cost {
+            return false;
+        }
+        self.tendy_wendies -= cost;
+        crate::audio::save_tendy_wendies(self.tendy_wendies);
+        true
+    }
+
+    /// Loads the persisted Tendy Wendies balance from `localStorage` into `PlayerStats`.
+    pub fn sync_tendy_wendies_from_save(&mut self) {
+        self.tendy_wendies = crate::audio::load_tendy_wendies();
     }
 
     /// Scale Stan's model is drawn at (and his saber and camera are sized for): `player_scale`
