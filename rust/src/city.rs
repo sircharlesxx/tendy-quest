@@ -3219,7 +3219,9 @@ pub fn enter_city_play(
     stats.total_tendies = 50;
     stats.wave = 4;
 
-    crate::audio::mark_mom_defeated();
+    if !stats.free_roam || stats.game_beaten {
+        crate::audio::mark_mom_defeated();
+    }
     if resuming_from_tj {
         // Crew progress rides along with every recruit message; the fourth recruit is then
         // celebrated by `update_city_crew_gate`.
@@ -3298,8 +3300,11 @@ pub fn enter_city_play(
         }
     }
 
-    // Saved after the gate flags are settled so a recruit (or a restored gate) is persisted.
-    crate::ui::save_game_checkpoint("city", &stats);
+    // Saved after the gate flags are settled so a recruit (or a restored gate) is persisted;
+    // skipped in direct pre-victory Free Mode so an unfinished story checkpoint isn't overwritten.
+    if !stats.free_roam || stats.game_beaten {
+        crate::ui::save_game_checkpoint("city", &stats);
+    }
 
     if let Ok((mut p_tf, mut player)) = player_q.get_single_mut() {
         p_tf.translation = if resuming_from_tj {
@@ -4658,6 +4663,10 @@ pub fn update_city_lexie(
         if lexie.hp <= 0.0 && !stats.lexie_defeated {
             stats.score += 15000;
             stats.lexie_defeated = true;
+            // Unlock and persist post-game Free Mode immediately on defeat so reloading during
+            // the victory cutscene never loses the unlock.
+            stats.game_beaten = true;
+            crate::ui::save_game_checkpoint("city", &stats);
             stats.hint_text = "LEXIE DEFEATED! NEW YORK CITY SAVED!".to_string();
             play_sfx("win");
             speak_voice(

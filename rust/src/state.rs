@@ -329,9 +329,11 @@ impl PlayerStats {
 
     /// Sets up post-game free roam for the next fresh `CityPlay` entry (applied again by
     /// `enter_city_play`): city, 180 cm, whole gate done, Lexie beaten, scooter app unlocked.
+    /// Why: intentionally leaves `self.game_beaten` untouched so entering Free Mode directly from
+    /// the Start Menu (or `?free_roam=1`) does not falsely mark an unfinished campaign as beaten.
+    /// Gameplay impact: lets players jump straight into Free Mode anytime while keeping story saves safe.
     pub fn prepare_free_roam(&mut self) {
         self.free_roam = true;
-        self.game_beaten = true;
         self.lexie_defeated = true;
         self.in_city = true;
         self.boss_mode = false;

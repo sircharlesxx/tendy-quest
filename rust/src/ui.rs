@@ -19,6 +19,11 @@ pub struct StartButton;
 #[derive(Component)]
 pub struct ContinueButton;
 
+/// Start-menu button launching Cedar Rapids Free Mode directly (preparing for future Free Roam
+/// multiplayer). Always available; preserves unfinished story checkpoints.
+#[derive(Component)]
+pub struct FreeModeButton;
+
 /// StageClear "Continue" (post-game free roam) button; shown only after the Lexie win.
 #[derive(Component)]
 pub struct RoamButton;
@@ -31,6 +36,11 @@ pub fn saved_game_beaten(saved: &str) -> bool {
 /// Serializes progress as a compact pipe-delimited string for `window.tendySave` (`localStorage`)
 /// rather than pulling `serde`/`serde_json` into the WASM binary.
 pub fn save_game_checkpoint(stage: &str, stats: &PlayerStats) {
+    // Pre-victory Free Mode entries (from the Start Menu button or `?free_roam=1`) must not
+    // overwrite an unfinished story checkpoint (`"boss"`, mid-crew `"city"`, etc.).
+    if stats.free_roam && !stats.game_beaten {
+        return;
+    }
     // Field 6 (gate mask: 1 TJ, 2 Derek, 4 Nate, 8 Glenn, 16 Mike), field 7 (Lexie beaten) and
     // field 8 (driver's license found) were appended later; older saves still load (see
     // `handle_tutorial_input`). The beaten flag is sticky: once a save has it, later saves from
@@ -790,36 +800,81 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     },
                     TextColor(Color::srgb(0.85, 0.95, 1.0)),
                 ));
-                card.spawn((
-                    StartButton,
-                    Button,
-                    Node {
-                        padding: UiRect::axes(Val::Px(22.0), Val::Px(9.0)),
-                        margin: UiRect::top(Val::Px(4.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
-                    BorderRadius::all(Val::Px(10.0)),
-                ))
-                .with_children(|btn| {
-                    btn.spawn((
-                        TutorialBtnText,
-                        Text::new("START QUEST (SPACE / TAP)"),
-                        TextFont {
-                            font_size: 16.5,
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
                 let saved = crate::audio::load_checkpoint();
                 let mom_defeated = crate::audio::has_defeated_mom()
                     || saved.split('|').next() == Some("city");
                 let saved_stage = saved.split('|').next().unwrap_or("");
-                if mom_defeated || saved_stage == "boss" {
-                    let label = if saved_game_beaten(&saved) {
-                        "FREE ROAM CEDAR RAPIDS [C] (LEXIE BEATEN!)"
-                    } else if mom_defeated {
+                let beaten = saved_game_beaten(&saved);
+
+                card.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(10.0),
+                        row_gap: Val::Px(8.0),
+                        margin: UiRect::top(Val::Px(4.0)),
+                        ..default()
+                    },
+                ))
+                .with_children(|row| {
+                    row.spawn((
+                        StartButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(22.0), Val::Px(9.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            TutorialBtnText,
+                            Text::new("START QUEST (SPACE / TAP)"),
+                            TextFont {
+                                font_size: 16.5,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                    let (free_label, free_bg) = if beaten {
+                        (
+                            "FREE MODE: CEDAR RAPIDS [F / C] (LEXIE BEATEN!)",
+                            Color::srgb(0.14, 0.58, 0.28),
+                        )
+                    } else {
+                        (
+                            "FREE MODE: CEDAR RAPIDS [F]",
+                            Color::srgb(0.11, 0.46, 0.72),
+                        )
+                    };
+                    row.spawn((
+                        FreeModeButton,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(18.0), Val::Px(9.0)),
+                            ..default()
+                        },
+                        BackgroundColor(free_bg),
+                        BorderRadius::all(Val::Px(10.0)),
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new(free_label),
+                            TextFont {
+                                font_size: 14.5,
+                                ..default()
+                            },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
+
+                if !beaten && (mom_defeated || saved_stage == "boss") {
+                    let label = if mom_defeated {
                         "SKIP TO CEDAR RAPIDS [C] (MOM DEFEATED!)"
                     } else {
                         "CONTINUE CHECKPOINT: MOM BOSS [C]"
@@ -1084,8 +1139,9 @@ pub fn check_url_test_mode(
             stats.test_crew_preset = Some(if m == 15 { 0 } else { 30 });
             next_state.set_from_black(GameState::CityPlay);
         }
-        // `free_roam=1`: post-game free roam in the city.
+        // `free_roam=1`: direct Cedar Rapids free roam (preserves any unfinished story save).
         17 => {
+            stats.game_beaten = saved_game_beaten(&crate::audio::load_checkpoint());
             stats.prepare_free_roam();
             next_state.set_from_black(GameState::CityPlay);
         }
@@ -1112,6 +1168,7 @@ pub fn handle_tutorial_input(
     mut next_state: crate::transition::SceneTransition,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     cont_q: Query<&Interaction, (Changed<Interaction>, With<ContinueButton>)>,
+    free_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeButton>)>,
 ) {
     // Debug scene skips, only with `?debug=1` in the URL.
     if keys.just_pressed(KeyCode::KeyK) && crate::audio::debug_keys_enabled() {
@@ -1120,6 +1177,29 @@ pub fn handle_tutorial_input(
     }
     if keys.just_pressed(KeyCode::KeyB) && crate::audio::debug_keys_enabled() {
         next_state.set(GameState::BossFight);
+        return;
+    }
+    let free_clicked = free_q.iter().any(|i| *i == Interaction::Pressed);
+    if free_clicked || keys.just_pressed(KeyCode::KeyF) {
+        let saved = crate::audio::load_checkpoint();
+        let parts: Vec<&str> = saved.split('|').collect();
+        if saved_game_beaten(&saved) {
+            if let Some(s) = parts.get(1).and_then(|v| v.parse::<u32>().ok()) {
+                stats.score = s;
+            }
+            if let Some(c) = parts.get(3).and_then(|v| v.parse::<u32>().ok()) {
+                stats.tendy_credits = c;
+            }
+            if parts.get(8).copied() == Some("1") {
+                stats.has_license = true;
+            }
+            stats.game_beaten = true;
+        } else {
+            // Keep unfinished campaign progress untouched while entering Free Mode.
+            stats.game_beaten = false;
+        }
+        stats.prepare_free_roam();
+        next_state.set(GameState::CityPlay);
         return;
     }
     let cont_clicked = cont_q.iter().any(|i| *i == Interaction::Pressed);
@@ -1143,6 +1223,7 @@ pub fn handle_tutorial_input(
             }
             if mom_defeated && saved_game_beaten(&saved) {
                 // Lexie already beaten: continue straight into post-game free roam.
+                stats.game_beaten = true;
                 stats.prepare_free_roam();
                 next_state.set(GameState::CityPlay);
                 return;
