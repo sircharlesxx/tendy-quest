@@ -357,7 +357,7 @@ pub fn update_city_glenn(
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityGlenn>>,
     orbit: Res<crate::state::CameraOrbit>,
-    mut glenn_q: Query<(&mut Transform, &mut CityGlenn), Without<Player>>,
+    mut glenn_q: Query<(&mut Transform, &mut CityGlenn, &Visibility), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut g_state: ResMut<GlennCutsceneState>,
     spots: Option<Res<crate::city::CrewSpots>>,
@@ -367,7 +367,12 @@ pub fn update_city_glenn(
     };
     let dt = time.delta_secs().min(0.05);
     let pub_s = PUB217_SCALE;
-    for (mut g_tf, mut glenn) in &mut glenn_q {
+    for (mut g_tf, mut glenn, g_vis) in &mut glenn_q {
+        // Skip Free Mode pub greetings while a human player currently controls Glenn.
+        if stats.free_roam && *g_vis == Visibility::Hidden {
+            glenn.was_inside = false;
+            continue;
+        }
         // `stats.glenn_recruited` is the gate's source of truth (checkpoint restore / test links).
         if stats.glenn_recruited && !glenn.recruited {
             glenn.recruited = true;

@@ -2840,69 +2840,123 @@
     });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true });
   </script>
-  <!-- ===== BEGIN experimental free-roam multiplayer (window.tendyNet) =====
-       Inert unless the URL has mp=1, mp=tabs or mp=rtc: without it only the stub below exists
-       (no DOM, no BroadcastChannel, no RTCPeerConnection, no network traffic).
-       Rust side: rust/src/net.rs. Design and limits: docs/MULTIPLAYER.md. -->
+  <!-- ===== BEGIN distributed free-roam multiplayer (window.tendyNet) =====
+       Zero self-hosted relay server: in Free Mode (when Online is enabled, default On), opens
+       parallel announces on public WebTorrent WebSocket trackers to exchange WebRTC offers and
+       drops into direct 4-player browser-to-browser DataChannels (Stan, Nate, Glenn, TJ) with
+       RTT latency probing and automatic 1-hop NAT bridging. Completely inert (no sockets, no
+       WebRTC, hidden HUD pill) outside Free Mode or when toggled to Solo.
+       Also keeps ?mp=tabs (same-browser BroadcastChannel), ?mp=rtc (manual copy/paste WebRTC),
+       and ?mp=off / ?mp=0 (force Solo). Rust side: rust/src/net.rs. Design: docs/MULTIPLAYER.md. -->
   <script>
     window.tendyNet = (() => {
       "use strict";
-      const STUB = {
-        enabled() { return false; },
-        publish() {},
-        event() {},
-        drain() { return new Float64Array(0); },
-        telemetry() {},
-      };
       let params;
-      try { params = new URLSearchParams(window.location.search); } catch (_) { return STUB; }
+      try { params = new URLSearchParams(window.location.search); } catch (_) { params = new URLSearchParams(""); }
       const mpParam = (params.get("mp") || "").toLowerCase();
-      if (!["1", "tabs", "rtc"].includes(mpParam)) return STUB;
+      const onlineStorageKey = "tendy_mp_online";
+      const readOnlinePref = () => {
+        if (mpParam === "off" || mpParam === "0" || mpParam === "solo") return false;
+        if (mpParam === "tabs" || mpParam === "rtc" || mpParam === "1" || mpParam === "mesh") return true;
+        try {
+          const saved = localStorage.getItem(onlineStorageKey);
+          if (saved === "0") return false;
+        } catch (_) {}
+        return true;
+      };
+      const writeOnlinePref = (on) => {
+        try { localStorage.setItem(onlineStorageKey, on ? "1" : "0"); } catch (_) {}
+      };
 
-      // ---- Constants (keep in sync with net.rs) ----
+      // ---- Constants (keep in sync with rust/src/net.rs) ----
       const VER = 1;
-      const T_STATE = 1, T_HELLO = 2, T_BYE = 3, T_EVENT = 4;
-      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20 };
+      const VER_BRIDGED = 129; // VER | 0x80: 1-hop bridged packet via lowest-RTT mutual neighbor (never re-relayed)
+      const T_STATE = 1, T_HELLO = 2, T_BYE = 3, T_EVENT = 4, T_PING = 5, T_PONG = 6, T_META = 7, T_FULL = 8;
+      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20, 5: 16, 6: 16, 7: 36, 8: 12 };
       const MAX_MSG = 64;          // bytes; anything bigger is dropped unread
-      const MAX_REMOTES = 5;       // 6 players in total
-      const REC_W = 19;            // drain() record width
+      const MESH_MAX_REMOTES = 3;  // 4-player squad: Stan, Nate, Glenn, TJ
+      const LEGACY_MAX_REMOTES = 5;
+      const HEADER_W = 7;          // drain() header width
+      const REC_W = 20;            // drain() record width
       const INBOX_CAP = 600;       // records queued for the game (drops oldest)
-      const PEER_TIMEOUT_MS = 10000; // long frames (asset loads, slow phones) block timers
+      const PEER_TIMEOUT_MS = 10000;
       const KEEPALIVE_MS = 1000;
-      const RATE_PER_S = 30, RATE_BURST = 30;
+      const PROBE_INTERVAL_MS = 2500;
+      const VETERAN_MS = 4000;
+      const RATE_PER_S = 35, RATE_BURST = 40;
       const CITY_HALF = 135, Y_MIN = -2, Y_MAX = 60;
+      const CHARS = {
+        0: { name: "STAN", color: "#2ef5ff" },
+        1: { name: "NATE", color: "#4da6ff" },
+        2: { name: "GLENN", color: "#ff5c33" },
+        3: { name: "TJ", color: "#52eb63" },
+      };
       const SLOT_COLORS = { 2: "#ff8c1a", 3: "#f24dd9", 4: "#66f259", 5: "#ffe633", 6: "#ff5252" };
 
-      // Optional STUN server for internet tests (?mp_stun=stun:host:port). Off by default so
-      // nothing off-device is contacted; there is no TURN, so some networks will never connect.
+      const DEFAULT_TRACKERS = [
+        "wss://tracker.openwebtorrent.com",
+        "wss://tracker.webtorrent.dev",
+        "wss://tracker.btorrent.xyz",
+        "wss://tracker.files.fm:7073/announce",
+      ];
+      const DEFAULT_STUN = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun.cloudflare.com:3478" },
+      ];
+
       const stunRaw = params.get("mp_stun") || "";
       const stunUrl = /^stuns?:[A-Za-z0-9.-]{1,120}(:\d{1,5})?$/.test(stunRaw) ? stunRaw : "";
+      const trackersParam = (params.get("mp_trackers") || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => /^wss:\/\/[A-Za-z0-9._:/-]{4,120}$/.test(s));
+      const TRACKER_URLS = trackersParam.length ? trackersParam.slice(0, 6) : DEFAULT_TRACKERS;
       const roomFromUrl = (params.get("mp_room") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
 
-      const rnd = new Uint32Array(1);
+      const rnd = new Uint32Array(2);
       crypto.getRandomValues(rnd);
       const myId = (rnd[0] || 1) >>> 0;
+      const myPeerId = "-TQ01-" + ((rnd[0].toString(16).padStart(8, "0") + rnd[1].toString(16).padStart(8, "0")).slice(0, 14));
+      const isTouchHint = (() => {
+        try { return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); } catch (_) { return false; }
+      })();
 
+      const initialKind = mpParam === "tabs" ? "tabs" : mpParam === "rtc" ? "rtc" : "mesh";
       const net = {
-        transport: null,   // { kind, send(buf, reliable), close(), ... }
-        transportKind: mpParam === "rtc" ? "rtc" : "tabs",
-        room: "",
-        status: "Not connected",
-        peers: new Map(),  // remote id -> { slot, last, tokens, fill, conn }
-        inbox: [],         // Float64Array records for drain()
+        inFreeRoam: false,
+        onlinePref: readOnlinePref(),
+        transport: null,     // { kind, send(buf, reliable, exceptConn), close(), connCount(), ... }
+        transportKind: initialKind,
+        room: roomFromUrl || "MAIN",
+        shard: 0,
+        status: "Solo (offline)",
+        myChar: 0,           // 0=STAN, 1=NATE, 2=GLENN, 3=TJ
+        joinedAt: performance.now(),
+        peers: new Map(),    // sender id (u32) -> { slot, charId, last, tokens, fill, conn, directOpen, rttMs, rttSamples, avgRttMs, directCount, directMap, mobile, veteran, full, bridgedVia, connectedAt }
+        inbox: [],           // Float64Array records for drain()
         seq: 0,
-        lastState: null,   // Float32Array copy of the last published state
-        lastBuf: null,     // its encoded message, re-sent unchanged as the keepalive
+        lastState: null,
+        lastBuf: null,
         lastSendAt: 0,
+        anchorId: myId,
+        anchorRttMs: -1,
         stats: { sent: 0, recv: 0, dropped: 0, relayed: 0 },
-        game: null,        // last telemetry object from Rust
+        game: null,
       };
 
-      // ---- Wire format (little endian) ----
-      // header: u8 version, u8 type, u16 seq, u32 sender id, u32 sender time (ms, wraps)
-      // STATE (44 B): f32 x,y,z | i16 qx,qy,qz,qw (x32767) | i16 vx,vy,vz (cm/s) | u16 scale x1000
-      //               | u8 mode | u8 flags | u8 action x255 | u8 reserved
-      // HELLO / BYE (12 B): header only.   EVENT (20 B): u8 code, 3 pad, u32 value.
+      const maxRemotes = () => (net.transportKind === "mesh" ? MESH_MAX_REMOTES : LEGACY_MAX_REMOTES);
+      const isVeteran = () => performance.now() - net.joinedAt >= VETERAN_MS;
+
+      // ---- Binary Wire Protocol (v1, little endian, max 64 B) ----
+      // header (12 B): u8 ver (1, or 129=1-hop bridged), u8 type, u16 seq, u32 senderId, u32 senderMs
+      // T_STATE (44 B): f32 x,y,z | i16 qx,qy,qz,qw (x32767) | i16 vx,vy,vz (cm/s) | u16 scale x1000
+      //               | u8 mode | u8 flags | u8 action x255 | u8 charId (0..3)
+      // T_HELLO / T_BYE / T_FULL (12 B): header only
+      // T_EVENT (20 B): u8 code, 3 pad, u32 value
+      // T_PING / T_PONG (16 B): u32 txMs
+      // T_META (36 B): u8 charId, u8 metaFlags, u16 avgRttMs, u8 directCount, u8 pad,
+      //                3 x (u32 peerId + u16 peerRttMs)
       function header(type, len) {
         const buf = new ArrayBuffer(len);
         const v = new DataView(buf);
@@ -2916,6 +2970,7 @@
       }
       const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
       const i16 = (x, k) => clamp(Math.round((Number.isFinite(x) ? x : 0) * k), -32767, 32767);
+
       function encodeState(s) {
         const [buf, v] = header(T_STATE, LEN[T_STATE]);
         v.setFloat32(12, clamp(s[0], -CITY_HALF, CITY_HALF), true);
@@ -2927,7 +2982,110 @@
         v.setUint8(40, clamp(s[11] | 0, 0, 255));
         v.setUint8(41, clamp(s[12] | 0, 0, 255));
         v.setUint8(42, clamp(Math.round(s[13] * 255), 0, 255));
+        v.setUint8(43, net.myChar & 3);
         return buf;
+      }
+
+      function computeOwnAvgRtt() {
+        const rtts = [];
+        for (const p of net.peers.values()) {
+          if (p.directOpen && Number.isFinite(p.rttMs) && p.rttMs >= 0) rtts.push(p.rttMs);
+        }
+        if (!rtts.length) return -1;
+        let sum = 0;
+        for (const r of rtts) sum += r;
+        return Math.round(sum / rtts.length);
+      }
+
+      function encodeMeta() {
+        const [buf, v] = header(T_META, LEN[T_META]);
+        v.setUint8(12, net.myChar & 3);
+        let mflags = 0;
+        if (isTouchHint) mflags |= 1;
+        if (isVeteran()) mflags |= 2;
+        if (net.peers.size >= maxRemotes()) mflags |= 4;
+        v.setUint8(13, mflags);
+        const avg = computeOwnAvgRtt();
+        v.setUint16(14, avg >= 0 ? clamp(avg, 0, 65534) : 65535, true);
+        const directPeers = [...net.peers.entries()].filter(([, p]) => p.directOpen).slice(0, 3);
+        v.setUint8(16, directPeers.length);
+        v.setUint8(17, 0);
+        for (let i = 0; i < 3; i++) {
+          const off = 18 + i * 6;
+          if (i < directPeers.length) {
+            const [pid, p] = directPeers[i];
+            v.setUint32(off, pid >>> 0, true);
+            v.setUint16(off + 4, p.rttMs >= 0 ? clamp(Math.round(p.rttMs), 0, 65534) : 65535, true);
+          } else {
+            v.setUint32(off, 0, true);
+            v.setUint16(off + 4, 65535, true);
+          }
+        }
+        return buf;
+      }
+
+      // ---- Character Claiming (Stan / Nate / Glenn / TJ) ----
+      // Conflict-free sticky claiming: Stan defaults to 0 when solo, while random newcomers
+      // joining an active squad claim one of the free crew slots (Nate, Glenn, TJ). Ties are
+      // deterministically broken so both browsers converge immediately without reshuffling
+      // existing players when someone leaves.
+      function pickFreeChar(excludeTaken) {
+        const crewFree = [1, 2, 3].filter((c) => !excludeTaken.has(c));
+        if (crewFree.length) return crewFree[Math.floor(Math.random() * crewFree.length)];
+        for (let c = 0; c <= 3; c++) if (!excludeTaken.has(c)) return c;
+        return ((myId % 3) + 1);
+      }
+
+      function resolveCharClaims(sourceId, peer) {
+        if (!net.transport || net.peers.size === 0) return;
+        if (peer.charId !== net.myChar) return;
+        const mineVet = isVeteran();
+        const theirVet = !!peer.veteran;
+        let iYield = false;
+        if (mineVet !== theirVet) {
+          iYield = !mineVet;
+        } else {
+          iYield = myId > sourceId;
+        }
+        if (!iYield) return;
+        const taken = new Set();
+        for (const p of net.peers.values()) taken.add(p.charId);
+        const nextChar = pickFreeChar(taken);
+        if (nextChar !== net.myChar) {
+          net.myChar = nextChar;
+          if (net.lastState) net.lastBuf = encodeState(net.lastState);
+          sendMeta();
+          if (net.lastBuf) sendBuf(net.lastBuf, false);
+          refreshPanel();
+          updateTelemetry();
+        }
+      }
+
+      function updateAnchorElection() {
+        const candidates = [{
+          id: myId,
+          direct: [...net.peers.values()].filter((p) => p.directOpen).length,
+          avg: computeOwnAvgRtt(),
+          mobile: isTouchHint,
+        }];
+        for (const [id, p] of net.peers) {
+          candidates.push({
+            id,
+            direct: p.directCount || (p.directOpen ? 1 : 0),
+            avg: p.avgRttMs >= 0 ? p.avgRttMs : (p.rttMs >= 0 ? p.rttMs : -1),
+            mobile: !!p.mobile,
+          });
+        }
+        candidates.sort((a, b) => {
+          if (b.direct !== a.direct) return b.direct - a.direct;
+          const aRtt = a.avg >= 0 ? a.avg + (a.mobile ? 25 : 0) : 99999;
+          const bRtt = b.avg >= 0 ? b.avg + (b.mobile ? 25 : 0) : 99999;
+          if (aRtt !== bRtt) return aRtt - bRtt;
+          return a.id - b.id;
+        });
+        const best = candidates[0];
+        net.anchorId = best ? best.id : myId;
+        net.anchorRttMs = best && best.avg >= 0 ? best.avg : computeOwnAvgRtt();
       }
 
       // ---- Receiving: every message is untrusted ----
@@ -2938,7 +3096,7 @@
       }
       function freeSlot() {
         const used = new Set([...net.peers.values()].map((p) => p.slot));
-        for (let s = 2; s <= 6; s++) if (!used.has(s)) return s;
+        for (let s = 2; s <= 1 + maxRemotes(); s++) if (!used.has(s)) return s;
         return 0;
       }
       function removePeer(id) {
@@ -2946,38 +3104,118 @@
         if (!p) return;
         net.peers.delete(id);
         const rec = new Float64Array(REC_W);
-        rec[0] = 2; rec[1] = p.slot;
+        rec[0] = 2; rec[1] = p.slot; rec[19] = p.charId;
         pushRecord(rec);
-        // As WebRTC host, tell the other guests this one left.
         if (net.transport && net.transport.isHost) {
           const [buf, v] = header(T_BYE, LEN[T_BYE]);
           v.setUint32(4, id, true);
           net.transport.send(buf, true, p.conn);
         }
+        updateAnchorElection();
         refreshPanel();
       }
+
+      // Auto 1-hop bridge in mesh mode: when peer A & C cannot finish direct ICE with each other,
+      // the mutual peer with lowest (rtt(self,A) + rtt(self,C)) forwards 1 copy with VER_BRIDGED.
+      function maybeBridgePacket(data, srcId, srcPeer, srcConn, type, reliable) {
+        if (!net.transport || net.transport.kind !== "mesh") return;
+        if (type !== T_STATE && type !== T_EVENT && type !== T_META) return;
+        const now = performance.now();
+        if (now - srcPeer.connectedAt < 2000) return;
+        const srcRtt = srcPeer.rttMs >= 0 ? srcPeer.rttMs : 120;
+        let bridgedBuf = null;
+        for (const [dstId, dstPeer] of net.peers) {
+          if (dstId === srcId || !dstPeer.directOpen || !dstPeer.conn || dstPeer.conn === srcConn) continue;
+          if (now - dstPeer.connectedAt < 2000) continue;
+          if (dstPeer.directMap && dstPeer.directMap.has(srcId)) continue;
+          if (srcPeer.directMap && srcPeer.directMap.has(dstId)) continue;
+          const myCost = srcRtt + (dstPeer.rttMs >= 0 ? dstPeer.rttMs : 120);
+          let betterExists = false;
+          for (const [midId, midPeer] of net.peers) {
+            if (midId === srcId || midId === dstId || !midPeer.directOpen || !midPeer.directMap) continue;
+            const r1 = midPeer.directMap.get(srcId);
+            const r2 = midPeer.directMap.get(dstId);
+            if (r1 !== undefined && r2 !== undefined) {
+              const otherCost = (r1 < 65535 ? r1 : 120) + (r2 < 65535 ? r2 : 120);
+              if (otherCost < myCost || (otherCost === myCost && midId < myId)) {
+                betterExists = true;
+                break;
+              }
+            }
+          }
+          if (betterExists) continue;
+          if (!bridgedBuf) {
+            bridgedBuf = data.slice(0);
+            new DataView(bridgedBuf).setUint8(0, VER_BRIDGED);
+          }
+          const ch = reliable || dstPeer.conn.st.readyState !== "open" ? dstPeer.conn.ev : dstPeer.conn.st;
+          try {
+            if (ch && ch.readyState === "open") {
+              ch.send(bridgedBuf);
+              net.stats.relayed++;
+            }
+          } catch (_) {}
+        }
+      }
+
       function onWire(data, conn, reliable) {
-        // 1. Shape: binary, small, known version / type with its exact length, a real sender id.
         if (!(data instanceof ArrayBuffer) || data.byteLength < 12 || data.byteLength > MAX_MSG) return drop();
         const v = new DataView(data);
         const ver = v.getUint8(0), type = v.getUint8(1);
-        if (ver !== VER || LEN[type] !== data.byteLength) return drop();
+        const isMesh = !!(net.transport && net.transport.kind === "mesh");
+        const bridged = ver === VER_BRIDGED && isMesh;
+        if ((ver !== VER && !bridged) || LEN[type] !== data.byteLength) return drop();
+        if (bridged && type !== T_STATE && type !== T_EVENT && type !== T_META) return drop();
         const id = v.getUint32(4, true);
         if (id === 0 || id === myId) return drop();
-        // A WebRTC guest may only speak for itself: bind each guest connection to its first id.
-        // On a guest, the first message on the ordered "ev" channel is the host's own hello
-        // (relayed hellos follow it), so that binds the host's id.
-        if (conn && !conn.boundId && (conn.bindsId || reliable)) conn.boundId = id;
-        if (conn && conn.bindsId && conn.boundId !== id) return drop();
-        // 2. Content: finite numbers inside the city, known enums. Checked before the sender is
-        //    registered, so junk never takes a player slot.
+
+        if (!bridged && conn && !conn.boundId && (conn.bindsId || reliable)) conn.boundId = id;
+        if (!bridged && conn && conn.bindsId && conn.boundId !== id) return drop();
+
+        // Ping / Pong handled directly on the link before inbox parsing.
+        if (type === T_PING) {
+          if (bridged || !conn) return drop();
+          const txMs = v.getUint32(12, true);
+          const [pbuf, pv] = header(T_PONG, LEN[T_PONG]);
+          pv.setUint32(12, txMs, true);
+          try { if (conn.ev && conn.ev.readyState === "open") conn.ev.send(pbuf); } catch (_) {}
+          return;
+        }
+        if (type === T_PONG) {
+          if (bridged || !conn) return drop();
+          const echoed = v.getUint32(12, true);
+          const nowMs = Math.floor(performance.now()) >>> 0;
+          const rtt = clamp((nowMs - echoed) >>> 0, 0, 9999);
+          const existing = net.peers.get(id);
+          if (existing) {
+            existing.rttSamples.push(rtt);
+            if (existing.rttSamples.length > 5) existing.rttSamples.shift();
+            const sorted = [...existing.rttSamples].sort((a, b) => a - b);
+            existing.rttMs = sorted[Math.floor(sorted.length / 2)];
+            existing.last = performance.now();
+            updateAnchorElection();
+            refreshPanel();
+          }
+          return;
+        }
+        if (type === T_FULL) {
+          if (isMesh && net.transport && typeof net.transport.onShardFull === "function") {
+            net.transport.onShardFull();
+          }
+          return;
+        }
+
+        // Content validation before slot allocation.
         let rec = null;
+        let msgChar = null;
+        let metaInfo = null;
         if (type === T_STATE) {
           const x = v.getFloat32(12, true), y = v.getFloat32(16, true), z = v.getFloat32(20, true);
           if (![x, y, z].every(Number.isFinite)) return drop();
           if (Math.abs(x) > CITY_HALF + 1 || Math.abs(z) > CITY_HALF + 1 || y < Y_MIN - 1 || y > Y_MAX + 1) return drop();
-          const mode = v.getUint8(40), flags = v.getUint8(41);
-          if (mode > 4 || flags > 127) return drop();
+          const mode = v.getUint8(40), flags = v.getUint8(41), charId = v.getUint8(43);
+          if (mode > 4 || flags > 127 || charId > 3) return drop();
+          msgChar = charId;
           rec = new Float64Array(REC_W);
           rec[0] = 1; rec[2] = v.getUint16(2, true); rec[3] = v.getUint32(8, true);
           rec[5] = x; rec[6] = y; rec[7] = z;
@@ -2985,50 +3223,129 @@
           for (let i = 0; i < 3; i++) rec[12 + i] = v.getInt16(32 + i * 2, true) / 100;
           rec[15] = v.getUint16(38, true) / 1000;
           rec[16] = mode; rec[17] = flags; rec[18] = v.getUint8(42) / 255;
+          rec[19] = charId;
         } else if (type === T_EVENT) {
           const code = v.getUint8(12), value = v.getUint32(16, true);
           if (code < 1 || code > 2 || value > 1000000) return drop();
           rec = new Float64Array(REC_W);
           rec[0] = 3; rec[2] = code; rec[3] = value;
+        } else if (type === T_META) {
+          const charId = v.getUint8(12);
+          if (charId > 3) return drop();
+          const mflags = v.getUint8(13);
+          const avgRtt = v.getUint16(14, true);
+          const dCount = v.getUint8(16);
+          if (dCount > 3) return drop();
+          const dMap = new Map();
+          for (let i = 0; i < dCount; i++) {
+            const off = 18 + i * 6;
+            const pid = v.getUint32(off, true);
+            const prtt = v.getUint16(off + 4, true);
+            if (pid > 0) dMap.set(pid, prtt);
+          }
+          msgChar = charId;
+          metaInfo = {
+            charId,
+            mobile: (mflags & 1) !== 0,
+            veteran: (mflags & 2) !== 0,
+            full: (mflags & 4) !== 0,
+            avgRttMs: avgRtt < 65535 ? avgRtt : -1,
+            directCount: dCount,
+            directMap: dMap,
+          };
         }
+
         let peer = net.peers.get(id);
         if (type === T_BYE) {
-          if (conn && !conn.bindsId && conn.boundId === id) {
-            // The WebRTC host left: the star is gone, so the whole session ends here.
+          if (conn && !conn.bindsId && conn.boundId === id && net.transport && net.transport.kind === "rtc") {
             leave();
             return setStatus("The host left. Ask for a new invite to play again.");
           }
           if (peer) removePeer(id);
           return;
         }
-        // 3. Sender: known, or a newcomer while there is a free slot (6 players at most).
+
+        // Ignore bridged copy if we already have an active direct connection to this peer.
+        if (bridged && peer && peer.directOpen) return;
+
+        const now = performance.now();
         if (!peer) {
-          if (net.peers.size >= MAX_REMOTES) return drop();
+          if (net.peers.size >= maxRemotes()) {
+            if (isMesh && conn && conn.ev && conn.ev.readyState === "open") {
+              try { conn.ev.send(header(T_FULL, LEN[T_FULL])[0]); } catch (_) {}
+              setTimeout(() => { try { if (conn.pc) conn.pc.close(); } catch (_) {} }, 120);
+            }
+            return drop();
+          }
           const slot = freeSlot();
           if (!slot) return drop();
-          peer = { slot, last: 0, tokens: RATE_BURST, fill: performance.now(), conn };
+          peer = {
+            slot,
+            charId: msgChar !== null ? msgChar : ((slot - 1) & 3),
+            last: now,
+            tokens: RATE_BURST,
+            fill: now,
+            conn: bridged ? null : conn,
+            directOpen: !bridged && !!conn,
+            rttMs: -1,
+            rttSamples: [],
+            avgRttMs: -1,
+            directCount: 0,
+            directMap: new Map(),
+            mobile: false,
+            veteran: false,
+            full: false,
+            bridgedVia: bridged && conn ? (conn.boundId || 1) : 0,
+            connectedAt: now,
+          };
           net.peers.set(id, peer);
-          // Introduce ourselves to a newcomer (once: we now know it, so its reply won't loop).
           sendHello();
+          sendMeta();
           if (net.lastBuf) sendBuf(net.lastBuf, false);
+          updateAnchorElection();
+          refreshPanel();
+        } else if (!bridged && conn && !peer.directOpen) {
+          peer.conn = conn;
+          peer.directOpen = true;
+          peer.bridgedVia = 0;
+          peer.connectedAt = now;
+        }
+
+        if (msgChar !== null && peer.charId !== msgChar) {
+          peer.charId = msgChar;
           refreshPanel();
         }
-        // 4. Rate: token bucket per sender.
-        const now = performance.now();
+        if (metaInfo) {
+          peer.mobile = metaInfo.mobile;
+          peer.veteran = metaInfo.veteran;
+          peer.full = metaInfo.full;
+          peer.avgRttMs = metaInfo.avgRttMs;
+          peer.directCount = metaInfo.directCount;
+          peer.directMap = metaInfo.directMap;
+          updateAnchorElection();
+        }
+        if (msgChar !== null) resolveCharClaims(id, peer);
+
+        // Token bucket rate limiter per sender.
         peer.tokens = Math.min(RATE_BURST, peer.tokens + ((now - peer.fill) / 1000) * RATE_PER_S);
         peer.fill = now;
         if (peer.tokens < 1) return drop();
         peer.tokens -= 1;
         peer.last = now;
         net.stats.recv++;
+
         if (rec) {
           rec[1] = peer.slot;
           if (rec[0] === 1) rec[4] = now;
+          rec[19] = peer.charId;
           pushRecord(rec);
         }
-        // WebRTC host relays guests to each other (star topology), unchanged.
+
+        // Legacy copy/paste WebRTC host star relay, OR automatic 1-hop RTT-elected NAT bridge in mesh mode.
         if (net.transport && net.transport.isHost) {
           net.stats.relayed += net.transport.send(data, type !== T_STATE, conn);
+        } else if (!bridged && isMesh) {
+          maybeBridgePacket(data, id, peer, conn, type, reliable);
         }
       }
 
@@ -3039,24 +3356,23 @@
         net.stats.sent++;
       }
       function sendHello() { sendBuf(header(T_HELLO, LEN[T_HELLO])[0], true); }
+      function sendMeta() { if (net.transport) sendBuf(encodeMeta(), true); }
       function sendBye() { if (net.transport) sendBuf(header(T_BYE, LEN[T_BYE])[0], true); }
 
       // ---- Transport 1: BroadcastChannel (tabs of one browser, same origin; no network) ----
       function tabsTransport(room) {
         const ch = new BroadcastChannel("tendy-mp-v1:" + room);
-        ch.onmessage = (e) => onWire(e.data, null);
+        ch.onmessage = (e) => onWire(e.data, null, true);
         return {
           kind: "tabs",
           isHost: false,
-          send(buf) { ch.postMessage(buf); },
+          send(buf) { ch.postMessage(buf); return 1; },
           close() { ch.close(); },
           connCount() { return 1; },
         };
       }
 
       // ---- Transport 2: WebRTC data channels, manual copy/paste signaling ----
-      // Each connection has an unreliable unordered "st" channel for state and a reliable "ev"
-      // channel for hello/bye/events. The host connects to each guest; guests relay through it.
       function rtcTransport(isHost) {
         const conns = [];
         const t = {
@@ -3090,14 +3406,15 @@
             ev.onopen = () => {
               c.open = true;
               setStatus("Connected (WebRTC)");
-              if (ui.panel) togglePanel(false); // out of the way; the MP pill reopens it
+              if (ui.panel) togglePanel(false);
               sendHello();
+              sendMeta();
               if (net.lastBuf) sendBuf(net.lastBuf, false);
             };
             const closed = () => {
               if (!c.open && conns.indexOf(c) < 0) return;
               c.open = false;
-              if (net.transport !== t) return; // already left this session
+              if (net.transport !== t) return;
               const i = conns.indexOf(c);
               if (i >= 0) conns.splice(i, 1);
               for (const [id, p] of [...net.peers]) if (p.conn === c || !isHost) removePeer(id);
@@ -3105,7 +3422,7 @@
             };
             ev.onclose = closed;
             pc.onconnectionstatechange = () => {
-              if (pc.connectionState === "failed") setStatus("WebRTC failed (no route between the two devices; see notes)");
+              if (pc.connectionState === "failed") setStatus("WebRTC failed (no route between devices)");
               if (pc.connectionState === "failed" || pc.connectionState === "closed") closed();
             };
             conns.push(c);
@@ -3114,16 +3431,361 @@
         };
         return t;
       }
-      function iceGathered(pc) {
+
+      function iceGathered(pc, timeoutMs) {
         if (pc.iceGatheringState === "complete") return Promise.resolve();
         return new Promise((res) => {
-          const done = () => { if (pc.iceGatheringState === "complete") { clearTimeout(timer); res(); } };
-          const timer = setTimeout(res, 5000);
-          pc.addEventListener("icegatheringstatechange", done);
+          let doneFlag = false;
+          const finish = () => {
+            if (doneFlag) return;
+            doneFlag = true;
+            clearTimeout(timer);
+            pc.removeEventListener("icegatheringstatechange", onChange);
+            pc.removeEventListener("icecandidate", onCand);
+            res();
+          };
+          const onChange = () => { if (pc.iceGatheringState === "complete") finish(); };
+          const onCand = (e) => { if (!e.candidate) finish(); };
+          const timer = setTimeout(finish, timeoutMs || 4000);
+          pc.addEventListener("icegatheringstatechange", onChange);
+          pc.addEventListener("icecandidate", onCand);
         });
       }
 
-      // Signaling codes: "TQ1." + base64url(deflate-raw(JSON)) or "TQ0." + base64url(JSON).
+      // ---- Transport 3: Zero-server distributed WebRTC Mesh via public WebTorrent trackers ----
+      // Uses standard open WebTorrent WebSocket trackers solely to exchange initial WebRTC SDP
+      // offers/answers inside deterministic 20-byte room shard info_hashes. Once paired, all game
+      // traffic flows peer-to-peer over browser DataChannels with RTT-elected 1-hop NAT bridging.
+      function makeInfoHash(room, shard) {
+        const clean = (room || "MAIN").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8).padEnd(8, "_");
+        return ("TQCR1-" + clean + "-S" + String(shard).padStart(2, "0") + "0").slice(0, 20);
+      }
+
+      function meshTransport(room, initialShard) {
+        let closed = false;
+        let shard = initialShard | 0;
+        let infoHash = makeInfoHash(room, shard);
+        let shardJoinedAt = performance.now();
+        let sawRoomFullHint = false;
+        let trackersUp = 0;
+
+        const conns = new Map();        // peer_id -> conn record
+        const pendingOffers = new Map();// offer_id -> { pc, st, ev, createdAt, announced }
+        const trackerStates = TRACKER_URLS.map((url) => ({
+          url,
+          ws: null,
+          ready: false,
+          backoffMs: 4000,
+          nextRetryAt: 0,
+          lastAnnounceAt: 0,
+        }));
+
+        const iceServers = stunUrl ? [...DEFAULT_STUN, { urls: stunUrl }] : DEFAULT_STUN;
+
+        function openConnCount() {
+          let n = 0;
+          for (const c of conns.values()) if (c.open) n++;
+          return n;
+        }
+
+        function attachDataChannels(c, remotePeerId) {
+          c.remotePeerId = remotePeerId || c.remotePeerId || "";
+          c.st.binaryType = "arraybuffer";
+          c.ev.binaryType = "arraybuffer";
+          c.st.onmessage = (e) => onWire(e.data, c, false);
+          c.ev.onmessage = (e) => onWire(e.data, c, true);
+          c.ev.onopen = () => {
+            if (closed || net.transport !== t) return;
+            c.open = true;
+            net.joinedAt = Math.min(net.joinedAt, performance.now());
+            sendHello();
+            sendMeta();
+            if (net.lastBuf) sendBuf(net.lastBuf, false);
+            setTimeout(() => sendPingToConn(c), 150);
+            setStatus("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")");
+            refreshPanel();
+            updateTelemetry();
+          };
+          const teardown = () => {
+            c.open = false;
+            if (c.remotePeerId && conns.get(c.remotePeerId) === c) conns.delete(c.remotePeerId);
+            if (c.boundId) {
+              const p = net.peers.get(c.boundId);
+              if (p && p.conn === c) removePeer(c.boundId);
+            }
+            if (!closed && net.transport === t) {
+              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
+              refreshPanel();
+            }
+          };
+          c.ev.onclose = teardown;
+          c.pc.onconnectionstatechange = () => {
+            if (c.pc.connectionState === "failed" || c.pc.connectionState === "closed") teardown();
+          };
+        }
+
+        function sendPingToConn(c) {
+          if (!c || !c.open || !c.ev || c.ev.readyState !== "open") return;
+          const [buf, v] = header(T_PING, LEN[T_PING]);
+          v.setUint32(12, Math.floor(performance.now()) >>> 0, true);
+          try { c.ev.send(buf); } catch (_) {}
+        }
+
+        async function prepareOfferPool(targetCount) {
+          if (closed) return;
+          const needed = Math.max(0, Math.min(3, targetCount) - pendingOffers.size);
+          const jobs = [];
+          for (let i = 0; i < needed; i++) {
+            jobs.push((async () => {
+              const offerIdBytes = new Uint32Array(3);
+              crypto.getRandomValues(offerIdBytes);
+              const offerId = Array.from(offerIdBytes, (x) => x.toString(16).padStart(8, "0")).join("").slice(0, 20);
+              const pc = new RTCPeerConnection({ iceServers });
+              const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+              const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
+              const c = { pc, st, ev, open: false, bindsId: true, boundId: 0, offerId, createdAt: performance.now(), sdp: "" };
+              attachDataChannels(c, null);
+              pendingOffers.set(offerId, c);
+              try {
+                await pc.setLocalDescription(await pc.createOffer());
+                await iceGathered(pc, 2200);
+                if (closed || !pc.localDescription) { try { pc.close(); } catch (_) {} pendingOffers.delete(offerId); return; }
+                c.sdp = pc.localDescription.sdp;
+              } catch (_) {
+                try { pc.close(); } catch (_) {}
+                pendingOffers.delete(offerId);
+              }
+            })());
+          }
+          await Promise.all(jobs);
+        }
+
+        function sendAnnounce(stEntry, forceOffers) {
+          if (closed || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
+          const roomSlotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
+          const offersPayload = [];
+          if (roomSlotsLeft > 0) {
+            for (const [oid, c] of pendingOffers) {
+              if (!c.sdp) continue;
+              if (offersPayload.length >= Math.min(3, roomSlotsLeft)) break;
+              offersPayload.push({ offer_id: oid, offer: { type: "offer", sdp: c.sdp } });
+            }
+          }
+          const payload = {
+            action: "announce",
+            info_hash: infoHash,
+            peer_id: myPeerId,
+            numwant: roomSlotsLeft > 0 ? 5 : 0,
+            uploaded: 0,
+            downloaded: 0,
+            left: 1,
+          };
+          if (offersPayload.length && (forceOffers || roomSlotsLeft > 0)) payload.offers = offersPayload;
+          try {
+            stEntry.ws.send(JSON.stringify(payload));
+            stEntry.lastAnnounceAt = performance.now();
+          } catch (_) {}
+        }
+
+        async function handleTrackerMsg(stEntry, raw) {
+          if (closed) return;
+          let msg;
+          try { msg = JSON.parse(raw); } catch (_) { return; }
+          if (!msg || typeof msg !== "object") return;
+          if (msg.info_hash && msg.info_hash !== infoHash) return;
+          if (typeof msg.incomplete === "number" && msg.incomplete >= 4 && openConnCount() === 0) {
+            sawRoomFullHint = true;
+          }
+          if (!msg.peer_id || msg.peer_id === myPeerId) return;
+
+          // Incoming WebRTC offer from another Free Roam player.
+          if (msg.offer && msg.offer.type === "offer" && typeof msg.offer.sdp === "string" && msg.offer_id) {
+            if (openConnCount() >= MESH_MAX_REMOTES) {
+              return;
+            }
+            const existing = conns.get(msg.peer_id);
+            if (existing) {
+              if (existing.open || myPeerId < msg.peer_id) return; // Glare resolution: lower peer_id keeps offerer role
+              try { existing.pc.close(); } catch (_) {}
+              conns.delete(msg.peer_id);
+            }
+            const pc = new RTCPeerConnection({ iceServers });
+            const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+            const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
+            const c = { pc, st, ev, open: false, bindsId: true, boundId: 0 };
+            attachDataChannels(c, msg.peer_id);
+            conns.set(msg.peer_id, c);
+            try {
+              await pc.setRemoteDescription({ type: "offer", sdp: msg.offer.sdp });
+              await pc.setLocalDescription(await pc.createAnswer());
+              await iceGathered(pc, 2200);
+              if (closed || !pc.localDescription || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
+              stEntry.ws.send(JSON.stringify({
+                action: "announce",
+                info_hash: infoHash,
+                peer_id: myPeerId,
+                to_peer_id: msg.peer_id,
+                offer_id: msg.offer_id,
+                answer: { type: "answer", sdp: pc.localDescription.sdp },
+              }));
+            } catch (_) {
+              if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
+              try { pc.close(); } catch (_) {}
+            }
+            return;
+          }
+
+          // Incoming answer to one of our pre-generated offers.
+          if (msg.answer && msg.answer.type === "answer" && typeof msg.answer.sdp === "string" && msg.offer_id) {
+            const c = pendingOffers.get(msg.offer_id);
+            if (!c || c.pc.signalingState !== "have-local-offer") return;
+            const dup = conns.get(msg.peer_id);
+            if (dup && dup !== c) {
+              // Prevent duplicate RTCPeerConnection leaks on simultaneous glare.
+              if (dup.open || myPeerId > msg.peer_id) {
+                pendingOffers.delete(msg.offer_id);
+                try { c.pc.close(); } catch (_) {}
+                return;
+              }
+              try { dup.pc.close(); } catch (_) {}
+            }
+            pendingOffers.delete(msg.offer_id);
+            c.remotePeerId = msg.peer_id;
+            conns.set(msg.peer_id, c);
+            try {
+              await c.pc.setRemoteDescription({ type: "answer", sdp: msg.answer.sdp });
+            } catch (_) {
+              if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
+              try { c.pc.close(); } catch (_) {}
+            }
+          }
+        }
+
+        function connectTracker(stEntry) {
+          if (closed || stEntry.ws) return;
+          try {
+            const ws = new WebSocket(stEntry.url);
+            stEntry.ws = ws;
+            ws.onopen = async () => {
+              if (closed) { try { ws.close(); } catch (_) {} return; }
+              stEntry.ready = true;
+              stEntry.backoffMs = 4000;
+              trackersUp = trackerStates.filter((x) => x.ready).length;
+              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
+              await prepareOfferPool(3 - openConnCount());
+              sendAnnounce(stEntry, true);
+              refreshPanel();
+              updateTelemetry();
+            };
+            ws.onmessage = (e) => { if (typeof e.data === "string") handleTrackerMsg(stEntry, e.data); };
+            const onDown = () => {
+              if (stEntry.ws !== ws) return;
+              stEntry.ws = null;
+              stEntry.ready = false;
+              trackersUp = trackerStates.filter((x) => x.ready).length;
+              stEntry.nextRetryAt = performance.now() + stEntry.backoffMs;
+              stEntry.backoffMs = Math.min(60000, stEntry.backoffMs * 2);
+              refreshPanel();
+              updateTelemetry();
+            };
+            ws.onerror = onDown;
+            ws.onclose = onDown;
+          } catch (_) {
+            stEntry.ws = null;
+            stEntry.ready = false;
+            stEntry.nextRetryAt = performance.now() + stEntry.backoffMs;
+            stEntry.backoffMs = Math.min(60000, stEntry.backoffMs * 2);
+          }
+        }
+
+        function bumpShard() {
+          for (const c of conns.values()) { try { c.pc.close(); } catch (_) {} }
+          conns.clear();
+          for (const id of [...net.peers.keys()]) removePeer(id);
+          shard = (shard + 1) % 16;
+          net.shard = shard;
+          infoHash = makeInfoHash(room, shard);
+          shardJoinedAt = performance.now();
+          sawRoomFullHint = false;
+          for (const oid of [...pendingOffers.keys()]) {
+            const c = pendingOffers.get(oid);
+            if (c) try { c.pc.close(); } catch (_) {}
+          }
+          pendingOffers.clear();
+          prepareOfferPool(3).then(() => {
+            for (const stEntry of trackerStates) if (stEntry.ready) sendAnnounce(stEntry, true);
+          });
+          setStatus("Shard full, trying Shard " + (shard + 1) + "...");
+        }
+
+        for (const stEntry of trackerStates) connectTracker(stEntry);
+
+        const maintTimer = setInterval(async () => {
+          if (closed || net.transport !== t) return;
+          const now = performance.now();
+          // Prune stale unanswered offers older than 45s.
+          for (const [oid, c] of [...pendingOffers]) {
+            if (now - c.createdAt > 45000) {
+              pendingOffers.delete(oid);
+              try { c.pc.close(); } catch (_) {}
+            }
+          }
+          const slotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
+          if (slotsLeft > 0 && pendingOffers.size < slotsLeft) {
+            await prepareOfferPool(slotsLeft);
+          }
+          for (const stEntry of trackerStates) {
+            if (!stEntry.ws && now >= stEntry.nextRetryAt) connectTracker(stEntry);
+            else if (stEntry.ready && now - stEntry.lastAnnounceAt >= (slotsLeft > 0 ? 18000 : 55000)) {
+              sendAnnounce(stEntry, slotsLeft > 0);
+            }
+          }
+          if (sawRoomFullHint && openConnCount() === 0 && now - shardJoinedAt > 7500) {
+            bumpShard();
+          }
+        }, 3000);
+
+        const pingTimer = setInterval(() => {
+          if (closed || net.transport !== t) return;
+          for (const c of conns.values()) sendPingToConn(c);
+          if (conns.size > 0) sendMeta();
+        }, PROBE_INTERVAL_MS);
+
+        const t = {
+          kind: "mesh",
+          isHost: false,
+          shard,
+          onShardFull() {
+            if (!closed && net.peers.size === 0) bumpShard();
+          },
+          get trackersUp() { return trackersUp; },
+          send(buf, reliable, except) {
+            let n = 0;
+            for (const c of conns.values()) {
+              if (c === except || !c.open) continue;
+              const ch = reliable || c.st.readyState !== "open" ? c.ev : c.st;
+              try { if (ch.readyState === "open") { ch.send(buf); n++; } } catch (_) {}
+            }
+            return n;
+          },
+          close() {
+            closed = true;
+            clearInterval(maintTimer);
+            clearInterval(pingTimer);
+            for (const stEntry of trackerStates) {
+              if (stEntry.ws) { try { stEntry.ws.close(); } catch (_) {} stEntry.ws = null; }
+            }
+            for (const c of pendingOffers.values()) { try { c.pc.close(); } catch (_) {} }
+            pendingOffers.clear();
+            for (const c of conns.values()) { try { c.pc.close(); } catch (_) {} }
+            conns.clear();
+          },
+          connCount() { return openConnCount(); },
+        };
+        return t;
+      }
+
+      // ---- Copy/paste invite encoding (legacy ?mp=rtc) ----
       const b64u = (bytes) => {
         let s = "";
         for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
@@ -3182,19 +3844,39 @@
         if (net.transport) { try { net.transport.close(); } catch (_) {} }
         net.transport = null;
         for (const id of [...net.peers.keys()]) removePeer(id);
-        net.room = "";
-        setStatus("Not connected");
+        net.myChar = 0;
+        net.anchorId = myId;
+        net.anchorRttMs = -1;
+        setStatus(net.onlinePref ? "Paused / offline" : "Solo (offline)");
       }
+
+      function joinMesh(room) {
+        leave();
+        net.transportKind = "mesh";
+        net.room = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) || "MAIN";
+        net.shard = 0;
+        net.joinedAt = performance.now();
+        net.myChar = 0;
+        net.transport = meshTransport(net.room, 0);
+        setStatus("Searching Cedar Rapids squad (Shard 1)...");
+        refreshPanel();
+        updateTelemetry();
+      }
+
       function joinTabs(room) {
         leave();
         room = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) || "MAIN";
         if (typeof BroadcastChannel !== "function") return setStatus("This browser has no BroadcastChannel.");
         net.transportKind = "tabs";
         net.room = room;
+        net.joinedAt = performance.now();
+        net.myChar = 0;
         net.transport = tabsTransport(room);
         setStatus("Tabs room " + room + ": open this page in another tab of this browser");
         sendHello();
+        sendMeta();
       }
+
       async function rtcCreateInvite() {
         if (!net.transport || net.transport.kind !== "rtc" || !net.transport.isHost) {
           leave();
@@ -3202,14 +3884,14 @@
           net.transport = rtcTransport(true);
         }
         const t = net.transport;
-        if (t.conns.length >= MAX_REMOTES) return setStatus("Room is full (6 players).");
+        if (t.conns.length >= maxRemotes()) return setStatus("Room is full.");
         if (t.pending && !t.pending.open) { try { t.pending.pc.close(); } catch (_) {} t.conns.splice(t.conns.indexOf(t.pending), 1); }
         const c = t.newConn();
         t.pending = c;
         setStatus("Creating invite...");
         try {
           await c.pc.setLocalDescription(await c.pc.createOffer());
-          await iceGathered(c.pc);
+          await iceGathered(c.pc, 5000);
           ui.offerOut.value = await encodeCode("o", c.pc.localDescription.sdp);
           setStatus("Invite ready: send it to the other player, then paste their reply below.");
         } catch (e) {
@@ -3240,7 +3922,7 @@
         try {
           await c.pc.setRemoteDescription({ type: "offer", sdp });
           await c.pc.setLocalDescription(await c.pc.createAnswer());
-          await iceGathered(c.pc);
+          await iceGathered(c.pc, 5000);
           ui.answerOut.value = await encodeCode("a", c.pc.localDescription.sdp);
           setStatus("Reply ready: send it back to the host. It connects once they paste it.");
         } catch (e) {
@@ -3248,10 +3930,6 @@
         }
       }
 
-      // Keepalive and peer timeouts. A hidden tab stops rendering (so stops publishing) but its
-      // timers still tick about once a second: re-send the last state message byte for byte
-      // (same sequence number and timestamp), which receivers count as presence only, never as
-      // a new position sample.
       setInterval(() => {
         const now = performance.now();
         if (net.transport && net.lastBuf && now - net.lastSendAt > KEEPALIVE_MS - 100) {
@@ -3263,7 +3941,7 @@
       }, KEEPALIVE_MS);
       window.addEventListener("pagehide", sendBye);
 
-      // ---- Panel (DOM overlay; buttons work with mouse and touch) ----
+      // ---- Collapsible Panel (shown only in Free Mode or explicit ?mp=tabs/rtc) ----
       const ui = {};
       function el(tag, props, kids) {
         const e = document.createElement(tag);
@@ -3291,30 +3969,53 @@
         refreshPanel();
         updateTelemetry();
       }
+      function updatePillVisibility() {
+        if (!ui.pill) return;
+        const show = net.inFreeRoam || mpParam === "tabs" || mpParam === "rtc" || mpParam === "1";
+        ui.pill.style.display = show ? "" : "none";
+        if (!show && ui.panel) togglePanel(false);
+      }
       function refreshPanel() {
         if (!ui.panel) return;
+        updatePillVisibility();
         const n = net.peers.size + 1;
+        const myMeta = CHARS[net.myChar] || CHARS[0];
+        const avg = computeOwnAvgRtt();
         ui.status.textContent = net.status;
-        ui.pillText.textContent = net.transport ? "MP: " + n + (n === 1 ? " player" : " players") : "MP";
-        ui.peers.textContent = "";
-        ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:#2ef5ff", text: "P1 (you)" }));
-        for (const p of [...net.peers.values()].sort((a, b) => a.slot - b.slot)) {
-          ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + (SLOT_COLORS[p.slot] || "#aaa"), text: "P" + p.slot }));
+        if (net.transport) {
+          const rttStr = avg >= 0 ? (" | " + avg + "ms") : "";
+          ui.pillText.textContent = (net.transport.kind === "mesh" ? "ONLINE: " : "MP: ") + myMeta.name + " (" + n + "/" + (1 + maxRemotes()) + rttStr + ")";
+        } else {
+          ui.pillText.textContent = "SOLO (OFFLINE)";
         }
-        const rtc = net.transportKind === "rtc";
-        ui.tabsBox.style.display = rtc ? "none" : "";
-        ui.rtcBox.style.display = rtc ? "" : "none";
-        ui.btnTabs.classList.toggle("on", !rtc);
-        ui.btnRtc.classList.toggle("on", rtc);
+        ui.peers.textContent = "";
+        const anchorStar = net.anchorId === myId && net.peers.size > 0 ? " *" : "";
+        ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + myMeta.color, text: myMeta.name + " (YOU" + anchorStar + ")" }));
+        for (const [id, p] of [...net.peers.entries()].sort((a, b) => a[1].slot - b[1].slot)) {
+          const cMeta = CHARS[p.charId];
+          const label = (p.slot <= 4 && cMeta) ? cMeta.name : ("P" + p.slot);
+          const color = (p.slot <= 4 && cMeta) ? cMeta.color : (SLOT_COLORS[p.slot] || "#aaa");
+          const suffix = p.directOpen ? (p.rttMs >= 0 ? (" " + p.rttMs + "ms") : "") : " (bridged)";
+          const aMark = net.anchorId === id ? " *" : "";
+          ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + color, text: label + suffix + aMark }));
+        }
+        const k = net.transportKind;
+        ui.meshBox.style.display = k === "mesh" ? "" : "none";
+        ui.tabsBox.style.display = k === "tabs" ? "" : "none";
+        ui.rtcBox.style.display = k === "rtc" ? "" : "none";
+        ui.btnMesh.classList.toggle("on", k === "mesh");
+        ui.btnTabs.classList.toggle("on", k === "tabs");
+        ui.btnRtc.classList.toggle("on", k === "rtc");
+        ui.btnToggleOnline.textContent = net.onlinePref ? "Online: ON (click for Solo)" : "Solo: ON (click to go Online)";
         ui.btnLeave.disabled = !net.transport;
       }
       function buildPanel() {
         const style = el("style", {});
         style.textContent = `
           #mp-pill{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:41;font:600 12px system-ui,sans-serif;
-            color:#e8f1ff;background:rgba(8,12,22,.9);border:1px solid #4ac8ff;border-radius:14px;padding:5px 12px;cursor:pointer}
+            color:#e8f1ff;background:rgba(8,12,22,.9);border:1px solid #4ac8ff;border-radius:14px;padding:5px 12px;cursor:pointer;display:none}
           #mp-panel{position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:41;box-sizing:border-box;
-            width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 56px);overflow:auto;padding:10px 12px;
+            width:min(380px,calc(100vw - 32px));max-height:calc(100dvh - 56px);overflow:auto;padding:10px 12px;
             font:13px/1.35 system-ui,sans-serif;color:#e8f1ff;background:rgba(8,12,22,.95);border:1px solid #4ac8ff;border-radius:10px}
           #mp-panel h2{font-size:14px;margin:0 0 8px}
           #mp-panel .mp-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0}
@@ -3331,10 +4032,16 @@
           #mp-status{margin-top:8px;padding:5px 7px;background:#0d1626;border-radius:6px;min-height:18px}`;
         document.head.appendChild(style);
 
-        ui.pillText = el("span", { text: "MP" });
-        ui.pill = el("button", { id: "mp-pill", type: "button", "aria-expanded": "true", "aria-controls": "mp-panel" }, [ui.pillText]);
-        ui.btnTabs = el("button", { id: "mp-use-tabs", type: "button", text: "Same browser (tabs)", onclick: () => { net.transportKind = "tabs"; refreshPanel(); } });
-        ui.btnRtc = el("button", { id: "mp-use-rtc", type: "button", text: "WebRTC (copy/paste)", onclick: () => { net.transportKind = "rtc"; refreshPanel(); } });
+        ui.pillText = el("span", { text: "SOLO" });
+        ui.pill = el("button", { id: "mp-pill", type: "button", "aria-expanded": "false", "aria-controls": "mp-panel" }, [ui.pillText]);
+        ui.btnMesh = el("button", { id: "mp-use-mesh", type: "button", text: "Distributed P2P", onclick: () => { net.transportKind = "mesh"; if (net.onlinePref && net.inFreeRoam) joinMesh(net.room); refreshPanel(); } });
+        ui.btnTabs = el("button", { id: "mp-use-tabs", type: "button", text: "Browser tabs", onclick: () => { net.transportKind = "tabs"; refreshPanel(); } });
+        ui.btnRtc = el("button", { id: "mp-use-rtc", type: "button", text: "Invite code", onclick: () => { net.transportKind = "rtc"; refreshPanel(); } });
+        ui.btnToggleOnline = el("button", { id: "mp-toggle-online", type: "button", text: "Online: ON", onclick: () => setOnline(!net.onlinePref) });
+        ui.meshBox = el("div", {}, [
+          el("div", { class: "mp-row" }, [ui.btnToggleOnline]),
+          el("div", { class: "mp-note", text: "Zero-server P2P Free Mode: public WebTorrent trackers pair up to 4 browsers (Stan, Nate, Glenn, TJ) over direct WebRTC DataChannels, with lowest-latency 1-hop bridging. Direct WebRTC exposes your IP to matched squad peers; switch to Solo above or in Pause anytime." }),
+        ]);
         ui.room = el("input", { id: "mp-room", type: "text", maxlength: "12", size: "8", autocomplete: "off", "aria-label": "Room code", value: roomFromUrl || "MAIN" });
         ui.tabsBox = el("div", {}, [
           el("div", { class: "mp-row" }, [
@@ -3364,44 +4071,51 @@
             el("button", { type: "button", text: "Copy reply", onclick: () => copyFrom(ui.answerOut) }),
           ]),
           ui.answerOut,
-          el("div", { class: "mp-note", text: "WebRTC connects the two browsers directly, so each player learns the other's IP address: only play with people you know. Without a STUN server (default) it works on the same computer or local network; across the internet add ?mp_stun=stun:<server>:<port>, and some networks still cannot connect (no relay server)." }),
         ]);
         ui.status = el("div", { id: "mp-status", role: "status", "aria-live": "polite" });
         ui.peers = el("div", { id: "mp-peers", class: "mp-row" });
         ui.btnLeave = el("button", { id: "mp-leave", type: "button", text: "Leave", onclick: leave });
-        ui.panel = el("div", { id: "mp-panel", role: "dialog", "aria-label": "Multiplayer (experimental)" }, [
-          el("h2", { text: "Multiplayer (experimental)" }),
-          el("div", { class: "mp-row" }, [ui.btnTabs, ui.btnRtc]),
-          ui.tabsBox, ui.rtcBox, ui.status, ui.peers,
+        ui.panel = el("div", { id: "mp-panel", role: "dialog", "aria-label": "Free Mode Multiplayer" }, [
+          el("h2", { text: "Free Mode Multiplayer" }),
+          el("div", { class: "mp-row" }, [ui.btnMesh, ui.btnTabs, ui.btnRtc]),
+          ui.meshBox, ui.tabsBox, ui.rtcBox, ui.status, ui.peers,
           el("div", { class: "mp-row" }, [
             ui.btnLeave,
             el("button", { type: "button", text: "Hide panel", onclick: () => togglePanel(false) }),
           ]),
-          el("div", { class: "mp-note", text: "Free roam only (beat the game and choose Continue, or use ?free_roam=1). Other players are shown as tinted heroes with a P2..P6 label; they cannot collide or interact." }),
         ]);
         ui.pill.addEventListener("click", () => togglePanel(ui.panel.style.display === "none"));
-        // Keep panel input away from the game's window-level touch / wheel / key handlers.
         for (const node of [ui.pill, ui.panel]) {
           for (const type of ["touchstart", "touchmove", "touchend", "touchcancel", "pointerdown", "mousedown", "wheel", "keydown", "keyup"]) {
             node.addEventListener(type, (e) => e.stopPropagation(), { passive: true });
           }
           document.body.appendChild(node);
         }
+        togglePanel(mpParam === "1" || mpParam === "rtc");
         refreshPanel();
-        // The instant two-tab trial starts collapsed (pill only) so the view stays clear.
-        if (mpParam === "tabs") togglePanel(false);
       }
       function togglePanel(show) {
+        if (!ui.panel) return;
         ui.panel.style.display = show ? "" : "none";
         ui.pill.setAttribute("aria-expanded", show ? "true" : "false");
       }
       function updateTelemetry() {
         const t = window.tendyTelemetry;
         if (!t) return;
+        const myMeta = CHARS[net.myChar] || CHARS[0];
         t.mp = Object.assign({ remote: [], local: null }, net.game || {}, {
           enabled: true,
+          inFreeRoam: net.inFreeRoam,
+          online: net.onlinePref,
           transport: net.transport ? net.transport.kind : "",
           room: net.room,
+          shard: net.shard,
+          char: myMeta.name,
+          charId: net.myChar,
+          avgRttMs: computeOwnAvgRtt(),
+          anchorId: net.anchorId,
+          anchorRttMs: net.anchorRttMs,
+          trackersUp: net.transport && typeof net.transport.trackersUp === "number" ? net.transport.trackersUp : 0,
           status: net.status,
           peers: net.peers.size,
           connections: net.transport ? net.transport.connCount() : 0,
@@ -3413,19 +4127,63 @@
         });
       }
 
+      function setFreeRoam(active) {
+        const want = !!active;
+        if (net.inFreeRoam === want) {
+          updatePillVisibility();
+          return;
+        }
+        net.inFreeRoam = want;
+        if (!want) {
+          if (mpParam !== "tabs" && mpParam !== "rtc") leave();
+          updatePillVisibility();
+          refreshPanel();
+          updateTelemetry();
+          return;
+        }
+        if (mpParam === "tabs") {
+          if (!net.transport || net.transport.kind !== "tabs") joinTabs(roomFromUrl || "MAIN");
+        } else if (mpParam === "rtc") {
+          if (!net.transport) setStatus("Not connected: pick a transport or Create invite");
+        } else if (net.onlinePref) {
+          joinMesh(roomFromUrl || "MAIN");
+        } else {
+          setStatus("Solo (offline)");
+        }
+        updatePillVisibility();
+        refreshPanel();
+        updateTelemetry();
+      }
+
+      function setOnline(on) {
+        const want = !!on;
+        net.onlinePref = want;
+        writeOnlinePref(want);
+        if (!want) {
+          leave();
+          setStatus("Solo (offline)");
+        } else if (net.inFreeRoam) {
+          if (mpParam === "tabs") joinTabs(roomFromUrl || "MAIN");
+          else if (mpParam !== "rtc") joinMesh(roomFromUrl || "MAIN");
+        }
+        refreshPanel();
+        updateTelemetry();
+      }
+
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);
       else buildPanel();
       if (mpParam === "tabs") {
-        // Instant two-tab trial: ?free_roam=1&mp=tabs joins room MAIN (or ?mp_room=XYZ).
         joinTabs(roomFromUrl || "MAIN");
-      } else {
+      } else if (mpParam === "rtc" || mpParam === "1") {
         setStatus("Not connected: pick a transport");
       }
 
-      // ---- Bridge used by rust/src/audio.rs (net.rs) ----
+      // ---- Bridge used by rust/src/audio.rs (rust/src/net.rs) ----
       return {
         enabled() { return true; },
-        // state: Float32Array view into wasm memory [x,y,z, qx,qy,qz,qw, vx,vy,vz, scale, mode, flags, action]
+        setFreeRoam,
+        setOnline,
+        isOnline() { return net.onlinePref; },
         publish(state) {
           if (!state || state.length !== 14) return;
           net.lastState = Float32Array.from(state);
@@ -3441,14 +4199,22 @@
           v.setUint32(16, Math.min(value >>> 0, 1000000), true);
           sendBuf(buf, true);
         },
-        // [now_ms, peers, n, n records of REC_W]; see net.rs `parse_sample`.
+        // [now_ms, peers, n, local_char, flags_mask, avg_rtt_ms, shard_idx, ... n * REC_W]
         drain() {
           const n = net.inbox.length;
-          const out = new Float64Array(3 + n * REC_W);
+          const out = new Float64Array(HEADER_W + n * REC_W);
+          let flagsMask = 0;
+          if (net.onlinePref || mpParam === "tabs" || mpParam === "rtc") flagsMask |= 1;
+          if (net.transport) flagsMask |= 2;
+          if (net.anchorId === myId) flagsMask |= 4;
           out[0] = performance.now();
           out[1] = net.peers.size;
           out[2] = n;
-          for (let i = 0; i < n; i++) out.set(net.inbox[i], 3 + i * REC_W);
+          out[3] = net.myChar;
+          out[4] = flagsMask;
+          out[5] = computeOwnAvgRtt();
+          out[6] = net.shard;
+          for (let i = 0; i < n; i++) out.set(net.inbox[i], HEADER_W + i * REC_W);
           net.inbox.length = 0;
           return out;
         },
@@ -3460,6 +4226,6 @@
       };
     })();
   </script>
-  <!-- ===== END experimental free-roam multiplayer ===== -->
+  <!-- ===== END distributed free-roam multiplayer ===== -->
 </body>
 </html>

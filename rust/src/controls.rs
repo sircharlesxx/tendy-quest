@@ -292,16 +292,25 @@ const BTN_RESUME: usize = 0;
 const BTN_SOUND: usize = 1;
 const BTN_RESTART: usize = 2;
 const BTN_CLEAR_SAVE: usize = 3;
-const BTN_COUNT: usize = 4;
+const BTN_MULTIPLAYER: usize = 4;
 /// Real seconds the "press again to restart" (or "to clear save") confirmation stays armed.
 const RESTART_CONFIRM_SECS: f32 = 3.0;
 /// Ignore Esc-to-close this long after opening, so the Esc that dropped pointer lock (which can
 /// arrive as a key event a frame after the lock change) doesn't close the menu again.
 const ESC_CLOSE_GRACE_SECS: f64 = 0.35;
 
+fn pause_buttons(state: &GameState, stats: &PlayerStats) -> Vec<usize> {
+    if *state == GameState::CityPlay && stats.free_roam && crate::audio::net_enabled() {
+        vec![BTN_RESUME, BTN_SOUND, BTN_MULTIPLAYER, BTN_RESTART, BTN_CLEAR_SAVE]
+    } else {
+        vec![BTN_RESUME, BTN_SOUND, BTN_RESTART, BTN_CLEAR_SAVE]
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct PauseMenu {
     selected: usize,
+    buttons: Vec<usize>,
     /// > 0 while the Restart button is armed (real seconds left).
     confirm_restart: f32,
     opened_at: f64,
@@ -319,7 +328,14 @@ struct PauseButton(usize);
 #[derive(Component)]
 struct PauseButtonText(usize);
 
-fn spawn_pause_menu(commands: &mut Commands, ctx: ControlContext, pad: bool, w: f32, h: f32) {
+fn spawn_pause_menu(
+    commands: &mut Commands,
+    ctx: ControlContext,
+    pad: bool,
+    w: f32,
+    h: f32,
+    buttons: &[usize],
+) {
     let narrow = w < 520.0;
     let short = h < 560.0;
     let k = if short || narrow { 0.88 } else { 1.0 };
@@ -422,9 +438,9 @@ fn spawn_pause_menu(commands: &mut Commands, ctx: ControlContext, pad: bool, w: 
                     ..default()
                 })
                 .with_children(|col| {
-                    for i in 0..BTN_COUNT {
+                    for &btn_id in buttons {
                         col.spawn((
-                            PauseButton(i),
+                            PauseButton(btn_id),
                             Button,
                             Node {
                                 padding: UiRect::axes(
@@ -441,7 +457,7 @@ fn spawn_pause_menu(commands: &mut Commands, ctx: ControlContext, pad: bool, w: 
                         ))
                         .with_children(|btn| {
                             btn.spawn((
-                                PauseButtonText(i),
+                                PauseButtonText(btn_id),
                                 Text::new(""),
                                 TextFont {
                                     font_size: 16.0 * k,
@@ -514,10 +530,12 @@ fn update_pause_menu(
         let Some(ctx) = ControlContext::current(state.get(), &stats) else {
             return;
         };
+        let buttons = pause_buttons(state.get(), &stats);
         help.open = true;
         virtual_time.pause();
         *menu = PauseMenu {
             opened_at: now,
+            buttons: buttons.clone(),
             ..default()
         };
         let _ = crate::audio::take_menu_nav();
@@ -539,6 +557,7 @@ fn update_pause_menu(
             crate::audio::last_input_gamepad(),
             w,
             h,
+            &buttons,
         );
         return;
     }
@@ -557,34 +576,42 @@ fn update_pause_menu(
     let esc = keys.just_pressed(KeyCode::Escape) && now - menu.opened_at > ESC_CLOSE_GRACE_SECS;
     let close = esc || keys.just_pressed(KeyCode::KeyH) || crate::audio::take_touch_help() || nav == 3;
 
+    let btn_count = menu.buttons.len().max(1);
     let prev_sel = menu.selected;
     if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW) || nav == -1 {
-        menu.selected = (menu.selected + BTN_COUNT - 1) % BTN_COUNT;
+        menu.selected = (menu.selected + btn_count - 1) % btn_count;
     }
     if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS) || nav == 1 {
-        menu.selected = (menu.selected + 1) % BTN_COUNT;
+        menu.selected = (menu.selected + 1) % btn_count;
     }
-    // (button index, activated by a real mouse click)
+    // (button semantic id, activated by a real mouse click)
     let mut activate: Option<(usize, bool)> = None;
     for (interaction, btn) in &btn_q {
         match interaction {
             Interaction::Pressed => {
-                menu.selected = btn.0;
+                if let Some(idx) = menu.buttons.iter().position(|&b| b == btn.0) {
+                    menu.selected = idx;
+                }
                 activate = Some((btn.0, touches.iter().next().is_none()));
             }
-            Interaction::Hovered => menu.selected = btn.0,
+            Interaction::Hovered => {
+                if let Some(idx) = menu.buttons.iter().position(|&b| b == btn.0) {
+                    menu.selected = idx;
+                }
+            }
             Interaction::None => {}
         }
     }
-    if menu.selected != prev_sel && menu.selected != BTN_RESTART {
+    let selected_id = menu.buttons.get(menu.selected).copied().unwrap_or(BTN_RESUME);
+    if menu.selected != prev_sel && selected_id != BTN_RESTART {
         menu.confirm_restart = 0.0;
     }
-    if menu.selected != prev_sel && menu.selected != BTN_CLEAR_SAVE {
+    if menu.selected != prev_sel && selected_id != BTN_CLEAR_SAVE {
         menu.confirm_clear = 0.0;
     }
     if activate.is_none() && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space)) {
         // Keyboard (or gamepad A, which arrives as a Space key event).
-        activate = Some((menu.selected, false));
+        activate = Some((selected_id, false));
     }
 
     let mut resume = close;
@@ -598,6 +625,11 @@ fn update_pause_menu(
         }
         Some((BTN_SOUND, _)) => {
             stats.audio_muted = crate::audio::toggle_mute();
+        }
+        Some((BTN_MULTIPLAYER, _)) => {
+            // Why: lets any Free Mode player opt in/out of distributed P2P multiplayer without
+            // leaving their session or touching browser console flags.
+            crate::audio::net_set_online(!crate::audio::net_is_online());
         }
         Some((BTN_RESTART, _)) => {
             if menu.confirm_restart > 0.0 {
@@ -651,8 +683,10 @@ fn refresh_pause_menu(
     }
     let armed = menu.confirm_restart > 0.0;
     let armed_clear = menu.confirm_clear > 0.0;
+    let selected_id = menu.buttons.get(menu.selected).copied().unwrap_or(BTN_RESUME);
+    let online = crate::audio::net_is_online();
     for (btn, mut bg, mut border) in &mut btn_q {
-        let selected = btn.0 == menu.selected;
+        let selected = btn.0 == selected_id;
         let want_bg = match (btn.0, selected) {
             (BTN_RESTART, _) if armed => Color::srgb(0.70, 0.06, 0.06),
             (BTN_CLEAR_SAVE, _) if armed_clear => Color::srgb(0.70, 0.06, 0.06),
@@ -676,6 +710,8 @@ fn refresh_pause_menu(
             BTN_RESUME => "RESUME",
             BTN_SOUND if stats.audio_muted => "SOUND: OFF",
             BTN_SOUND => "SOUND: ON",
+            BTN_MULTIPLAYER if online => "FREE ROAM: ONLINE (P2P)",
+            BTN_MULTIPLAYER => "FREE ROAM: SOLO",
             BTN_CLEAR_SAVE if armed_clear => "PRESS AGAIN TO CLEAR SAVE",
             BTN_CLEAR_SAVE => "CLEAR SAVE",
             _ if armed => "PRESS AGAIN TO RESTART LEVEL",

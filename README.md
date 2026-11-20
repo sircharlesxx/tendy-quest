@@ -169,9 +169,13 @@ python3 blender/build_tendy_quest_audio.py
 python3 blender/build_readme_graphics.py
 ```
 
-### Experimental: Free-Roam Multiplayer (off by default)
+### Distributed Free-Mode Multiplayer (Zero Servers, Auto Drop-In)
 
-A multiplayer prototype for post-game free roam ships behind a URL flag; without `mp=` in the URL nothing changes (no panel, no network code runs). To try it, open the game in two tabs of the same browser with `?free_roam=1&mp=tabs`: each tab shows the other player as a tinted hero with a `P2` marker, a radar dot and a `PLAYERS: 2` line. `?mp=rtc` connects two browsers directly over WebRTC with copy/paste invite codes. Design, recommendation and limits: [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md).
+Jumping into **Free Mode** (`FREE MODE: CEDAR RAPIDS [F]` or post-victory `Continue`) automatically pairs up to **4 browsers per shard** over a **zero-server distributed P2P WebRTC mesh**—no invite codes or hosted relay server required, all served straight from static GitHub Pages:
+
+- **Zero-Server Discovery + Latency-Tested NAT Bridging:** Parallel WebSocket announces on public WebTorrent trackers exchange WebRTC offers using public STUN servers, then drop immediately into direct browser-to-browser DataChannels. Rolling RTT ping probes elect the lowest-latency mutual peer as an automatic **1-hop bridge** if any pair of browsers cannot finish a direct NAT handshake, with automatic shard overflow (`Shard 1`, `Shard 2`, ...) when a 4-player squad fills up.
+- **Play as the Hero & Pub Crew Members:** Players automatically claim open roles across the **four playable squad characters** (using their distinct 3D character models on foot, scooters, and cars) without duplicating claimed crew NPCs inside the pub.
+- **Online / Solo Anytime & URL Test Flags:** Completely inert during Story Mode, cutscenes, and menus (zero sockets opened). In Free Mode, toggle **Online (P2P) / Solo** anytime from the **Pause Menu** (`Esc` / `H` / `Start`) or the collapsible top-center badge, pass `?mp=off` for Solo, or open two browser tabs with `?free_roam=1&mp=tabs` for instant local testing. *(Direct WebRTC connections reveal your IP address to squad peers; see [`docs/MULTIPLAYER.md`](docs/MULTIPLAYER.md) for architecture and safety details.)*
 
 ---
 

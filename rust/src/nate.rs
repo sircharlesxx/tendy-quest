@@ -150,6 +150,10 @@ pub fn spawn_nate_rig(
         let mut leg = parent.spawn((Transform::from_xyz(*sx, 0.66, 0.0), Visibility::default()));
         if is_cutscene {
             leg.insert(NateLegPivot { is_left: idx == 0 });
+        } else {
+            // Why: reuses Nate's existing hip pivots for Free Mode multiplayer stride animation
+            // without touching CityNate (which stays static in Pub 217 unless spawned under CrewRigAnimRoot).
+            leg.insert(crate::net::CrewStrideLeg { is_left: idx == 0 });
         }
         leg.with_children(|l| {
             l.spawn((
@@ -199,6 +203,8 @@ pub fn spawn_nate_rig(
         let mut arm = parent.spawn((Transform::from_xyz(*sx, 1.36, 0.0), Visibility::default()));
         if is_cutscene {
             arm.insert(NateArmPivot { is_left: idx == 0 });
+        } else {
+            arm.insert(crate::net::CrewStrideArm { is_left: idx == 0 });
         }
         let hand_mesh = sh::add(meshes, sh::hand(0.085, sx.signum(), false));
         arm.with_children(|a| {
@@ -348,7 +354,7 @@ pub fn update_city_nate(
     mut stats: ResMut<PlayerStats>,
     player_q: Query<(&Transform, &Player), Without<CityNate>>,
     orbit: Res<crate::state::CameraOrbit>,
-    mut nate_q: Query<(&mut Transform, &mut CityNate), Without<Player>>,
+    mut nate_q: Query<(&mut Transform, &mut CityNate, &Visibility), Without<Player>>,
     mut next_state: crate::transition::SceneTransition,
     mut n_state: ResMut<NateCutsceneState>,
     spots: Option<Res<crate::city::CrewSpots>>,
@@ -358,7 +364,12 @@ pub fn update_city_nate(
     };
     let dt = time.delta_secs().min(0.05);
     let pub_s = PUB217_SCALE;
-    for (mut n_tf, mut nate) in &mut nate_q {
+    for (mut n_tf, mut nate, n_vis) in &mut nate_q {
+        // Skip Free Mode pub greetings while a human player currently controls Nate.
+        if stats.free_roam && *n_vis == Visibility::Hidden {
+            nate.was_inside = false;
+            continue;
+        }
         // `stats.nate_recruited` is the gate's source of truth (checkpoint restore / test links).
         if stats.nate_recruited && !nate.recruited {
             nate.recruited = true;

@@ -454,11 +454,22 @@ mod imp {
         js_update_telemetry(state, hearts, tendies, stamina, boss_hp, credits, in_city);
     }
 
-    // Experimental free-roam multiplayer (`window.tendyNet`, net.rs, docs/MULTIPLAYER.md).
+    // Distributed free-roam multiplayer (`window.tendyNet`, net.rs, docs/MULTIPLAYER.md).
+    // Why: keeps networking lifecycle & Online/Solo toggles event-driven in JS outside Rust's frame loop
+    // while giving Free Mode full control over activating discovery and choosing Solo vs Online.
     #[wasm_bindgen]
     extern "C" {
         #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = enabled)]
         fn js_net_enabled() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = setFreeRoam)]
+        fn js_net_set_free_roam(active: bool);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = setOnline)]
+        fn js_net_set_online(online: bool);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = isOnline)]
+        fn js_net_is_online() -> bool;
 
         #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = publish)]
         fn js_net_publish(state: &[f32]);
@@ -473,9 +484,24 @@ mod imp {
         fn js_net_telemetry(json: &str);
     }
 
-    /// The page URL has `mp=1|tabs|rtc`; false for every normal player.
+    /// True whenever the browser multiplayer bridge is loaded (stays inert outside Free Mode).
     pub fn net_enabled() -> bool {
         js_net_enabled()
+    }
+
+    /// Notifies JS when entering/leaving Cedar Rapids Free Mode so P2P discovery only runs there.
+    pub fn net_set_free_roam(active: bool) {
+        js_net_set_free_roam(active);
+    }
+
+    /// Toggles distributed Free Mode P2P networking vs Solo mode (persisted in localStorage).
+    pub fn net_set_online(online: bool) {
+        js_net_set_online(online);
+    }
+
+    /// Whether Online P2P multiplayer is preferred for Free Mode.
+    pub fn net_is_online() -> bool {
+        js_net_is_online()
     }
 
     /// Local hero state for the wire (see net.rs `publish_local_state` for the field order).
@@ -488,7 +514,7 @@ mod imp {
         js_net_event(code, value);
     }
 
-    /// `[now_ms, peers, n, n records of 19]` received since the last call (validated in JS).
+    /// `[now_ms, peers, n, local_char, flags_mask, avg_rtt_ms, shard_idx, n * 20]` received since the last call.
     pub fn net_drain() -> Vec<f64> {
         js_net_drain()
     }
@@ -696,6 +722,14 @@ mod imp {
         false
     }
 
+    pub fn net_set_free_roam(_active: bool) {}
+
+    pub fn net_set_online(_online: bool) {}
+
+    pub fn net_is_online() -> bool {
+        false
+    }
+
     pub fn net_publish(_state: &[f32]) {}
 
     pub fn net_event(_code: u32, _value: u32) {}
@@ -725,5 +759,5 @@ pub use imp::debug_at_beer;
 pub use imp::{debug_park_demo, park_log, touch_jump_held};
 // Ferris wheel debug driver and telemetry (ferris.rs).
 pub use imp::{debug_wheel_demo, set_wheel_telemetry};
-// Experimental free-roam multiplayer bridge (net.rs).
-pub use imp::{net_drain, net_enabled, net_event, net_publish, net_telemetry};
+// Distributed free-roam multiplayer bridge (net.rs & controls.rs).
+pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_publish, net_set_free_roam, net_set_online, net_telemetry};

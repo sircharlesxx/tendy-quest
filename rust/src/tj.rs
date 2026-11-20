@@ -43,6 +43,7 @@ pub struct TjAnkleCast;
 pub struct TjCrackFlash;
 
 /// Spawns TJ with a short city-style haircut, trimmed beard, and rectangular glasses.
+/// Delegates child mesh assembly to `spawn_tj_rig` with cutscene/city markers enabled.
 pub fn spawn_tj_character(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -52,6 +53,29 @@ pub fn spawn_tj_character(
     scale: f32,
     with_cast: bool,
 ) -> Entity {
+    commands
+        .spawn((
+            Transform::from_translation(pos)
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::splat(scale)),
+            Visibility::default(),
+        ))
+        .with_children(|tj| {
+            spawn_tj_rig(tj, meshes, materials, with_cast, true);
+        })
+        .id()
+}
+
+/// Shared procedural TJ rig builder used for the city NPC/cutscene (`attach_city_markers = true`)
+/// and Free Mode multiplayer avatars (`attach_city_markers = false`, omitting `TjLegPivot` /
+/// `TjAnkleCast` so city/cutscene systems never animate or toggle casts on networked players).
+pub fn spawn_tj_rig(
+    tj: &mut ChildBuilder,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    with_cast: bool,
+    attach_city_markers: bool,
+) {
     let skin = materials.add(StandardMaterial {
         base_color: Color::srgb(0.92, 0.74, 0.62),
         perceptual_roughness: 0.72,
@@ -116,206 +140,220 @@ pub fn spawn_tj_character(
         ..default()
     });
 
-    commands
-        .spawn((
-            Transform::from_translation(pos)
-                .with_rotation(Quat::from_rotation_y(yaw))
-                .with_scale(Vec3::splat(scale)),
-            Visibility::default(),
-        ))
-        .with_children(|tj| {
-            use crate::shapes::{self as sh, ring};
-            let (hr, jaw) = (0.28_f32, 0.12_f32);
-            // Blue hoodie torso, bunched hood, white tee collar & drawstrings
-            let hoodie = sh::loft(
-                &[
-                    ring(0.60, 0.0, 0.0),
-                    ring(0.62, 0.25, 0.21),
-                    ring(0.72, 0.28, 0.23),
-                    ring(1.00, 0.29, 0.235).dz(0.01),
-                    ring(1.25, 0.30, 0.24).dz(0.01),
-                    ring(1.42, 0.30, 0.23),
-                    ring(1.53, 0.24, 0.20),
-                    ring(1.60, 0.14, 0.14),
-                    ring(1.62, 0.0, 0.0),
-                ],
-                3,
-                30,
-                0.9,
-            );
-            let pocket = sh::radial_shell(&hoodie, 0.012, |p| {
-                sh::smoothstep(0.17, 0.15, p.x.abs())
-                    * sh::smoothstep(0.70, 0.72, p.y)
-                    * sh::smoothstep(0.97, 0.95, p.y - 0.3 * (0.17 - p.x.abs()).max(0.0))
-                    * sh::smoothstep(0.05, 0.12, p.z)
-            });
-            tj.spawn((
-                Mesh3d(sh::add(meshes, hoodie)),
-                MeshMaterial3d(shirt_mat.clone()),
-                Transform::default(),
-            ));
-            tj.spawn((
-                Mesh3d(sh::add(meshes, pocket)),
-                MeshMaterial3d(hood_mat.clone()),
-                Transform::default(),
-            ));
-            tj.spawn((
-                Mesh3d(meshes.add(Torus::new(0.07, 0.22))),
-                MeshMaterial3d(hood_mat.clone()),
-                Transform::from_xyz(0.0, 1.56, -0.10).with_rotation(Quat::from_rotation_x(0.5)),
-            ));
-            tj.spawn((
-                Mesh3d(sh::add(meshes, sh::limb(0.14, 0.17, 0.17))),
-                MeshMaterial3d(collar_mat.clone()),
-                Transform::from_xyz(0.0, 1.57, 0.0),
-            ));
-            let mut strings = sh::Geo::default();
-            for sx in [-0.07_f32, 0.07] {
-                strings = strings.merged(sh::rod(Vec3::new(sx, 1.50, 0.215), Vec3::new(sx * 1.15, 1.26, 0.25), 0.011));
-            }
-            tj.spawn((
-                Mesh3d(sh::add(meshes, strings)),
-                MeshMaterial3d(collar_mat),
-                Transform::default(),
-            ));
+    use crate::shapes::{self as sh, ring};
+    let (hr, jaw) = (0.28_f32, 0.12_f32);
+    // Blue hoodie torso, bunched hood, white tee collar & drawstrings
+    let hoodie = sh::loft(
+        &[
+            ring(0.60, 0.0, 0.0),
+            ring(0.62, 0.25, 0.21),
+            ring(0.72, 0.28, 0.23),
+            ring(1.00, 0.29, 0.235).dz(0.01),
+            ring(1.25, 0.30, 0.24).dz(0.01),
+            ring(1.42, 0.30, 0.23),
+            ring(1.53, 0.24, 0.20),
+            ring(1.60, 0.14, 0.14),
+            ring(1.62, 0.0, 0.0),
+        ],
+        3,
+        30,
+        0.9,
+    );
+    let pocket = sh::radial_shell(&hoodie, 0.012, |p| {
+        sh::smoothstep(0.17, 0.15, p.x.abs())
+            * sh::smoothstep(0.70, 0.72, p.y)
+            * sh::smoothstep(0.97, 0.95, p.y - 0.3 * (0.17 - p.x.abs()).max(0.0))
+            * sh::smoothstep(0.05, 0.12, p.z)
+    });
+    tj.spawn((
+        Mesh3d(sh::add(meshes, hoodie)),
+        MeshMaterial3d(shirt_mat.clone()),
+        Transform::default(),
+    ));
+    tj.spawn((
+        Mesh3d(sh::add(meshes, pocket)),
+        MeshMaterial3d(hood_mat.clone()),
+        Transform::default(),
+    ));
+    tj.spawn((
+        Mesh3d(meshes.add(Torus::new(0.07, 0.22))),
+        MeshMaterial3d(hood_mat.clone()),
+        Transform::from_xyz(0.0, 1.56, -0.10).with_rotation(Quat::from_rotation_x(0.5)),
+    ));
+    tj.spawn((
+        Mesh3d(sh::add(meshes, sh::limb(0.14, 0.17, 0.17))),
+        MeshMaterial3d(collar_mat.clone()),
+        Transform::from_xyz(0.0, 1.57, 0.0),
+    ));
+    let mut strings = sh::Geo::default();
+    for sx in [-0.07_f32, 0.07] {
+        strings = strings.merged(sh::rod(Vec3::new(sx, 1.50, 0.215), Vec3::new(sx * 1.15, 1.26, 0.25), 0.011));
+    }
+    tj.spawn((
+        Mesh3d(sh::add(meshes, strings)),
+        MeshMaterial3d(collar_mat),
+        Transform::default(),
+    ));
 
-            // Arms
-            let sleeve_mesh = sh::add(meshes, sh::limb_profile(0.62, &[0.092, 0.086, 0.076], 1.0));
-            for sx in [-1.0_f32, 1.0_f32] {
-                tj.spawn((
+    // Arms
+    let sleeve_mesh = sh::add(meshes, sh::limb_profile(0.62, &[0.092, 0.086, 0.076], 1.0));
+    for sx in [-1.0_f32, 1.0_f32] {
+        let hand_mesh = sh::add(meshes, sh::hand(0.075, sx, false));
+        if attach_city_markers {
+            tj.spawn((
+                Mesh3d(sleeve_mesh.clone()),
+                MeshMaterial3d(shirt_mat.clone()),
+                Transform::from_xyz(sx * 0.37, 1.18, 0.06)
+                    .with_rotation(Quat::from_rotation_x(-0.22) * Quat::from_rotation_z(sx * -0.14)),
+            ));
+            tj.spawn((
+                Mesh3d(hand_mesh),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(sx * 0.41, 0.88, 0.13).with_rotation(Quat::from_rotation_x(-0.22)),
+            ));
+        } else {
+            tj.spawn((
+                crate::net::CrewStrideArm { is_left: sx < 0.0 },
+                Transform::from_xyz(sx * 0.37, 1.42, 0.02),
+                Visibility::default(),
+            ))
+            .with_children(|arm| {
+                arm.spawn((
                     Mesh3d(sleeve_mesh.clone()),
                     MeshMaterial3d(shirt_mat.clone()),
-                    Transform::from_xyz(sx * 0.37, 1.18, 0.06)
+                    Transform::from_xyz(0.0, -0.24, 0.04)
                         .with_rotation(Quat::from_rotation_x(-0.22) * Quat::from_rotation_z(sx * -0.14)),
                 ));
-                tj.spawn((
-                    Mesh3d(sh::add(meshes, sh::hand(0.075, sx, false))),
+                arm.spawn((
+                    Mesh3d(hand_mesh),
                     MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(sx * 0.41, 0.88, 0.13).with_rotation(Quat::from_rotation_x(-0.22)),
+                    Transform::from_xyz(sx * 0.04, -0.54, 0.11).with_rotation(Quat::from_rotation_x(-0.22)),
+                ));
+            });
+        }
+    }
+
+    // Left & Right Legs (pivoted at hip for cutscene or multiplayer walk stride)
+    let leg_mesh = sh::add(meshes, sh::limb_profile(0.74, &[0.112, 0.10, 0.088], 1.0));
+    let shoe_mesh = sh::add(meshes, sh::shoe(0.17, 0.11, 0.30));
+    let sole_mesh = sh::add(meshes, sh::shoe_sole(0.17, 0.11, 0.30));
+    let cast_mesh = sh::add(meshes, sh::limb(0.27, 0.125, 0.13));
+    for (sx, is_left) in [(-0.15_f32, true), (0.15_f32, false)] {
+        let mut leg_cmd = tj.spawn((Transform::from_xyz(sx, 0.78, 0.0), Visibility::default()));
+        if attach_city_markers {
+            leg_cmd.insert(TjLegPivot { is_left });
+        } else {
+            leg_cmd.insert(crate::net::CrewStrideLeg { is_left });
+        }
+        leg_cmd.with_children(|leg| {
+            leg.spawn((
+                Mesh3d(leg_mesh.clone()),
+                MeshMaterial3d(pants_mat.clone()),
+                Transform::from_xyz(0.0, -0.36, 0.0),
+            ));
+            // Sneaker facing +Z
+            leg.spawn((
+                Mesh3d(shoe_mesh.clone()),
+                MeshMaterial3d(shoe_mat.clone()),
+                Transform::from_xyz(0.0, -0.72, 0.06),
+            ));
+            leg.spawn((
+                Mesh3d(sole_mesh.clone()),
+                MeshMaterial3d(cast_mat.clone()),
+                Transform::from_xyz(0.0, -0.72, 0.06),
+            ));
+            if attach_city_markers && is_left {
+                leg.spawn((
+                    TjAnkleCast,
+                    Mesh3d(cast_mesh.clone()),
+                    MeshMaterial3d(cast_mat.clone()),
+                    Transform::from_xyz(0.0, -0.60, 0.0),
+                    if with_cast {
+                        Visibility::Inherited
+                    } else {
+                        Visibility::Hidden
+                    },
                 ));
             }
+        });
+    }
 
-            // Left & Right Legs (pivoted at hip so TJ can kick his feet onto the table!)
-            let leg_mesh = sh::add(meshes, sh::limb_profile(0.74, &[0.112, 0.10, 0.088], 1.0));
-            let shoe_mesh = sh::add(meshes, sh::shoe(0.17, 0.11, 0.30));
-            let sole_mesh = sh::add(meshes, sh::shoe_sole(0.17, 0.11, 0.30));
-            let cast_mesh = sh::add(meshes, sh::limb(0.27, 0.125, 0.13));
-            for (sx, is_left) in [(-0.15_f32, true), (0.15_f32, false)] {
-                tj.spawn((
-                    TjLegPivot { is_left },
-                    Transform::from_xyz(sx, 0.78, 0.0),
-                ))
-                .with_children(|leg| {
-                    leg.spawn((
-                        Mesh3d(leg_mesh.clone()),
-                        MeshMaterial3d(pants_mat.clone()),
-                        Transform::from_xyz(0.0, -0.36, 0.0),
-                    ));
-                    // Sneaker facing +Z
-                    leg.spawn((
-                        Mesh3d(shoe_mesh.clone()),
-                        MeshMaterial3d(shoe_mat.clone()),
-                        Transform::from_xyz(0.0, -0.72, 0.06),
-                    ));
-                    leg.spawn((
-                        Mesh3d(sole_mesh.clone()),
-                        MeshMaterial3d(cast_mat.clone()),
-                        Transform::from_xyz(0.0, -0.72, 0.06),
-                    ));
-                    if is_left {
-                        leg.spawn((
-                            TjAnkleCast,
-                            Mesh3d(cast_mesh.clone()),
-                            MeshMaterial3d(cast_mat.clone()),
-                            Transform::from_xyz(0.0, -0.60, 0.0),
-                            if with_cast {
-                                Visibility::Inherited
-                            } else {
-                                Visibility::Hidden
-                            },
-                        ));
-                    }
-                });
-            }
+    // Head (+Z is forward face), ears & nose
+    tj.spawn((
+        Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
+        MeshMaterial3d(skin.clone()),
+        Transform::from_xyz(0.0, 1.84, 0.0),
+    ));
+    for sx in [-1.0_f32, 1.0] {
+        tj.spawn((
+            Mesh3d(sh::add(meshes, sh::ear(0.125, sx))),
+            MeshMaterial3d(skin.clone()),
+            Transform::from_xyz(sx * 0.258, 1.84, -0.01),
+        ));
+    }
+    tj.spawn((
+        Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.058, 0.048), 1.0, 1.0, 14, 10))),
+        MeshMaterial3d(skin.clone()),
+        Transform::from_xyz(0.0, 1.815, 0.272),
+    ));
 
-            // Head (+Z is forward face), ears & nose
-            tj.spawn((
-                Mesh3d(sh::add(meshes, sh::head(hr, jaw))),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.84, 0.0),
-            ));
-            for sx in [-1.0_f32, 1.0] {
-                tj.spawn((
-                    Mesh3d(sh::add(meshes, sh::ear(0.125, sx))),
-                    MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(sx * 0.258, 1.84, -0.01),
-                ));
-            }
-            tj.spawn((
-                Mesh3d(sh::add(meshes, sh::superellipsoid(Vec3::new(0.042, 0.058, 0.048), 1.0, 1.0, 14, 10))),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.815, 0.272),
-            ));
+    // Short city-style haircut: neat raised top + tapered sides/back
+    tj.spawn((
+        Mesh3d(sh::add(meshes, sh::hair_cap(hr, jaw, 0.64, -0.40, 0.035, 0.13))),
+        MeshMaterial3d(hair_mat.clone()),
+        Transform::from_xyz(0.0, 1.84, 0.0),
+    ));
 
-            // Short city-style haircut: neat raised top + tapered sides/back
-            tj.spawn((
-                Mesh3d(sh::add(meshes, sh::hair_cap(hr, jaw, 0.64, -0.40, 0.035, 0.13))),
-                MeshMaterial3d(hair_mat.clone()),
-                Transform::from_xyz(0.0, 1.84, 0.0),
-            ));
+    // Full trimmed beard + mustache
+    tj.spawn((
+        Mesh3d(sh::add(meshes, sh::beard(hr, jaw, 0.065, 0.08, -0.13))),
+        MeshMaterial3d(hair_mat.clone()),
+        Transform::from_xyz(0.0, 1.84, 0.0),
+    ));
+    tj.spawn((
+        Mesh3d(sh::add(meshes, sh::arc_bar(0.20, &[0.012, 0.024, 0.026, 0.024, 0.012], 0.01, 0.035, 0.8))),
+        MeshMaterial3d(hair_mat),
+        Transform::from_xyz(0.0, 1.768, 0.262),
+    ));
 
-            // Full trimmed beard + mustache
-            tj.spawn((
-                Mesh3d(sh::add(meshes, sh::beard(hr, jaw, 0.065, 0.08, -0.13))),
-                MeshMaterial3d(hair_mat.clone()),
-                Transform::from_xyz(0.0, 1.84, 0.0),
-            ));
-            tj.spawn((
-                Mesh3d(sh::add(meshes, sh::arc_bar(0.20, &[0.012, 0.024, 0.026, 0.024, 0.012], 0.01, 0.035, 0.8))),
-                MeshMaterial3d(hair_mat),
-                Transform::from_xyz(0.0, 1.768, 0.262),
-            ));
-
-            // Eyes + Rectangular Glasses
-            let eye_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.044, 0.044, 0.036), 1.0, 1.0, 20, 14));
-            let pupil_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.023, 0.023, 0.015), 1.0, 1.0, 14, 10));
-            let rim_mesh = sh::add(meshes, sh::frame_ring(0.145, 0.095, 0.010, 0.22));
-            let lens_mesh = sh::add(meshes, sh::plate(0.132, 0.084, 0.010, 0.25));
-            for sx in [-1.0_f32, 1.0_f32] {
-                tj.spawn((
-                    Mesh3d(eye_mesh.clone()),
-                    MeshMaterial3d(eye_w.clone()),
-                    Transform::from_xyz(sx * 0.095, 1.87, 0.24),
-                ));
-                tj.spawn((
-                    Mesh3d(pupil_mesh.clone()),
-                    MeshMaterial3d(eye_p.clone()),
-                    Transform::from_xyz(sx * 0.095, 1.87, 0.272),
-                ));
-                // Glass lens & dark rim
-                tj.spawn((
-                    Mesh3d(rim_mesh.clone()),
-                    MeshMaterial3d(frame_mat.clone()),
-                    Transform::from_xyz(sx * 0.10, 1.875, 0.287),
-                ));
-                tj.spawn((
-                    Mesh3d(lens_mesh.clone()),
-                    MeshMaterial3d(lens_mat.clone()),
-                    Transform::from_xyz(sx * 0.10, 1.875, 0.287),
-                ));
-            }
-            // Glasses nose bridge & temple arms back to the ears
-            let mut glasses = sh::arc_bar(0.05, &[0.009, 0.009], 0.008, 0.0, 1.0).at(0.0, 1.885, 0.29);
-            for sx in [-1.0_f32, 1.0] {
-                glasses = glasses.merged(sh::rod(Vec3::new(sx * 0.172, 1.885, 0.284), Vec3::new(sx * 0.258, 1.87, 0.0), 0.009));
-            }
-            tj.spawn((
-                Mesh3d(sh::add(meshes, glasses)),
-                MeshMaterial3d(frame_mat),
-                Transform::default(),
-            ));
-        })
-        .id()
+    // Eyes + Rectangular Glasses
+    let eye_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.044, 0.044, 0.036), 1.0, 1.0, 20, 14));
+    let pupil_mesh = sh::add(meshes, sh::superellipsoid(Vec3::new(0.023, 0.023, 0.015), 1.0, 1.0, 14, 10));
+    let rim_mesh = sh::add(meshes, sh::frame_ring(0.145, 0.095, 0.010, 0.22));
+    let lens_mesh = sh::add(meshes, sh::plate(0.132, 0.084, 0.010, 0.25));
+    for sx in [-1.0_f32, 1.0_f32] {
+        tj.spawn((
+            Mesh3d(eye_mesh.clone()),
+            MeshMaterial3d(eye_w.clone()),
+            Transform::from_xyz(sx * 0.095, 1.87, 0.24),
+        ));
+        tj.spawn((
+            Mesh3d(pupil_mesh.clone()),
+            MeshMaterial3d(eye_p.clone()),
+            Transform::from_xyz(sx * 0.095, 1.87, 0.272),
+        ));
+        // Glass lens & dark rim
+        tj.spawn((
+            Mesh3d(rim_mesh.clone()),
+            MeshMaterial3d(frame_mat.clone()),
+            Transform::from_xyz(sx * 0.10, 1.875, 0.287),
+        ));
+        tj.spawn((
+            Mesh3d(lens_mesh.clone()),
+            MeshMaterial3d(lens_mat.clone()),
+            Transform::from_xyz(sx * 0.10, 1.875, 0.287),
+        ));
+    }
+    // Glasses nose bridge & temple arms back to the ears
+    let mut glasses = sh::arc_bar(0.05, &[0.009, 0.009], 0.008, 0.0, 1.0).at(0.0, 1.885, 0.29);
+    for sx in [-1.0_f32, 1.0] {
+        glasses = glasses.merged(sh::rod(Vec3::new(sx * 0.172, 1.885, 0.284), Vec3::new(sx * 0.258, 1.87, 0.0), 0.009));
+    }
+    tj.spawn((
+        Mesh3d(sh::add(meshes, glasses)),
+        MeshMaterial3d(frame_mat),
+        Transform::default(),
+    ));
 }
 
 /// Ensures TJ exists in the NYC city map and handles meeting / companion following. Until he is
@@ -330,7 +368,7 @@ pub fn update_city_tj(
     mut next_state: crate::transition::SceneTransition,
     player_q: Query<(&Transform, &Player), Without<TjCityActor>>,
     orbit: Res<crate::state::CameraOrbit>,
-    mut tj_q: Query<(Entity, &mut Transform), With<TjCityActor>>,
+    mut tj_q: Query<(Entity, &mut Transform, &Visibility), With<TjCityActor>>,
     mut cast_q: Query<&mut Visibility, (With<TjAnkleCast>, Without<TjCityActor>, Without<Player>)>,
     mut roam_greeted: Local<bool>,
     spots: Option<Res<crate::city::CrewSpots>>,
@@ -357,7 +395,7 @@ pub fn update_city_tj(
         return;
     }
 
-    let Ok((_, mut tj_tf)) = tj_q.get_single_mut() else {
+    let Ok((_, mut tj_tf, tj_vis)) = tj_q.get_single_mut() else {
         return;
     };
     tj_tf.scale = Vec3::splat(crate::state::city_body_scale(stats.player_scale.max(1.8)));
@@ -372,7 +410,10 @@ pub fn update_city_tj(
 
     if stats.free_roam {
         // Post-game free roam: TJ hangs out in Pub 217 by the door at normal size, turns to face
-        // Stan, and just says hi (no cutscene replay, no following).
+        // Stan, and just says hi (no cutscene replay, no following). Skip greeting if hidden by MP.
+        if *tj_vis == Visibility::Hidden {
+            return;
+        }
         let (pos, rot) = crate::city::crew_wait_pose(crate::city::CREW_TJ, &stats, spots.as_deref(), p_tf.translation);
         tj_tf.translation = pos;
         tj_tf.rotation = rot;
