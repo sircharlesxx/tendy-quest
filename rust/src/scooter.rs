@@ -734,6 +734,7 @@ pub fn update_city_scooter_and_phone(
     if keys.just_pressed(KeyCode::KeyP)
         && stats.driving_car.is_none()
         && stats.riding_scooter.is_none()
+        && !stats.bartender_open
         && !stats.casino_open
     {
         if stats.phone_open {

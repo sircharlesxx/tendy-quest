@@ -25,7 +25,7 @@ const AUTOSKIP_AFTER_SECS: f32 = 3.0;
 
 static SKIP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-pub const CUTSCENE_STATES: [GameState; 11] = [
+pub const CUTSCENE_STATES: [GameState; 12] = [
     GameState::HeadphoneCutscene,
     GameState::Cutscene,
     GameState::MomVictoryCutscene,
@@ -38,6 +38,7 @@ pub const CUTSCENE_STATES: [GameState; 11] = [
     // Registered so hold-to-skip jumps cleanly out of the optional boardwalk cutscene and restores
     // CityPlay position, audio, and DOM filters via `exit_chillary_cutscene`.
     GameState::ChillaryCutscene,
+    GameState::PubPortalCutscene,
     GameState::LexieVictoryCutscene,
 ];
 

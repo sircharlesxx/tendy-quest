@@ -1,112 +1,47 @@
-//! Walk-in Cedar Rapids Casino (`CasinoPlugin`): Blackjack, Buffalo Stampede slots, and
-//! Lucky Ladies (cute women portrait) slots, all wagered and paid in persistent Tendy Wendies.
+//! Dedicated Level 3 (`GameState::CasinoPlay`): spacious 3D Tendy Palace Casino hall with
+//! Blackjack, Buffalo Stampede slots, and Lucky Ladies (cute women portrait) slots, all wagered
+//! and paid in persistent Tendy Wendies (`TW`), plus a swirling Return Portal back to Pub 217.
 //!
-//! Why: gives players a dedicated Cedar Rapids destination across 3rd St SE from Pub 217 where
-//! Tendy Wendies earned from tendies and boss wins can be wagered and tracked across sessions
-//! for both current casino play and future features.
+//! Why: gives the Casino its own spacious 44m x 44m hall with unobstructed third-person camera
+//! framing and clean entry via Pub 217's bartender & magic portal cutscene (`pub_portal.rs`),
+//! instead of cramming it onto a cramped downtown Cedar Rapids block.
 //!
-//! Gameplay impact: adds block `(23.0, 23.0)` as a walk-in interior building with four floor
-//! stations (Blackjack, Buffalo Slots, Lucky Ladies Slots, and Cashier), interactive modal UI
-//! using strictly persistent `TW` currency (zero impact on main quest tendy gates or combat),
-//! and an emergency Cashier stipend when a player's balance drops below the minimum wager.
+//! Gameplay impact: `CasinoPlay` uses persistent `TW` currency (zero impact on story tendy
+//! gates or combat), lets players return seamlessly to Pub 217 via the South Portal, and provides
+//! an emergency Cashier stipend whenever a player's balance drops below the minimum wager.
 
-use std::f32::consts::FRAC_PI_2;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::audio::play_sfx;
-use crate::city::{CITY_HALF_EXTENT, CityMinimapPlayerDot, CityWorldMarker};
+use crate::audio::{play_bgm, play_sfx, set_touch_boss_mode, set_touch_playing};
 use crate::player::Player;
-use crate::state::{GameState, LevelEntity, PlatformBox, PlayerStats};
-use crate::ui::HelpPause;
+use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
+use crate::transition::{SceneTransition, sim_running};
+use crate::ui::{HelpPause, HudOverlay, gameplay_running};
 
 // =================================================================================================
-// Public Location & Spatial Helpers (shared with city.rs, gfx.rs, player.rs, skatepark.rs)
+// Public Location Constants (shared with player.rs, pub_portal.rs, ui.rs)
 // =================================================================================================
 
-/// West doorway anchor on block `(23.0, 23.0)`, directly across 3rd St SE from `PUB217_ANCHOR`.
-pub const CASINO_ANCHOR: Vec3 = Vec3::new(13.0, 0.0, 23.0);
-/// Uniform architectural scale matching Pub 217 (`PUB217_SCALE = 1.45`).
-pub const CASINO_SCALE: f32 = 1.45;
-/// Hero scale ceiling before the casino doorway closes (`PUB217_DOOR_MAX_SCALE` equivalent).
-const CASINO_DOOR_MAX_SCALE: f32 = 3.2;
+/// Isolated world origin for Level 3 (`GameState::CasinoPlay`), far south of Cedar Rapids &
+/// all cutscene dioramas so no city/kitchen geometry or lighting can overlap.
+pub const CASINO_LEVEL_ORIGIN: Vec3 = Vec3::new(0.0, 0.0, -1400.0);
+/// Horizontal half-width of the walkable Grand Casino hall (`44m x 44m` interior).
+pub const CASINO_WALK_LIMIT: f32 = 20.8;
+/// Player entry spawn facing north from the South Return Portal into the Grand Casino floor.
+pub const CASINO_SPAWN_POS: Vec3 = Vec3::new(0.0, 0.0, -1400.0 + 13.5);
 
-/// Local interior origin matching the West doorway (building extends +X east into block `(23, 23)`).
-const CASINO_LAYOUT_ORIGIN: Vec3 = Vec3::new(11.75, 0.0, 34.0);
-
-/// World XZ footprint `(min_x, max_x, min_z, max_z)` of the Casino shell.
-pub fn casino_rect() -> (f32, f32, f32, f32) {
-    let s = CASINO_SCALE;
-    (
-        CASINO_ANCHOR.x - 0.5 * s,
-        CASINO_ANCHOR.x + 13.5 * s,
-        CASINO_ANCHOR.z - 7.0 * s,
-        CASINO_ANCHOR.z + 7.0 * s,
-    )
-}
-
-/// True while `pos` is inside the walk-in Casino interior (excluding roof).
-pub fn is_in_casino(pos: Vec3, _player_scale: f32) -> bool {
-    let (min_x, max_x, min_z, max_z) = casino_rect();
-    pos.x >= min_x
-        && pos.x <= max_x
-        && pos.z >= min_z
-        && pos.z <= max_z
-        && pos.y < 6.2 * CASINO_SCALE
-}
-
-/// True for the Cedar Rapids city grid block reserved for the Tendy Palace Casino `(23, 23)`.
-pub fn is_casino_block(bx: f32, bz: f32) -> bool {
-    (bx - 23.0).abs() < 1.0 && (bz - 23.0).abs() < 1.0
-}
-
-/// True if `(x, z)` falls within the Casino footprint plus `margin`.
-pub fn blocks_spot(x: f32, z: f32, margin: f32) -> bool {
-    let (min_x, max_x, min_z, max_z) = casino_rect();
-    x > min_x - margin && x < max_x + margin && z > min_z - margin && z < max_z + margin
-}
-
-/// Pushes a car footprint outside the Casino walls so vehicles cannot drive indoors.
-pub fn push_car_out_of_casino(car_tf: &mut Transform, yaw: f32) -> Option<Vec2> {
-    let (min_x, max_x, min_z, max_z) = casino_rect();
-    let (s, c) = (yaw.sin().abs(), yaw.cos().abs());
-    let hx = s * crate::city::CAR_HALF_L + c * crate::city::CAR_HALF_W + 0.2;
-    let hz = c * crate::city::CAR_HALF_L + s * crate::city::CAR_HALF_W + 0.2;
-    let p = car_tf.translation;
-    let (l, r, b, f) = (
-        p.x - (min_x - hx),
-        (max_x + hx) - p.x,
-        p.z - (min_z - hz),
-        (max_z + hz) - p.z,
-    );
-    if l <= 0.0 || r <= 0.0 || b <= 0.0 || f <= 0.0 {
-        return None;
-    }
-    let m = l.min(r).min(b).min(f);
-    Some(if m == l {
-        car_tf.translation.x = min_x - hx;
-        Vec2::NEG_X
-    } else if m == r {
-        car_tf.translation.x = max_x + hx;
-        Vec2::X
-    } else if m == b {
-        car_tf.translation.z = min_z - hz;
-        Vec2::NEG_Y
-    } else {
-        car_tf.translation.z = max_z + hz;
-        Vec2::Y
-    })
-}
-
-/// Interactive floor stations inside the Casino.
+/// Interactive floor stations inside the Tendy Palace Casino hall.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CasinoStationKind {
     Blackjack,
     BuffaloSlots,
     LuckyLadiesSlots,
     Cashier,
+    ReturnPortal,
 }
 
 impl CasinoStationKind {
@@ -116,6 +51,7 @@ impl CasinoStationKind {
             Self::BuffaloSlots => "BUFFALO STAMPEDE SLOTS [F/E]",
             Self::LuckyLadiesSlots => "LUCKY LADIES SLOTS [F/E]",
             Self::Cashier => "TENDY WENDY CASHIER [F/E]",
+            Self::ReturnPortal => "RETURN TO PUB 217 PORTAL [F/E]",
         }
     }
 
@@ -125,58 +61,50 @@ impl CasinoStationKind {
             Self::BuffaloSlots => "BUFFALO STAMPEDE SLOTS",
             Self::LuckyLadiesSlots => "LUCKY LADIES SLOTS",
             Self::Cashier => "TENDY WENDY CASHIER",
+            Self::ReturnPortal => "PUB 217 RETURN PORTAL",
         }
     }
-}
-
-/// Prompt handoff shared with `city::update_city_props` (same pattern as `WheelPrompt`).
-#[derive(Resource, Default)]
-pub struct CasinoPrompt {
-    pub label: Option<String>,
-    pub station: Option<CasinoStationKind>,
-    pub pressed: bool,
 }
 
 pub struct CasinoPlugin;
 
 impl Plugin for CasinoPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CasinoPrompt>()
-            .init_resource::<CasinoGameState>()
+        app.init_resource::<CasinoGameState>()
             .add_systems(Startup, setup_casino_textures)
-            .add_systems(OnExit(GameState::CityPlay), cleanup_casino_on_exit)
+            .add_systems(OnEnter(GameState::CasinoPlay), enter_casino_play)
+            .add_systems(OnExit(GameState::CasinoPlay), exit_casino_play)
             .add_systems(
                 Update,
                 (
-                    spawn_casino_if_needed,
-                    update_casino_door_and_rings,
-                    update_casino_minimap_dot,
-                    update_casino_stations
-                        .after(spawn_casino_if_needed)
-                        .before(crate::city::update_city_props),
-                    update_blackjack_dealer_timer,
-                    update_slot_spin_timer,
-                    handle_casino_modal_input,
+                    update_casino_props_anim.run_if(sim_running),
+                    update_casino_stations.run_if(gameplay_running),
+                    update_blackjack_dealer_timer.run_if(sim_running),
+                    update_slot_spin_timer.run_if(sim_running),
+                    handle_casino_modal_input.run_if(sim_running),
                     refresh_casino_ui,
                 )
                     .chain()
-                    .run_if(in_state(GameState::CityPlay)),
+                    .run_if(in_state(GameState::CasinoPlay)),
             );
     }
 }
 
 // =================================================================================================
-// Procedural Pixel-Art Textures (Marquee, Buffalo Banner, 3 Cute Women Portraits, Reels, Suits)
+// Procedural Pixel-Art Textures (Marquee, Signs, Cute Women Portraits, Bartender Portrait, Reels)
 // =================================================================================================
 
 #[derive(Resource)]
-struct CasinoArt {
-    marquee: Handle<Image>,
-    buffalo_banner: Handle<Image>,
-    girl_banners: [Handle<Image>; 3],  // Ruby, Sakura, Skye
-    buffalo_icons: [Handle<Image>; 6], // 0 Buffalo, 1 Tendy, 2 Sunset7, 3 Eagle, 4 Wolf, 5 Coin
-    ladies_icons: [Handle<Image>; 6],  // 0 Ruby, 1 Sakura, 2 Skye, 3 Diamond, 4 Cherry, 5 Heart
-    suit_icons: [Handle<Image>; 4],    // 0 Spade, 1 Heart, 2 Diamond, 3 Club
+pub(crate) struct CasinoArt {
+    pub(crate) marquee: Handle<Image>,
+    pub(crate) buffalo_banner: Handle<Image>,
+    pub(crate) girl_banners: [Handle<Image>; 3],   // Ruby, Sakura, Skye
+    pub(crate) buffalo_icons: [Handle<Image>; 6],  // 0 Buffalo, 1 Tendy, 2 Sunset7, 3 Eagle, 4 Wolf, 5 Coin
+    pub(crate) ladies_icons: [Handle<Image>; 6],   // 0 Ruby, 1 Sakura, 2 Skye, 3 Diamond, 4 Cherry, 5 Heart
+    pub(crate) suit_icons: [Handle<Image>; 4],     // 0 Spade, 1 Heart, 2 Diamond, 3 Club
+    pub(crate) bartender_portrait: Handle<Image>,  // Scarlett (Pub 217 bartender)
+    pub(crate) womens_sign: Handle<Image>,         // Pub 217 Women's restroom plaque
+    pub(crate) return_portal_sign: Handle<Image>,  // Casino South return portal sign
 }
 
 struct PxCanvas {
@@ -287,18 +215,37 @@ impl PxCanvas {
             'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
             'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
             'F' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
+            'G' => [0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110],
+            'H' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
             'I' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111],
+            'J' => [0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100],
+            'K' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
             'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+            'M' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
             'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
             'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
             'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+            'Q' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
             'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
             'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
             'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
             'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+            'V' => [0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b01010, 0b00100],
             'W' => [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001],
+            'X' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
             'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
+            'Z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+            '0' => [0b01110, 0b10011, 0b10101, 0b10101, 0b11001, 0b10001, 0b01110],
+            '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+            '2' => [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111],
+            '3' => [0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110],
+            '4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+            '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+            '6' => [0b01110, 0b10000, 0b11110, 0b10001, 0b10001, 0b10001, 0b01110],
             '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+            '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+            '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110],
+            '\'' => [0b00100, 0b00100, 0b01000, 0b00000, 0b00000, 0b00000, 0b00000],
             _ => [0; 7],
         }
     }
@@ -688,6 +635,106 @@ fn paint_ladies_symbol(idx: usize) -> Image {
     c.into_image()
 }
 
+fn paint_bartender_portrait() -> Image {
+    let mut c = PxCanvas::new(128, 128);
+    // Warm golden-amber bar bokeh backdrop
+    c.fill_grad([44, 14, 24], [118, 42, 34]);
+    for (bx, by, r, col) in [
+        (20.0_f32, 26.0_f32, 11.0_f32, [255, 198, 72, 65]),
+        (106.0, 30.0, 12.0, [255, 148, 86, 60]),
+        (24.0, 94.0, 9.0, [255, 224, 120, 50]),
+        (108.0, 88.0, 8.0, [255, 108, 148, 55]),
+    ] {
+        c.circle(bx, by, r, col);
+    }
+
+    // Lush voluminous wavy auburn/chestnut hair silhouette
+    let hair_dark = [108, 30, 22, 255];
+    let hair_mid = [148, 46, 30, 255];
+    let hair_hi = [212, 86, 52, 210];
+    c.ellipse(64.0, 66.0, 44.0, 48.0, hair_dark);
+    c.ellipse(30.0, 88.0, 17.0, 30.0, hair_mid);
+    c.ellipse(98.0, 88.0, 17.0, 30.0, hair_mid);
+    c.ellipse(64.0, 44.0, 36.0, 30.0, hair_mid);
+
+    // Sculpted shoulders, off-shoulder crimson velvet top & golden heart necklace
+    let skin = [252, 214, 194, 255];
+    let skin_shade = [232, 182, 162, 255];
+    c.ellipse(64.0, 118.0, 34.0, 18.0, [176, 18, 52, 255]);
+    c.ellipse(64.0, 106.0, 22.0, 9.0, skin);
+    c.rect(56, 82, 72, 105, skin);
+    c.ellipse(64.0, 90.0, 10.0, 4.5, skin_shade);
+    // Choker & gold pendant
+    c.line(54.0, 97.0, 64.0, 101.0, 1.6, [255, 210, 84, 255]);
+    c.line(74.0, 97.0, 64.0, 101.0, 1.6, [255, 210, 84, 255]);
+    c.circle(64.0, 102.5, 3.2, [255, 226, 110, 255]);
+
+    // Soft oval face & warm cheek blush
+    c.ellipse(64.0, 60.0, 25.0, 27.0, skin);
+    c.ellipse(64.0, 72.0, 20.0, 16.0, skin);
+    c.ellipse(47.0, 69.0, 6.5, 3.8, [255, 118, 138, 150]);
+    c.ellipse(81.0, 69.0, 6.5, 3.8, [255, 118, 138, 150]);
+
+    // Expressive emerald eyes, arched lashes & brows
+    for sx in [-1.0_f32, 1.0_f32] {
+        let ex = 64.0 + sx * 11.5;
+        let ey = 59.0;
+        c.line(ex - 7.0, ey - 10.5, ex + 7.0, ey - 11.5 * 1.0 + sx * 0.5, 1.4, [82, 24, 18, 255]);
+        c.ellipse(ex, ey - 1.5, 7.0, 7.6, [34, 18, 24, 255]);
+        c.ellipse(ex, ey, 6.4, 6.8, [252, 252, 255, 255]);
+        c.ellipse(ex, ey + 0.5, 4.6, 5.6, [34, 178, 112, 255]);
+        c.ellipse(ex, ey + 1.2, 2.7, 3.2, [20, 28, 32, 255]);
+        c.circle(ex - 2.0 * sx, ey - 2.0, 2.0, [255, 255, 255, 255]);
+        c.circle(ex + 1.8 * sx, ey + 2.0, 1.0, [255, 255, 255, 230]);
+    }
+
+    // Little nose & glossy ruby smiling lips
+    c.circle(64.0, 67.5, 1.1, [218, 156, 138, 255]);
+    c.ellipse(64.0, 77.2, 6.5, 2.4, [212, 26, 62, 255]);
+    c.line(58.5, 76.5, 64.0, 78.6, 1.1, [168, 16, 44, 255]);
+    c.line(69.5, 76.5, 64.0, 78.6, 1.1, [168, 16, 44, 255]);
+    c.circle(65.5, 77.5, 1.0, [255, 200, 210, 210]);
+
+    // Swept chestnut bangs & side waves + gold hoop earrings
+    c.ellipse(42.0, 42.0, 14.0, 15.0, hair_mid);
+    c.ellipse(86.0, 42.0, 14.0, 15.0, hair_mid);
+    c.ellipse(60.0, 32.0, 24.0, 11.0, hair_mid);
+    c.ellipse(52.0, 33.0, 11.0, 4.2, hair_hi);
+    c.ellipse(76.0, 35.0, 10.0, 4.0, hair_hi);
+    c.circle(38.0, 72.0, 4.2, [255, 214, 88, 255]);
+    c.circle(38.0, 72.0, 2.4, [108, 30, 22, 255]);
+    c.circle(90.0, 72.0, 4.2, [255, 214, 88, 255]);
+    c.circle(90.0, 72.0, 2.4, [108, 30, 22, 255]);
+
+    // Frothy beer mug accent on the lower-right corner
+    c.rect(99, 95, 117, 118, [238, 168, 34, 255]);
+    c.ellipse(108.0, 95.0, 11.0, 5.5, [255, 252, 244, 255]);
+    c.circle(104.0, 91.0, 4.5, [255, 252, 244, 255]);
+    c.circle(113.0, 92.0, 4.0, [255, 252, 244, 255]);
+
+    c.sparkle(20.0, 22.0, 5.5, [255, 244, 188, 235]);
+    c.sparkle(108.0, 22.0, 5.0, [255, 244, 188, 235]);
+    c.border_frame(3, [255, 208, 86, 255]);
+    c.into_image()
+}
+
+fn paint_womens_sign() -> Image {
+    let mut c = PxCanvas::new(128, 64);
+    c.fill_grad([48, 10, 46], [92, 16, 74]);
+    c.border_frame(4, [255, 108, 206, 255]);
+    c.text_centered("WOMEN'S", 25, 2, [255, 238, 152, 255]);
+    c.into_image()
+}
+
+fn paint_return_portal_sign() -> Image {
+    let mut c = PxCanvas::new(160, 64);
+    c.fill_grad([34, 12, 68], [92, 18, 114]);
+    c.border_frame(4, [96, 238, 255, 255]);
+    c.text_centered("PUB 217", 12, 2, [255, 226, 98, 255]);
+    c.text_centered("PORTAL", 35, 2, [255, 118, 218, 255]);
+    c.into_image()
+}
+
 fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let marquee = images.add(paint_marquee_banner());
     let mut b_canv = PxCanvas::new(160, 96);
@@ -703,6 +750,9 @@ fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image
     let buffalo_icons = std::array::from_fn(|i| images.add(paint_buffalo_symbol(i)));
     let ladies_icons = std::array::from_fn(|i| images.add(paint_ladies_symbol(i)));
     let suit_icons = std::array::from_fn(paint_suit_icon).map(|img| images.add(img));
+    let bartender_portrait = images.add(paint_bartender_portrait());
+    let womens_sign = images.add(paint_womens_sign());
+    let return_portal_sign = images.add(paint_return_portal_sign());
 
     commands.insert_resource(CasinoArt {
         marquee,
@@ -711,18 +761,18 @@ fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image
         buffalo_icons,
         ladies_icons,
         suit_icons,
+        bartender_portrait,
+        womens_sign,
+        return_portal_sign,
     });
 }
 
 // =================================================================================================
-// 3D Walk-In Tendy Palace Casino World Geometry & Stations
+// 3D Grand Tendy Palace Casino Level (GameState::CasinoPlay)
 // =================================================================================================
 
 #[derive(Component)]
-struct CasinoWorld;
-
-#[derive(Component)]
-struct CasinoDoorPlug;
+pub struct CasinoLevelEntity;
 
 #[derive(Component)]
 struct CasinoRing {
@@ -731,78 +781,160 @@ struct CasinoRing {
 }
 
 #[derive(Component)]
-struct CasinoMinimapDot;
+struct CasinoPortalSpin {
+    speed: f32,
+}
 
-#[allow(clippy::too_many_lines)]
-fn spawn_casino_if_needed(
+#[derive(Component)]
+struct CasinoPromptUi;
+
+#[derive(Component)]
+struct CasinoPromptButton;
+
+#[derive(Component)]
+struct CasinoPromptText;
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::type_complexity)]
+fn enter_casino_play(
     mut commands: Commands,
-    stats: Res<PlayerStats>,
     art: Option<Res<CasinoArt>>,
-    existing_q: Query<Entity, With<CasinoWorld>>,
+    mut stats: ResMut<PlayerStats>,
+    mut orbit: ResMut<CameraOrbit>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    old_casino_q: Query<Entity, With<CasinoLevelEntity>>,
+    mut hud_q: Query<(&mut Node, &mut Visibility), With<HudOverlay>>,
+    mut player_q: Query<
+        (&mut Transform, &mut crate::player::Player, &mut Visibility),
+        (With<Player>, Without<HudOverlay>, Without<Camera3d>),
+    >,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<HudOverlay>)>,
 ) {
-    if !stats.in_city || !existing_q.is_empty() {
-        return;
+    for e in &old_casino_q {
+        commands.entity(e).despawn_recursive();
     }
+
+    stats.sync_tendy_wendies_from_save();
+    stats.in_city = false;
+    stats.in_casino_level = true;
+    stats.boss_mode = false;
+    stats.player_scale = 1.8;
+    stats.casino_open = false;
+    stats.casino_esc_grace = false;
+    stats.bartender_open = false;
+    stats.driving_car = None;
+    stats.riding_scooter = None;
+    stats.riding_wheel = false;
+    stats.phone_open = false;
+    stats.hint_text = "WELCOME TO TENDY PALACE CASINO! Play Blackjack, Buffalo & Lucky Ladies Slots (TW), or use the South Portal to return to Pub 217.".to_string();
+    stats.hint_bump = stats.hint_bump.wrapping_add(1);
+
+    for (mut node, mut vis) in &mut hud_q {
+        node.display = Display::Flex;
+        *vis = Visibility::Inherited;
+    }
+
+    commands.insert_resource(ClearColor(Color::srgb(0.05, 0.02, 0.07)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.96, 0.88, 0.96),
+        brightness: 540.0,
+    });
+
+    if let Ok((mut p_tf, mut player, mut vis)) = player_q.get_single_mut() {
+        p_tf.translation = CASINO_SPAWN_POS;
+        p_tf.scale = Vec3::splat(stats.body_scale());
+        p_tf.rotation = Quat::IDENTITY;
+        player.velocity = Vec3::ZERO;
+        player.knockback = Vec3::ZERO;
+        player.facing_yaw = 0.0;
+        *vis = Visibility::Visible;
+    }
+
+    orbit.yaw = 0.0;
+    orbit.pitch = 0.34;
+    orbit.distance = 8.4;
+    orbit.current_dist = 8.4;
+    orbit.follow_pos = CASINO_SPAWN_POS;
+    orbit.last_player_pos = CASINO_SPAWN_POS;
+    orbit.snap_follow = true;
+    orbit.blend_request = false;
+    orbit.blend_t = crate::state::CAMERA_BLEND_SECS;
+    orbit.push_offset = Vec3::ZERO;
+
+    if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
+        c_tf.translation = CASINO_SPAWN_POS + Vec3::new(0.0, 4.4, 8.6);
+        c_tf.look_at(CASINO_SPAWN_POS + Vec3::new(0.0, 2.0, -4.0), Vec3::Y);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
+    }
+
+    set_touch_playing(true);
+    set_touch_boss_mode(false);
+    play_bgm();
+
     let Some(art) = art else {
         return;
     };
 
+    let orig = CASINO_LEVEL_ORIGIN;
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
-    let ring_mesh = meshes.add(Torus::new(0.14, 1.25));
+    let ring_mesh = meshes.add(Torus::new(0.14, 1.35));
+    let portal_ring_mesh = meshes.add(Torus::new(0.18, 2.15));
 
-    let exterior_wall_mat = materials.add(crate::gfx::city_textured(
-        StandardMaterial {
-            base_color: Color::srgb(0.24, 0.06, 0.14),
-            perceptual_roughness: 0.55,
-            ..default()
-        },
-        crate::gfx::CityTex::Brick,
-    ));
+    let wall_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.24, 0.06, 0.14),
+        perceptual_roughness: 0.52,
+        ..default()
+    });
+    let ceiling_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.03, 0.10),
+        perceptual_roughness: 0.65,
+        ..default()
+    });
     let gold_trim_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.76, 0.22),
-        metallic: 0.75,
-        perceptual_roughness: 0.25,
+        base_color: Color::srgb(0.96, 0.78, 0.24),
+        metallic: 0.76,
+        perceptual_roughness: 0.24,
         ..default()
     });
     let carpet_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.42, 0.06, 0.12),
-        perceptual_roughness: 0.90,
+        base_color: Color::srgb(0.38, 0.05, 0.12),
+        perceptual_roughness: 0.88,
         ..default()
     });
     let red_runner_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.76, 0.08, 0.14),
-        perceptual_roughness: 0.85,
+        base_color: Color::srgb(0.76, 0.08, 0.16),
+        perceptual_roughness: 0.84,
         ..default()
     });
     let felt_green_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.06, 0.42, 0.20),
-        perceptual_roughness: 0.85,
+        base_color: Color::srgb(0.06, 0.44, 0.22),
+        perceptual_roughness: 0.82,
         ..default()
     });
     let wood_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.22, 0.10, 0.07),
+        base_color: Color::srgb(0.24, 0.11, 0.07),
         perceptual_roughness: 0.35,
         ..default()
     });
     let dark_metal_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.10, 0.10, 0.13),
-        metallic: 0.6,
-        perceptual_roughness: 0.35,
-        ..default()
-    });
-    let rose_cab_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.46, 0.10, 0.28),
-        metallic: 0.25,
-        perceptual_roughness: 0.4,
+        base_color: Color::srgb(0.12, 0.12, 0.16),
+        metallic: 0.65,
+        perceptual_roughness: 0.32,
         ..default()
     });
     let bronze_cab_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.32, 0.18, 0.08),
+        base_color: Color::srgb(0.34, 0.19, 0.09),
         metallic: 0.45,
+        perceptual_roughness: 0.38,
+        ..default()
+    });
+    let rose_cab_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.48, 0.10, 0.30),
+        metallic: 0.28,
         perceptual_roughness: 0.38,
         ..default()
     });
@@ -813,15 +945,28 @@ fn spawn_casino_if_needed(
         ..default()
     });
     let neon_pink_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.42, 0.78),
-        emissive: LinearRgba::rgb(2.3, 0.65, 1.55),
+        base_color: Color::srgb(1.0, 0.40, 0.80),
+        emissive: LinearRgba::rgb(2.4, 0.65, 1.65),
+        unlit: true,
+        ..default()
+    });
+    let neon_cyan_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.94, 1.0),
+        emissive: LinearRgba::rgb(0.55, 2.1, 2.6),
+        unlit: true,
+        ..default()
+    });
+    let portal_core_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.68, 0.24, 0.96, 0.72),
+        emissive: LinearRgba::rgb(1.6, 0.55, 2.8),
+        alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
     });
     let marquee_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(art.marquee.clone()),
-        emissive: LinearRgba::rgb(1.3, 1.15, 1.25),
+        emissive: LinearRgba::rgb(1.35, 1.2, 1.3),
         emissive_texture: Some(art.marquee.clone()),
         unlit: true,
         ..default()
@@ -829,7 +974,7 @@ fn spawn_casino_if_needed(
     let buffalo_screen_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         base_color_texture: Some(art.buffalo_banner.clone()),
-        emissive: LinearRgba::rgb(1.2, 1.0, 0.85),
+        emissive: LinearRgba::rgb(1.25, 1.05, 0.9),
         emissive_texture: Some(art.buffalo_banner.clone()),
         unlit: true,
         ..default()
@@ -838,11 +983,19 @@ fn spawn_casino_if_needed(
         materials.add(StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(art.girl_banners[i].clone()),
-            emissive: LinearRgba::rgb(1.15, 1.05, 1.2),
+            emissive: LinearRgba::rgb(1.2, 1.1, 1.25),
             emissive_texture: Some(art.girl_banners[i].clone()),
             unlit: true,
             ..default()
         })
+    });
+    let portal_sign_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(art.return_portal_sign.clone()),
+        emissive: LinearRgba::rgb(1.2, 1.1, 1.35),
+        emissive_texture: Some(art.return_portal_sign.clone()),
+        unlit: true,
+        ..default()
     });
     let slot_screen_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.95, 0.96, 1.0),
@@ -866,323 +1019,434 @@ fn spawn_casino_if_needed(
         ..default()
     });
 
-    // Warm entrance & interior casino lighting
-    let ca = CASINO_ANCHOR;
+    // Overhead casino hall lighting
     for (lx, ly, lz, col, intensity, range) in [
-        (ca.x - 1.6, 4.6_f32, ca.z, Color::srgb(1.0, 0.82, 0.42), 45000.0_f32, 26.0_f32),
-        (ca.x + 8.5, 5.6, ca.z, Color::srgb(1.0, 0.86, 0.65), 62000.0, 28.0),
-        (ca.x + 9.0, 5.2, ca.z - 5.0, Color::srgb(1.0, 0.72, 0.38), 34000.0, 20.0),
-        (ca.x + 9.0, 5.2, ca.z + 5.0, Color::srgb(1.0, 0.55, 0.82), 34000.0, 20.0),
+        (0.0_f32, 11.0_f32, 0.0_f32, Color::srgb(1.0, 0.88, 0.70), 360_000.0_f32, 42.0_f32),
+        (-13.5, 9.5, 0.0, Color::srgb(1.0, 0.76, 0.42), 260_000.0, 34.0),
+        (13.5, 9.5, 0.0, Color::srgb(1.0, 0.58, 0.84), 260_000.0, 34.0),
+        (0.0, 9.0, -15.5, Color::srgb(1.0, 0.86, 0.56), 240_000.0, 30.0),
+        (0.0, 8.0, 17.5, Color::srgb(0.76, 0.68, 1.0), 220_000.0, 28.0),
     ] {
         commands.spawn((
             LevelEntity,
-            CityWorldMarker,
-            CasinoWorld,
+            CasinoLevelEntity,
             PointLight {
                 color: col,
                 intensity,
                 range,
                 ..default()
             },
-            Transform::from_xyz(lx, ly, lz),
+            Transform::from_translation(orig + Vec3::new(lx, ly, lz)),
         ));
     }
 
-    let to_local = |wx: f32, wy: f32, wz: f32| Vec3::new(wx, wy, wz) - CASINO_LAYOUT_ORIGIN;
+    // Main floor slab + PlatformBox collider (top surface at y = 0.0)
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(carpet_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, -0.5, 0.0))
+            .with_scale(Vec3::new(46.0, 1.0, 46.0)),
+        PlatformBox {
+            half_extents: Vec3::new(23.0, 0.5, 23.0),
+        },
+    ));
+    // Central red runner carpet with gold trim borders running South Portal -> North Cashier
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(gold_trim_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 0.015, 0.0))
+            .with_scale(Vec3::new(5.4, 0.03, 39.0)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(red_runner_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 0.025, 0.0))
+            .with_scale(Vec3::new(4.8, 0.03, 38.6)),
+    ));
 
-    commands
-        .spawn((
-            LevelEntity,
-            CityWorldMarker,
-            CasinoWorld,
-            crate::gfx::CityOccluderGroup,
-            Transform::from_translation(CASINO_ANCHOR).with_scale(Vec3::splat(CASINO_SCALE)),
-        ))
-        .with_children(|root| {
-            // Crimson velvet carpet floor + exterior red runner welcoming players off 3rd St SE
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(carpet_mat.clone()),
-                Transform::from_translation(to_local(18.25, 0.04, 34.0))
-                    .with_scale(Vec3::new(13.5, 0.08, 14.0)),
-            ));
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(red_runner_mat.clone()),
-                Transform::from_translation(to_local(13.2, 0.09, 34.0))
-                    .with_scale(Vec3::new(6.8, 0.02, 2.8)),
-            ));
-
-            // Back East Wall, North & South Side Walls, West Wall framing doorway, Dark Roof
-            for (wx, wy, wz, sx, sy, sz) in [
-                (24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32),
-                (18.25, 3.2, 27.25, 13.5, 6.4, 0.5),
-                (18.25, 3.2, 40.75, 13.5, 6.4, 0.5),
-                (11.75, 3.2, 29.5, 0.5, 6.4, 4.5),
-                (11.75, 3.2, 38.5, 0.5, 6.4, 4.5),
-                (11.75, 5.4, 34.0, 0.5, 2.0, 4.6),
-                (18.25, 6.5, 34.0, 13.5, 0.35, 14.0),
-            ] {
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(exterior_wall_mat.clone()),
-                    Transform::from_translation(to_local(wx, wy, wz)).with_scale(Vec3::new(sx, sy, sz)),
-                ));
-            }
-
-            // Gold Art-Deco West entrance pillars, glowing canopy, and TENDY PALACE CASINO marquee
-            for pz in [31.5_f32, 36.5] {
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(gold_trim_mat.clone()),
-                    Transform::from_translation(to_local(11.35, 2.5, pz))
-                        .with_scale(Vec3::new(0.22, 5.0, 0.22)),
-                ));
-            }
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(wood_mat.clone()),
-                Transform::from_translation(to_local(10.8, 4.25, 34.0))
-                    .with_scale(Vec3::new(1.8, 0.32, 5.4)),
-            ));
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(gold_trim_mat.clone()),
-                Transform::from_translation(to_local(9.92, 4.25, 34.0))
-                    .with_scale(Vec3::new(0.12, 0.42, 5.5)),
-            ));
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(marquee_mat.clone()),
-                Transform::from_translation(to_local(11.35, 5.35, 34.0))
-                    .with_scale(Vec3::new(0.14, 1.9, 5.4)),
-            ));
-
-            // Overhead Neon Ceiling Chandelier Ring
-            root.spawn((
-                Mesh3d(ring_mesh.clone()),
-                MeshMaterial3d(neon_gold_mat.clone()),
-                Transform::from_translation(to_local(18.25, 5.8, 34.0))
-                    .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
-                    .with_scale(Vec3::splat(2.1)),
-            ));
-
-            // Center-floor Blackjack Table + Dealer NPC
-            root.spawn((
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(wood_mat.clone()),
-                Transform::from_translation(to_local(17.8, 0.52, 34.0))
-                    .with_scale(Vec3::new(0.42, 1.0, 0.42)),
-            ));
-            root.spawn((
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(wood_mat.clone()),
-                Transform::from_translation(to_local(17.8, 1.05, 34.0))
-                    .with_scale(Vec3::new(2.25, 0.16, 1.55)),
-            ));
-            root.spawn((
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(felt_green_mat.clone()),
-                Transform::from_translation(to_local(17.8, 1.15, 34.0))
-                    .with_scale(Vec3::new(2.05, 0.04, 1.35)),
-            ));
-            // Stacked gold chips & card shoe on the table
-            for (cx, cz, col) in [(17.4_f32, 33.4_f32, &gold_trim_mat), (17.55, 34.5, &neon_pink_mat)] {
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(col.clone()),
-                    Transform::from_translation(to_local(cx, 1.24, cz))
-                        .with_scale(Vec3::new(0.11, 0.16, 0.11)),
-                ));
-            }
-            // Tuxedo Blackjack Dealer standing east of table facing players (-X)
-            let d_pos = to_local(19.65, 0.0, 34.0);
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(tux_mat.clone()),
-                Transform::from_translation(d_pos + Vec3::Y * 0.85)
-                    .with_scale(Vec3::new(0.45, 0.95, 0.66)),
-            ));
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(shirt_white.clone()),
-                Transform::from_translation(d_pos + Vec3::new(-0.22, 0.96, 0.0))
-                    .with_scale(Vec3::new(0.06, 0.45, 0.24)),
-            ));
-            root.spawn((
-                Mesh3d(unit_sphere.clone()),
-                MeshMaterial3d(skin_mat.clone()),
-                Transform::from_translation(d_pos + Vec3::Y * 1.56)
-                    .with_scale(Vec3::splat(0.24)),
-            ));
-
-            // NORTH WALL BANK: 3x BUFFALO STAMPEDE Slot Machines (bronze cabinets + Buffalo toppers)
-            for bx in [15.4_f32, 18.0, 20.6] {
-                let p = to_local(bx, 0.0, 28.45);
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(bronze_cab_mat.clone()),
-                    Transform::from_translation(p + Vec3::Y * 1.15)
-                        .with_scale(Vec3::new(1.25, 2.2, 0.95)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(buffalo_screen_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 1.85, 0.49))
-                        .with_scale(Vec3::new(1.06, 0.64, 0.04)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(slot_screen_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 1.12, 0.49))
-                        .with_scale(Vec3::new(0.98, 0.56, 0.04)),
-                ));
-                // Lever + gold ball handle
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(gold_trim_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.72, 1.32, 0.15))
-                        .with_rotation(Quat::from_rotation_x(-0.28))
-                        .with_scale(Vec3::new(0.04, 0.65, 0.04)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(red_runner_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.72, 1.65, 0.25))
-                        .with_scale(Vec3::splat(0.11)),
-                ));
-                // Cushioned stool
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(dark_metal_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 0.35, 1.15))
-                        .with_scale(Vec3::new(0.14, 0.70, 0.14)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(bronze_cab_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 0.70, 1.15))
-                        .with_scale(Vec3::new(0.40, 0.14, 0.40)),
-                ));
-            }
-
-            // SOUTH WALL BANK: 3x LUCKY LADIES (Cute Women Portrait) Slot Machines
-            for (idx, sx) in [15.4_f32, 18.0, 20.6].iter().enumerate() {
-                let p = to_local(*sx, 0.0, 39.55);
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(rose_cab_mat.clone()),
-                    Transform::from_translation(p + Vec3::Y * 1.15)
-                        .with_scale(Vec3::new(1.25, 2.2, 0.95)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(lady_screen_mats[idx % 3].clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 1.85, -0.49))
-                        .with_scale(Vec3::new(0.86, 0.86, 0.04)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(slot_screen_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 1.02, -0.49))
-                        .with_scale(Vec3::new(0.98, 0.56, 0.04)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(gold_trim_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(-0.72, 1.32, -0.15))
-                        .with_rotation(Quat::from_rotation_x(0.28))
-                        .with_scale(Vec3::new(0.04, 0.65, 0.04)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(neon_pink_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(-0.72, 1.65, -0.25))
-                        .with_scale(Vec3::splat(0.11)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(dark_metal_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 0.35, -1.15))
-                        .with_scale(Vec3::new(0.14, 0.70, 0.14)),
-                ));
-                root.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(rose_cab_mat.clone()),
-                    Transform::from_translation(p + Vec3::new(0.0, 0.70, -1.15))
-                        .with_scale(Vec3::new(0.40, 0.14, 0.40)),
-                ));
-            }
-
-            // EAST BACK WALL: Tendy Wendy Cashier Cage & Buffalo Emblem Showcase
-            let c_pos = to_local(23.25, 0.0, 34.0);
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(wood_mat.clone()),
-                Transform::from_translation(c_pos + Vec3::Y * 0.65)
-                    .with_scale(Vec3::new(1.1, 1.3, 4.4)),
-            ));
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(gold_trim_mat.clone()),
-                Transform::from_translation(c_pos + Vec3::Y * 1.34)
-                    .with_scale(Vec3::new(1.22, 0.10, 4.5)),
-            ));
-            root.spawn((
-                Mesh3d(unit_box.clone()),
-                MeshMaterial3d(buffalo_screen_mat.clone()),
-                Transform::from_translation(to_local(24.38, 2.8, 34.0))
-                    .with_scale(Vec3::new(0.06, 1.5, 2.5)),
-            ));
-        });
-
-    // PlatformBox colliders for Casino outer walls & center tables/banks (mirrored from Pub 217)
-    for (wx, wy, wz, sx, sy, sz) in [
-        (24.75_f32, 3.2_f32, 34.0_f32, 0.5_f32, 6.4_f32, 14.0_f32),
-        (18.25, 3.2, 27.25, 13.5, 6.4, 0.5),
-        (18.25, 3.2, 40.75, 13.5, 6.4, 0.5),
-        (11.75, 3.2, 29.5, 0.5, 6.4, 4.5),
-        (11.75, 3.2, 38.5, 0.5, 6.4, 4.5),
-        (11.75, 5.4, 34.0, 0.5, 2.0, 4.6),
-        (18.25, 6.5, 34.0, 13.5, 0.35, 14.0),
-        (17.8, 0.62, 34.0, 2.3, 1.24, 1.6),
-        (18.0, 1.15, 28.45, 6.6, 2.3, 1.0),
-        (18.0, 1.15, 39.55, 6.6, 2.3, 1.0),
-        (23.25, 0.65, 34.0, 1.2, 1.3, 4.5),
+    // Perimeter Hall Walls & Vaulted Ceiling (44m x 44m x 14m) + PlatformBox colliders
+    for (wx, wy, wz, sx, sy, sz, mat) in [
+        (0.0_f32, 7.0_f32, -22.5_f32, 46.0_f32, 14.0_f32, 1.0_f32, wall_mat.clone()),
+        (0.0, 7.0, 22.5, 46.0, 14.0, 1.0, wall_mat.clone()),
+        (-22.5, 7.0, 0.0, 1.0, 14.0, 46.0, wall_mat.clone()),
+        (22.5, 7.0, 0.0, 1.0, 14.0, 46.0, wall_mat.clone()),
+        (0.0, 14.2, 0.0, 46.0, 0.5, 46.0, ceiling_mat.clone()),
     ] {
-        let base_local = to_local(wx, wy, wz);
-        let base_half = Vec3::new(sx * 0.5, sy * 0.5, sz * 0.5);
         commands.spawn((
             LevelEntity,
-            CityWorldMarker,
-            CasinoWorld,
-            Transform::from_translation(CASINO_ANCHOR + base_local * CASINO_SCALE),
+            CasinoLevelEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(mat),
+            Transform::from_translation(orig + Vec3::new(wx, wy, wz))
+                .with_scale(Vec3::new(sx, sy, sz)),
             PlatformBox {
-                half_extents: base_half * CASINO_SCALE,
+                half_extents: Vec3::new(sx * 0.5, sy * 0.5, sz * 0.5),
             },
         ));
     }
+    // Neon wall wainscoting bands
+    for (wx, wy, wz, sx, sz, mat) in [
+        (0.0_f32, 4.4_f32, -21.9_f32, 44.0_f32, 0.14_f32, neon_gold_mat.clone()),
+        (0.0, 4.4, 21.9, 44.0, 0.14, neon_pink_mat.clone()),
+        (-21.9, 4.4, 0.0, 0.14, 44.0, neon_gold_mat.clone()),
+        (21.9, 4.4, 0.0, 0.14, 44.0, neon_pink_mat.clone()),
+    ] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(mat),
+            Transform::from_translation(orig + Vec3::new(wx, wy, wz))
+                .with_scale(Vec3::new(sx, 0.18, sz)),
+        ));
+    }
 
-    // Doorway plug when oversized (matches Pub 217 behavior)
+    // Ornate corner gold columns & massive glowing overhead Chandelier
+    for px in [-18.5_f32, 18.5] {
+        for pz in [-18.5_f32, 18.5] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(gold_trim_mat.clone()),
+                Transform::from_translation(orig + Vec3::new(px, 7.0, pz))
+                    .with_scale(Vec3::new(0.8, 14.0, 0.8)),
+                PlatformBox {
+                    half_extents: Vec3::new(0.75, 7.0, 0.75),
+                },
+            ));
+        }
+    }
     commands.spawn((
         LevelEntity,
-        CityWorldMarker,
-        CasinoWorld,
-        CasinoDoorPlug,
-        Transform::from_translation(CASINO_ANCHOR + Vec3::new(0.0, -50.0, 0.0)),
-        PlatformBox {
-            half_extents: Vec3::new(0.25, 0.1, 0.1),
-        },
+        CasinoLevelEntity,
+        Mesh3d(ring_mesh.clone()),
+        MeshMaterial3d(neon_gold_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 11.4, 0.0))
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::splat(3.4)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(ring_mesh.clone()),
+        MeshMaterial3d(neon_pink_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 11.0, 0.0))
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::splat(2.1)),
     ));
 
-    // Glowing floor rings marking the 4 interactive casino stations
+    // Huge backlit TENDY PALACE CASINO Marquee high on North wall (facing South +Z)
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(gold_trim_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 9.2, -21.92))
+            .with_scale(Vec3::new(9.2, 3.6, 0.18)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(marquee_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, 9.2, -21.82))
+            .with_scale(Vec3::new(8.8, 3.3, 0.08)),
+    ));
+
+    // CENTER FLOOR: Grand Emerald Blackjack Pit + Tuxedo Dealer
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_cyl.clone()),
+        MeshMaterial3d(wood_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 0.56, 0.0))
+            .with_scale(Vec3::new(0.75, 1.12, 0.65)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_cyl.clone()),
+        MeshMaterial3d(wood_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 1.18, 0.0))
+            .with_scale(Vec3::new(2.55, 0.22, 1.85)),
+        PlatformBox {
+            half_extents: Vec3::new(2.55, 0.65, 1.85),
+        },
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_cyl.clone()),
+        MeshMaterial3d(felt_green_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, 1.31, 0.0))
+            .with_scale(Vec3::new(2.30, 0.06, 1.62)),
+    ));
+    for (cx, cz, mat) in [
+        (-1.15_f32, 0.55_f32, &gold_trim_mat),
+        (-0.85, 0.70, &neon_pink_mat),
+        (1.05, 0.58, &gold_trim_mat),
+    ] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(orig + Vec3::new(cx, 1.44, cz))
+                .with_scale(Vec3::new(0.14, 0.22, 0.14)),
+        ));
+    }
+    // Dealer behind Blackjack table facing South (+Z)
+    let dealer_p = orig + Vec3::new(0.0, 0.0, -2.35);
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(tux_mat.clone()),
+        Transform::from_translation(dealer_p + Vec3::Y * 1.05)
+            .with_scale(Vec3::new(0.85, 1.18, 0.55)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(shirt_white.clone()),
+        Transform::from_translation(dealer_p + Vec3::new(0.0, 1.18, 0.27))
+            .with_scale(Vec3::new(0.32, 0.52, 0.06)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_sphere.clone()),
+        MeshMaterial3d(skin_mat.clone()),
+        Transform::from_translation(dealer_p + Vec3::Y * 1.92)
+            .with_scale(Vec3::splat(0.30)),
+    ));
+
+    // WEST WING: 4x BUFFALO STAMPEDE Slot Machines (x = -15.5, facing East +X)
+    for bz in [-9.0_f32, -3.0, 3.0, 9.0] {
+        let p = orig + Vec3::new(-15.5, 0.0, bz);
+        commands
+            .spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
+                PlatformBox {
+                    half_extents: Vec3::new(0.95, 1.35, 1.15),
+                },
+            ))
+            .with_children(|cab| {
+                cab.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(bronze_cab_mat.clone()),
+                    Transform::from_xyz(0.0, 1.55, 0.0).with_scale(Vec3::new(1.75, 3.1, 1.35)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(buffalo_screen_mat.clone()),
+                    Transform::from_xyz(0.0, 2.52, 0.69).with_scale(Vec3::new(1.48, 0.90, 0.06)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(slot_screen_mat.clone()),
+                    Transform::from_xyz(0.0, 1.48, 0.69).with_scale(Vec3::new(1.38, 0.78, 0.06)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(0.98, 1.75, 0.18)
+                        .with_rotation(Quat::from_rotation_x(-0.28))
+                        .with_scale(Vec3::new(0.055, 0.92, 0.055)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(red_runner_mat.clone()),
+                    Transform::from_xyz(0.98, 2.22, 0.30).with_scale(Vec3::splat(0.15)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(dark_metal_mat.clone()),
+                    Transform::from_xyz(0.0, 0.48, 1.65).with_scale(Vec3::new(0.18, 0.96, 0.18)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(bronze_cab_mat.clone()),
+                    Transform::from_xyz(0.0, 0.96, 1.65).with_scale(Vec3::new(0.55, 0.20, 0.55)),
+                ));
+            });
+    }
+
+    // EAST WING: 4x LUCKY LADIES Cute-Women Portrait Slot Machines (x = +15.5, facing West -X)
+    for (idx, sz) in [-9.0_f32, -3.0, 3.0, 9.0].iter().enumerate() {
+        let p = orig + Vec3::new(15.5, 0.0, *sz);
+        commands
+            .spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
+                PlatformBox {
+                    half_extents: Vec3::new(0.95, 1.35, 1.15),
+                },
+            ))
+            .with_children(|cab| {
+                cab.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(rose_cab_mat.clone()),
+                    Transform::from_xyz(0.0, 1.55, 0.0).with_scale(Vec3::new(1.75, 3.1, 1.35)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(lady_screen_mats[idx % 3].clone()),
+                    Transform::from_xyz(0.0, 2.48, 0.69).with_scale(Vec3::new(1.24, 1.24, 0.06)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(slot_screen_mat.clone()),
+                    Transform::from_xyz(0.0, 1.36, 0.69).with_scale(Vec3::new(1.38, 0.78, 0.06)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(-0.98, 1.75, 0.18)
+                        .with_rotation(Quat::from_rotation_x(-0.28))
+                        .with_scale(Vec3::new(0.055, 0.92, 0.055)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(neon_pink_mat.clone()),
+                    Transform::from_xyz(-0.98, 2.22, 0.30).with_scale(Vec3::splat(0.15)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(dark_metal_mat.clone()),
+                    Transform::from_xyz(0.0, 0.48, 1.65).with_scale(Vec3::new(0.18, 0.96, 0.18)),
+                ));
+                cab.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(rose_cab_mat.clone()),
+                    Transform::from_xyz(0.0, 0.96, 1.65).with_scale(Vec3::new(0.55, 0.20, 0.55)),
+                ));
+            });
+    }
+
+    // NORTH VIP WALL: Tendy Wendy Cashier Desk & Buffalo Showcase
+    let cash_p = orig + Vec3::new(0.0, 0.0, -16.8);
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(wood_mat),
+        Transform::from_translation(cash_p + Vec3::Y * 0.75)
+            .with_scale(Vec3::new(7.4, 1.5, 1.4)),
+        PlatformBox {
+            half_extents: Vec3::new(3.7, 0.75, 0.7),
+        },
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(gold_trim_mat.clone()),
+        Transform::from_translation(cash_p + Vec3::Y * 1.55)
+            .with_scale(Vec3::new(7.6, 0.14, 1.56)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(buffalo_screen_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, 3.8, -21.85))
+            .with_scale(Vec3::new(4.2, 2.5, 0.08)),
+    ));
+    // Cashier NPC behind desk
+    let cashier_p = orig + Vec3::new(0.0, 0.0, -18.4);
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(tux_mat),
+        Transform::from_translation(cashier_p + Vec3::Y * 1.05)
+            .with_scale(Vec3::new(0.85, 1.18, 0.55)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(shirt_white),
+        Transform::from_translation(cashier_p + Vec3::new(0.0, 1.18, 0.27))
+            .with_scale(Vec3::new(0.32, 0.52, 0.06)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_sphere.clone()),
+        MeshMaterial3d(skin_mat),
+        Transform::from_translation(cashier_p + Vec3::Y * 1.92).with_scale(Vec3::splat(0.30)),
+    ));
+
+    // SOUTH WALL: Swirling Magic Return Portal to Pub 217
+    let port_p = orig + Vec3::new(0.0, 2.8, 20.6);
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_cyl.clone()),
+        MeshMaterial3d(portal_core_mat),
+        Transform::from_translation(port_p)
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::new(2.05, 0.14, 2.55)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        CasinoPortalSpin { speed: 1.8 },
+        Mesh3d(portal_ring_mesh.clone()),
+        MeshMaterial3d(neon_pink_mat.clone()),
+        Transform::from_translation(port_p).with_scale(Vec3::new(1.05, 1.25, 1.0)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        CasinoPortalSpin { speed: -2.4 },
+        Mesh3d(portal_ring_mesh),
+        MeshMaterial3d(neon_cyan_mat),
+        Transform::from_translation(port_p + Vec3::new(0.0, 0.0, -0.15))
+            .with_scale(Vec3::new(0.84, 1.02, 1.0)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(gold_trim_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, 6.2, 20.65))
+            .with_scale(Vec3::new(3.9, 1.55, 0.14)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_box),
+        MeshMaterial3d(portal_sign_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, 6.2, 20.54))
+            .with_rotation(Quat::from_rotation_y(PI))
+            .with_scale(Vec3::new(3.65, 1.40, 0.06)),
+    ));
+
+    // Glowing floor rings marking the 7 interactive stations
     let stations = [
-        (CasinoStationKind::Blackjack, Vec3::new(16.0, 0.0, 34.0), Color::srgb(0.18, 0.95, 0.45)),
-        (CasinoStationKind::BuffaloSlots, Vec3::new(18.0, 0.0, 30.3), Color::srgb(1.0, 0.72, 0.16)),
-        (CasinoStationKind::LuckyLadiesSlots, Vec3::new(18.0, 0.0, 37.7), Color::srgb(1.0, 0.42, 0.82)),
-        (CasinoStationKind::Cashier, Vec3::new(21.6, 0.0, 34.0), Color::srgb(0.98, 0.88, 0.34)),
+        (CasinoStationKind::Blackjack, Vec3::new(0.0, 0.16, 3.8), Color::srgb(0.18, 0.95, 0.45)),
+        (CasinoStationKind::BuffaloSlots, Vec3::new(-11.2, 0.16, -4.5), Color::srgb(1.0, 0.72, 0.16)),
+        (CasinoStationKind::BuffaloSlots, Vec3::new(-11.2, 0.16, 4.5), Color::srgb(1.0, 0.72, 0.16)),
+        (CasinoStationKind::LuckyLadiesSlots, Vec3::new(11.2, 0.16, -4.5), Color::srgb(1.0, 0.42, 0.82)),
+        (CasinoStationKind::LuckyLadiesSlots, Vec3::new(11.2, 0.16, 4.5), Color::srgb(1.0, 0.42, 0.82)),
+        (CasinoStationKind::Cashier, Vec3::new(0.0, 0.16, -13.2), Color::srgb(0.98, 0.88, 0.34)),
+        (CasinoStationKind::ReturnPortal, Vec3::new(0.0, 0.16, 17.8), Color::srgb(0.32, 0.94, 1.0)),
     ];
-    for (kind, pos, color) in stations {
+    for (kind, local_p, color) in stations {
         let l = color.to_linear();
         let mat = materials.add(StandardMaterial {
             base_color: color,
@@ -1190,11 +1454,10 @@ fn spawn_casino_if_needed(
             unlit: true,
             ..default()
         });
-        let world_p = CASINO_ANCHOR + to_local(pos.x, 0.16, pos.z) * CASINO_SCALE;
+        let world_p = orig + local_p;
         commands.spawn((
             LevelEntity,
-            CityWorldMarker,
-            CasinoWorld,
+            CasinoLevelEntity,
             CasinoRing {
                 station: kind,
                 base_pos: world_p,
@@ -1203,78 +1466,99 @@ fn spawn_casino_if_needed(
             MeshMaterial3d(mat),
             Transform::from_translation(world_p)
                 .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
-                .with_scale(Vec3::splat(CASINO_SCALE * 0.9)),
+                .with_scale(Vec3::splat(1.18)),
         ));
     }
+
+    // Glenn, Nate & TJ celebrating around the Casino floor after tumbling out of the portal!
+    let glenn_mats = crate::glenn::make_glenn_materials(&mut materials);
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Transform::from_translation(orig + Vec3::new(-10.2, 0.0, -8.2))
+                .with_rotation(Quat::from_rotation_y(-FRAC_PI_2 + 0.35))
+                .with_scale(Vec3::splat(1.22)),
+            Visibility::default(),
+        ))
+        .with_children(|p| {
+            crate::glenn::spawn_glenn_rig(p, &mut meshes, &glenn_mats);
+        });
+
+    let nate_mats = crate::nate::make_nate_materials(&mut materials);
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Transform::from_translation(orig + Vec3::new(10.2, 0.0, -2.0))
+                .with_rotation(Quat::from_rotation_y(FRAC_PI_2 - 0.35))
+                .with_scale(Vec3::splat(1.26)),
+            Visibility::default(),
+        ))
+        .with_children(|p| {
+            crate::nate::spawn_nate_rig(p, &mut meshes, &nate_mats, false);
+        });
+
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Transform::from_translation(orig + Vec3::new(5.2, 0.0, 3.4))
+                .with_rotation(Quat::from_rotation_y((-5.2_f32).atan2(-3.4)))
+                .with_scale(Vec3::splat(1.26)),
+            Visibility::default(),
+        ))
+        .with_children(|p| {
+            crate::tj::spawn_tj_rig(p, &mut meshes, &mut materials, false, false);
+        });
 }
 
-fn update_casino_door_and_rings(
+fn exit_casino_play(
+    mut commands: Commands,
+    mut stats: ResMut<PlayerStats>,
+    mut game: ResMut<CasinoGameState>,
+    level_q: Query<Entity, With<CasinoLevelEntity>>,
+    ui_q: Query<Entity, With<CasinoUiRoot>>,
+    prompt_q: Query<Entity, With<CasinoPromptUi>>,
+) {
+    if game.slot_spinning {
+        finish_slot_spin(&mut stats, &mut game);
+    }
+    stats.in_casino_level = false;
+    stats.casino_open = false;
+    stats.casino_esc_grace = false;
+    for e in &level_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &ui_q {
+        commands.entity(e).despawn_recursive();
+    }
+    for e in &prompt_q {
+        commands.entity(e).despawn_recursive();
+    }
+}
+
+fn update_casino_props_anim(
     time: Res<Time>,
     stats: Res<PlayerStats>,
-    prompt: Res<CasinoPrompt>,
-    mut plug_q: Query<(&mut Transform, &mut PlatformBox), With<CasinoDoorPlug>>,
-    mut ring_q: Query<(&CasinoRing, &mut Transform, &mut Visibility), Without<CasinoDoorPlug>>,
+    player_q: Query<&Transform, (With<Player>, Without<CasinoRing>, Without<CasinoPortalSpin>)>,
+    mut portal_q: Query<(&CasinoPortalSpin, &mut Transform), Without<CasinoRing>>,
+    mut ring_q: Query<(&CasinoRing, &mut Transform), Without<CasinoPortalSpin>>,
 ) {
-    let too_big = stats.player_scale > CASINO_DOOR_MAX_SCALE;
-    for (mut tf, mut pbox) in &mut plug_q {
-        if too_big {
-            tf.translation = CASINO_ANCHOR + Vec3::new(0.0, 3.2, 0.0) * CASINO_SCALE;
-            pbox.half_extents = Vec3::new(0.25, 3.2, 2.3) * CASINO_SCALE;
-        } else {
-            tf.translation = CASINO_ANCHOR + Vec3::new(0.0, -50.0, 0.0);
-            pbox.half_extents = Vec3::new(0.25, 0.1, 0.1);
-        }
-    }
+    let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
-    for (ring, mut tf, mut vis) in &mut ring_q {
-        let want = if too_big {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        };
-        if *vis != want {
-            *vis = want;
-        }
-        let active = prompt.station == Some(ring.station);
-        let pulse = 1.0 + (t * 3.4).sin() * if active { 0.11 } else { 0.05 };
-        tf.translation = ring.base_pos;
-        tf.scale = Vec3::splat(CASINO_SCALE * 0.85 * pulse);
+    for (spin, mut tf) in &mut portal_q {
+        tf.rotate_z(spin.speed * dt);
     }
-}
-
-fn update_casino_minimap_dot(
-    mut commands: Commands,
-    stats: Res<PlayerStats>,
-    radar_q: Query<&Parent, With<CityMinimapPlayerDot>>,
-    dot_q: Query<Entity, With<CasinoMinimapDot>>,
-) {
-    if !stats.in_city || !dot_q.is_empty() {
-        return;
+    let p_pos = player_q.get_single().ok().map(|tf| tf.translation);
+    for (ring, mut tf) in &mut ring_q {
+        let near = !stats.casino_open
+            && p_pos.is_some_and(|p| {
+                Vec2::new(p.x - ring.base_pos.x, p.z - ring.base_pos.z).length() < 3.2
+            });
+        let pulse = 1.0 + (t * 3.4).sin() * if near { 0.12 } else { 0.05 };
+        tf.scale = Vec3::splat(1.18 * pulse);
     }
-    let Ok(radar_parent) = radar_q.get_single() else {
-        return;
-    };
-    let to_pct = |v: f32| -> f32 { ((v + CITY_HALF_EXTENT) / (CITY_HALF_EXTENT * 2.0) * 100.0).clamp(3.0, 97.0) };
-    let center = CASINO_ANCHOR + Vec3::new(6.5 * CASINO_SCALE, 0.0, 0.0);
-    let dot = commands
-        .spawn((
-            CasinoMinimapDot,
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Percent(to_pct(center.x)),
-                top: Val::Percent(to_pct(center.z)),
-                width: Val::Px(10.0),
-                height: Val::Px(10.0),
-                margin: UiRect::all(Val::Px(-5.0)),
-                border: UiRect::all(Val::Px(1.5)),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.98, 0.34, 0.72)),
-            BorderColor(Color::srgb(1.0, 0.88, 0.32)),
-            BorderRadius::all(Val::Px(3.0)),
-        ))
-        .id();
-    commands.entity(radar_parent.get()).add_child(dot);
 }
 
 // =================================================================================================
@@ -1856,61 +2140,119 @@ fn start_slot_spin(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     game.slot_msg = "Spinning reels...".to_string();
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_casino_stations(
     mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
     help: Res<HelpPause>,
     art: Option<Res<CasinoArt>>,
-    mut prompt: ResMut<CasinoPrompt>,
     mut game: ResMut<CasinoGameState>,
+    mut next_state: SceneTransition,
     player_q: Query<&Transform, With<Player>>,
     ring_q: Query<&CasinoRing>,
+    prompt_q: Query<Entity, With<CasinoPromptUi>>,
+    btn_q: Query<&Interaction, (Changed<Interaction>, With<CasinoPromptButton>)>,
+    mut text_q: Query<&mut Text, With<CasinoPromptText>>,
     mut window_q: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
     let Some(art) = art else {
         return;
     };
-    prompt.label = None;
-    prompt.station = None;
-    if !stats.in_city || stats.casino_open || stats.phone_open || stats.riding_wheel || help.open {
-        prompt.pressed = false;
+    if !stats.in_casino_level || stats.casino_open || help.open {
+        for e in &prompt_q {
+            commands.entity(e).despawn_recursive();
+        }
         return;
     }
     let Ok(p_tf) = player_q.get_single() else {
-        prompt.pressed = false;
+        for e in &prompt_q {
+            commands.entity(e).despawn_recursive();
+        }
         return;
     };
-    let on_foot = stats.driving_car.is_none()
-        && stats.riding_scooter.is_none()
-        && p_tf.translation.y < 3.5
-        && stats.player_scale <= CASINO_DOOR_MAX_SCALE;
-    if !on_foot {
-        prompt.pressed = false;
+
+    let mut best: Option<(f32, CasinoStationKind)> = None;
+    if p_tf.translation.y < 3.5 {
+        for ring in &ring_q {
+            let d = Vec2::new(
+                p_tf.translation.x - ring.base_pos.x,
+                p_tf.translation.z - ring.base_pos.z,
+            )
+            .length();
+            if d < 3.2 && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, ring.station));
+            }
+        }
+    }
+
+    let Some((_, kind)) = best else {
+        for e in &prompt_q {
+            commands.entity(e).despawn_recursive();
+        }
+        return;
+    };
+
+    let label = kind.prompt_text();
+    if prompt_q.is_empty() {
+        commands
+            .spawn((
+                CasinoPromptUi,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(74.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+            ))
+            .with_children(|root| {
+                root.spawn((
+                    CasinoPromptButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.42, 0.12, 0.36)),
+                    BorderColor(Color::srgb(1.0, 0.84, 0.32)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        CasinoPromptText,
+                        Text::new(label),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            });
+    } else if let Ok(mut txt) = text_q.get_single_mut() {
+        if txt.0 != label {
+            txt.0 = label.to_string();
+        }
+    }
+
+    let tapped = btn_q.iter().any(|i| *i == Interaction::Pressed);
+    let pressed = tapped || keys.just_pressed(KeyCode::KeyF) || keys.just_pressed(KeyCode::KeyE);
+    if !pressed {
         return;
     }
 
-    let mut best: Option<(f32, CasinoStationKind)> = None;
-    for ring in &ring_q {
-        let d = Vec2::new(
-            p_tf.translation.x - ring.base_pos.x,
-            p_tf.translation.z - ring.base_pos.z,
-        )
-        .length();
-        if d < 2.8 && best.is_none_or(|(bd, _)| d < bd) {
-            best = Some((d, ring.station));
-        }
+    for e in &prompt_q {
+        commands.entity(e).despawn_recursive();
     }
-    if let Some((_, kind)) = best {
-        prompt.label = Some(kind.prompt_text().to_string());
-        prompt.station = Some(kind);
-        if prompt.pressed {
-            prompt.pressed = false;
-            open_casino_modal(&mut commands, &mut stats, &mut game, &art, kind, &mut window_q);
-            return;
-        }
+    if kind == CasinoStationKind::ReturnPortal {
+        play_sfx("portal_suck");
+        stats.casino_return_city = true;
+        next_state.set(GameState::CityPlay);
+        return;
     }
-    prompt.pressed = false;
+    open_casino_modal(&mut commands, &mut stats, &mut game, &art, kind, &mut window_q);
 }
 
 fn update_blackjack_dealer_timer(
@@ -2091,7 +2433,7 @@ fn handle_casino_modal_input(
                 start_slot_spin(&mut stats, &mut game);
             }
         }
-        CasinoStationKind::Cashier => {}
+        CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {}
     }
 }
 
@@ -2589,7 +2931,7 @@ fn refresh_casino_ui(
             CasinoDynamicText::StatusMsg => match game.station {
                 CasinoStationKind::Blackjack => game.bj_msg.clone(),
                 CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => game.slot_msg.clone(),
-                CasinoStationKind::Cashier => {
+                CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {
                     "Tendy Wendies persist across Story Mode, Free Mode & future updates!".to_string()
                 }
             },
@@ -2758,24 +3100,5 @@ fn refresh_casino_ui(
         } else {
             Color::srgb(1.0, 0.62, 0.85)
         };
-    }
-}
-
-fn cleanup_casino_on_exit(
-    mut commands: Commands,
-    mut stats: ResMut<PlayerStats>,
-    mut game: ResMut<CasinoGameState>,
-    mut prompt: ResMut<CasinoPrompt>,
-    ui_q: Query<Entity, With<CasinoUiRoot>>,
-) {
-    if game.slot_spinning {
-        finish_slot_spin(&mut stats, &mut game);
-    }
-    stats.casino_open = false;
-    prompt.label = None;
-    prompt.station = None;
-    prompt.pressed = false;
-    for e in &ui_q {
-        commands.entity(e).despawn_recursive();
     }
 }

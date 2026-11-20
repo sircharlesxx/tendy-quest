@@ -29,6 +29,7 @@ pub enum ControlContext {
     Scooter,
     Car,
     Wheel,
+    Casino,
 }
 
 impl ControlContext {
@@ -41,6 +42,7 @@ impl ControlContext {
             GameState::CityPlay if stats.riding_scooter.is_some() => Some(Self::Scooter),
             GameState::CityPlay if stats.driving_car.is_some() => Some(Self::Car),
             GameState::CityPlay => Some(Self::CityFoot),
+            GameState::CasinoPlay => Some(Self::Casino),
             _ => None,
         }
     }
@@ -53,6 +55,7 @@ impl ControlContext {
             Self::Scooter => "Riding a scooter",
             Self::Car => "Driving a car",
             Self::Wheel => "Riding the Ferris wheel",
+            Self::Casino => "Tendy Palace Casino",
         }
     }
 }
@@ -135,6 +138,15 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             bind("F", "X", "Hop off at the bottom", true),
             bind("WHEEL", "", "Gondola / outside view", true),
             PAUSE,
+        ],
+        ControlContext::Casino => vec![
+            bind("WASD", "L-STICK", "Move", true),
+            bind("SPACE", "A", "Jump", true),
+            bind("SHIFT", "B", "Dash", true),
+            bind("F / E", "X", "Play / Return Portal", true),
+            PAUSE,
+            LOOK,
+            bind("WHEEL", "", "Zoom", false),
         ],
     }
 }
@@ -231,6 +243,7 @@ fn update_control_strip(
         && fade.phase == FadePhase::Idle
         && !stats.phone_open
         && !stats.casino_open
+        && !stats.bartender_open
         && !crate::audio::skip_touch_ui();
     let want = if show { Visibility::Inherited } else { Visibility::Hidden };
     if *vis != want {
@@ -520,7 +533,7 @@ fn update_pause_menu(
         // Only open over settled gameplay: not during a fade-in (a pointer-lock loss or the debug
         // flag waits for it to finish instead of being dropped).
         // (`SceneTransition` owns `SceneFade`; `input_unlocked(0.0)` is "fade phase is Idle".)
-        if !next_state.input_unlocked(0.0) || stats.casino_open || stats.casino_esc_grace {
+        if !next_state.input_unlocked(0.0) || stats.casino_open || stats.bartender_open || stats.casino_esc_grace {
             stats.casino_esc_grace = false;
             let _ = crate::audio::take_pointer_lock_lost();
             return;
@@ -736,7 +749,9 @@ fn run_pause_restart(world: &mut World) {
         return;
     };
     let _ = world.try_run_schedule(OnExit(state));
-    let _ = world.run_system_once_with((state == GameState::CityPlay, false), restart_world_for_pause);
+    if state != GameState::CasinoPlay {
+        let _ = world.run_system_once_with((state == GameState::CityPlay, false), restart_world_for_pause);
+    }
     let _ = world.try_run_schedule(OnEnter(state));
 }
 
@@ -788,12 +803,18 @@ impl Plugin for ControlsPlugin {
                     .run_if(
                         in_state(GameState::Playing)
                             .or(in_state(GameState::BossFight))
-                            .or(in_state(GameState::CityPlay)),
+                            .or(in_state(GameState::CityPlay))
+                            .or(in_state(GameState::CasinoPlay)),
                     )
                     .run_if(sim_running),
             )
             .add_systems(Update, (update_control_strip, refresh_pause_menu));
-        for s in [GameState::Playing, GameState::BossFight, GameState::CityPlay] {
+        for s in [
+            GameState::Playing,
+            GameState::BossFight,
+            GameState::CityPlay,
+            GameState::CasinoPlay,
+        ] {
             app.add_systems(
                 OnTransition {
                     exited: s,

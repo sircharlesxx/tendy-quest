@@ -618,6 +618,17 @@
           });
           return true;
         }
+        if (name === "door_slam") {
+          mkOsc("sawtooth", 145, 38, 0.22, 0.34);
+          mkResNoise("bandpass", 0.0, 0.16, 0.36, 900, 260, 1.2);
+          return true;
+        }
+        if (name === "portal_suck") {
+          mkOsc("sine", 140, 880, 0.95, 0.24);
+          mkOsc("triangle", 220, 1180, 0.85, 0.16);
+          mkResNoise("bandpass", 0.0, 0.95, 0.28, 350, 2800, 2.2);
+          return true;
+        }
         return false;
       }
 
@@ -1250,6 +1261,8 @@
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
           // Voice profile for the optional River Star boardwalk easter-egg NPC.
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
+          // Voice profile for Scarlett, the Pub 217 bartender.
+          bartender: { pitch: 1.16, rate: 0.96, volume: 1.0, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
         _VOICE_MOODS: {
@@ -1264,7 +1277,7 @@
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
-        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary"],
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender"],
         _voiceCast: null,
         _voiceCastKey: "",
         _voiceCastLocked: false,
@@ -2575,6 +2588,8 @@
         if (s.includes("lexie_victory=1")) return 14;
         // QA/dev direct-preview mode (mode 18); zero effect during standard play.
         if (s.includes("chillary=1")) return 18;
+        if (s.includes("casino=1")) return 19;
+        if (s.includes("pub_portal=1")) return 20;
         return 0;
       })();
       const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);

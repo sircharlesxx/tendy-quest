@@ -499,6 +499,10 @@ pub fn update_hurt_flash(
 
 /// The single "what do I do now" line for the HUD.
 fn objective_line(stats: &PlayerStats) -> String {
+    if stats.in_casino_level {
+        return "> TENDY PALACE CASINO: Blackjack, Buffalo & Lucky Ladies Slots (TW) | South Portal -> Pub 217"
+            .to_string();
+    }
     if stats.in_city {
         if stats.free_roam {
             return "> FREE ROAM: scoot, hit the stunt gates, visit the crew in Pub 217".to_string();
@@ -621,13 +625,15 @@ pub fn update_hud(
         border.0 = Color::srgba(1.0, 0.84, 0.32, 0.55 * hint_alpha);
     }
 
-    let unlocked = !stats.in_city || stats.city_tendies_unlocked();
+    let unlocked = !stats.in_city || stats.in_casino_level || stats.city_tendies_unlocked();
     let tags = status_tags(&stats);
     for (mut text, mut color, field) in &mut text_q {
         let new_text = match field {
             HudField::Hearts => format!("{}/{}", stats.hearts.max(0), stats.max_hearts),
             HudField::Tendies => {
-                if stats.in_city && stats.free_roam {
+                if stats.in_casino_level {
+                    "CASINO LEVEL".to_string()
+                } else if stats.in_city && stats.free_roam {
                     "CITY CLEARED".to_string()
                 } else if unlocked {
                     format!("TENDIES {}/{}", stats.tendies, stats.total_tendies)
@@ -639,14 +645,16 @@ pub fn update_hud(
             HudField::Flask => format!("FLASK [Q] {}/{}", stats.estus_flasks, stats.max_estus_flasks),
             // The license is saved with the checkpoint; Tendy Wendies persist across modes.
             HudField::Credits => {
-                if stats.in_city && stats.has_license {
+                if (stats.in_city || stats.in_casino_level) && stats.has_license {
                     format!("TW {} | CR {} | LICENSE", stats.tendy_wendies, stats.tendy_credits)
                 } else {
                     format!("TW {} | CR {}", stats.tendy_wendies, stats.tendy_credits)
                 }
             }
             HudField::App => {
-                if stats.scooter_app_unlocked {
+                if stats.in_casino_level {
+                    "PORTAL: SOUTH".to_string()
+                } else if stats.scooter_app_unlocked {
                     "SCOOTER APP OK".to_string()
                 } else {
                     "PHONE [P]".to_string()
@@ -655,7 +663,9 @@ pub fn update_hud(
             HudField::Objective => objective_line(&stats),
             HudField::Status => tags.join("  "),
             HudField::Score => {
-                if stats.in_city && stats.free_roam {
+                if stats.in_casino_level {
+                    format!("SCORE: {:06}\nTENDY PALACE CASINO", stats.score)
+                } else if stats.in_city && stats.free_roam {
                     format!("SCORE: {:06}\nCEDAR RAPIDS | FREE ROAM", stats.score)
                 } else if stats.in_city {
                     format!("SCORE: {:06}\nCEDAR RAPIDS | {}/50", stats.score, stats.tendies)
@@ -685,7 +695,7 @@ pub fn update_hud(
 
     for (slot, mut node) in &mut slot_q {
         let show = match slot {
-            HudSlot::CityChip => stats.in_city,
+            HudSlot::CityChip => stats.in_city || stats.in_casino_level,
             HudSlot::Status => !tags.is_empty(),
         };
         let want = if show { Display::Flex } else { Display::None };
@@ -708,8 +718,8 @@ pub fn update_hud(
         node.width = Val::Percent(stats.dash_energy.clamp(0.0, 100.0));
     }
     if let Ok((mut node, mut bg)) = tendy_bar_q.get_single_mut() {
-        // Free roam has no tendies; the bar reads as complete.
-        let frac = if stats.in_city && stats.free_roam {
+        // Free roam & Casino have no tendies; the bar reads as complete.
+        let frac = if stats.in_casino_level || (stats.in_city && stats.free_roam) {
             1.0
         } else {
             stats.tendies as f32 / stats.total_tendies.max(1) as f32
@@ -1183,6 +1193,31 @@ pub fn check_url_test_mode(
             stats.chillary_return_city = true;
             stats.saved_city_pos = crate::chillary::CHILLARY_POS + Vec3::new(3.0, 0.0, -2.5);
             next_state.set_from_black(GameState::ChillaryCutscene);
+        }
+        // `?casino=1`: QA/dev direct-preview link for Level 3 Tendy Palace Casino.
+        19 => {
+            stats.in_city = false;
+            stats.in_casino_level = true;
+            stats.player_scale = 1.8;
+            stats.free_roam = true;
+            stats.lexie_defeated = true;
+            stats.scooter_app_unlocked = true;
+            stats.saved_city_pos =
+                crate::city::PUB217_ANCHOR + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set_from_black(GameState::CasinoPlay);
+        }
+        // `?pub_portal=1`: QA/dev direct-preview link for the Pub 217 10-beers & portal cutscene.
+        20 => {
+            stats.in_city = true;
+            stats.free_roam = true;
+            stats.lexie_defeated = true;
+            stats.scooter_app_unlocked = true;
+            stats.player_scale = 1.8;
+            stats.saved_city_pos =
+                crate::city::PUB217_ANCHOR + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set_from_black(GameState::PubPortalCutscene);
         }
         _ => {}
     }

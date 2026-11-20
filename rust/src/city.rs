@@ -1049,10 +1049,6 @@ pub(crate) fn is_clear_of_skyscrapers(x: f32, z: f32, margin: f32) -> bool {
     if x > pmin_x - margin && x < pmax_x + margin && z > pmin_z - margin && z < pmax_z + margin {
         return false;
     }
-    // Tendy Palace Casino (its own walk-in building on the (23, 23) block)
-    if crate::casino::blocks_spot(x, z, margin) {
-        return false;
-    }
     // Empire Citadel Tower footprint: 21x21 centered at (0, -82)
     if (x - CITADEL_POS.x).abs() < 11.2 + margin && (z - CITADEL_POS.z).abs() < 11.2 + margin {
         return false;
@@ -1713,10 +1709,9 @@ pub fn spawn_nyc_world_if_needed(
             if bx < -100.0 && bz.abs() > 1.0 {
                 continue;
             }
-            // Block (-23, 23) is Pub 217 and (23, 23) is Tendy Palace Casino: sidewalk and kerb, no tower.
+            // Block (-23, 23) is Pub 217: sidewalk and kerb, no tower.
             let is_pub = (bx + 23.0).abs() < 1.0 && (bz - 23.0).abs() < 1.0;
-            let is_casino = crate::casino::is_casino_block(bx, bz);
-            if is_pub || is_casino {
+            if is_pub {
                 commands.spawn((
                     LevelEntity,
                     CityWorldMarker,
@@ -1731,10 +1726,6 @@ pub fn spawn_nyc_world_if_needed(
                     MeshMaterial3d(kerb_mat.clone()),
                     Transform::from_xyz(bx, 0.0, bz),
                 ));
-                if is_casino {
-                    // Keep the remaining downtown towers' deterministic height/color sequence intact.
-                    b_idx += 1;
-                }
                 continue;
             }
             // Five Seasons Park's three blocks: `skatepark::spawn_skate_park` builds the ground, terraces
@@ -2395,10 +2386,10 @@ fn spawn_50_city_tendies(
     }
     crate::scooter::spawn_city_scooters(commands, meshes, materials);
     crate::stunts::spawn_stunt_course(commands, meshes, materials);
-    // Never put a tendy inside Pub 217 or the Casino.
-    spots.retain(|p| !is_in_pub217(*p, 1.8) && !crate::casino::is_in_casino(*p, 1.8));
+    // Never put a tendy inside Pub 217.
+    spots.retain(|p| !is_in_pub217(*p, 1.8));
     let mut stunt_spots = crate::stunts::stunt_tendy_spots();
-    stunt_spots.retain(|p| !is_in_pub217(*p, 1.8) && !crate::casino::is_in_casino(*p, 1.8));
+    stunt_spots.retain(|p| !is_in_pub217(*p, 1.8));
     // About 70 on the map in total (50 grow Stan to full kaiju): the stunt trails stay whole and
     // the street ones are thinned evenly.
     let street_keep = CITY_TENDY_TOTAL.saturating_sub(stunt_spots.len()).max(30);
@@ -3192,7 +3183,9 @@ pub fn enter_city_play(
         node.display = Display::Flex;
     }
     stats.sync_tendy_wendies_from_save();
+    stats.in_casino_level = false;
     stats.casino_open = false;
+    stats.bartender_open = false;
 
     spawn_nyc_world_if_needed(
         &mut commands,
@@ -3213,18 +3206,24 @@ pub fn enter_city_play(
         || stats.derek_return_city
         || stats.nate_return_city
         || stats.glenn_return_city
-        || stats.chillary_return_city;
+        || stats.chillary_return_city
+        || stats.casino_return_city;
     let from_mike = stats.mike_return_city;
     let from_derek = stats.derek_return_city;
     let from_nate = stats.nate_return_city;
     let from_glenn = stats.glenn_return_city;
     let from_chillary = stats.chillary_return_city;
+    let from_casino = stats.casino_return_city;
     stats.tj_return_city = false;
     stats.mike_return_city = false;
     stats.derek_return_city = false;
     stats.nate_return_city = false;
     stats.glenn_return_city = false;
     stats.chillary_return_city = false;
+    stats.casino_return_city = false;
+    if from_casino {
+        stats.player_scale = stats.saved_casino_city_scale.clamp(1.8, 18.0);
+    }
     let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
     stats.boss_mode = true;
@@ -3257,6 +3256,8 @@ pub fn enter_city_play(
         } else if from_chillary {
             // Optional boardwalk easter egg completed; crew gate stays unchanged.
             "JUST CHILLIN' IN CEDAR RAPIDS! Chillary's Snapchat is live.".to_string()
+        } else if from_casino {
+            "Back in Pub 217 from Tendy Palace Casino! Your Tendy Wendies (TW) are banked.".to_string()
         } else {
             format!("TJ JOINED YOUR SQUAD! {}", crew_line)
         };
@@ -3667,6 +3668,7 @@ pub fn exit_city_play(
     stats.riding_wheel = false;
     stats.phone_open = false;
     stats.casino_open = false;
+    stats.bartender_open = false;
     if let Ok(mut vis) = player_q.get_single_mut() {
         *vis = Visibility::Visible;
     }
@@ -4033,10 +4035,8 @@ pub fn update_city_driving(
                 }
             }
         }
-        // Pub 217 and the Casino are walk-in only: keep driven cars outdoors.
-        if let Some(n) = push_car_out_of_pub217(&mut car_tf, car.yaw)
-            .or_else(|| crate::casino::push_car_out_of_casino(&mut car_tf, car.yaw))
-        {
+        // Pub 217 is walk-in only: keep driven cars outdoors.
+        if let Some(n) = push_car_out_of_pub217(&mut car_tf, car.yaw) {
             let into = car.velocity.dot(n).min(0.0);
             car.velocity -= n * into * 1.28;
         }
@@ -4182,7 +4182,7 @@ pub fn update_city_traffic(
         return;
     };
     let in_active_play = *state.get() == GameState::CityPlay;
-    let is_driving = stats.driving_car.is_some() || stats.phone_open || stats.casino_open;
+    let is_driving = stats.driving_car.is_some() || stats.phone_open || stats.bartender_open;
     let hit_radius = 1.9 + stats.player_scale * 0.22;
 
     for (mut car_tf, mut car) in &mut car_q {
@@ -4202,9 +4202,7 @@ pub fn update_city_traffic(
         if car.parked {
             car_tf.translation.x = (car_tf.translation.x + car.velocity.x * dt).clamp(-132.0, 132.0);
             car_tf.translation.z = (car_tf.translation.z + car.velocity.y * dt).clamp(-132.0, 132.0);
-            if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some()
-                || crate::casino::push_car_out_of_casino(&mut car_tf, car.yaw).is_some()
-            {
+            if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some() {
                 car.velocity = Vec2::ZERO;
                 car.knock_vel = Vec2::ZERO;
             }
@@ -4260,10 +4258,8 @@ pub fn update_city_traffic(
                 car_tf.translation.z = CITY_HALF_EXTENT;
             }
         }
-        // Backstop for knockback shoving a lane car sideways into Pub 217 or the Casino.
-        if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some()
-            || crate::casino::push_car_out_of_casino(&mut car_tf, car.yaw).is_some()
-        {
+        // Backstop for knockback shoving a lane car sideways into Pub 217.
+        if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some() {
             car.knock_vel = Vec2::ZERO;
         }
         car_tf.rotation = Quat::from_rotation_y(car.yaw);
@@ -4714,8 +4710,7 @@ pub fn update_city_lexie(
         }
     }
 
-    let in_pub217 = is_in_pub217(p_tf.translation, stats.player_scale)
-        || crate::casino::is_in_casino(p_tf.translation, stats.player_scale);
+    let in_pub217 = is_in_pub217(p_tf.translation, stats.player_scale);
     let lexie_pos = lexie_q.get_single().ok().map(|(_, tf, _, _)| tf.translation);
 
     // Update airborne Pickled Garlic Clove Projectiles & burst into lingering Stench Clouds
@@ -4726,9 +4721,7 @@ pub fn update_city_lexie(
         g_tf.rotate_y(proj.spin * dt);
         g_tf.rotate_x(proj.spin * 0.7 * dt);
 
-        if is_in_pub217(g_tf.translation, stats.player_scale)
-            || crate::casino::is_in_casino(g_tf.translation, stats.player_scale)
-        {
+        if is_in_pub217(g_tf.translation, stats.player_scale) {
             commands.entity(g_ent).despawn_recursive();
             continue;
         }
@@ -4744,7 +4737,7 @@ pub fn update_city_lexie(
 
         // Saber guard: a blocked clove is sliced apart (no stench cloud on Stan); a perfect block
         // bats it back toward Lexie. Cloves arriving inside the post-block grace are cut for free.
-        if !stats.phone_open && !stats.casino_open && !in_pub217 && hit_stan && player.roll_timer <= 0.0 {
+        if !stats.phone_open && !stats.bartender_open && !in_pub217 && hit_stan && player.roll_timer <= 0.0 {
             let outcome = if player.invuln_timer <= 0.0 {
                 crate::player::try_block(&mut player, &mut stats, p_tf.translation, g_tf.translation)
             } else if crate::player::guard_covers(&player, &stats, p_tf.translation, g_tf.translation) {
@@ -4770,7 +4763,7 @@ pub fn update_city_lexie(
         }
 
         if !stats.phone_open
-            && !stats.casino_open
+            && !stats.bartender_open
             && !in_pub217
             && hit_stan
             && player.roll_timer <= 0.0
@@ -4848,7 +4841,7 @@ pub fn update_city_lexie(
         )
         .length();
         if !stats.phone_open
-            && !stats.casino_open
+            && !stats.bartender_open
             && !in_pub217
             && flat_dist < cloud.radius * spread
             && p_tf.translation.y < 6.5
@@ -5233,7 +5226,6 @@ fn spawn_parked_car(
     let stunt = crate::stunts::stunt_tendy_spots();
     let flat_d2 = |a: Vec3, b: Vec3| (a.x - b.x).powi(2) + (a.z - b.z).powi(2);
     let pub_front = PUB217_ANCHOR + Vec3::new(4.0, 0.0, 0.0);
-    let casino_front = crate::casino::CASINO_ANCHOR + Vec3::new(-4.0, 0.0, 0.0);
     let mut candidates: Vec<(Vec3, bool)> = Vec::new();
     for &r in &ROAD_COORDS {
         // 3rd St SE (x = 0) has the bike lanes, trees and the north stunt circuit.
@@ -5246,9 +5238,7 @@ fn spawn_parked_car(
                 for (p, along_z) in [(Vec3::new(r + side, 0.0, b), true), (Vec3::new(b, 0.0, r + side), false)] {
                     let ok = is_clear_of_skyscrapers(p.x, p.z, 2.5)
                         && !is_in_pub217(p, 1.8)
-                        && !crate::casino::is_in_casino(p, 1.8)
                         && flat_d2(p, pub_front) > 26.0 * 26.0
-                        && flat_d2(p, casino_front) > 26.0 * 26.0
                         && flat_d2(p, Vec3::new(69.0, 0.0, 69.0)) > 32.0 * 32.0
                         && stunt.iter().all(|&q| flat_d2(p, q) > 12.0 * 12.0)
                         && tendy_spots.iter().all(|&q| flat_d2(p, q) > 5.0 * 5.0)
@@ -5518,8 +5508,8 @@ pub enum PropAction {
     Wheel,
     /// Chillary Clinton NPC beside the Ferris wheel plaza (`chillary.rs`).
     Chillary,
-    /// Walk-in Cedar Rapids Casino games and cashier (`casino.rs`).
-    Casino,
+    /// Scarlett the Pub 217 bartender (`pub_portal.rs`).
+    Bartender,
 }
 
 /// Beer tower and parked car interaction (CityPlay, normal play and free roam). Both use the city
@@ -5552,7 +5542,7 @@ pub fn update_city_props(
     mut text_q: Query<&mut Text, With<PropPromptText>>,
     mut wheel: ResMut<crate::ferris::WheelPrompt>,
     mut chillary: ResMut<crate::chillary::ChillaryPrompt>,
-    mut casino: ResMut<crate::casino::CasinoPrompt>,
+    mut bartender: ResMut<crate::pub_portal::BartenderPrompt>,
     mut last: Local<Option<PropAction>>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -5565,7 +5555,7 @@ pub fn update_city_props(
     let on_foot = stats.driving_car.is_none()
         && stats.riding_scooter.is_none()
         && !stats.phone_open
-        && !stats.casino_open
+        && !stats.bartender_open
         && p.y < 4.0;
 
     // Open from the start; only shut while Stan stands where Mike's own [F / E] could fire
@@ -5590,8 +5580,8 @@ pub fn update_city_props(
         // Yield to Ferris wheel boarding (`PropAction::Wheel`) so players riding or hopping onto
         // the wheel are never hijacked into the optional boardwalk easter-egg cutscene.
         Some(PropAction::Chillary)
-    } else if casino.label.is_some() {
-        Some(PropAction::Casino)
+    } else if bartender.label.is_some() {
+        Some(PropAction::Bartender)
     } else if near_beer {
         Some(PropAction::Beer)
     } else if near_car {
@@ -5626,7 +5616,7 @@ pub fn update_city_props(
         PropAction::Car => "DRIVE [F/E]".to_string(),
         PropAction::Wheel => wheel.label.clone().unwrap_or_default(),
         PropAction::Chillary => chillary.label.clone().unwrap_or_default(),
-        PropAction::Casino => casino.label.clone().unwrap_or_default(),
+        PropAction::Bartender => bartender.label.clone().unwrap_or_default(),
     };
     if prompt_q.is_empty() {
         commands
@@ -5715,7 +5705,7 @@ pub fn update_city_props(
         // `ferris::ferris_ride_update` decides what the press means this frame.
         PropAction::Wheel => wheel.pressed = true,
         PropAction::Chillary => chillary.pressed = true,
-        PropAction::Casino => casino.pressed = true,
+        PropAction::Bartender => bartender.pressed = true,
     }
 }
 

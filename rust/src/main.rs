@@ -15,6 +15,7 @@ mod lexie_victory;
 mod nate;
 mod net;
 mod player;
+mod pub_portal;
 mod scooter;
 mod shapes;
 mod skatepark;
@@ -113,8 +114,10 @@ fn main() {
         .add_plugins(controls::ControlsPlugin)
         // Riverfront Ferris wheel: spin, ride, ride camera (see ferris.rs).
         .add_plugins(ferris::FerrisPlugin)
-        // Cedar Rapids Casino: Blackjack & Buffalo / Lucky Ladies slots in Tendy Wendies (casino.rs).
+        // Tendy Palace Casino: Level 3 Blackjack & Buffalo / Lucky Ladies slots in Tendy Wendies (casino.rs).
         .add_plugins(casino::CasinoPlugin)
+        // Pub 217 Scarlett bartender, "ORDER 10 BEERS" prompt & Women's Bathroom Portal cutscene (pub_portal.rs).
+        .add_plugins(pub_portal::PubPortalPlugin)
         // Distributed Free Mode P2P multiplayer (WebRTC mesh via public WebTorrent trackers, inert outside Free Mode; see net.rs).
         .add_plugins(net::NetPlugin)
         // Skate park on Greene Square + the lot south of it: pieces, ride physics, grinds (skatepark.rs).
@@ -304,6 +307,7 @@ fn main() {
             // keeps Ferris wheel boarding higher priority so players trying to ride aren't interrupted.
             (
                 update_city_chillary,
+                pub_portal::update_pub_bartender,
                 city::update_city_props,
                 city::update_license_card,
                 city::sync_parked_car_collider,
@@ -408,6 +412,21 @@ fn main() {
         .add_systems(
             Update,
             update_chillary_cutscene.run_if(in_state(GameState::ChillaryCutscene)).run_if(sim_running),
+        )
+        .add_systems(
+            OnExit(GameState::CasinoPlay),
+            (close_help_overlay, reset_hit_reaction, unlock_cursor),
+        )
+        .add_systems(
+            Update,
+            (
+                camera_mouse_look.in_set(CameraSet::Look),
+                player_movement.in_set(CameraSet::Motion),
+                animate_player_limbs,
+                update_camera.in_set(CameraSet::Follow),
+            )
+                .run_if(in_state(GameState::CasinoPlay))
+                .run_if(gameplay_running),
         )
         .add_systems(OnEnter(GameState::LexieVictoryCutscene), enter_lexie_victory_cutscene)
         .add_systems(OnExit(GameState::LexieVictoryCutscene), exit_lexie_victory_cutscene)

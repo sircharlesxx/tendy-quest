@@ -613,7 +613,7 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if stats.casino_open {
+    if stats.casino_open || stats.bartender_open {
         return;
     }
     if let Ok(mut window) = window_q.get_single_mut() {
@@ -831,12 +831,13 @@ pub fn player_movement(
         }
     }
 
-    // Vehicles (and the Ferris wheel / Casino tables) own Stan's position or UI focus.
+    // Vehicles (and the Ferris wheel / Casino tables / Bartender modal) own Stan's position or UI focus.
     if stats.driving_car.is_some()
         || stats.riding_scooter.is_some()
         || stats.riding_wheel
         || stats.phone_open
         || stats.casino_open
+        || stats.bartender_open
     {
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
@@ -1096,7 +1097,8 @@ pub fn player_movement(
             crate::audio::play_sfx("double_jump");
         }
         player.velocity.y = 9.2
-            + (stats.player_scale - 0.55).max(0.0) * if stats.in_city { 1.85 } else { 1.55 }
+            + (stats.player_scale - 0.55).max(0.0)
+                * if stats.in_city || stats.in_casino_level { 1.85 } else { 1.55 }
             + if stats.enraged && !stats.in_city { 2.2 } else { 0.0 };
         player.grounded = false;
         player.jumps_used += 1;
@@ -1220,12 +1222,12 @@ pub fn player_movement(
         player.knockback = Vec3::ZERO;
     }
 
-    let land_r = if stats.in_city {
+    let land_r = if stats.in_city || stats.in_casino_level {
         (0.38 * stats.player_scale).clamp(0.55, 3.2)
     } else {
         (0.38 * stats.player_scale).clamp(0.38, 0.85)
     };
-    let wall_r = if stats.in_city {
+    let wall_r = if stats.in_city || stats.in_casino_level {
         (0.28 * stats.player_scale).clamp(0.45, 2.8)
     } else {
         (0.28 * stats.player_scale).clamp(0.28, 0.72)
@@ -1343,7 +1345,16 @@ pub fn player_movement(
     }
 
     // Keep within level bounds or respawn on abyssal fall
-    if stats.in_city {
+    if stats.in_casino_level {
+        let c = crate::casino::CASINO_LEVEL_ORIGIN;
+        let lim = crate::casino::CASINO_WALK_LIMIT;
+        tf.translation.x = tf.translation.x.clamp(c.x - lim, c.x + lim);
+        tf.translation.z = tf.translation.z.clamp(c.z - lim, c.z + lim);
+        if tf.translation.y < -10.0 {
+            tf.translation = crate::casino::CASINO_SPAWN_POS;
+            respawn_after_fall(&mut player, &mut orbit);
+        }
+    } else if stats.in_city {
         tf.translation.x = tf.translation.x.clamp(-126.0, 126.0);
         tf.translation.z = tf.translation.z.clamp(-126.0, 126.0);
         if tf.translation.y < -12.0 {
@@ -1631,24 +1642,25 @@ pub fn update_camera(
     } else {
         1.0
     };
-    // Scale camera pullback with Stan's Katamari growth (linear in city up to 18x kaiju, sqrt in apartment).
+    // Scale camera pullback with Stan's Katamari growth (linear in city/casino up to 18x kaiju, sqrt in apartment).
     let cam_scale_mul = if stats.driving_car.is_some() {
         0.92
-    } else if stats.in_city {
+    } else if stats.in_city || stats.in_casino_level {
         0.72 + cam_ps * 0.24
     } else {
         0.82 + cam_ps.sqrt() * 0.34
     };
-    // Pub 217 and the Casino share fixed interior scale; only count interior (not roof).
-    let in_pub217 = stats.in_city
-        && (crate::city::is_in_pub217(p_pos, cam_ps) || crate::casino::is_in_casino(p_pos, cam_ps));
+    // Pub 217 keeps a fixed tight interior scale; only count interior (not roof).
+    let in_pub217 = stats.in_city && crate::city::is_in_pub217(p_pos, cam_ps);
     let pub_s = crate::city::PUB217_SCALE;
     let mut desired_dist = orbit.distance * cam_scale_mul * aspect_mul;
     // Clamp distance & pitch inside Pub 217 so the bar ceiling/walls don't occlude the player.
     if in_pub217 {
         desired_dist = desired_dist.min(4.2 * pub_s);
     }
-    let min_cam_dist = if stats.in_city {
+    let min_cam_dist = if stats.in_casino_level {
+        (2.4 + cam_ps * 0.6).min(desired_dist)
+    } else if stats.in_city {
         (2.2 + cam_ps * 1.8).min(desired_dist)
     } else {
         (2.2 + cam_ps * 0.45).min(desired_dist)
@@ -1674,7 +1686,7 @@ pub fn update_camera(
     let sweep_pad = Vec3::splat(0.22);
     if !(stats.in_city && cam_ps >= 8.0) {
         for (p_tf_box, p_box) in &platform_q {
-            if !stats.in_city && p_tf_box.translation.z > 46.5 {
+            if !stats.in_city && !stats.in_casino_level && p_tf_box.translation.z > 46.5 {
                 continue;
             }
             let is_structural = p_box.half_extents.y >= 2.1
@@ -1700,8 +1712,14 @@ pub fn update_camera(
         }
     }
 
-    // Clamp boom along room/city bounds (allowing open camera pull-back at south spawn)
-    let (room_min, room_max) = if stats.in_city {
+    // Clamp boom along room/city/casino bounds (allowing open camera pull-back at south spawn)
+    let (room_min, room_max) = if stats.in_casino_level {
+        let c = crate::casino::CASINO_LEVEL_ORIGIN;
+        (
+            Vec3::new(c.x - 21.0, 0.55, c.z - 21.0),
+            Vec3::new(c.x + 21.0, 12.8, c.z + 21.0),
+        )
+    } else if stats.in_city {
         (
             Vec3::new(-165.0, -2.0, -165.0),
             Vec3::new(165.0, 260.0, 165.0),
@@ -1748,7 +1766,7 @@ pub fn update_camera(
         let cam_margin = Vec3::splat(0.38);
         for _ in 0..2 {
             for (p_tf_box, p_box) in &platform_q {
-                if !stats.in_city && p_tf_box.translation.z > 46.5 {
+                if !stats.in_city && !stats.in_casino_level && p_tf_box.translation.z > 46.5 {
                     continue;
                 }
                 let top_y = p_tf_box.translation.y + p_box.half_extents.y;
@@ -1898,16 +1916,21 @@ pub fn update_camera(
         }
     }
 
-    // Ease from the previous shot (e.g. a cutscene's last frame) into the follow pose.
+    // Ease from the previous shot (e.g. a cutscene's last frame) into the follow pose,
+    // snapping cleanly if switching between isolated stages (> 60m apart).
     if orbit.blend_request {
         orbit.blend_request = false;
-        orbit.blend_t = 0.0;
-        orbit.blend_from_pos = c_tf.translation;
-        orbit.blend_from_rot = c_tf.rotation;
-        orbit.blend_from_fov = match *proj {
-            Projection::Perspective(ref p) => p.fov,
-            _ => base_fov,
-        };
+        if c_tf.translation.distance(goal.translation) > 60.0 {
+            orbit.blend_t = CAMERA_BLEND_SECS;
+        } else {
+            orbit.blend_t = 0.0;
+            orbit.blend_from_pos = c_tf.translation;
+            orbit.blend_from_rot = c_tf.rotation;
+            orbit.blend_from_fov = match *proj {
+                Projection::Perspective(ref p) => p.fov,
+                _ => base_fov,
+            };
+        }
     }
     orbit.snap_follow = false;
     if orbit.blend_t < CAMERA_BLEND_SECS {

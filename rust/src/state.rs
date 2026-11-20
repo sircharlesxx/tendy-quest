@@ -24,6 +24,10 @@ pub enum GameState {
     GlennCutscene,
     /// Optional boardwalk NPC easter-egg cutscene (`chillary.rs`); non-blocking for Level 2 progress.
     ChillaryCutscene,
+    /// Pub 217 10-beers table & women's bathroom magic portal cutscene (`pub_portal.rs`).
+    PubPortalCutscene,
+    /// Level 3: Dedicated spacious Tendy Palace Casino hall (`casino.rs`).
+    CasinoPlay,
     LexieVictoryCutscene,
     StageClear,
     GameOver,
@@ -105,10 +109,18 @@ pub struct PlayerStats {
     /// Persistent Tendy Wendies currency wallet wagered in the Cedar Rapids Casino and tracked
     /// across Story Mode, Free Mode, reloads, and future features (`localStorage.tendy_wendies_v1`).
     pub tendy_wendies: u32,
-    /// True while seated inside a Cedar Rapids Casino game table or slot cabinet (`casino.rs`).
+    /// True while seated inside a Tendy Palace Casino game table or slot cabinet (`casino.rs`).
     pub casino_open: bool,
-    /// One-frame grace flag set when closing the casino modal so Esc doesn't also open Pause.
+    /// One-frame grace flag set when closing the casino/bartender modal so Esc doesn't also open Pause.
     pub casino_esc_grace: bool,
+    /// True while inside the standalone Level 3 Tendy Palace Casino (`GameState::CasinoPlay`).
+    pub in_casino_level: bool,
+    /// Set when stepping into the Casino South Portal to return directly to Pub 217 (`CityPlay`).
+    pub casino_return_city: bool,
+    /// True while talking to Scarlett the bartender inside Pub 217 (`pub_portal.rs`).
+    pub bartender_open: bool,
+    /// Stan's Cedar Rapids scale saved before warping into Casino Level 3, restored on return.
+    pub saved_casino_city_scale: f32,
     pub scooter_app_unlocked: bool,
     pub riding_scooter: Option<Entity>,
     /// On the riverfront Ferris wheel (boarding, riding or stepping out; see ferris.rs).
@@ -207,6 +219,10 @@ impl Default for PlayerStats {
             tendy_wendies: 100,
             casino_open: false,
             casino_esc_grace: false,
+            in_casino_level: false,
+            casino_return_city: false,
+            bartender_open: false,
+            saved_casino_city_scale: 1.8,
             scooter_app_unlocked: false,
             riding_scooter: None,
             riding_wheel: false,
@@ -380,9 +396,9 @@ impl PlayerStats {
     }
 
     /// Scale Stan's model is drawn at (and his saber and camera are sized for): `player_scale`
-    /// in the apartment, `city_body_scale(player_scale)` in the city.
+    /// in the apartment, `city_body_scale(player_scale)` in the city & Casino level.
     pub fn body_scale(&self) -> f32 {
-        if self.in_city {
+        if self.in_city || self.in_casino_level {
             city_body_scale(self.player_scale)
         } else {
             self.player_scale
@@ -396,7 +412,7 @@ impl PlayerStats {
     }
 
     pub fn height_cm(&self) -> u32 {
-        if self.in_city {
+        if self.in_city || self.in_casino_level {
             // 1.8 scale is a 180 cm adult and 18.0 is the 6500 cm kaiju; interpolate between them
             // so the HUD does not claim 650 cm at the start of the city.
             let t = ((self.player_scale - 1.8) / (18.0 - 1.8)).clamp(0.0, 1.0);
@@ -408,6 +424,9 @@ impl PlayerStats {
     }
 
     pub fn size_tier(&self) -> &'static str {
+        if self.in_casino_level {
+            return "Tendy Palace VIP";
+        }
         if self.in_city && self.free_roam {
             return "Free Roam";
         }

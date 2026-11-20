@@ -740,7 +740,9 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         // Why: Chillary's cutscene takes place outdoors along the bright sunlit Cedar River waterfront
         // (`SceneKind::Stylized` gives crisp 20k noon sunlight and bright blue ClearColor sky instead
         // of `SceneKind::City`'s dusk sunset dome). Gameplay impact: visual lighting/sky only.
-        | GameState::ChillaryCutscene => SceneKind::Stylized,
+        | GameState::ChillaryCutscene
+        | GameState::PubPortalCutscene
+        | GameState::CasinoPlay => SceneKind::Stylized,
     }
 }
 
@@ -1058,10 +1060,8 @@ fn ghost_city_occluders(
     let hero = player_q.get_single().ok().map(|t| t.translation());
     let scale = stats.player_scale.max(0.1);
     let dt = time.delta_secs();
-    // Inside Pub 217 or the Casino the camera is deliberately boxed in by walls: leave them alone.
-    let hero_in_pub = hero.is_some_and(|h| {
-        crate::city::is_in_pub217(h, scale) || crate::casino::is_in_casino(h, scale)
-    });
+    // Inside Pub 217 the camera is deliberately boxed in by walls: leave them alone.
+    let hero_in_pub = hero.is_some_and(|h| crate::city::is_in_pub217(h, scale));
 
     let mut units: Vec<(Entity, bool)> = building_q.iter().map(|e| (e, true)).collect();
     for children in &group_q {

@@ -721,8 +721,6 @@ fn add_street_grinds(l: &mut Layout) {
     }
     let door = crate::city::PUB217_ANCHOR;
     soft.push((Vec2::new(door.x + 4.0, door.z), Vec2::new(6.0, 5.0)));
-    let casino_door = crate::casino::CASINO_ANCHOR;
-    soft.push((Vec2::new(casino_door.x - 4.0, casino_door.z), Vec2::new(6.0, 5.0)));
     let tx = crate::city::STREET_TREE_X;
     let trees: Vec<Vec2> = crate::city::STREET_TREE_Z.iter().flat_map(|&z| [Vec2::new(-tx, z), Vec2::new(tx, z)]).collect();
     // Component of a half-extent along an axis-aligned direction.
