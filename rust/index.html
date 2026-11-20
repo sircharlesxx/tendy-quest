@@ -209,6 +209,7 @@
       let vikingStep = 0;
       let headphoneTimer = null;
       let headphoneStep = 0;
+      let jazzTimer = null;
 
       // Music changes crossfade instead of hard-stopping: every procedural track plays through
       // its own bus gain that ramps in over MUSIC_FADE_S; on a change the old bus ramps out while
@@ -258,13 +259,14 @@
 
       function stopSpecialAudio() {
         try {
-          const timers = [bossTimer, vikingTimer, headphoneTimer];
+          const timers = [bossTimer, vikingTimer, headphoneTimer, jazzTimer];
           const oscs = [droneOsc1, droneOsc2];
           const oldDrone = droneGain;
           const oldBus = musicBus;
           bossTimer = null;
           vikingTimer = null;
           headphoneTimer = null;
+          jazzTimer = null;
           droneOsc1 = null;
           droneOsc2 = null;
           droneGain = null;
@@ -588,6 +590,38 @@
           mkResNoise("bandpass", 0.0, 0.048, 0.24, 2200, 1200, 1.4);
           return true;
         }
+        if (name === "card_flip") {
+          mkResNoise("bandpass", 0.0, 0.065, 0.22, 2800, 1400, 1.5);
+          mkOsc("triangle", 620, 980, 0.055, 0.12);
+          return true;
+        }
+        if (name === "slot_lever") {
+          mkOsc("sawtooth", 190, 92, 0.14, 0.16);
+          mkResNoise("bandpass", 0.02, 0.11, 0.18, 950, 480, 1.6);
+          setTimeout(() => mkOsc("sine", 780, 1120, 0.045, 0.14), 110);
+          return true;
+        }
+        if (name === "coin_win") {
+          const pings = [2349.3, 2793.8, 3136.0, 2637.0, 3520.0, 3136.0];
+          pings.forEach((f, idx) => {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            const t0 = ac.currentTime + idx * 0.055;
+            const o = ac.createOscillator();
+            const g = ac.createGain();
+            o.type = idx % 2 === 0 ? "sine" : "triangle";
+            o.frequency.setValueAtTime(f, t0);
+            o.frequency.exponentialRampToValueAtTime(f * 1.015, t0 + 0.12);
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.linearRampToValueAtTime(0.11, t0 + 0.006);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+            o.connect(g);
+            g.connect(masterGain);
+            o.start(t0);
+            o.stop(t0 + 0.17);
+          });
+          return true;
+        }
         if (name === "slot_tick") {
           mkOsc("square", 460, 280, 0.028, 0.09);
           return true;
@@ -656,6 +690,12 @@
 
       function unlockAndMaybeStart() {
         try {
+          if (window.speechSynthesis) {
+            try {
+              window.speechSynthesis.getVoices();
+              if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+            } catch (_) {}
+          }
           const ac = ensureCtx();
           if (!ac) return;
           if (ac.state === "suspended") {
@@ -1246,6 +1286,279 @@
             }, 105);
           } catch (_) {}
         },
+        playCasinoJazzMusic() {
+          if (isTrackRestart("casino_jazz")) return;
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
+
+            // Warm velvet lounge chain + stereo-feel room delay (routes cleanly through `out`).
+            const loungeMain = ac.createBiquadFilter();
+            loungeMain.type = "lowpass";
+            loungeMain.frequency.value = 3200;
+            loungeMain.Q.value = 0.6;
+            loungeMain.connect(out);
+
+            const echoDelay = ac.createDelay(1.0);
+            echoDelay.delayTime.value = 0.29;
+            const echoLp = ac.createBiquadFilter();
+            echoLp.type = "lowpass";
+            echoLp.frequency.value = 1500;
+            const echoFb = ac.createGain();
+            echoFb.gain.value = 0.22;
+            const echoWet = ac.createGain();
+            echoWet.gain.value = 0.20;
+            echoDelay.connect(echoLp);
+            echoLp.connect(echoFb);
+            echoFb.connect(echoDelay);
+            echoLp.connect(echoWet);
+            echoWet.connect(out);
+
+            // White noise buffer for delicate jazz wire brushes & ride shimmer.
+            const bLen = Math.floor(ac.sampleRate * 0.4);
+            const brushBuf = ac.createBuffer(1, bLen, ac.sampleRate);
+            const bData = brushBuf.getChannelData(0);
+            for (let i = 0; i < bLen; i++) bData[i] = Math.random() * 2 - 1;
+
+            // 8-bar (32-beat) ii-V-I smooth jazz progression in F major at ~92 BPM (beat = 0.652s).
+            const walkingBass = [
+              // Gm9 -> C13 -> Fmaj9 -> Dm9
+              98.00, 116.54, 146.83, 138.59,
+              130.81, 110.00, 98.00, 82.41,
+              87.31, 110.00, 130.81, 123.47,
+              146.83, 130.81, 110.00, 103.83,
+              // Gm9 -> C9sus4/C7b9 -> Am7/D7#9 -> Gm9/C13
+              98.00, 116.54, 130.81, 146.83,
+              130.81, 98.00, 82.41, 87.31,
+              110.00, 98.00, 73.42, 92.50,
+              98.00, 116.54, 130.81, 92.50,
+            ];
+            const chords = {
+              Gm9: [196.00, 233.08, 293.66, 349.23],
+              C13: [220.00, 233.08, 293.66, 329.63],
+              Fmaj9: [174.61, 220.00, 261.63, 329.63],
+              Dm9: [196.00, 261.63, 329.63, 349.23],
+              C9sus4: [196.00, 233.08, 293.66, 349.23],
+              C7b9: [207.65, 233.08, 293.66, 329.63],
+              Am7: [196.00, 246.94, 261.63, 329.63],
+              D7s9: [185.00, 261.63, 311.13, 349.23],
+            };
+            const beatChord = (step) => {
+              const bar = step >> 2;
+              const b = step & 3;
+              if (bar === 0 || bar === 4) return chords.Gm9;
+              if (bar === 1) return chords.C13;
+              if (bar === 2) return chords.Fmaj9;
+              if (bar === 3) return chords.Dm9;
+              if (bar === 5) return b < 2 ? chords.C9sus4 : chords.C7b9;
+              if (bar === 6) return b < 2 ? chords.Am7 : chords.D7s9;
+              return b < 2 ? chords.Gm9 : chords.C13;
+            };
+            // Lyrical smooth-jazz tenor sax phrases: null or array of { t, f, d } within the beat.
+            const saxPhrases = {
+              0: [{ t: 0.02, f: 440.00, d: 0.42 }, { t: 0.42, f: 523.25, d: 0.24 }],
+              1: [{ t: 0.00, f: 587.33, d: 0.56 }],
+              2: [{ t: 0.00, f: 523.25, d: 0.34 }, { t: 0.42, f: 440.00, d: 0.24 }],
+              3: [{ t: 0.00, f: 392.00, d: 0.58 }],
+              4: [{ t: 0.00, f: 349.23, d: 0.38 }, { t: 0.42, f: 392.00, d: 0.24 }],
+              5: [{ t: 0.00, f: 440.00, d: 0.72 }],
+              8: [{ t: 0.00, f: 329.63, d: 0.44 }, { t: 0.42, f: 392.00, d: 0.24 }],
+              9: [{ t: 0.00, f: 440.00, d: 0.58 }],
+              10: [{ t: 0.00, f: 523.25, d: 0.36 }, { t: 0.42, f: 587.33, d: 0.24 }],
+              11: [{ t: 0.00, f: 659.25, d: 0.78 }],
+              16: [{ t: 0.02, f: 587.33, d: 0.34 }, { t: 0.42, f: 523.25, d: 0.22 }],
+              17: [{ t: 0.00, f: 466.16, d: 0.54 }],
+              18: [{ t: 0.00, f: 440.00, d: 0.36 }, { t: 0.42, f: 392.00, d: 0.24 }],
+              19: [{ t: 0.00, f: 349.23, d: 0.66 }],
+              21: [{ t: 0.42, f: 392.00, d: 0.24 }],
+              22: [{ t: 0.00, f: 440.00, d: 0.42 }, { t: 0.42, f: 466.16, d: 0.22 }],
+              23: [{ t: 0.00, f: 440.00, d: 0.56 }],
+              24: [{ t: 0.00, f: 523.25, d: 0.42 }, { t: 0.42, f: 493.88, d: 0.24 }],
+              25: [{ t: 0.00, f: 440.00, d: 0.62 }],
+              26: [{ t: 0.00, f: 392.00, d: 0.40 }, { t: 0.42, f: 440.00, d: 0.24 }],
+              27: [{ t: 0.00, f: 369.99, d: 0.68 }],
+              29: [{ t: 0.42, f: 349.23, d: 0.24 }],
+              30: [{ t: 0.00, f: 392.00, d: 0.48 }],
+              31: [{ t: 0.00, f: 329.63, d: 0.54 }],
+            };
+
+            const playRhodes = (t0, notes, dur, peak) => {
+              const epLp = ac.createBiquadFilter();
+              epLp.type = "lowpass";
+              epLp.frequency.setValueAtTime(1650, t0);
+              epLp.frequency.exponentialRampToValueAtTime(920, t0 + dur);
+              const cg = ac.createGain();
+              cg.gain.setValueAtTime(0.0001, t0);
+              cg.gain.linearRampToValueAtTime(peak, t0 + 0.025);
+              cg.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+              epLp.connect(cg);
+              cg.connect(loungeMain);
+              cg.connect(echoDelay);
+              for (const f of notes) {
+                const o1 = ac.createOscillator();
+                o1.type = "sine";
+                o1.frequency.setValueAtTime(f, t0);
+                o1.connect(epLp);
+                o1.start(t0);
+                o1.stop(t0 + dur + 0.03);
+                const tine = ac.createOscillator();
+                const tg = ac.createGain();
+                tine.type = "sine";
+                tine.frequency.setValueAtTime(f * 2.0, t0);
+                tg.gain.setValueAtTime(0.0001, t0);
+                tg.gain.linearRampToValueAtTime(0.16, t0 + 0.006);
+                tg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.14);
+                tine.connect(tg);
+                tg.connect(epLp);
+                tine.start(t0);
+                tine.stop(t0 + 0.15);
+              }
+            };
+
+            const playBrush = (t0, freq, q, dur, peak) => {
+              const ns = ac.createBufferSource();
+              ns.buffer = brushBuf;
+              const bp = ac.createBiquadFilter();
+              bp.type = "bandpass";
+              bp.frequency.setValueAtTime(freq, t0);
+              bp.Q.value = q;
+              const g = ac.createGain();
+              g.gain.setValueAtTime(0.0001, t0);
+              g.gain.linearRampToValueAtTime(peak, t0 + 0.010);
+              g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur);
+              ns.connect(bp);
+              bp.connect(g);
+              g.connect(loungeMain);
+              ns.start(t0);
+              ns.stop(t0 + dur + 0.02);
+            };
+
+            const playSax = (t0, freq, dur) => {
+              const sf = ac.createBiquadFilter();
+              sf.type = "lowpass";
+              sf.frequency.setValueAtTime(480, t0);
+              sf.frequency.linearRampToValueAtTime(1280, t0 + Math.min(0.11, dur * 0.35));
+              sf.frequency.exponentialRampToValueAtTime(560, t0 + dur);
+              const sg = ac.createGain();
+              sg.gain.setValueAtTime(0.0001, t0);
+              sg.gain.linearRampToValueAtTime(0.088, t0 + 0.045);
+              sg.gain.setValueAtTime(0.072, t0 + Math.max(0.06, dur * 0.72));
+              sg.gain.exponentialRampToValueAtTime(0.0006, t0 + dur);
+              sf.connect(sg);
+              sg.connect(loungeMain);
+              sg.connect(echoDelay);
+
+              const body = ac.createOscillator();
+              body.type = "triangle";
+              body.frequency.setValueAtTime(freq, t0);
+              const reed = ac.createOscillator();
+              reed.type = "sawtooth";
+              reed.frequency.setValueAtTime(freq, t0);
+              const reedG = ac.createGain();
+              reedG.gain.value = 0.28;
+              // Soft embouchure vibrato LFO
+              const vib = ac.createOscillator();
+              const vibG = ac.createGain();
+              vib.type = "sine";
+              vib.frequency.value = 5.0;
+              vibG.gain.value = 3.5;
+              vib.connect(vibG);
+              vibG.connect(body.frequency);
+              vibG.connect(reed.frequency);
+
+              body.connect(sf);
+              reed.connect(reedG);
+              reedG.connect(sf);
+              body.start(t0);
+              reed.start(t0);
+              vib.start(t0);
+              body.stop(t0 + dur + 0.03);
+              reed.stop(t0 + dur + 0.03);
+              vib.stop(t0 + dur + 0.03);
+            };
+
+            let jazzStep = 0;
+            const tickJazzBeat = () => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const step = jazzStep % 32;
+              const bar = step >> 2;
+              const inBar = step & 3;
+              jazzStep += 1;
+
+              // 1. Warm Upright Walking Acoustic Bass
+              const bf = walkingBass[step];
+              const bLp = ac.createBiquadFilter();
+              bLp.type = "lowpass";
+              bLp.frequency.value = 340;
+              const bg = ac.createGain();
+              bg.gain.setValueAtTime(0.0001, now);
+              bg.gain.linearRampToValueAtTime(0.24, now + 0.015);
+              bg.gain.exponentialRampToValueAtTime(0.001, now + 0.56);
+              bLp.connect(bg);
+              bg.connect(loungeMain);
+              const bo1 = ac.createOscillator();
+              bo1.type = "triangle";
+              bo1.frequency.setValueAtTime(bf, now);
+              const bo2 = ac.createOscillator();
+              bo2.type = "sine";
+              bo2.frequency.setValueAtTime(bf, now);
+              bo1.connect(bLp);
+              bo2.connect(bLp);
+              bo1.start(now);
+              bo2.start(now);
+              bo1.stop(now + 0.58);
+              bo2.stop(now + 0.58);
+
+              // 2. Rhodes Electric Piano lush chord voicings & swung Charleston comp
+              const chord = beatChord(step);
+              if (inBar === 0 || (bar >= 5 && inBar === 2)) {
+                playRhodes(now, chord, inBar === 0 ? 1.15 : 0.90, 0.055);
+              }
+              if (inBar === 1) {
+                playRhodes(now + 0.415, chord, 0.54, 0.042);
+              }
+
+              // 3. Brushed Ride Cymbal + Swung Skip + Soft Wire-Brush Snare + Feathered Kick
+              playBrush(now, 6800, 3.0, 0.075, 0.034);
+              if (inBar === 1 || inBar === 3) {
+                playBrush(now + 0.415, 7200, 3.2, 0.055, 0.025);
+                playBrush(now, 2600, 1.1, 0.11, 0.038);
+              }
+              if (inBar === 0 || (inBar === 2 && (bar === 2 || bar === 6))) {
+                const ko = ac.createOscillator();
+                const kg = ac.createGain();
+                ko.type = "sine";
+                ko.frequency.setValueAtTime(92, now);
+                ko.frequency.exponentialRampToValueAtTime(40, now + 0.12);
+                kg.gain.setValueAtTime(inBar === 0 ? 0.11 : 0.07, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+                ko.connect(kg);
+                kg.connect(loungeMain);
+                ko.start(now);
+                ko.stop(now + 0.14);
+              }
+
+              // 4. Silky Smooth-Jazz Tenor Sax melody
+              const notes = saxPhrases[step];
+              if (notes) {
+                for (const n of notes) {
+                  playSax(now + n.t, n.f, n.d);
+                }
+              }
+            };
+            tickJazzBeat();
+            jazzTimer = setInterval(tickJazzBeat, 652);
+          } catch (_) {}
+        },
         // --- Per-character voices (Web Speech API, no network) ---
         // Each speaker gets its own installed voice when the browser offers several, plus its
         // own pitch and rate so characters stay distinct even with only one or two voices.
@@ -1375,30 +1688,52 @@
           if (v) this._voiceCastLocked = true;
           return v || null;
         },
+        _localVoiceFor(who) {
+          const synth = window.speechSynthesis;
+          if (!synth) return null;
+          let all = [];
+          try { all = synth.getVoices() || []; } catch (_) {}
+          if (!all.length) return null;
+          const pageLang = String(document.documentElement.lang || navigator.language || "en").toLowerCase();
+          const pageBase = pageLang.split("-")[0];
+          const want = (this._VOICE_PROFILES[who] && this._VOICE_PROFILES[who].g) || "m";
+          let pool = all.filter((v) => v.localService && !this._brokenVoices.has(v.voiceURI || v.name));
+          const langPool = pool.filter((v) => String(v.lang || "").toLowerCase().replace("_", "-").split("-")[0] === pageBase);
+          if (langPool.length) pool = langPool;
+          if (!pool.length) return null;
+          let best = null;
+          let bestScore = -Infinity;
+          for (const v of pool) {
+            let sc = this._voiceScore(v, pageLang, pageBase);
+            const g = this._voiceGender(v);
+            if (g && g === want) sc += 10;
+            else if (g && g !== want) sc -= 80;
+            if (sc > bestScore) { bestScore = sc; best = v; }
+          }
+          return best;
+        },
         _voiceToken: 0,
         _voiceActive: false,
         _voiceGraceUntilMs: 0,
         _voiceUntilMs: 0,
+        _activeUtterance: null,
+        _voiceTimer: null,
+        _voiceFallbackTimer: null,
+        _lastCancelMs: 0,
+        _brokenVoices: new Set(),
         speakVoice(text, role) {
-
+          if (this._voiceTimer) { clearTimeout(this._voiceTimer); this._voiceTimer = null; }
+          if (this._voiceFallbackTimer) { clearTimeout(this._voiceFallbackTimer); this._voiceFallbackTimer = null; }
           try {
             const token = ++this._voiceToken;
             if (muted || !window.speechSynthesis || !text) {
               this._voiceActive = false;
               this._voiceUntilMs = 0;
+              this._activeUtterance = null;
               return;
             }
-            window.speechSynthesis.cancel();
-            const u = new SpeechSynthesisUtterance(text);
+            const synth = window.speechSynthesis;
             const prof = this._voiceProfile(role);
-            u.pitch = prof.pitch;
-            u.rate = prof.rate;
-            u.volume = prof.volume;
-            const voice = this._voiceFor(prof.who);
-            if (voice) {
-              u.voice = voice;
-              if (voice.lang) u.lang = voice.lang;
-            }
             if (role && (role.includes("uzumaki") || role.includes("cosmic") || role.startsWith("stan_vow"))) {
               try {
                 const ac = ensureCtx();
@@ -1419,29 +1754,126 @@
                 }
               } catch (_) {}
             }
-            const clearVoice = () => {
-              if (this._voiceToken === token) {
-                this._voiceActive = false;
-              }
-            };
-            u.onend = clearVoice;
-            u.onerror = clearVoice;
             const words = String(text).trim().split(/\s+/).filter(Boolean).length;
             const now = performance.now();
             this._voiceActive = true;
-            this._voiceGraceUntilMs = now + 450;
-            this._voiceUntilMs = now + Math.min(14000, Math.max(4000, (words * 650) / prof.rate + 2500));
-            window.speechSynthesis.speak(u);
+            this._voiceGraceUntilMs = now + 950;
+            this._voiceUntilMs = now + Math.min(15000, Math.max(4500, (words * 650) / prof.rate + 3000));
+
+            const launch = (useLocalFallback) => {
+              if (this._voiceToken !== token || muted) return;
+              const u = new SpeechSynthesisUtterance(text);
+              u.pitch = prof.pitch;
+              u.rate = prof.rate;
+              u.volume = prof.volume;
+              let voice = null;
+              if (useLocalFallback) {
+                voice = this._localVoiceFor(prof.who);
+              } else {
+                const primary = this._voiceFor(prof.who);
+                if (primary && !this._brokenVoices.has(primary.voiceURI || primary.name)) {
+                  voice = primary;
+                } else {
+                  voice = this._localVoiceFor(prof.who);
+                }
+              }
+              if (voice) {
+                u.voice = voice;
+                if (voice.lang) u.lang = voice.lang;
+              }
+              this._activeUtterance = u;
+              let started = false;
+              u.onstart = () => {
+                if (this._voiceToken !== token) return;
+                started = true;
+                if (this._voiceFallbackTimer) {
+                  clearTimeout(this._voiceFallbackTimer);
+                  this._voiceFallbackTimer = null;
+                }
+              };
+              u.onend = () => {
+                if (this._voiceToken === token) {
+                  this._voiceActive = false;
+                  this._activeUtterance = null;
+                  if (this._voiceFallbackTimer) {
+                    clearTimeout(this._voiceFallbackTimer);
+                    this._voiceFallbackTimer = null;
+                  }
+                }
+              };
+              u.onerror = (ev) => {
+                if (this._voiceToken !== token) return;
+                if (this._voiceFallbackTimer) {
+                  clearTimeout(this._voiceFallbackTimer);
+                  this._voiceFallbackTimer = null;
+                }
+                const err = ev && ev.error ? String(ev.error) : "";
+                if (!useLocalFallback && err !== "canceled" && err !== "interrupted") {
+                  if (voice) this._brokenVoices.add(voice.voiceURI || voice.name);
+                  try { synth.cancel(); } catch (_) {}
+                  this._lastCancelMs = performance.now();
+                  this._voiceTimer = setTimeout(() => { this._voiceTimer = null; launch(true); }, 70);
+                  return;
+                }
+                if (!useLocalFallback && !started) {
+                  try { synth.cancel(); } catch (_) {}
+                  this._lastCancelMs = performance.now();
+                  this._voiceTimer = setTimeout(() => { this._voiceTimer = null; launch(true); }, 90);
+                  return;
+                }
+                this._voiceActive = false;
+                this._activeUtterance = null;
+              };
+              try {
+                if (synth.paused) synth.resume();
+                synth.speak(u);
+                if (!useLocalFallback) {
+                  this._voiceFallbackTimer = setTimeout(() => {
+                    this._voiceFallbackTimer = null;
+                    if (this._voiceToken !== token || started || muted) return;
+                    if (voice && !voice.localService) {
+                      this._brokenVoices.add(voice.voiceURI || voice.name);
+                    }
+                    try { synth.cancel(); } catch (_) {}
+                    this._lastCancelMs = performance.now();
+                    this._voiceTimer = setTimeout(() => { this._voiceTimer = null; launch(true); }, 70);
+                  }, 750);
+                }
+              } catch (_) {
+                this._voiceActive = false;
+                this._activeUtterance = null;
+              }
+            };
+
+            const needCancel = synth.speaking || synth.pending || synth.paused;
+            if (needCancel) {
+              synth.cancel();
+              this._lastCancelMs = performance.now();
+            }
+            const sinceCancel = performance.now() - this._lastCancelMs;
+            if (needCancel || sinceCancel < 120) {
+              this._voiceTimer = setTimeout(() => {
+                this._voiceTimer = null;
+                launch(false);
+              }, Math.max(70, 120 - sinceCancel));
+            } else {
+              launch(false);
+            }
           } catch (_) {
             this._voiceActive = false;
+            this._activeUtterance = null;
           }
         },
         // Cutscene skip: cut the current line so isVoiceSpeaking() reads false at once.
         stopVoice() {
           try {
+            if (this._voiceTimer) { clearTimeout(this._voiceTimer); this._voiceTimer = null; }
+            if (this._voiceFallbackTimer) { clearTimeout(this._voiceFallbackTimer); this._voiceFallbackTimer = null; }
             this._voiceToken++;
             this._voiceActive = false;
             this._voiceUntilMs = 0;
+            this._activeUtterance = null;
+            this._lastCancelMs = performance.now();
             if (window.speechSynthesis) window.speechSynthesis.cancel();
           } catch (_) {}
         },

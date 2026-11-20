@@ -253,6 +253,9 @@ impl PlayerStats {
     ///   tendies need gentle increments around small counter props while the final 4 tendies
     ///   must rapidly vault Stan to adult height (`6.0`) to reach the refrigerator handle.
     pub fn target_scale(&self) -> f32 {
+        if self.in_casino_level {
+            return 1.8;
+        }
         if self.in_city && self.free_roam {
             return 1.8;
         }

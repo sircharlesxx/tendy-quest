@@ -10,13 +10,14 @@
 //! gates or combat), lets players return seamlessly to Pub 217 via the South Portal, and provides
 //! an emergency Cashier stipend whenever a player's balance drops below the minimum wager.
 
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::audio::{play_bgm, play_sfx, set_touch_boss_mode, set_touch_playing};
+use crate::audio::{play_casino_jazz_music, play_sfx, set_touch_boss_mode, set_touch_playing};
+use crate::chillary::{ChillaryDealerLimb, ChillaryDealerPart};
 use crate::player::Player;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
 use crate::transition::{SceneTransition, sim_running};
@@ -71,6 +72,7 @@ pub struct CasinoPlugin;
 impl Plugin for CasinoPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CasinoGameState>()
+            .init_resource::<Casino3dSync>()
             .add_systems(Startup, setup_casino_textures)
             .add_systems(OnEnter(GameState::CasinoPlay), enter_casino_play)
             .add_systems(OnExit(GameState::CasinoPlay), exit_casino_play)
@@ -78,10 +80,17 @@ impl Plugin for CasinoPlugin {
                 Update,
                 (
                     update_casino_props_anim.run_if(sim_running),
+                    update_casino_crew_bob.run_if(sim_running),
+                    update_casino_chase_bulbs.run_if(sim_running),
+                    update_chillary_dealers.run_if(sim_running),
                     update_casino_stations.run_if(gameplay_running),
                     update_blackjack_dealer_timer.run_if(sim_running),
                     update_slot_spin_timer.run_if(sim_running),
                     handle_casino_modal_input.run_if(sim_running),
+                    update_casino_3d_blackjack.run_if(sim_running),
+                    update_casino_3d_slots.run_if(sim_running),
+                    update_casino_coins.run_if(sim_running),
+                    update_casino_station_camera.run_if(sim_running),
                     refresh_casino_ui,
                 )
                     .chain()
@@ -105,6 +114,10 @@ pub(crate) struct CasinoArt {
     pub(crate) bartender_portrait: Handle<Image>,  // Scarlett (Pub 217 bartender)
     pub(crate) womens_sign: Handle<Image>,         // Pub 217 Women's restroom plaque
     pub(crate) return_portal_sign: Handle<Image>,  // Casino South return portal sign
+    pub(crate) blackjack_felt: Handle<Image>,      // Elliptical emerald Blackjack table layout decal
+    pub(crate) chillary_portrait: Handle<Image>,   // Chillary Clinton dealer portrait
+    pub(crate) card_back: Handle<Image>,           // Royal crimson & gold card back
+    pub(crate) card_faces: Vec<Handle<Image>>,     // 52 crisp playing card faces (suit * 13 + rank - 1)
 }
 
 struct PxCanvas {
@@ -254,21 +267,41 @@ impl PxCanvas {
         let len = text.chars().count() as i32;
         let total_w = len * 6 * scale - scale;
         let start_x = (self.w as i32 - total_w) / 2;
+        self.text_at(text, start_x, cy, scale, rgba);
+    }
+
+    /// Left-aligned 5x7 pixel text starting at `(x, y)`.
+    fn text_at(&mut self, text: &str, x: i32, y: i32, scale: i32, rgba: [u8; 4]) {
         for (idx, ch) in text.chars().enumerate() {
             let rows = Self::glyph_5x7(ch);
-            let gx = start_x + idx as i32 * 6 * scale;
+            let gx = x + idx as i32 * 6 * scale;
             for (ry, row) in rows.iter().enumerate() {
                 for rx in 0..5 {
                     if (row >> (4 - rx)) & 1 == 1 {
                         self.rect(
                             gx + rx * scale,
-                            cy + ry as i32 * scale,
+                            y + ry as i32 * scale,
                             gx + rx * scale + scale - 1,
-                            cy + ry as i32 * scale + scale - 1,
+                            y + ry as i32 * scale + scale - 1,
                             rgba,
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Nearest-neighbour blit of `src` (non-transparent pixels only) scaled by `s`.
+    fn blit_scaled(&mut self, src: &PxCanvas, dx: i32, dy: i32, s: i32) {
+        for y in 0..src.h {
+            for x in 0..src.w {
+                let i = ((y * src.w + x) * 4) as usize;
+                let px = [src.data[i], src.data[i + 1], src.data[i + 2], src.data[i + 3]];
+                if px[3] == 0 {
+                    continue;
+                }
+                let (bx, by) = (dx + x as i32 * s, dy + y as i32 * s);
+                self.rect(bx, by, bx + s - 1, by + s - 1, px);
             }
         }
     }
@@ -486,8 +519,11 @@ fn paint_marquee_banner() -> Image {
     c.into_image()
 }
 
-fn paint_suit_icon(suit: usize) -> Image {
+fn suit_canvas(suit: usize, bg: [u8; 4]) -> PxCanvas {
     let mut c = PxCanvas::new(24, 24);
+    if bg[3] > 0 {
+        c.rect(0, 0, 23, 23, bg);
+    }
     let col = if suit == 1 || suit == 2 {
         [218, 28, 48, 255]
     } else {
@@ -526,6 +562,144 @@ fn paint_suit_icon(suit: usize) -> Image {
             c.rect(9, 19, 15, 21, col);
         }
     }
+    c
+}
+
+fn paint_suit_icon(suit: usize) -> Image {
+    suit_canvas(suit, [0, 0, 0, 0]).into_image()
+}
+
+/// Crisp 64x92 ivory playing-card face (rank top-left & bottom-right, bold suit pip in the center).
+fn paint_card_face(suit: usize, rank: u8) -> Image {
+    let ivory = [250, 246, 232, 255];
+    let mut c = PxCanvas::new(64, 92);
+    c.rect(0, 0, 63, 91, ivory);
+    let ink = if suit == 1 || suit == 2 {
+        [200, 24, 44, 255]
+    } else {
+        [24, 26, 34, 255]
+    };
+    let label = match rank {
+        1 => "A",
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        5 => "5",
+        6 => "6",
+        7 => "7",
+        8 => "8",
+        9 => "9",
+        10 => "10",
+        11 => "J",
+        12 => "Q",
+        _ => "K",
+    };
+    c.text_at(label, 5, 6, 2, ink);
+    let w = label.len() as i32 * 12 - 2;
+    c.text_at(label, 64 - 5 - w, 92 - 6 - 14, 2, ink);
+    let pip = suit_canvas(suit, ivory);
+    c.blit_scaled(&pip, 8, 22, 2);
+    c.border_frame(2, [214, 176, 84, 255]);
+    c.into_image()
+}
+
+/// Royal crimson & gold diamond-lattice Tendy Palace card back.
+fn paint_card_back() -> Image {
+    let mut c = PxCanvas::new(64, 92);
+    c.fill_grad([128, 14, 40], [74, 8, 30]);
+    for k in (-92..64).step_by(12) {
+        c.line(k as f32, 0.0, (k + 92) as f32, 92.0, 0.6, [236, 184, 70, 150]);
+        c.line((k + 92) as f32, 0.0, k as f32, 92.0, 0.6, [236, 184, 70, 150]);
+    }
+    c.ellipse(32.0, 46.0, 17.0, 17.0, [74, 8, 30, 255]);
+    c.circle(32.0, 46.0, 14.0, [236, 184, 70, 255]);
+    c.circle(32.0, 46.0, 11.5, [128, 14, 40, 255]);
+    c.text_centered("TW", 41, 2, [255, 226, 110, 255]);
+    c.border_frame(3, [255, 214, 96, 255]);
+    c.into_image()
+}
+
+/// 256x160 elliptical blackjack table-layout decal (transparent outside ellipse for zero seam).
+fn paint_blackjack_felt() -> Image {
+    let mut c = PxCanvas::new(256, 160);
+    c.ellipse(128.0, 80.0, 124.0, 76.0, [14, 102, 52, 255]);
+    c.ellipse(128.0, 80.0, 118.0, 70.0, [214, 176, 84, 190]);
+    c.ellipse(128.0, 80.0, 115.0, 67.0, [10, 82, 42, 255]);
+    c.text_centered("BLACKJACK", 20, 2, [255, 222, 96, 255]);
+    c.text_centered("PAYS 3 TO 2", 40, 2, [255, 222, 96, 255]);
+    c.text_centered("DEALER STANDS ON 17", 64, 1, [226, 244, 230, 255]);
+    c.rect(40, 78, 216, 79, [214, 176, 84, 150]);
+    for (cx, cy, r) in [(128.0_f32, 128.0_f32, 14.0_f32), (62.0, 114.0, 10.5), (194.0, 114.0, 10.5)] {
+        c.circle(cx, cy, r, [255, 214, 96, 255]);
+        c.circle(cx, cy, r - 2.2, [10, 80, 42, 255]);
+    }
+    // Preserve strict transparency outside the table ellipse so AlphaMode::Blend blends cleanly.
+    for y in 0..160 {
+        for x in 0..256 {
+            let dx = (x as f32 + 0.5 - 128.0) / 124.0;
+            let dy = (y as f32 + 0.5 - 80.0) / 76.0;
+            if dx * dx + dy * dy > 1.0 {
+                let i = ((y * 256 + x) * 4) as usize;
+                c.data[i..i + 4].copy_from_slice(&[0, 0, 0, 0]);
+            }
+        }
+    }
+    c.into_image()
+}
+
+/// Stylized Chillary Clinton dealer portrait (blonde bob, turquoise pantsuit, pearls, big smile).
+fn paint_chillary_portrait() -> Image {
+    let mut c = PxCanvas::new(128, 128);
+    c.fill_grad([10, 60, 44], [40, 96, 70]);
+    for (bx, by, r, col) in [
+        (20.0_f32, 26.0_f32, 11.0_f32, [255, 224, 120, 70]),
+        (106.0, 30.0, 12.0, [120, 255, 200, 60]),
+        (24.0, 96.0, 9.0, [255, 214, 100, 55]),
+        (108.0, 92.0, 8.0, [255, 255, 255, 50]),
+    ] {
+        c.circle(bx, by, r, col);
+    }
+    let hair = [236, 206, 112, 255];
+    let hair_hi = [250, 232, 160, 220];
+    c.ellipse(64.0, 62.0, 42.0, 44.0, hair);
+    c.ellipse(28.0, 82.0, 15.0, 26.0, hair);
+    c.ellipse(100.0, 82.0, 15.0, 26.0, hair);
+
+    let skin = [250, 214, 192, 255];
+    c.ellipse(64.0, 122.0, 40.0, 20.0, [28, 148, 204, 255]);
+    c.rect(56, 84, 72, 106, skin);
+    c.ellipse(64.0, 106.0, 14.0, 9.0, [250, 250, 252, 255]);
+    c.line(52.0, 104.0, 64.0, 120.0, 2.0, [20, 110, 160, 255]);
+    c.line(76.0, 104.0, 64.0, 120.0, 2.0, [20, 110, 160, 255]);
+    for k in -2..=2 {
+        c.circle(64.0 + k as f32 * 6.0, 109.0 - (k * k) as f32 * 0.5, 2.3, [255, 252, 244, 255]);
+    }
+
+    c.ellipse(64.0, 60.0, 25.0, 27.0, skin);
+    c.ellipse(64.0, 72.0, 20.0, 16.0, skin);
+    c.ellipse(47.0, 68.0, 6.0, 3.5, [255, 140, 150, 130]);
+    c.ellipse(81.0, 68.0, 6.0, 3.5, [255, 140, 150, 130]);
+    for sx in [-1.0_f32, 1.0_f32] {
+        let ex = 64.0 + sx * 11.0;
+        let ey = 58.0;
+        c.ellipse(ex, ey, 6.4, 6.0, [252, 252, 255, 255]);
+        c.circle(ex, ey + 0.5, 4.2, [60, 130, 220, 255]);
+        c.circle(ex, ey + 1.0, 2.2, [16, 22, 40, 255]);
+        c.circle(ex - 1.5, ey - 1.2, 1.4, [255, 255, 255, 255]);
+        c.line(ex - 7.0, ey - 7.5, ex + 7.0, ey - 8.5 + sx * 0.6, 1.3, [150, 118, 60, 255]);
+    }
+    c.circle(64.0, 67.0, 1.1, [214, 150, 132, 255]);
+    c.ellipse(64.0, 77.0, 11.0, 4.4, [230, 60, 90, 255]);
+    c.ellipse(64.0, 76.0, 8.5, 2.6, [252, 252, 248, 255]);
+
+    c.ellipse(46.0, 38.0, 16.0, 13.0, hair);
+    c.ellipse(82.0, 36.0, 22.0, 11.0, hair);
+    c.ellipse(60.0, 31.0, 20.0, 9.0, hair_hi);
+    c.circle(38.0, 74.0, 2.6, [255, 252, 244, 255]);
+    c.circle(90.0, 74.0, 2.6, [255, 252, 244, 255]);
+    c.sparkle(20.0, 22.0, 5.5, [255, 244, 188, 235]);
+    c.sparkle(108.0, 22.0, 5.0, [255, 244, 188, 235]);
+    c.border_frame(3, [255, 208, 86, 255]);
     c.into_image()
 }
 
@@ -753,6 +927,15 @@ fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image
     let bartender_portrait = images.add(paint_bartender_portrait());
     let womens_sign = images.add(paint_womens_sign());
     let return_portal_sign = images.add(paint_return_portal_sign());
+    let blackjack_felt = images.add(paint_blackjack_felt());
+    let chillary_portrait = images.add(paint_chillary_portrait());
+    let card_back = images.add(paint_card_back());
+    let mut card_faces = Vec::with_capacity(52);
+    for suit in 0..4 {
+        for rank in 1..=13u8 {
+            card_faces.push(images.add(paint_card_face(suit, rank)));
+        }
+    }
 
     commands.insert_resource(CasinoArt {
         marquee,
@@ -764,6 +947,10 @@ fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image
         bartender_portrait,
         womens_sign,
         return_portal_sign,
+        blackjack_felt,
+        chillary_portrait,
+        card_back,
+        card_faces,
     });
 }
 
@@ -778,6 +965,12 @@ pub struct CasinoLevelEntity;
 struct CasinoRing {
     station: CasinoStationKind,
     base_pos: Vec3,
+    station_idx: usize,
+}
+
+#[derive(Component)]
+struct CasinoChandelier {
+    speed: f32,
 }
 
 #[derive(Component)]
@@ -833,6 +1026,8 @@ fn enter_casino_play(
     art: Option<Res<CasinoArt>>,
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
+    mut game: ResMut<CasinoGameState>,
+    mut sync: ResMut<Casino3dSync>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     old_casino_q: Query<Entity, With<CasinoLevelEntity>>,
@@ -851,6 +1046,7 @@ fn enter_casino_play(
     stats.in_city = false;
     stats.in_casino_level = true;
     stats.boss_mode = false;
+    stats.enraged = false;
     stats.player_scale = 1.8;
     stats.casino_open = false;
     stats.casino_esc_grace = false;
@@ -859,7 +1055,9 @@ fn enter_casino_play(
     stats.riding_scooter = None;
     stats.riding_wheel = false;
     stats.phone_open = false;
-    stats.hint_text = "WELCOME TO TENDY PALACE CASINO! Play Blackjack, Buffalo & Lucky Ladies Slots (TW), or use the South Portal to return to Pub 217.".to_string();
+    *sync = Casino3dSync::default();
+    game.display_tw = stats.tendy_wendies as f32;
+    stats.hint_text = "WELCOME TO TENDY PALACE CASINO! Chillary Clinton deals all 3 Blackjack tables, smooth jazz plays, and Buffalo & Lucky Ladies slots await!".to_string();
     stats.hint_bump = stats.hint_bump.wrapping_add(1);
 
     for (mut node, mut vis) in &mut hud_q {
@@ -904,7 +1102,7 @@ fn enter_casino_play(
 
     set_touch_playing(true);
     set_touch_boss_mode(false);
-    play_bgm();
+    play_casino_jazz_music();
 
     let Some(art) = art else {
         return;
@@ -1048,12 +1246,6 @@ fn enter_casino_play(
         unlit: true,
         ..default()
     });
-    let slot_screen_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.96, 1.0),
-        emissive: LinearRgba::rgb(0.9, 0.85, 1.1),
-        unlit: true,
-        ..default()
-    });
     let tux_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.08, 0.08, 0.11),
         perceptual_roughness: 0.55,
@@ -1177,6 +1369,7 @@ fn enter_casino_play(
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
+        CasinoChandelier { speed: 0.32 },
         Mesh3d(ring_mesh.clone()),
         MeshMaterial3d(neon_gold_mat.clone()),
         Transform::from_translation(orig + Vec3::new(0.0, 11.4, 0.0))
@@ -1186,6 +1379,7 @@ fn enter_casino_play(
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
+        CasinoChandelier { speed: -0.48 },
         Mesh3d(ring_mesh.clone()),
         MeshMaterial3d(neon_pink_mat.clone()),
         Transform::from_translation(orig + Vec3::new(0.0, 11.0, 0.0))
@@ -1211,176 +1405,342 @@ fn enter_casino_play(
             .with_scale(Vec3::new(8.8, 3.3, 0.08)),
     ));
 
-    // CENTER FLOOR: Grand Emerald Blackjack Pit + Tuxedo Dealer
-    commands.spawn((
-        LevelEntity,
-        CasinoLevelEntity,
-        Mesh3d(unit_cyl.clone()),
-        MeshMaterial3d(wood_mat.clone()),
-        Transform::from_translation(orig + Vec3::new(0.0, 0.56, 0.0))
-            .with_scale(Vec3::new(0.75, 1.12, 0.65)),
-    ));
-    commands.spawn((
-        LevelEntity,
-        CasinoLevelEntity,
-        Mesh3d(unit_cyl.clone()),
-        MeshMaterial3d(wood_mat.clone()),
-        Transform::from_translation(orig + Vec3::new(0.0, 1.18, 0.0))
-            .with_scale(Vec3::new(2.55, 0.22, 1.85)),
-        PlatformBox {
-            half_extents: Vec3::new(2.55, 0.65, 1.85),
-        },
-    ));
-    commands.spawn((
-        LevelEntity,
-        CasinoLevelEntity,
-        Mesh3d(unit_cyl.clone()),
-        MeshMaterial3d(felt_green_mat),
-        Transform::from_translation(orig + Vec3::new(0.0, 1.31, 0.0))
-            .with_scale(Vec3::new(2.30, 0.06, 1.62)),
-    ));
-    for (cx, cz, mat) in [
-        (-1.15_f32, 0.55_f32, &gold_trim_mat),
-        (-0.85, 0.70, &neon_pink_mat),
-        (1.05, 0.58, &gold_trim_mat),
-    ] {
+    // Shared FX assets (cards, chips, coins, chase bulbs) reused by the 3D casino animation systems
+    let chip_mesh = meshes.add(Cylinder::new(0.075, 0.026));
+    let chip_mats: [Handle<StandardMaterial>; 4] = [
+        (0.85_f32, 0.12_f32, 0.14_f32),
+        (0.16, 0.34, 0.88),
+        (0.96, 0.78, 0.24),
+        (0.12, 0.64, 0.32),
+    ]
+    .map(|(r, g, b)| {
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(r, g, b),
+            perceptual_roughness: 0.35,
+            ..default()
+        })
+    });
+    let card_front_mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::new(0.12, 0.175)));
+    let card_back_mesh = meshes.add(Plane3d::new(Vec3::NEG_Y, Vec2::new(0.12, 0.175)));
+    let coin_mesh = meshes.add(Cylinder::new(0.11, 0.026));
+    let coin_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.22),
+        emissive: LinearRgba::rgb(0.9, 0.6, 0.1),
+        metallic: 0.8,
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    let chase_on = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.92, 0.45),
+        emissive: LinearRgba::rgb(4.0, 3.2, 0.8),
+        unlit: true,
+        ..default()
+    });
+    let chase_off = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.35, 0.22, 0.08),
+        unlit: true,
+        ..default()
+    });
+    let bulb_mesh = meshes.add(Sphere::new(0.05));
+
+    // CENTER FLOOR: three emerald Blackjack tables, every single one dealt by Chillary Clinton
+    let chillary_mats = crate::chillary::make_chillary_materials(&mut materials);
+    let leather_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.20, 0.06, 0.07),
+        perceptual_roughness: 0.5,
+        ..default()
+    });
+    let decal_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(art.blackjack_felt.clone()),
+        alpha_mode: AlphaMode::Blend,
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let acrylic_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.03, 0.03, 0.05),
+        metallic: 0.6,
+        perceptual_roughness: 0.2,
+        ..default()
+    });
+    let chip_row_mats: [Handle<StandardMaterial>; 5] = [
+        Color::srgb(0.85, 0.12, 0.14),
+        Color::srgb(0.16, 0.34, 0.85),
+        Color::srgb(0.96, 0.78, 0.24),
+        Color::srgb(0.12, 0.62, 0.30),
+        Color::srgb(0.08, 0.08, 0.10),
+    ]
+    .map(|c| {
+        materials.add(StandardMaterial {
+            base_color: c,
+            perceptual_roughness: 0.4,
+            ..default()
+        })
+    });
+    let rail_torus = meshes.add(Torus::new(0.065, 1.0));
+    let gold_rail_torus = meshes.add(Torus::new(0.035, 1.0));
+    let decal_mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::new(1.6, 1.0)));
+    for (ti, (tp, yaw)) in BJ_TABLES.iter().enumerate() {
+        let tpos = orig + *tp;
         commands.spawn((
             LevelEntity,
             CasinoLevelEntity,
-            Mesh3d(unit_cyl.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_translation(orig + Vec3::new(cx, 1.44, cz))
-                .with_scale(Vec3::new(0.14, 0.22, 0.14)),
+            Transform::from_translation(tpos + Vec3::Y * 1.18),
+            PlatformBox {
+                half_extents: Vec3::new(2.55, 0.65, 1.85),
+            },
         ));
-    }
-    // Dealer behind Blackjack table facing South (+Z)
-    let dealer_p = orig + Vec3::new(0.0, 0.0, -2.35);
-    commands.spawn((
-        LevelEntity,
-        CasinoLevelEntity,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(tux_mat.clone()),
-        Transform::from_translation(dealer_p + Vec3::Y * 1.05)
-            .with_scale(Vec3::new(0.85, 1.18, 0.55)),
-    ));
-    commands.spawn((
-        LevelEntity,
-        CasinoLevelEntity,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(shirt_white.clone()),
-        Transform::from_translation(dealer_p + Vec3::new(0.0, 1.18, 0.27))
-            .with_scale(Vec3::new(0.32, 0.52, 0.06)),
-    ));
-    commands.spawn((
-        LevelEntity,
-        CasinoLevelEntity,
-        Mesh3d(unit_sphere.clone()),
-        MeshMaterial3d(skin_mat.clone()),
-        Transform::from_translation(dealer_p + Vec3::Y * 1.92)
-            .with_scale(Vec3::splat(0.30)),
-    ));
-
-    // WEST WING: 4x BUFFALO STAMPEDE Slot Machines (x = -15.5, facing East +X)
-    for bz in [-9.0_f32, -3.0, 3.0, 9.0] {
-        let p = orig + Vec3::new(-15.5, 0.0, bz);
         commands
             .spawn((
                 LevelEntity,
                 CasinoLevelEntity,
-                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
-                PlatformBox {
-                    half_extents: Vec3::new(0.95, 1.35, 1.15),
-                },
+                Transform::from_translation(tpos).with_rotation(Quat::from_rotation_y(*yaw)),
+                Visibility::default(),
             ))
-            .with_children(|cab| {
-                cab.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(bronze_cab_mat.clone()),
-                    Transform::from_xyz(0.0, 1.55, 0.0).with_scale(Vec3::new(1.75, 3.1, 1.35)),
-                ));
-                cab.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(buffalo_screen_mat.clone()),
-                    Transform::from_xyz(0.0, 2.52, 0.69).with_scale(Vec3::new(1.48, 0.90, 0.06)),
-                ));
-                cab.spawn((
-                    Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(slot_screen_mat.clone()),
-                    Transform::from_xyz(0.0, 1.48, 0.69).with_scale(Vec3::new(1.38, 0.78, 0.06)),
-                ));
-                cab.spawn((
+            .with_children(|t| {
+                t.spawn((
                     Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(wood_mat.clone()),
+                    Transform::from_xyz(0.0, 0.56, 0.0).with_scale(Vec3::new(0.75, 1.12, 0.65)),
+                ));
+                t.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(wood_mat.clone()),
+                    Transform::from_xyz(0.0, 1.18, 0.0).with_scale(Vec3::new(2.55, 0.22, 1.85)),
+                ));
+                t.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(felt_green_mat.clone()),
+                    Transform::from_xyz(0.0, 1.31, 0.0).with_scale(Vec3::new(2.30, 0.06, 1.62)),
+                ));
+                t.spawn((
+                    Mesh3d(decal_mesh.clone()),
+                    MeshMaterial3d(decal_mat.clone()),
+                    Transform::from_xyz(0.0, 1.345, 0.0),
+                ));
+                t.spawn((
+                    Mesh3d(rail_torus.clone()),
+                    MeshMaterial3d(leather_mat.clone()),
+                    Transform::from_xyz(0.0, 1.32, 0.0).with_scale(Vec3::new(2.44, 1.15, 1.74)),
+                ));
+                t.spawn((
+                    Mesh3d(gold_rail_torus.clone()),
                     MeshMaterial3d(gold_trim_mat.clone()),
-                    Transform::from_xyz(0.98, 1.75, 0.18)
-                        .with_rotation(Quat::from_rotation_x(-0.28))
-                        .with_scale(Vec3::new(0.055, 0.92, 0.055)),
+                    Transform::from_xyz(0.0, 1.24, 0.0).with_scale(Vec3::new(2.58, 1.0, 1.88)),
                 ));
-                cab.spawn((
-                    Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(red_runner_mat.clone()),
-                    Transform::from_xyz(0.98, 2.22, 0.30).with_scale(Vec3::splat(0.15)),
+                // Card shoe, discard tray and brass chip tray with chip stacks
+                t.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(acrylic_mat.clone()),
+                    Transform::from_translation(BJ_SHOE_LOCAL - Vec3::Y * 0.06)
+                        .with_scale(Vec3::new(0.34, 0.14, 0.22)),
                 ));
-                cab.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(dark_metal_mat.clone()),
-                    Transform::from_xyz(0.0, 0.48, 1.65).with_scale(Vec3::new(0.18, 0.96, 0.18)),
+                t.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(acrylic_mat.clone()),
+                    Transform::from_translation(BJ_TRAY_LOCAL - Vec3::Y * 0.045)
+                        .with_scale(Vec3::new(0.42, 0.05, 0.30)),
                 ));
-                cab.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(bronze_cab_mat.clone()),
-                    Transform::from_xyz(0.0, 0.96, 1.65).with_scale(Vec3::new(0.55, 0.20, 0.55)),
+                t.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(0.0, 1.375, -1.3).with_scale(Vec3::new(1.6, 0.05, 0.22)),
                 ));
+                for s in 0..5 {
+                    for k in 0..4 {
+                        t.spawn((
+                            Mesh3d(unit_cyl.clone()),
+                            MeshMaterial3d(chip_row_mats[s].clone()),
+                            Transform::from_xyz(-0.6 + s as f32 * 0.3, 1.41 + k as f32 * 0.028, -1.3)
+                                .with_scale(Vec3::new(0.07, 0.026, 0.07)),
+                        ));
+                    }
+                }
+                // Chillary Clinton dealing from behind every Blackjack table
+                t.spawn((
+                    ChillaryDealerPart {
+                        table_idx: ti,
+                        kind: ChillaryDealerLimb::BodyRoot,
+                    },
+                    Transform::from_xyz(0.0, 0.0, -2.05)
+                        .with_scale(Vec3::splat(crate::state::city_body_scale(1.8))),
+                    Visibility::default(),
+                ))
+                .with_children(|d| {
+                    crate::chillary::spawn_chillary_dealer_rig(d, &mut meshes, &chillary_mats, ti);
+                });
             });
     }
 
-    // EAST WING: 4x LUCKY LADIES Cute-Women Portrait Slot Machines (x = +15.5, facing West -X)
-    for (idx, sz) in [-9.0_f32, -3.0, 3.0, 9.0].iter().enumerate() {
-        let p = orig + Vec3::new(15.5, 0.0, *sz);
+    // SLOT FLOOR: 4 Buffalo (west) + 4 Lucky Ladies (east) cabinets with real spinning 3D reel drums
+    let reel_mats_buf: [Handle<StandardMaterial>; 6] = std::array::from_fn(|i| {
+        materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(art.buffalo_icons[i].clone()),
+            unlit: true,
+            ..default()
+        })
+    });
+    let reel_mats_lad: [Handle<StandardMaterial>; 6] = std::array::from_fn(|i| {
+        materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(art.ladies_icons[i].clone()),
+            unlit: true,
+            ..default()
+        })
+    });
+    let panel_mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::new(0.215, 0.128)));
+    let payline_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.2, 0.2),
+        emissive: LinearRgba::rgb(4.0, 0.3, 0.3),
+        unlit: true,
+        ..default()
+    });
+    let cab_stops = default_cab_stops();
+    for cab in 0..SLOT_CABS {
+        let (cpos, cyaw) = slot_cab_pose(cab);
+        let buffalo = cab < 4;
+        let body_mat = if buffalo { bronze_cab_mat.clone() } else { rose_cab_mat.clone() };
+        let topper_mat = if buffalo {
+            buffalo_screen_mat.clone()
+        } else {
+            lady_screen_mats[cab % 3].clone()
+        };
+        let reel_mats = if buffalo { &reel_mats_buf } else { &reel_mats_lad };
+        let theme = if buffalo { SlotTheme::Buffalo } else { SlotTheme::LuckyLadies };
+        let side = if buffalo { 1.0_f32 } else { -1.0 };
+        let stops = cab_stops[cab];
         commands
             .spawn((
                 LevelEntity,
                 CasinoLevelEntity,
-                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
+                Transform::from_translation(orig + cpos).with_rotation(Quat::from_rotation_y(cyaw)),
                 PlatformBox {
                     half_extents: Vec3::new(0.95, 1.35, 1.15),
                 },
             ))
-            .with_children(|cab| {
-                cab.spawn((
+            .with_children(|c| {
+                c.spawn((
                     Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(rose_cab_mat.clone()),
+                    MeshMaterial3d(body_mat.clone()),
                     Transform::from_xyz(0.0, 1.55, 0.0).with_scale(Vec3::new(1.75, 3.1, 1.35)),
                 ));
-                cab.spawn((
+                c.spawn((
                     Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(lady_screen_mats[idx % 3].clone()),
-                    Transform::from_xyz(0.0, 2.48, 0.69).with_scale(Vec3::new(1.24, 1.24, 0.06)),
+                    MeshMaterial3d(topper_mat),
+                    Transform::from_xyz(0.0, 2.55, 0.69).with_scale(Vec3::new(
+                        if buffalo { 1.48 } else { 1.24 },
+                        if buffalo { 0.90 } else { 1.14 },
+                        0.06,
+                    )),
                 ));
-                cab.spawn((
+                // Horizontal + vertical brass reel-window bezel bars
+                for y in [1.99_f32, 0.91] {
+                    c.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(gold_trim_mat.clone()),
+                        Transform::from_xyz(0.0, y, 0.78).with_scale(Vec3::new(1.66, 0.07, 0.30)),
+                    ));
+                }
+                for x in [-0.81_f32, 0.81] {
+                    c.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(gold_trim_mat.clone()),
+                        Transform::from_xyz(x, 1.45, 0.78).with_scale(Vec3::new(0.06, 1.14, 0.30)),
+                    ));
+                }
+                // Three real 12-facet rotating reel drums (axis along local X)
+                for col in 0..3 {
+                    let dx = (col as f32 - 1.0) * 0.52;
+                    let strip = slot_strip(theme, col);
+                    let rest = stops[col] as f32 * (PI / 6.0);
+                    c.spawn((
+                        SlotReelDrum {
+                            cab,
+                            col,
+                            angle: rest,
+                            spinning: false,
+                            settle: None,
+                            after_t: 9.0,
+                        },
+                        Transform::from_xyz(dx, 1.45, 0.40).with_rotation(Quat::from_rotation_x(rest)),
+                        Visibility::default(),
+                    ))
+                    .with_children(|d| {
+                        d.spawn((
+                            Mesh3d(unit_cyl.clone()),
+                            MeshMaterial3d(dark_metal_mat.clone()),
+                            Transform::from_scale(Vec3::new(0.47, 0.46, 0.47))
+                                .with_rotation(Quat::from_rotation_z(FRAC_PI_2)),
+                        ));
+                        for k in 0..12 {
+                            let th = k as f32 * (PI / 6.0);
+                            d.spawn((
+                                Mesh3d(panel_mesh.clone()),
+                                MeshMaterial3d(reel_mats[strip[k]].clone()),
+                                Transform::from_xyz(0.0, 0.483 * th.sin(), 0.483 * th.cos())
+                                    .with_rotation(Quat::from_rotation_x(FRAC_PI_2 - th)),
+                            ));
+                        }
+                    });
+                }
+                c.spawn((
                     Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(slot_screen_mat.clone()),
-                    Transform::from_xyz(0.0, 1.36, 0.69).with_scale(Vec3::new(1.38, 0.78, 0.06)),
+                    MeshMaterial3d(payline_mat.clone()),
+                    Transform::from_xyz(0.0, 1.45, 0.93).with_scale(Vec3::new(1.64, 0.018, 0.012)),
                 ));
-                cab.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(gold_trim_mat.clone()),
-                    Transform::from_xyz(-0.98, 1.75, 0.18)
-                        .with_rotation(Quat::from_rotation_x(-0.28))
-                        .with_scale(Vec3::new(0.055, 0.92, 0.055)),
-                ));
-                cab.spawn((
+                // Articulated mechanical side pull lever
+                c.spawn((
+                    SlotLeverPivot { cab, t: 9.0 },
+                    Transform::from_xyz(0.98 * side, 1.15, 0.18).with_rotation(Quat::from_rotation_x(-0.28)),
+                    Visibility::default(),
+                ))
+                .with_children(|l| {
+                    l.spawn((
+                        Mesh3d(unit_cyl.clone()),
+                        MeshMaterial3d(gold_trim_mat.clone()),
+                        Transform::from_xyz(0.0, 0.46, 0.0).with_scale(Vec3::new(0.055, 0.92, 0.055)),
+                    ));
+                    l.spawn((
+                        Mesh3d(unit_sphere.clone()),
+                        MeshMaterial3d(red_runner_mat.clone()),
+                        Transform::from_xyz(0.0, 0.95, 0.0).with_scale(Vec3::splat(0.15)),
+                    ));
+                });
+                // Chasing marquee bulbs (top row + both front edges) and jackpot crown beacon
+                for i in 0..9 {
+                    c.spawn((
+                        CasinoChaseBulb { phase: i },
+                        Mesh3d(bulb_mesh.clone()),
+                        MeshMaterial3d(chase_off.clone()),
+                        Transform::from_xyz(-0.8 + i as f32 * 0.2, 3.16, 0.62),
+                    ));
+                }
+                for i in 0..8 {
+                    for sx in [-0.86_f32, 0.86] {
+                        c.spawn((
+                            CasinoChaseBulb { phase: 9 + i },
+                            Mesh3d(bulb_mesh.clone()),
+                            MeshMaterial3d(chase_off.clone()),
+                            Transform::from_xyz(sx, 0.45 + i as f32 * 0.33, 0.62),
+                        ));
+                    }
+                }
+                c.spawn((
+                    SlotCrown { cab },
                     Mesh3d(unit_sphere.clone()),
-                    MeshMaterial3d(neon_pink_mat.clone()),
-                    Transform::from_xyz(-0.98, 2.22, 0.30).with_scale(Vec3::splat(0.15)),
+                    MeshMaterial3d(neon_gold_mat.clone()),
+                    Transform::from_xyz(0.0, 3.38, 0.25).with_scale(Vec3::splat(0.16)),
                 ));
-                cab.spawn((
+                // Velvet-cushioned slot stool
+                c.spawn((
                     Mesh3d(unit_cyl.clone()),
                     MeshMaterial3d(dark_metal_mat.clone()),
                     Transform::from_xyz(0.0, 0.48, 1.65).with_scale(Vec3::new(0.18, 0.96, 0.18)),
                 ));
-                cab.spawn((
+                c.spawn((
                     Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(rose_cab_mat.clone()),
+                    MeshMaterial3d(body_mat.clone()),
                     Transform::from_xyz(0.0, 0.96, 1.65).with_scale(Vec3::new(0.55, 0.20, 0.55)),
                 ));
             });
@@ -1514,17 +1874,24 @@ fn enter_casino_play(
             .with_scale(Vec3::new(3.65, 1.40, 0.06)),
     ));
 
-    // Glowing floor rings marking the 7 interactive stations
-    let stations = [
-        (CasinoStationKind::Blackjack, Vec3::new(0.0, 0.16, 3.8), Color::srgb(0.18, 0.95, 0.45)),
-        (CasinoStationKind::BuffaloSlots, Vec3::new(-11.2, 0.16, -4.5), Color::srgb(1.0, 0.72, 0.16)),
-        (CasinoStationKind::BuffaloSlots, Vec3::new(-11.2, 0.16, 4.5), Color::srgb(1.0, 0.72, 0.16)),
-        (CasinoStationKind::LuckyLadiesSlots, Vec3::new(11.2, 0.16, -4.5), Color::srgb(1.0, 0.42, 0.82)),
-        (CasinoStationKind::LuckyLadiesSlots, Vec3::new(11.2, 0.16, 4.5), Color::srgb(1.0, 0.42, 0.82)),
-        (CasinoStationKind::Cashier, Vec3::new(0.0, 0.16, -13.2), Color::srgb(0.98, 0.88, 0.34)),
-        (CasinoStationKind::ReturnPortal, Vec3::new(0.0, 0.16, 17.8), Color::srgb(0.32, 0.94, 1.0)),
-    ];
-    for (kind, local_p, color) in stations {
+    // Glowing floor rings: 3 Blackjack tables, 8 Slot cabinets, the Cashier and the Pub 217 portal
+    let mut stations: Vec<(CasinoStationKind, usize, Vec3, Color)> = Vec::new();
+    for (ti, (tp, yaw)) in BJ_TABLES.iter().enumerate() {
+        let p = *tp + Quat::from_rotation_y(*yaw) * Vec3::new(0.0, 0.16, 3.0);
+        stations.push((CasinoStationKind::Blackjack, ti, p, Color::srgb(0.18, 0.95, 0.45)));
+    }
+    for cab in 0..SLOT_CABS {
+        let (cp, cy) = slot_cab_pose(cab);
+        let p = cp + Quat::from_rotation_y(cy) * Vec3::new(0.0, 0.16, 3.7);
+        if cab < 4 {
+            stations.push((CasinoStationKind::BuffaloSlots, cab, p, Color::srgb(1.0, 0.72, 0.16)));
+        } else {
+            stations.push((CasinoStationKind::LuckyLadiesSlots, cab, p, Color::srgb(1.0, 0.42, 0.82)));
+        }
+    }
+    stations.push((CasinoStationKind::Cashier, 0, Vec3::new(0.0, 0.16, -13.2), Color::srgb(0.98, 0.88, 0.34)));
+    stations.push((CasinoStationKind::ReturnPortal, 0, Vec3::new(0.0, 0.16, 17.8), Color::srgb(0.32, 0.94, 1.0)));
+    for (kind, idx, local_p, color) in stations {
         let l = color.to_linear();
         let mat = materials.add(StandardMaterial {
             base_color: color,
@@ -1539,6 +1906,7 @@ fn enter_casino_play(
             CasinoRing {
                 station: kind,
                 base_pos: world_p,
+                station_idx: idx,
             },
             Mesh3d(ring_mesh.clone()),
             MeshMaterial3d(mat),
@@ -1548,15 +1916,41 @@ fn enter_casino_play(
         ));
     }
 
-    // Glenn, Nate & TJ celebrating around the Casino floor after tumbling out of the portal!
+    // Chasing marquee bulbs framing the North wall sign
+    for i in 0..23 {
+        let x = -4.4 + i as f32 * 0.4;
+        for y in [11.08_f32, 7.32] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                CasinoChaseBulb { phase: i },
+                Mesh3d(bulb_mesh.clone()),
+                MeshMaterial3d(chase_off.clone()),
+                Transform::from_translation(orig + Vec3::new(x, y, -21.74)),
+            ));
+        }
+    }
+    commands.insert_resource(CasinoFxAssets {
+        card_front_mesh,
+        card_back_mesh,
+        chip_mesh,
+        chip_mats,
+        coin_mesh,
+        coin_mat,
+        chase_on,
+        chase_off,
+    });
+
+    // Glenn, Nate & TJ grooving to the smooth jazz around the Casino floor!
     let glenn_mats = crate::glenn::make_glenn_materials(&mut materials);
     commands
         .spawn((
             LevelEntity,
             CasinoLevelEntity,
-            Transform::from_translation(orig + Vec3::new(-10.2, 0.0, -8.2))
+            CasinoCrewBob { base_y: 0.0, phase: 0.0 },
+            Transform::from_translation(orig + Vec3::new(-10.6, 0.0, -9.2))
                 .with_rotation(Quat::from_rotation_y(-FRAC_PI_2 + 0.35))
-                .with_scale(Vec3::splat(1.22)),
+                .with_scale(Vec3::splat(crate::state::city_body_scale(1.8))),
             Visibility::default(),
         ))
         .with_children(|p| {
@@ -1568,9 +1962,10 @@ fn enter_casino_play(
         .spawn((
             LevelEntity,
             CasinoLevelEntity,
-            Transform::from_translation(orig + Vec3::new(10.2, 0.0, -2.0))
+            CasinoCrewBob { base_y: 0.0, phase: 2.1 },
+            Transform::from_translation(orig + Vec3::new(10.6, 0.0, -9.2))
                 .with_rotation(Quat::from_rotation_y(FRAC_PI_2 - 0.35))
-                .with_scale(Vec3::splat(1.26)),
+                .with_scale(Vec3::splat(crate::state::city_body_scale(1.8))),
             Visibility::default(),
         ))
         .with_children(|p| {
@@ -1581,9 +1976,10 @@ fn enter_casino_play(
         .spawn((
             LevelEntity,
             CasinoLevelEntity,
-            Transform::from_translation(orig + Vec3::new(5.2, 0.0, 3.4))
-                .with_rotation(Quat::from_rotation_y((-5.2_f32).atan2(-3.4)))
-                .with_scale(Vec3::splat(1.26)),
+            CasinoCrewBob { base_y: 0.0, phase: 4.2 },
+            Transform::from_translation(orig + Vec3::new(5.4, 0.0, 4.4))
+                .with_rotation(Quat::from_rotation_y((-5.4_f32).atan2(-4.4)))
+                .with_scale(Vec3::splat(crate::state::city_body_scale(1.8))),
             Visibility::default(),
         ))
         .with_children(|p| {
@@ -1595,6 +1991,8 @@ fn exit_casino_play(
     mut commands: Commands,
     mut stats: ResMut<PlayerStats>,
     mut game: ResMut<CasinoGameState>,
+    mut sync: ResMut<Casino3dSync>,
+    mut player_q: Query<&mut Visibility, With<Player>>,
     level_q: Query<Entity, With<CasinoLevelEntity>>,
     ui_q: Query<Entity, With<CasinoUiRoot>>,
     prompt_q: Query<Entity, With<CasinoPromptUi>>,
@@ -1605,6 +2003,10 @@ fn exit_casino_play(
     stats.in_casino_level = false;
     stats.casino_open = false;
     stats.casino_esc_grace = false;
+    *sync = Casino3dSync::default();
+    for mut v in &mut player_q {
+        *v = Visibility::Visible;
+    }
     for e in &level_q {
         commands.entity(e).despawn_recursive();
     }
@@ -1616,12 +2018,31 @@ fn exit_casino_play(
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn update_casino_props_anim(
     time: Res<Time>,
     stats: Res<PlayerStats>,
-    player_q: Query<&Transform, (With<Player>, Without<CasinoRing>, Without<CasinoPortalSpin>)>,
-    mut portal_q: Query<(&CasinoPortalSpin, &mut Transform), Without<CasinoRing>>,
-    mut ring_q: Query<(&CasinoRing, &mut Transform), Without<CasinoPortalSpin>>,
+    player_q: Query<
+        &Transform,
+        (
+            With<Player>,
+            Without<CasinoRing>,
+            Without<CasinoPortalSpin>,
+            Without<CasinoChandelier>,
+        ),
+    >,
+    mut portal_q: Query<
+        (&CasinoPortalSpin, &mut Transform),
+        (Without<CasinoRing>, Without<CasinoChandelier>),
+    >,
+    mut ring_q: Query<
+        (&CasinoRing, &mut Transform),
+        (Without<CasinoPortalSpin>, Without<CasinoChandelier>),
+    >,
+    mut chand_q: Query<
+        (&CasinoChandelier, &mut Transform),
+        (Without<CasinoPortalSpin>, Without<CasinoRing>),
+    >,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
@@ -1629,6 +2050,9 @@ fn update_casino_props_anim(
         tf.rotate_x(spin.vel.x * dt);
         tf.rotate_y(spin.vel.y * dt);
         tf.rotate_z(spin.vel.z * dt);
+    }
+    for (ch, mut tf) in &mut chand_q {
+        tf.rotate_y(ch.speed * dt);
     }
     let p_pos = player_q.get_single().ok().map(|tf| tf.translation);
     for (ring, mut tf) in &mut ring_q {
@@ -1715,6 +2139,7 @@ struct CasinoGameState {
     rng: u64,
     // Blackjack
     shoe: Vec<Card>,
+    bj_table: usize,
     bj_bet: u32,
     bj_doubled: bool,
     bj_phase: BjPhase,
@@ -1725,7 +2150,11 @@ struct CasinoGameState {
     bj_hands: u32,
     // Slots
     slot_theme: SlotTheme,
+    slot_cab: usize,
     slot_bet: u32,
+    slot_stop: [usize; 3],
+    slot_cab_stops: [[usize; 3]; SLOT_CABS],
+    slot_stop_times: [f32; 3],
     slot_grid: [[usize; 3]; 3], // [col][row], 6 symbols (0..=5)
     slot_target: [[usize; 3]; 3],
     slot_spinning: bool,
@@ -1736,9 +2165,13 @@ struct CasinoGameState {
     slot_last_win: u32,
     slot_spins: u32,
     slot_msg: String,
-    // Ledger (session telemetry)
+    // Ledger & 3D FX telemetry
     session_net: i64,
     biggest_win: u32,
+    display_tw: f32,
+    payout_seq: u32,
+    last_wager: u32,
+    last_payout: u32,
 }
 
 impl Default for CasinoGameState {
@@ -1746,22 +2179,30 @@ impl Default for CasinoGameState {
         let mut seed_bytes = [0u8; 8];
         let _ = getrandom::getrandom(&mut seed_bytes);
         let rng = u64::from_le_bytes(seed_bytes) | 1;
+        let cab_stops = default_cab_stops();
+        let stop = cab_stops[1];
+        let grid = grid_from_stops(SlotTheme::Buffalo, stop);
         Self {
             station: CasinoStationKind::Blackjack,
             rng,
             shoe: Vec::new(),
+            bj_table: 0,
             bj_bet: 10,
             bj_doubled: false,
             bj_phase: BjPhase::Betting,
             bj_player: Vec::new(),
             bj_dealer: Vec::new(),
             bj_dealer_timer: 0.0,
-            bj_msg: "Pick a TW chip bet and hit DEAL!".to_string(),
+            bj_msg: "Chillary: Just chillin' at the 21 table. Pick a TW bet and hit DEAL!".to_string(),
             bj_hands: 0,
             slot_theme: SlotTheme::Buffalo,
+            slot_cab: 1,
             slot_bet: 10,
-            slot_grid: [[0, 1, 2], [2, 0, 3], [4, 2, 0]],
-            slot_target: [[0, 1, 2], [2, 0, 3], [4, 2, 0]],
+            slot_stop: stop,
+            slot_cab_stops: cab_stops,
+            slot_stop_times: [0.72, 1.18, 1.65],
+            slot_grid: grid,
+            slot_target: grid,
             slot_spinning: false,
             slot_elapsed: 0.0,
             slot_tick_accum: 0.0,
@@ -1769,9 +2210,13 @@ impl Default for CasinoGameState {
             slot_win_lines: Vec::new(),
             slot_last_win: 0,
             slot_spins: 0,
-            slot_msg: "Select your TW bet and press SPIN!".to_string(),
+            slot_msg: "Select your TW bet and PULL LEVER [SPACE]!".to_string(),
             session_net: 0,
             biggest_win: 0,
+            display_tw: 0.0,
+            payout_seq: 0,
+            last_wager: 0,
+            last_payout: 0,
         }
     }
 }
@@ -1814,34 +2259,14 @@ impl CasinoGameState {
         if payout > self.biggest_win {
             self.biggest_win = payout;
         }
+        self.last_wager = wager;
+        self.last_payout = payout;
+        self.payout_seq = self.payout_seq.wrapping_add(1);
     }
 }
 
 const BUFFALO_NAMES: [&str; 6] = ["WILD BUFFALO", "GOLD TENDY", "SUNSET 7", "EAGLE", "WOLF", "TW COIN"];
 const LADIES_NAMES: [&str; 6] = ["RUBY", "SAKURA", "SKYE", "DIAMOND", "CHERRY", "HEART TW"];
-
-/// Weighted symbol generator for 5-payline 3x3 reels (balanced for exciting hits & near-misses).
-fn roll_slot_symbol(rng: u64, theme: SlotTheme) -> usize {
-    let r = (rng % 100) as usize;
-    match theme {
-        SlotTheme::Buffalo => match r {
-            0..=7 => 0,   // Wild Buffalo
-            8..=19 => 1,  // Gold Tendy
-            20..=33 => 2, // Sunset 7
-            34..=51 => 3, // Eagle
-            52..=73 => 4, // Wolf
-            _ => 5,       // TW Coin
-        },
-        SlotTheme::LuckyLadies => match r {
-            0..=8 => 0,   // Ruby
-            9..=18 => 1,  // Sakura
-            19..=29 => 2, // Skye
-            30..=47 => 3, // Diamond
-            48..=71 => 4, // Cherry
-            _ => 5,       // Heart TW
-        },
-    }
-}
 
 const PAYLINES: [[(usize, usize); 3]; 5] = [
     [(0, 1), (1, 1), (2, 1)], // Center row
@@ -2022,13 +2447,17 @@ fn open_casino_modal(
     game: &mut CasinoGameState,
     art: &CasinoArt,
     station: CasinoStationKind,
+    station_idx: usize,
     window_q: &mut Query<&mut Window, With<bevy::window::PrimaryWindow>>,
 ) {
     stats.casino_open = true;
     game.station = station;
+    game.display_tw = stats.tendy_wendies as f32;
     match station {
-        CasinoStationKind::BuffaloSlots => game.slot_theme = SlotTheme::Buffalo,
-        CasinoStationKind::LuckyLadiesSlots => game.slot_theme = SlotTheme::LuckyLadies,
+        CasinoStationKind::Blackjack => game.bj_table = station_idx.min(BJ_TABLES.len() - 1),
+        CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
+            select_slot_cab(game, station_idx);
+        }
         _ => {}
     }
     if let Ok(mut window) = window_q.get_single_mut() {
@@ -2083,12 +2512,11 @@ fn start_blackjack_deal(stats: &mut PlayerStats, game: &mut CasinoGameState) {
         return;
     }
     if !stats.spend_tendy_wendies(game.bj_bet) {
-        game.bj_msg = format!("Need {} TW! Claim free +25 TW at Cashier or lower bet.", game.bj_bet);
+        game.bj_msg = format!("Chillary: Need {} TW! Claim free +25 TW or lower your bet.", game.bj_bet);
         play_sfx("hack_deny");
         return;
     }
     play_sfx("chip_bet");
-    play_sfx("card_deal");
     game.bj_hands += 1;
     game.bj_doubled = false;
     game.bj_player.clear();
@@ -2110,15 +2538,15 @@ fn start_blackjack_deal(stats: &mut PlayerStats, game: &mut CasinoGameState) {
             (true, false) => {
                 let p = game.bj_bet + (game.bj_bet * 3) / 2;
                 play_sfx("slot_jackpot");
-                (p, format!("NATURAL BLACKJACK! Won {} TW!", p))
+                (p, format!("Chillary: NATURAL BLACKJACK! Won {} TW!", p))
             }
             (true, true) => {
                 play_sfx("chip_bet");
-                (game.bj_bet, format!("Both Blackjack! Push: {} TW returned.", game.bj_bet))
+                (game.bj_bet, format!("Chillary: Both 21! Push: {} TW returned.", game.bj_bet))
             }
             _ => {
                 play_sfx("hit");
-                (0, "Dealer has Blackjack!".to_string())
+                (0, "Chillary: Dealer Blackjack! Better luck next hand.".to_string())
             }
         };
         if payout > 0 {
@@ -2128,7 +2556,7 @@ fn start_blackjack_deal(stats: &mut PlayerStats, game: &mut CasinoGameState) {
         game.bj_msg = msg;
     } else {
         game.bj_phase = BjPhase::PlayerTurn;
-        game.bj_msg = "Your turn: HIT [H], STAND [S], or DOUBLE [D].".to_string();
+        game.bj_msg = "Chillary: Your move - HIT [H], STAND [S], or DOUBLE [D].".to_string();
     }
 }
 
@@ -2138,20 +2566,19 @@ fn blackjack_hit(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     }
     let card = game.draw_card();
     game.bj_player.push(card);
-    play_sfx("card_deal");
     let (tot, _) = hand_total(&game.bj_player);
     if tot > 21 {
         game.bj_phase = BjPhase::Settled;
         game.record_payout(game.bj_bet, 0);
-        game.bj_msg = format!("BUST at {}! House takes {} TW.", tot, game.bj_bet);
+        game.bj_msg = format!("Chillary: BUST at {}! House collects {} TW.", tot, game.bj_bet);
         play_sfx("hit");
     } else if tot == 21 {
         let _ = stats;
         game.bj_phase = BjPhase::DealerTurn;
-        game.bj_dealer_timer = 0.35;
-        game.bj_msg = "21! Dealer draws...".to_string();
+        game.bj_dealer_timer = 0.50;
+        game.bj_msg = "Chillary: 21! Drawing dealer hand...".to_string();
     } else {
-        game.bj_msg = format!("Hit! You have {}. HIT [H] or STAND [S]?", tot);
+        game.bj_msg = format!("You have {}. HIT [H] or STAND [S]?", tot);
     }
 }
 
@@ -2160,8 +2587,8 @@ fn blackjack_stand(game: &mut CasinoGameState) {
         return;
     }
     game.bj_phase = BjPhase::DealerTurn;
-    game.bj_dealer_timer = 0.35;
-    game.bj_msg = "Dealer reveals & draws to 17...".to_string();
+    game.bj_dealer_timer = 0.50;
+    game.bj_msg = "Chillary flips her hole card & draws to 17...".to_string();
 }
 
 fn blackjack_double(stats: &mut PlayerStats, game: &mut CasinoGameState) {
@@ -2169,7 +2596,7 @@ fn blackjack_double(stats: &mut PlayerStats, game: &mut CasinoGameState) {
         return;
     }
     if !stats.spend_tendy_wendies(game.bj_bet) {
-        game.bj_msg = "Not enough TW to Double Down!".to_string();
+        game.bj_msg = "Chillary: Not enough TW to Double Down!".to_string();
         play_sfx("hack_deny");
         return;
     }
@@ -2178,19 +2605,18 @@ fn blackjack_double(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     play_sfx("chip_bet");
     let card = game.draw_card();
     game.bj_player.push(card);
-    play_sfx("card_deal");
     let (tot, _) = hand_total(&game.bj_player);
     if tot > 21 {
         game.bj_phase = BjPhase::Settled;
         game.record_payout(game.bj_bet, 0);
-        game.bj_msg = format!("DOUBLED & BUST at {}! Lost {} TW.", tot, game.bj_bet);
+        game.bj_msg = format!("Chillary: DOUBLED & BUST at {}! Lost {} TW.", tot, game.bj_bet);
         game.bj_bet /= 2;
         game.bj_doubled = false;
         play_sfx("hit");
     } else {
         game.bj_phase = BjPhase::DealerTurn;
-        game.bj_dealer_timer = 0.4;
-        game.bj_msg = format!("Doubled to {}! Dealer plays...", tot);
+        game.bj_dealer_timer = 0.50;
+        game.bj_msg = format!("Doubled to {}! Chillary plays...", tot);
     }
 }
 
@@ -2203,6 +2629,7 @@ fn start_slot_spin(stats: &mut PlayerStats, game: &mut CasinoGameState) {
         play_sfx("hack_deny");
         return;
     }
+    play_sfx("slot_lever");
     play_sfx("chip_bet");
     game.slot_spins += 1;
     game.slot_spinning = true;
@@ -2212,12 +2639,20 @@ fn start_slot_spin(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     game.slot_win_lines.clear();
     game.slot_last_win = 0;
     for col in 0..3 {
-        for row in 0..3 {
-            let r = game.next_u64();
-            game.slot_target[col][row] = roll_slot_symbol(r, game.slot_theme);
-        }
+        game.slot_stop[col] = (game.next_u64() % 12) as usize;
     }
-    game.slot_msg = "Spinning reels...".to_string();
+    game.slot_cab_stops[game.slot_cab] = game.slot_stop;
+    game.slot_target = grid_from_stops(game.slot_theme, game.slot_stop);
+    let c0_mid = game.slot_target[0][1];
+    let c1_mid = game.slot_target[1][1];
+    let suspense = (c0_mid == c1_mid && c0_mid <= 2)
+        || (game.slot_theme == SlotTheme::Buffalo && (c0_mid == 0 || c1_mid == 0));
+    game.slot_stop_times = if suspense {
+        [0.72, 1.18, 2.12]
+    } else {
+        [0.72, 1.18, 1.65]
+    };
+    game.slot_msg = "Pulling lever - reels spinning!".to_string();
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -2252,7 +2687,7 @@ fn update_casino_stations(
         return;
     };
 
-    let mut best: Option<(f32, CasinoStationKind)> = None;
+    let mut best: Option<(f32, CasinoStationKind, usize)> = None;
     if p_tf.translation.y < 3.5 {
         for ring in &ring_q {
             let d = Vec2::new(
@@ -2260,13 +2695,13 @@ fn update_casino_stations(
                 p_tf.translation.z - ring.base_pos.z,
             )
             .length();
-            if d < 3.2 && best.is_none_or(|(bd, _)| d < bd) {
-                best = Some((d, ring.station));
+            if d < 3.2 && best.is_none_or(|(bd, _, _)| d < bd) {
+                best = Some((d, ring.station, ring.station_idx));
             }
         }
     }
 
-    let Some((_, kind)) = best else {
+    let Some((_, kind, station_idx)) = best else {
         for e in &prompt_q {
             commands.entity(e).despawn_recursive();
         }
@@ -2332,7 +2767,7 @@ fn update_casino_stations(
         next_state.set(GameState::CityPlay);
         return;
     }
-    open_casino_modal(&mut commands, &mut stats, &mut game, &art, kind, &mut window_q);
+    open_casino_modal(&mut commands, &mut stats, &mut game, &art, kind, station_idx, &mut window_q);
 }
 
 fn update_blackjack_dealer_timer(
@@ -2351,8 +2786,7 @@ fn update_blackjack_dealer_timer(
     if dtot < 17 {
         let card = game.draw_card();
         game.bj_dealer.push(card);
-        play_sfx("card_deal");
-        game.bj_dealer_timer = 0.40;
+        game.bj_dealer_timer = 0.52;
         return;
     }
 
@@ -2368,13 +2802,13 @@ fn update_blackjack_dealer_timer(
         } else {
             play_sfx("tendy");
         }
-        (p, format!("YOU WIN ({} vs {})! +{} TW!", ptot, dtot, p))
+        (p, format!("Chillary: YOU WIN ({} vs {})! +{} TW!", ptot, dtot, p))
     } else if ptot == dtot {
         play_sfx("chip_bet");
-        (active_wager, format!("PUSH ({} vs {}). {} TW returned.", ptot, dtot, active_wager))
+        (active_wager, format!("Chillary: PUSH ({} vs {}). {} TW returned.", ptot, dtot, active_wager))
     } else {
         play_sfx("hit");
-        (0, format!("DEALER WINS ({} vs {}).", dtot, ptot))
+        (0, format!("Chillary: House wins ({} vs {}). Relax, just chillin'.", dtot, ptot))
     };
     if payout > 0 {
         stats.add_tendy_wendies(payout);
@@ -2399,16 +2833,16 @@ fn update_slot_spin_timer(
     game.slot_elapsed += dt;
     game.slot_tick_accum += dt;
 
-    let stop_times = [0.55_f32, 0.95, 1.35];
+    let stop_times = game.slot_stop_times;
     if game.slot_tick_accum >= 0.085 {
         game.slot_tick_accum = 0.0;
         let theme = game.slot_theme;
+        let step = (game.slot_elapsed * 14.0) as usize;
         for col in 0..3 {
             if !game.slot_stopped_cols[col] {
-                for row in 0..3 {
-                    let r = game.next_u64();
-                    game.slot_grid[col][row] = roll_slot_symbol(r, theme);
-                }
+                let strip = slot_strip(theme, col);
+                let s = (step + col * 4) % 12;
+                game.slot_grid[col] = [strip[(s + 1) % 12], strip[s], strip[(s + 11) % 12]];
             }
         }
         play_sfx("slot_tick");
@@ -2459,6 +2893,12 @@ fn handle_casino_modal_input(
                 }
                 game.station = next;
                 match next {
+                    CasinoStationKind::BuffaloSlots if game.slot_cab >= 4 => {
+                        select_slot_cab(&mut game, 1);
+                    }
+                    CasinoStationKind::LuckyLadiesSlots if game.slot_cab < 4 => {
+                        select_slot_cab(&mut game, 5);
+                    }
                     CasinoStationKind::BuffaloSlots => game.slot_theme = SlotTheme::Buffalo,
                     CasinoStationKind::LuckyLadiesSlots => game.slot_theme = SlotTheme::LuckyLadies,
                     _ => {}
@@ -2556,26 +2996,26 @@ fn spawn_card_node(parent: &mut ChildBuilder, art: &CasinoArt, is_dealer: bool, 
         .spawn((
             BjCardSlot { is_dealer, idx },
             Node {
-                width: Val::Px(54.0),
-                height: Val::Px(74.0),
+                width: Val::Px(42.0),
+                height: Val::Px(56.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
-                padding: UiRect::axes(Val::Px(4.0), Val::Px(5.0)),
-                border: UiRect::all(Val::Px(2.0)),
+                padding: UiRect::axes(Val::Px(3.0), Val::Px(3.0)),
+                border: UiRect::all(Val::Px(1.5)),
                 display: Display::None,
                 ..default()
             },
             BackgroundColor(Color::srgb(0.97, 0.96, 0.92)),
             BorderColor(Color::srgb(0.84, 0.76, 0.56)),
-            BorderRadius::all(Val::Px(7.0)),
+            BorderRadius::all(Val::Px(5.0)),
         ))
         .with_children(|card| {
             card.spawn((
                 BjCardRankText,
                 Text::new("A"),
                 TextFont {
-                    font_size: 16.0,
+                    font_size: 13.0,
                     ..default()
                 },
                 TextColor(Color::srgb(0.12, 0.12, 0.16)),
@@ -2584,8 +3024,8 @@ fn spawn_card_node(parent: &mut ChildBuilder, art: &CasinoArt, is_dealer: bool, 
                 BjCardSuitImg,
                 ImageNode::new(art.suit_icons[0].clone()),
                 Node {
-                    width: Val::Px(24.0),
-                    height: Val::Px(24.0),
+                    width: Val::Px(18.0),
+                    height: Val::Px(18.0),
                     ..default()
                 },
             ));
@@ -2602,7 +3042,7 @@ fn spawn_card_node(parent: &mut ChildBuilder, art: &CasinoArt, is_dealer: bool, 
                     ..default()
                 },
                 BackgroundColor(Color::srgb(0.55, 0.10, 0.22)),
-                BorderRadius::all(Val::Px(5.0)),
+                BorderRadius::all(Val::Px(4.0)),
             ));
         });
 }
@@ -2614,6 +3054,7 @@ fn spawn_casino_ui(
     game: &CasinoGameState,
     stats: &PlayerStats,
 ) {
+    // 3-zone transparent overlay so the live 3D Chillary Blackjack table / 3D Slots stay center-stage!
     commands
         .spawn((
             CasinoUiRoot,
@@ -2621,234 +3062,284 @@ fn spawn_casino_ui(
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                justify_content: JustifyContent::Center,
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
-                padding: UiRect::all(Val::Px(12.0)),
+                padding: UiRect::all(Val::Px(10.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.01, 0.04, 0.72)),
             GlobalZIndex(900),
         ))
-        .with_children(|bg| {
-            bg.spawn((
-                Node {
-                    width: Val::Percent(96.0),
-                    max_width: Val::Px(680.0),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
-                    padding: UiRect::all(Val::Px(14.0)),
-                    border: UiRect::all(Val::Px(2.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.09, 0.04, 0.10, 0.96)),
-                BorderColor(Color::srgb(0.98, 0.78, 0.24)),
-                BorderRadius::all(Val::Px(14.0)),
-            ))
-            .with_children(|card| {
-                // Header: Station Title + Tendy Wendies Wallet + Leave
-                card.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    justify_content: JustifyContent::SpaceBetween,
-                    align_items: AlignItems::Center,
-                    flex_wrap: FlexWrap::Wrap,
-                    row_gap: Val::Px(6.0),
-                    ..default()
-                })
-                .with_children(|hdr| {
-                    hdr.spawn((
-                        CasinoDynamicText::StationTitle,
-                        Text::new(game.station.title()),
-                        TextFont {
-                            font_size: 20.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(1.0, 0.84, 0.26)),
-                    ));
-                    hdr.spawn((
-                        CasinoDynamicText::HeaderBalance,
-                        Text::new(format!("TENDY WENDIES: {} TW", stats.tendy_wendies)),
-                        TextFont {
-                            font_size: 16.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgb(0.38, 1.0, 0.62)),
-                    ));
-                    mk_btn(hdr, CasinoActionBtn::Leave, "LEAVE [ESC]", Color::srgb(0.55, 0.14, 0.18), 13.0);
-                });
-
-                // Station Tab Switcher + Bailout Button
-                card.spawn(Node {
-                    flex_direction: FlexDirection::Row,
-                    flex_wrap: FlexWrap::Wrap,
-                    column_gap: Val::Px(6.0),
-                    row_gap: Val::Px(6.0),
-                    ..default()
-                })
-                .with_children(|tabs| {
-                    mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::Blackjack), "BLACKJACK", Color::srgb(0.10, 0.38, 0.22), 12.5);
-                    mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::BuffaloSlots), "BUFFALO SLOTS", Color::srgb(0.54, 0.28, 0.08), 12.5);
-                    mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::LuckyLadiesSlots), "LUCKY LADIES", Color::srgb(0.60, 0.14, 0.42), 12.5);
-                    mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::Cashier), "CASHIER", Color::srgb(0.28, 0.24, 0.12), 12.5);
-                    mk_btn(tabs, CasinoActionBtn::Stipend, "FREE +25 TW", Color::srgb(0.14, 0.46, 0.68), 12.5);
-                });
-
-                // Status Feedback Line
-                card.spawn((
-                    CasinoDynamicText::StatusMsg,
-                    Text::new(""),
-                    TextFont {
-                        font_size: 14.0,
+        .with_children(|root| {
+            // ---- TOP ZONE: Translucent Header, Tabs & Live Status Pill ----
+            root.spawn(Node {
+                width: Val::Percent(98.0),
+                max_width: Val::Px(880.0),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(5.0),
+                ..default()
+            })
+            .with_children(|top| {
+                top.spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(7.0)),
+                        border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
-                    TextColor(Color::srgb(1.0, 0.94, 0.72)),
-                ));
+                    BackgroundColor(Color::srgba(0.07, 0.03, 0.10, 0.86)),
+                    BorderColor(Color::srgb(0.98, 0.78, 0.24)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|bar| {
+                    bar.spawn(Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Row,
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        flex_wrap: FlexWrap::Wrap,
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    })
+                    .with_children(|hdr| {
+                        hdr.spawn((
+                            CasinoDynamicText::StationTitle,
+                            Text::new(game.station.title()),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(Color::srgb(1.0, 0.84, 0.26)),
+                        ));
+                        hdr.spawn((
+                            CasinoDynamicText::HeaderBalance,
+                            Text::new(format!("TENDY WENDIES: {} TW", stats.tendy_wendies)),
+                            TextFont { font_size: 15.5, ..default() },
+                            TextColor(Color::srgb(0.38, 1.0, 0.62)),
+                        ));
+                        mk_btn(hdr, CasinoActionBtn::Leave, "LEAVE [ESC]", Color::srgb(0.55, 0.14, 0.18), 12.5);
+                    });
+                    bar.spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(4.0),
+                        ..default()
+                    })
+                    .with_children(|tabs| {
+                        mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::Blackjack), "BLACKJACK", Color::srgb(0.10, 0.38, 0.22), 12.0);
+                        mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::BuffaloSlots), "BUFFALO SLOTS", Color::srgb(0.54, 0.28, 0.08), 12.0);
+                        mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::LuckyLadiesSlots), "LUCKY LADIES", Color::srgb(0.60, 0.14, 0.42), 12.0);
+                        mk_btn(tabs, CasinoActionBtn::Tab(CasinoStationKind::Cashier), "CASHIER", Color::srgb(0.28, 0.24, 0.12), 12.0);
+                        mk_btn(tabs, CasinoActionBtn::Stipend, "FREE +25 TW", Color::srgb(0.14, 0.46, 0.68), 12.0);
+                    });
+                });
 
-                // ---- BLACKJACK PANEL ----
-                card.spawn((
-                    CasinoPanel::Blackjack,
+                top.spawn((
                     Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
-                        padding: UiRect::all(Val::Px(10.0)),
+                        padding: UiRect::axes(Val::Px(14.0), Val::Px(5.0)),
                         border: UiRect::all(Val::Px(1.5)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.05, 0.24, 0.12)),
-                    BorderColor(Color::srgb(0.76, 0.56, 0.20)),
+                    BackgroundColor(Color::srgba(0.05, 0.02, 0.08, 0.80)),
+                    BorderColor(Color::srgba(0.98, 0.78, 0.24, 0.55)),
+                    BorderRadius::all(Val::Px(8.0)),
+                ))
+                .with_children(|pill| {
+                    pill.spawn((
+                        CasinoDynamicText::StatusMsg,
+                        Text::new(""),
+                        TextFont { font_size: 13.5, ..default() },
+                        TextColor(Color::srgb(1.0, 0.94, 0.72)),
+                    ));
+                });
+            });
+
+            // ---- MIDDLE ZONE: Transparent Open 3D Stage (Cashier only when selected) ----
+            root.spawn(Node {
+                flex_grow: 1.0,
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|mid| {
+                mid.spawn((
+                    CasinoPanel::Cashier,
+                    Node {
+                        max_width: Val::Px(560.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(8.0),
+                        padding: UiRect::all(Val::Px(14.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.10, 0.07, 0.04, 0.90)),
+                    BorderColor(Color::srgb(0.95, 0.80, 0.30)),
+                    BorderRadius::all(Val::Px(12.0)),
+                ))
+                .with_children(|cash| {
+                    cash.spawn((
+                        CasinoDynamicText::CashierSummary,
+                        Text::new(""),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            });
+
+            // ---- BOTTOM ZONE: Compact Translucent Control Dock (Blackjack / Slots) ----
+            root.spawn(Node {
+                width: Val::Percent(98.0),
+                max_width: Val::Px(860.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            })
+            .with_children(|dock| {
+                // BLACKJACK DOCK
+                dock.spawn((
+                    CasinoPanel::Blackjack,
+                    Node {
+                        width: Val::Percent(100.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        padding: UiRect::all(Val::Px(9.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.22, 0.12, 0.86)),
+                    BorderColor(Color::srgb(0.84, 0.66, 0.24)),
                     BorderRadius::all(Val::Px(10.0)),
                 ))
                 .with_children(|bj| {
-                    bj.spawn((
-                        CasinoDynamicText::BjDealerScore,
-                        Text::new("DEALER: -"),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::srgb(0.92, 0.96, 1.0)),
-                    ));
                     bj.spawn(Node {
+                        width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(6.0),
-                        min_height: Val::Px(76.0),
+                        justify_content: JustifyContent::SpaceBetween,
+                        align_items: AlignItems::Center,
+                        flex_wrap: FlexWrap::Wrap,
+                        column_gap: Val::Px(12.0),
+                        row_gap: Val::Px(6.0),
                         ..default()
                     })
-                    .with_children(|row| {
-                        for idx in 0..8 {
-                            spawn_card_node(row, art, true, idx);
-                        }
+                    .with_children(|hands| {
+                        hands.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        })
+                        .with_children(|dl| {
+                            dl.spawn((
+                                ImageNode::new(art.chillary_portrait.clone()),
+                                Node {
+                                    width: Val::Px(46.0),
+                                    height: Val::Px(46.0),
+                                    border: UiRect::all(Val::Px(2.0)),
+                                    ..default()
+                                },
+                                BorderColor(Color::srgb(0.98, 0.78, 0.24)),
+                            ));
+                            dl.spawn(Node {
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(2.0),
+                                ..default()
+                            })
+                            .with_children(|col| {
+                                col.spawn((
+                                    Text::new("DEALER: CHILLARY CLINTON"),
+                                    TextFont { font_size: 12.5, ..default() },
+                                    TextColor(Color::srgb(0.46, 0.90, 1.0)),
+                                ));
+                                col.spawn((
+                                    CasinoDynamicText::BjDealerScore,
+                                    Text::new("DEALER: -"),
+                                    TextFont { font_size: 13.0, ..default() },
+                                    TextColor(Color::srgb(0.92, 0.96, 1.0)),
+                                ));
+                            });
+                            dl.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            })
+                            .with_children(|row| {
+                                for idx in 0..8 {
+                                    spawn_card_node(row, art, true, idx);
+                                }
+                            });
+                        });
+
+                        hands.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(8.0),
+                            ..default()
+                        })
+                        .with_children(|pl| {
+                            pl.spawn((
+                                CasinoDynamicText::BjPlayerScore,
+                                Text::new("YOUR HAND: -"),
+                                TextFont { font_size: 13.0, ..default() },
+                                TextColor(Color::srgb(1.0, 0.88, 0.36)),
+                            ));
+                            pl.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                column_gap: Val::Px(4.0),
+                                ..default()
+                            })
+                            .with_children(|row| {
+                                for idx in 0..8 {
+                                    spawn_card_node(row, art, false, idx);
+                                }
+                            });
+                        });
                     });
-                    bj.spawn((
-                        CasinoDynamicText::BjPlayerScore,
-                        Text::new("YOUR HAND: -"),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::srgb(1.0, 0.88, 0.36)),
-                    ));
-                    bj.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        column_gap: Val::Px(6.0),
-                        min_height: Val::Px(76.0),
-                        ..default()
-                    })
-                    .with_children(|row| {
-                        for idx in 0..8 {
-                            spawn_card_node(row, art, false, idx);
-                        }
-                    });
+
                     bj.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         flex_wrap: FlexWrap::Wrap,
                         column_gap: Val::Px(6.0),
-                        row_gap: Val::Px(6.0),
+                        row_gap: Val::Px(5.0),
                         ..default()
                     })
                     .with_children(|ctrl| {
                         for bet in [5_u32, 10, 25, 50, 100] {
-                            mk_btn(ctrl, CasinoActionBtn::BjBet(bet), &format!("{} TW", bet), Color::srgb(0.24, 0.20, 0.34), 12.5);
+                            mk_btn(ctrl, CasinoActionBtn::BjBet(bet), &format!("{} TW", bet), Color::srgb(0.24, 0.20, 0.34), 12.0);
                         }
-                        mk_btn(ctrl, CasinoActionBtn::BjDeal, "DEAL [SPACE]", Color::srgb(0.16, 0.56, 0.26), 13.5);
-                        mk_btn(ctrl, CasinoActionBtn::BjHit, "HIT [H]", Color::srgb(0.16, 0.44, 0.72), 13.5);
-                        mk_btn(ctrl, CasinoActionBtn::BjStand, "STAND [S]", Color::srgb(0.68, 0.34, 0.14), 13.5);
-                        mk_btn(ctrl, CasinoActionBtn::BjDouble, "DOUBLE [D]", Color::srgb(0.56, 0.18, 0.62), 13.5);
+                        mk_btn(ctrl, CasinoActionBtn::BjDeal, "DEAL [SPACE]", Color::srgb(0.16, 0.56, 0.26), 13.0);
+                        mk_btn(ctrl, CasinoActionBtn::BjHit, "HIT [H]", Color::srgb(0.16, 0.44, 0.72), 13.0);
+                        mk_btn(ctrl, CasinoActionBtn::BjStand, "STAND [S]", Color::srgb(0.68, 0.34, 0.14), 13.0);
+                        mk_btn(ctrl, CasinoActionBtn::BjDouble, "DOUBLE [D]", Color::srgb(0.56, 0.18, 0.62), 13.0);
                     });
                 });
 
-                // ---- SLOTS PANEL (BUFFALO STAMPEDE + LUCKY LADIES PORTRAITS) ----
-                card.spawn((
+                // SLOTS DOCK (compact payline mirror + pull lever, while 3D drums spin above!)
+                dock.spawn((
                     CasinoPanel::Slots,
                     Node {
-                        flex_direction: FlexDirection::Column,
+                        flex_direction: FlexDirection::Row,
                         align_items: AlignItems::Center,
-                        row_gap: Val::Px(8.0),
-                        padding: UiRect::all(Val::Px(10.0)),
+                        column_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(8.0)),
                         border: UiRect::all(Val::Px(1.5)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.14, 0.06, 0.14)),
+                    BackgroundColor(Color::srgba(0.14, 0.06, 0.14, 0.86)),
                     BorderColor(Color::srgb(0.98, 0.74, 0.24)),
                     BorderRadius::all(Val::Px(10.0)),
                 ))
                 .with_children(|sl| {
-                    // Topper Showcase: Buffalo Sunset Banner OR Cute Women Portraits Trio
-                    sl.spawn((
-                        BuffaloBannerPanel,
-                        ImageNode::new(art.buffalo_banner.clone()),
-                        Node {
-                            width: Val::Px(170.0),
-                            height: Val::Px(98.0),
-                            ..default()
-                        },
-                    ));
-                    sl.spawn((
-                        LadiesBannerPanel,
-                        Node {
-                            flex_direction: FlexDirection::Row,
-                            column_gap: Val::Px(10.0),
-                            ..default()
-                        },
-                    ))
-                    .with_children(|trio| {
-                        for (i, label) in ["RUBY 30x", "SAKURA 20x", "SKYE 15x"].iter().enumerate() {
-                            trio.spawn((
-                                LadyShowcaseFrame(i),
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    align_items: AlignItems::Center,
-                                    padding: UiRect::all(Val::Px(3.0)),
-                                    border: UiRect::all(Val::Px(2.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgb(0.24, 0.06, 0.20)),
-                                BorderColor(Color::srgb(1.0, 0.62, 0.85)),
-                                BorderRadius::all(Val::Px(8.0)),
-                            ))
-                            .with_children(|frame| {
-                                frame.spawn((
-                                    ImageNode::new(art.girl_banners[i].clone()),
-                                    Node {
-                                        width: Val::Px(72.0),
-                                        height: Val::Px(72.0),
-                                        ..default()
-                                    },
-                                ));
-                                frame.spawn((
-                                    Text::new(*label),
-                                    TextFont { font_size: 11.0, ..default() },
-                                    TextColor(Color::srgb(1.0, 0.86, 0.94)),
-                                ));
-                            });
-                        }
-                    });
-
-                    // 3x3 Reels Grid (5 Paylines)
                     sl.spawn(Node {
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(5.0),
-                        padding: UiRect::all(Val::Px(8.0)),
+                        row_gap: Val::Px(3.0),
                         ..default()
                     })
                     .with_children(|grid| {
                         for row in 0..3 {
                             grid.spawn(Node {
                                 flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(8.0),
+                                column_gap: Val::Px(4.0),
                                 ..default()
                             })
                             .with_children(|rnode| {
@@ -2857,21 +3348,21 @@ fn spawn_casino_ui(
                                         .spawn((
                                             SlotCell { col, row },
                                             Node {
-                                                padding: UiRect::all(Val::Px(3.0)),
-                                                border: UiRect::all(Val::Px(2.5)),
+                                                padding: UiRect::all(Val::Px(2.0)),
+                                                border: UiRect::all(Val::Px(2.0)),
                                                 ..default()
                                             },
                                             BackgroundColor(Color::srgb(0.06, 0.04, 0.08)),
                                             BorderColor(Color::srgb(0.45, 0.36, 0.52)),
-                                            BorderRadius::all(Val::Px(6.0)),
+                                            BorderRadius::all(Val::Px(5.0)),
                                         ))
                                         .with_children(|cell| {
                                             cell.spawn((
                                                 SlotCellImg,
                                                 ImageNode::new(art.buffalo_icons[0].clone()),
                                                 Node {
-                                                    width: Val::Px(60.0),
-                                                    height: Val::Px(60.0),
+                                                    width: Val::Px(36.0),
+                                                    height: Val::Px(36.0),
                                                     ..default()
                                                 },
                                             ));
@@ -2882,48 +3373,83 @@ fn spawn_casino_ui(
                     });
 
                     sl.spawn(Node {
-                        flex_direction: FlexDirection::Row,
-                        flex_wrap: FlexWrap::Wrap,
-                        column_gap: Val::Px(6.0),
+                        flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(6.0),
+                        max_width: Val::Px(460.0),
                         ..default()
                     })
-                    .with_children(|ctrl| {
-                        for bet in [5_u32, 10, 25, 50] {
-                            mk_btn(ctrl, CasinoActionBtn::SlotBet(bet), &format!("BET {} TW", bet), Color::srgb(0.28, 0.16, 0.36), 12.5);
-                        }
-                        mk_btn(ctrl, CasinoActionBtn::SlotSpin, "SPIN [SPACE]", Color::srgb(0.82, 0.18, 0.24), 14.5);
+                    .with_children(|right| {
+                        right.spawn((
+                            BuffaloBannerPanel,
+                            ImageNode::new(art.buffalo_banner.clone()),
+                            Node {
+                                width: Val::Px(84.0),
+                                height: Val::Px(50.0),
+                                ..default()
+                            },
+                        ));
+                        right
+                            .spawn((
+                                LadiesBannerPanel,
+                                Node {
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(6.0),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|trio| {
+                                for (i, label) in ["RUBY 30x", "SAKURA 20x", "SKYE 15x"].iter().enumerate() {
+                                    trio.spawn((
+                                        LadyShowcaseFrame(i),
+                                        Node {
+                                            flex_direction: FlexDirection::Column,
+                                            align_items: AlignItems::Center,
+                                            padding: UiRect::all(Val::Px(2.0)),
+                                            border: UiRect::all(Val::Px(2.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgb(0.24, 0.06, 0.20)),
+                                        BorderColor(Color::srgb(1.0, 0.62, 0.85)),
+                                        BorderRadius::all(Val::Px(6.0)),
+                                    ))
+                                    .with_children(|frame| {
+                                        frame.spawn((
+                                            ImageNode::new(art.girl_banners[i].clone()),
+                                            Node {
+                                                width: Val::Px(40.0),
+                                                height: Val::Px(40.0),
+                                                ..default()
+                                            },
+                                        ));
+                                        frame.spawn((
+                                            Text::new(*label),
+                                            TextFont { font_size: 9.0, ..default() },
+                                            TextColor(Color::srgb(1.0, 0.86, 0.94)),
+                                        ));
+                                    });
+                                }
+                            });
+                        right.spawn((
+                            CasinoDynamicText::SlotPaytable,
+                            Text::new(""),
+                            TextFont { font_size: 11.0, ..default() },
+                            TextColor(Color::srgb(0.86, 0.80, 0.92)),
+                        ));
+                        right
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: Val::Px(6.0),
+                                row_gap: Val::Px(6.0),
+                                ..default()
+                            })
+                            .with_children(|ctrl| {
+                                for bet in [5_u32, 10, 25, 50] {
+                                    mk_btn(ctrl, CasinoActionBtn::SlotBet(bet), &format!("BET {} TW", bet), Color::srgb(0.28, 0.16, 0.36), 12.5);
+                                }
+                                mk_btn(ctrl, CasinoActionBtn::SlotSpin, "PULL LEVER [SPACE]", Color::srgb(0.82, 0.18, 0.24), 14.0);
+                            });
                     });
-
-                    sl.spawn((
-                        CasinoDynamicText::SlotPaytable,
-                        Text::new(""),
-                        TextFont { font_size: 11.5, ..default() },
-                        TextColor(Color::srgb(0.86, 0.80, 0.92)),
-                    ));
-                });
-
-                // ---- CASHIER PANEL ----
-                card.spawn((
-                    CasinoPanel::Cashier,
-                    Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
-                        padding: UiRect::all(Val::Px(12.0)),
-                        border: UiRect::all(Val::Px(1.5)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.12, 0.09, 0.05)),
-                    BorderColor(Color::srgb(0.95, 0.80, 0.30)),
-                    BorderRadius::all(Val::Px(10.0)),
-                ))
-                .with_children(|cash| {
-                    cash.spawn((
-                        CasinoDynamicText::CashierSummary,
-                        Text::new(""),
-                        TextFont { font_size: 14.0, ..default() },
-                        TextColor(Color::WHITE),
-                    ));
                 });
             });
         });
@@ -3006,7 +3532,8 @@ fn refresh_casino_ui(
             CasinoDynamicText::StationTitle => game.station.title().to_string(),
             CasinoDynamicText::HeaderBalance => {
                 let sign = if game.session_net >= 0 { "+" } else { "" };
-                format!("TENDY WENDIES: {} TW ({}{} TW)", stats.tendy_wendies, sign, game.session_net)
+                let shown = game.display_tw.round().max(0.0) as u32;
+                format!("TENDY WENDIES: {} TW ({}{} TW)", shown, sign, game.session_net)
             }
             CasinoDynamicText::StatusMsg => match game.station {
                 CasinoStationKind::Blackjack => game.bj_msg.clone(),
@@ -3180,5 +3707,782 @@ fn refresh_casino_ui(
         } else {
             Color::srgb(1.0, 0.62, 0.85)
         };
+    }
+}
+
+// =================================================================================================
+// Live 3D Casino FX: Chillary Dealers, Mechanical Slot Drums & Levers, 3D Cards, Chips & Coins
+// =================================================================================================
+
+/// Blackjack table placements (offset from `CASINO_LEVEL_ORIGIN`, yaw). Chillary deals at all three!
+const BJ_TABLES: [(Vec3, f32); 3] = [
+    (Vec3::new(0.0, 0.0, -0.8), 0.0),
+    (Vec3::new(-6.6, 0.0, -5.0), 0.34),
+    (Vec3::new(6.6, 0.0, -5.0), -0.34),
+];
+const SLOT_CABS: usize = 8;
+const CARD_FLIGHT_SECS: f32 = 0.38;
+/// Table-local anchors (table faces +Z toward the player; Chillary stands at -Z).
+const BJ_SHOE_LOCAL: Vec3 = Vec3::new(-1.2, 1.46, -1.0);
+const BJ_TRAY_LOCAL: Vec3 = Vec3::new(1.2, 1.42, -1.0);
+const BJ_CHIP_LOCAL: Vec3 = Vec3::new(0.0, 1.36, 0.9);
+
+/// Fixed 12-symbol reel strips per column, preserving weighted jackpot rarity.
+const BUFFALO_STRIPS: [[usize; 12]; 3] = [
+    [5, 3, 4, 1, 5, 2, 4, 0, 3, 5, 4, 2],
+    [4, 5, 2, 3, 0, 4, 5, 3, 1, 4, 2, 5],
+    [3, 4, 5, 0, 2, 5, 4, 1, 2, 3, 5, 4],
+];
+const LADIES_STRIPS: [[usize; 12]; 3] = [
+    [5, 4, 3, 0, 5, 4, 2, 5, 3, 4, 1, 5],
+    [4, 5, 1, 5, 3, 4, 5, 0, 4, 3, 2, 5],
+    [5, 3, 4, 2, 5, 4, 0, 5, 1, 3, 4, 5],
+];
+
+fn slot_strip(theme: SlotTheme, col: usize) -> &'static [usize; 12] {
+    match theme {
+        SlotTheme::Buffalo => &BUFFALO_STRIPS[col.min(2)],
+        SlotTheme::LuckyLadies => &LADIES_STRIPS[col.min(2)],
+    }
+}
+
+/// Rows `[top, center, bottom]` visible on each reel when reel `col` rests on `stops[col]`.
+fn grid_from_stops(theme: SlotTheme, stops: [usize; 3]) -> [[usize; 3]; 3] {
+    std::array::from_fn(|col| {
+        let strip = slot_strip(theme, col);
+        let s = stops[col] % 12;
+        [strip[(s + 1) % 12], strip[s], strip[(s + 11) % 12]]
+    })
+}
+
+fn default_cab_stops() -> [[usize; 3]; SLOT_CABS] {
+    std::array::from_fn(|cab| std::array::from_fn(|col| (cab * 5 + col * 3 + 1) % 12))
+}
+
+fn select_slot_cab(game: &mut CasinoGameState, cab: usize) {
+    let cab = cab.min(SLOT_CABS - 1);
+    game.slot_cab = cab;
+    game.slot_theme = if cab < 4 { SlotTheme::Buffalo } else { SlotTheme::LuckyLadies };
+    game.slot_stop = game.slot_cab_stops[cab];
+    game.slot_grid = grid_from_stops(game.slot_theme, game.slot_stop);
+    game.slot_target = game.slot_grid;
+    game.slot_win_lines.clear();
+    game.slot_last_win = 0;
+}
+
+/// Offset and facing yaw of slot cabinet `i` (0..4 west Buffalo, 4..8 east Lucky Ladies).
+fn slot_cab_pose(i: usize) -> (Vec3, f32) {
+    let z = [-9.0_f32, -3.0, 3.0, 9.0][i % 4];
+    if i < 4 {
+        (Vec3::new(-15.5, 0.0, z), FRAC_PI_2)
+    } else {
+        (Vec3::new(15.5, 0.0, z), -FRAC_PI_2)
+    }
+}
+
+fn bj_table_pose(i: usize) -> (Vec3, Quat) {
+    let (p, yaw) = BJ_TABLES[i.min(BJ_TABLES.len() - 1)];
+    (CASINO_LEVEL_ORIGIN + p, Quat::from_rotation_y(yaw))
+}
+
+fn bj_card_local(is_dealer: bool, idx: usize) -> Vec3 {
+    Vec3::new(
+        -0.45 + idx as f32 * 0.34,
+        1.372 + idx as f32 * 0.002,
+        if is_dealer { -0.7 } else { 0.0 },
+    )
+}
+
+fn chips_for(bet: u32) -> usize {
+    ((bet / 10) as usize).clamp(1, 8)
+}
+
+fn hash01(n: u32) -> f32 {
+    let x = n.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let w = ((x >> ((x >> 28) + 4)) ^ x).wrapping_mul(277_803_737);
+    ((w >> 22) ^ w) as f32 / u32::MAX as f32
+}
+
+#[derive(Component)]
+struct CasinoCrewBob {
+    base_y: f32,
+    phase: f32,
+}
+
+#[derive(Component)]
+struct CasinoChaseBulb {
+    phase: usize,
+}
+
+#[derive(Component)]
+struct SlotCrown {
+    cab: usize,
+}
+
+#[derive(Component)]
+struct SlotLeverPivot {
+    cab: usize,
+    t: f32,
+}
+
+#[derive(Component)]
+struct SlotReelDrum {
+    cab: usize,
+    col: usize,
+    angle: f32,
+    spinning: bool,
+    settle: Option<(f32, f32)>,
+    after_t: f32,
+}
+
+#[derive(Component)]
+struct Casino3dCard {
+    table: usize,
+    is_dealer: bool,
+    idx: usize,
+    delay: f32,
+    launched: bool,
+    t: f32,
+    from: Vec3,
+    to: Vec3,
+    yaw: f32,
+    flip: f32,
+    flip_sfx: bool,
+    discard: Option<(f32, Vec3)>,
+}
+
+#[derive(Component)]
+struct Casino3dChip {
+    table: usize,
+    delay: f32,
+    t: f32,
+    from: Vec3,
+    to: Vec3,
+    sweep: Option<(f32, Vec3)>,
+}
+
+#[derive(Component)]
+struct CasinoCoin {
+    vel: Vec3,
+    spin: Vec3,
+    life: f32,
+}
+
+#[derive(Resource)]
+struct CasinoFxAssets {
+    card_front_mesh: Handle<Mesh>,
+    card_back_mesh: Handle<Mesh>,
+    chip_mesh: Handle<Mesh>,
+    chip_mats: [Handle<StandardMaterial>; 4],
+    coin_mesh: Handle<Mesh>,
+    coin_mat: Handle<StandardMaterial>,
+    chase_on: Handle<StandardMaterial>,
+    chase_off: Handle<StandardMaterial>,
+}
+
+#[derive(Resource, Default)]
+struct Casino3dSync {
+    bj_hands: u32,
+    bj_table: usize,
+    pn: usize,
+    dn: usize,
+    chips: usize,
+    chips_pending: bool,
+    seq_seen: u32,
+    deal_pulse: f32,
+    lever_spins: u32,
+    seated: bool,
+    win_flash: f32,
+}
+
+fn update_casino_crew_bob(time: Res<Time>, mut q: Query<(&CasinoCrewBob, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (b, mut tf) in &mut q {
+        tf.translation.y = b.base_y + ((t * 3.07 + b.phase).sin() * 0.5 + 0.5) * 0.06;
+    }
+}
+
+fn update_casino_chase_bulbs(
+    time: Res<Time>,
+    game: Res<CasinoGameState>,
+    fx: Option<Res<CasinoFxAssets>>,
+    mut q: Query<(&CasinoChaseBulb, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let Some(fx) = fx else {
+        return;
+    };
+    let rate = if game.slot_spinning { 16.0 } else { 5.0 };
+    let step = (time.elapsed_secs() * rate) as usize;
+    for (b, mut m) in &mut q {
+        let want = if (b.phase + step) % 3 == 0 { &fx.chase_on } else { &fx.chase_off };
+        if m.0 != *want {
+            m.0 = want.clone();
+        }
+    }
+}
+
+fn update_chillary_dealers(
+    time: Res<Time>,
+    sync: Res<Casino3dSync>,
+    game: Res<CasinoGameState>,
+    mut q: Query<(&ChillaryDealerPart, &mut Transform)>,
+) {
+    let t = time.elapsed_secs();
+    for (p, mut tf) in &mut q {
+        let ph = p.table_idx as f32 * 1.7;
+        let pulse = if p.table_idx == game.bj_table { sync.deal_pulse } else { 0.0 };
+        match p.kind {
+            ChillaryDealerLimb::BodyRoot => {
+                tf.rotation = Quat::from_rotation_y((t * 0.9 + ph).sin() * 0.05);
+            }
+            ChillaryDealerLimb::Head => {
+                tf.rotation = Quat::from_rotation_x(0.06 + pulse * 0.14)
+                    * Quat::from_rotation_y((t * 0.7 + ph).sin() * 0.2);
+            }
+            ChillaryDealerLimb::RightDealArm => {
+                tf.rotation = Quat::from_euler(
+                    EulerRot::XYZ,
+                    -0.78 - pulse * 0.5,
+                    -0.16 - pulse * 0.18,
+                    0.10,
+                );
+            }
+            ChillaryDealerLimb::LeftIdleArm => {
+                tf.rotation = Quat::from_euler(
+                    EulerRot::XYZ,
+                    -0.48 + (t * 1.7 + ph).sin() * 0.05,
+                    0.14,
+                    -0.10,
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn update_casino_3d_slots(
+    time: Res<Time<Real>>,
+    stats: Res<PlayerStats>,
+    mut game: ResMut<CasinoGameState>,
+    mut sync: ResMut<Casino3dSync>,
+    mut drum_q: Query<(&mut SlotReelDrum, &mut Transform)>,
+    mut lever_q: Query<(&mut SlotLeverPivot, &mut Transform), Without<SlotReelDrum>>,
+    mut crown_q: Query<(&SlotCrown, &mut Transform), (Without<SlotReelDrum>, Without<SlotLeverPivot>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+
+    // Smoothly roll Tendy Wendies counter toward true wallet balance
+    let target = stats.tendy_wendies as f32;
+    let diff = target - game.display_tw;
+    if diff.abs() < 0.5 {
+        game.display_tw = target;
+    } else {
+        let step = (diff.abs() * dt * 3.5).max(40.0 * dt).min(diff.abs());
+        game.display_tw += diff.signum() * step;
+    }
+
+    let active_cab = game.slot_cab;
+    let spinning = game.slot_spinning;
+    for (mut d, mut tf) in &mut drum_q {
+        let rest = game.slot_cab_stops[d.cab][d.col] as f32 * (PI / 6.0);
+        if d.cab == active_cab && spinning {
+            let el = game.slot_elapsed;
+            let st = game.slot_stop_times[d.col];
+            if !d.spinning {
+                d.spinning = true;
+                d.settle = None;
+                d.after_t = 0.0;
+            }
+            if el >= st - 0.30 {
+                let (from, to) = match d.settle {
+                    Some(s) => s,
+                    None => {
+                        let from = d.angle;
+                        let goal = game.slot_stop[d.col] as f32 * (PI / 6.0);
+                        let k = ((from + 3.0 - goal) / TAU).ceil();
+                        let s = (from, goal + k * TAU);
+                        d.settle = Some(s);
+                        s
+                    }
+                };
+                let u = ((el - (st - 0.30)) / 0.30).clamp(0.0, 1.0);
+                let e = 1.0 - (1.0 - u).powi(3);
+                d.angle = from + (to - from) * e;
+                if el > st {
+                    let u2 = el - st;
+                    d.angle = to + 0.14 * (-14.0 * u2).exp() * (26.0 * u2).sin();
+                }
+            } else {
+                let vel = if el < 0.12 { -3.2 } else { 18.5 };
+                d.angle += vel * dt;
+            }
+        } else {
+            if d.spinning {
+                d.spinning = false;
+                d.after_t = 0.0;
+                d.settle = None;
+            }
+            d.after_t += dt;
+            let bounce = if d.after_t < 0.6 {
+                0.14 * (-14.0 * d.after_t).exp() * (26.0 * d.after_t).sin()
+            } else {
+                0.0
+            };
+            d.angle = rest + bounce;
+        }
+        tf.rotation = Quat::from_rotation_x(d.angle);
+    }
+
+    // Articulated pull-lever stroke + spring rebound
+    let new_spin = game.slot_spins != sync.lever_spins;
+    if new_spin {
+        sync.lever_spins = game.slot_spins;
+    }
+    for (mut l, mut tf) in &mut lever_q {
+        if new_spin && l.cab == active_cab {
+            l.t = 0.0;
+        }
+        l.t += dt;
+        let u = l.t / 0.8;
+        let pull = if u >= 1.0 {
+            0.0
+        } else if u < 0.3 {
+            let k = u / 0.3;
+            1.15 * k * k * (3.0 - 2.0 * k)
+        } else {
+            let w = (u - 0.3) / 0.7;
+            1.15 * (-6.0 * w).exp() * (9.0 * w).cos()
+        };
+        tf.rotation = Quat::from_rotation_x(-0.28 + pull);
+    }
+
+    // Jackpot crown beacons strobe during spins & after wins
+    for (c, mut tf) in &mut crown_q {
+        let amp = if c.cab == active_cab {
+            if spinning {
+                0.45
+            } else {
+                (sync.win_flash * 0.35).min(0.9)
+            }
+        } else {
+            0.08
+        };
+        tf.scale = Vec3::splat(0.16 * (1.0 + amp * (t * 20.0).sin().abs()));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_bj_card(
+    commands: &mut Commands,
+    fx: &CasinoFxAssets,
+    art: &CasinoArt,
+    materials: &mut Assets<StandardMaterial>,
+    table: usize,
+    is_dealer: bool,
+    idx: usize,
+    card: Card,
+    delay: f32,
+) {
+    let (tpos, trot) = bj_table_pose(table);
+    let tyaw = BJ_TABLES[table.min(BJ_TABLES.len() - 1)].1;
+    let yaw = tyaw + (idx as f32 * 1.7 + if is_dealer { 0.8 } else { 0.0 }).sin() * 0.07;
+    let face = art.card_faces
+        [usize::from(card.suit.min(3)) * 13 + usize::from(card.rank.clamp(1, 13)) - 1]
+        .clone();
+    let front_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(face),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let back_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(art.card_back.clone()),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let hole = is_dealer && idx == 1;
+    let from = tpos + trot * BJ_SHOE_LOCAL;
+    let to = tpos + trot * bj_card_local(is_dealer, idx);
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Casino3dCard {
+                table,
+                is_dealer,
+                idx,
+                delay,
+                launched: false,
+                t: 0.0,
+                from,
+                to,
+                yaw,
+                flip: if hole { 1.0 } else { 0.0 },
+                flip_sfx: false,
+                discard: None,
+            },
+            Transform::from_translation(from).with_rotation(
+                Quat::from_rotation_y(yaw) * Quat::from_rotation_x(if hole { PI } else { 0.0 }),
+            ),
+            Visibility::Hidden,
+        ))
+        .with_children(|c| {
+            c.spawn((
+                Mesh3d(fx.card_front_mesh.clone()),
+                MeshMaterial3d(front_mat),
+                Transform::from_xyz(0.0, 0.002, 0.0),
+            ));
+            c.spawn((
+                Mesh3d(fx.card_back_mesh.clone()),
+                MeshMaterial3d(back_mat),
+                Transform::from_xyz(0.0, -0.002, 0.0),
+            ));
+        });
+}
+
+fn spawn_chips(commands: &mut Commands, fx: &CasinoFxAssets, table: usize, start: usize, end: usize) {
+    let (tpos, trot) = bj_table_pose(table);
+    for i in start..end {
+        let to = tpos + trot * (BJ_CHIP_LOCAL + Vec3::Y * (i as f32 * 0.028));
+        let from = tpos + trot * Vec3::new(0.0, 2.4, 2.8);
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Casino3dChip {
+                table,
+                delay: 0.25 + (i - start) as f32 * 0.07,
+                t: 0.0,
+                from,
+                to,
+                sweep: None,
+            },
+            Mesh3d(fx.chip_mesh.clone()),
+            MeshMaterial3d(fx.chip_mats[i % 4].clone()),
+            Transform::from_translation(Vec3::new(0.0, -50.0, 0.0)),
+        ));
+    }
+}
+
+fn spawn_coin_burst(
+    commands: &mut Commands,
+    fx: &CasinoFxAssets,
+    origin: Vec3,
+    rot: Quat,
+    count: usize,
+    seed: u32,
+) {
+    for i in 0..count {
+        let h = |k: u32| hash01(seed.wrapping_mul(31).wrapping_add(i as u32 * 7 + k));
+        let ang = h(1) * TAU;
+        let sp = 1.2 + h(2) * 2.6;
+        let up = 5.5 + h(3) * 4.0;
+        let vel = rot * Vec3::new(ang.cos() * sp, up, ang.sin() * sp * 0.6 + 1.2);
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            CasinoCoin {
+                vel,
+                spin: Vec3::new(h(4) * 14.0 - 7.0, h(5) * 14.0 - 7.0, h(6) * 14.0 - 7.0),
+                life: 2.4 + h(7) * 0.8,
+            },
+            Mesh3d(fx.coin_mesh.clone()),
+            MeshMaterial3d(fx.coin_mat.clone()),
+            Transform::from_translation(origin + Vec3::new(h(8) * 0.4 - 0.2, 0.0, h(9) * 0.4 - 0.2)),
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn update_casino_3d_blackjack(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    stats: Res<PlayerStats>,
+    game: Res<CasinoGameState>,
+    mut sync: ResMut<Casino3dSync>,
+    fx: Option<Res<CasinoFxAssets>>,
+    art: Option<Res<CasinoArt>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut card_q: Query<(Entity, &mut Casino3dCard, &mut Transform, &mut Visibility), Without<Casino3dChip>>,
+    mut chip_q: Query<(Entity, &mut Casino3dChip, &mut Transform), Without<Casino3dCard>>,
+) {
+    let (Some(fx), Some(art)) = (fx, art) else {
+        return;
+    };
+    let dt = time.delta_secs().min(0.05);
+    sync.deal_pulse = (sync.deal_pulse - dt * 3.0).max(0.0);
+    sync.win_flash = (sync.win_flash - dt).max(0.0);
+
+    // New hand or switched table: clear previous cards into the discard tray & clear chips
+    if game.bj_hands != sync.bj_hands || game.bj_table != sync.bj_table {
+        for (_, mut c, tf, mut vis) in &mut card_q {
+            *vis = Visibility::Visible;
+            if c.discard.is_none() {
+                c.discard = Some((0.0, tf.translation));
+            }
+        }
+        for (e, _, _) in &chip_q {
+            commands.entity(e).despawn_recursive();
+        }
+        sync.pn = 0;
+        sync.dn = 0;
+        sync.chips = 0;
+        sync.bj_hands = game.bj_hands;
+        sync.bj_table = game.bj_table;
+        sync.chips_pending = game.bj_hands > 0 && !game.bj_player.is_empty();
+    }
+
+    // Launch newly drawn cards from the shoe (alternating player, dealer, player, dealer)
+    let plen = game.bj_player.len();
+    let dlen = game.bj_dealer.len();
+    let (mut pn, mut dn) = (sync.pn, sync.dn);
+    let mut stagger = 0.0_f32;
+    for i in 0..plen.max(dlen) {
+        if i >= pn && i < plen {
+            spawn_bj_card(&mut commands, &fx, &art, &mut materials, game.bj_table, false, i, game.bj_player[i], stagger);
+            stagger += 0.17;
+            pn = i + 1;
+        }
+        if i >= dn && i < dlen {
+            spawn_bj_card(&mut commands, &fx, &art, &mut materials, game.bj_table, true, i, game.bj_dealer[i], stagger);
+            stagger += 0.17;
+            dn = i + 1;
+        }
+    }
+    sync.pn = pn;
+    sync.dn = dn;
+
+    // Bet chips arc onto the felt betting circle
+    if sync.chips_pending {
+        sync.chips_pending = false;
+        let n = chips_for(game.bj_bet);
+        spawn_chips(&mut commands, &fx, game.bj_table, 0, n);
+        sync.chips = n;
+    } else if game.bj_hands > 0 && game.bj_doubled {
+        let want = chips_for(game.bj_bet);
+        if want > sync.chips {
+            spawn_chips(&mut commands, &fx, game.bj_table, sync.chips, want);
+            sync.chips = want;
+        }
+    }
+
+    // Animate 3D playing cards
+    let (tpos, trot) = bj_table_pose(game.bj_table);
+    for (e, mut c, mut tf, mut vis) in &mut card_q {
+        if let Some((dt_t, from)) = c.discard {
+            let t2 = dt_t + dt;
+            c.discard = Some((t2, from));
+            let u = (t2 / 0.30).clamp(0.0, 1.0);
+            let (cp, cr) = bj_table_pose(c.table);
+            let tray = cp + cr * BJ_TRAY_LOCAL;
+            let eased = u * u * (3.0 - 2.0 * u);
+            tf.translation = from.lerp(tray, eased) + Vec3::Y * ((PI * u).sin() * 0.10);
+            if t2 >= 0.30 {
+                commands.entity(e).despawn_recursive();
+            }
+            continue;
+        }
+        if !c.launched {
+            if c.delay > 0.0 {
+                c.delay -= dt;
+                if c.delay > 0.0 {
+                    continue;
+                }
+            }
+            c.launched = true;
+            *vis = Visibility::Visible;
+            play_sfx("card_deal");
+            sync.deal_pulse = 1.0;
+        }
+        if c.t < 1.0 {
+            c.t = (c.t + dt / CARD_FLIGHT_SECS).min(1.0);
+        }
+        let u = c.t;
+        let eased = u * u * (3.0 - 2.0 * u);
+        let mut pos = c.from.lerp(c.to, eased);
+        pos.y += (PI * u).sin() * 0.24;
+
+        let want_down = c.is_dealer && c.idx == 1 && game.bj_phase == BjPhase::PlayerTurn;
+        if want_down {
+            c.flip_sfx = false;
+            c.flip = (c.flip + dt / 0.38).min(1.0);
+        } else if c.flip > 0.0 {
+            c.flip = (c.flip - dt / 0.38).max(0.0);
+            if !c.flip_sfx {
+                c.flip_sfx = true;
+                play_sfx("card_flip");
+            }
+        }
+        pos.y += (PI * c.flip).sin() * 0.16;
+        tf.translation = pos;
+        let spin = (1.0 - eased) * 0.9 * if c.is_dealer { 1.0 } else { -1.0 };
+        tf.rotation = Quat::from_rotation_y(c.yaw + spin) * Quat::from_rotation_x(PI * c.flip);
+    }
+
+    // Animate 3D bet chips
+    for (e, mut ch, mut tf) in &mut chip_q {
+        if let Some((st, from)) = ch.sweep {
+            let st2 = st + dt;
+            ch.sweep = Some((st2, from));
+            let u = (st2 / 0.45).clamp(0.0, 1.0);
+            let (cp, cr) = bj_table_pose(ch.table);
+            let tray = cp + cr * Vec3::new(0.0, 1.40, -1.3);
+            tf.translation = from.lerp(tray, u * u * (3.0 - 2.0 * u));
+            if u >= 1.0 {
+                commands.entity(e).despawn_recursive();
+            }
+            continue;
+        }
+        if ch.delay > 0.0 {
+            ch.delay -= dt;
+            tf.translation = Vec3::new(0.0, -50.0, 0.0);
+            continue;
+        }
+        ch.t = (ch.t + dt / 0.30).min(1.0);
+        let u = ch.t;
+        let eased = 1.0 - (1.0 - u).powi(3);
+        tf.translation = ch.from.lerp(ch.to, eased) + Vec3::Y * ((PI * u).sin() * 0.18);
+    }
+
+    // Payout gold coin fountains & losing chip sweeps
+    if game.payout_seq != sync.seq_seen {
+        sync.seq_seen = game.payout_seq;
+        if stats.casino_open {
+            match game.station {
+                CasinoStationKind::Blackjack => {
+                    if game.last_payout > game.last_wager {
+                        spawn_coin_burst(
+                            &mut commands,
+                            &fx,
+                            tpos + trot * Vec3::new(0.0, 1.7, 0.5),
+                            trot,
+                            18,
+                            game.payout_seq,
+                        );
+                        play_sfx("coin_win");
+                        sync.win_flash = 1.2;
+                    } else if game.last_payout == 0 {
+                        for (_, mut ch, tf) in &mut chip_q {
+                            ch.sweep = Some((0.0, tf.translation));
+                        }
+                    }
+                }
+                CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
+                    if game.last_payout > 0 {
+                        let (cp, cy) = slot_cab_pose(game.slot_cab);
+                        let rot = Quat::from_rotation_y(cy);
+                        let big = game.last_payout >= game.last_wager * 4;
+                        spawn_coin_burst(
+                            &mut commands,
+                            &fx,
+                            CASINO_LEVEL_ORIGIN + cp + rot * Vec3::new(0.0, 0.9, 1.0),
+                            rot,
+                            if big { 32 } else { 14 },
+                            game.payout_seq,
+                        );
+                        play_sfx("coin_win");
+                        sync.win_flash = if big { 2.5 } else { 1.0 };
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn update_casino_coins(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut q: Query<(Entity, &mut CasinoCoin, &mut Transform)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    for (e, mut c, mut tf) in &mut q {
+        c.life -= dt;
+        if c.life <= 0.0 {
+            commands.entity(e).despawn_recursive();
+            continue;
+        }
+        c.vel.y -= 13.5 * dt;
+        let v = c.vel;
+        tf.translation += v * dt;
+        let floor_y = CASINO_LEVEL_ORIGIN.y + 0.06;
+        if tf.translation.y < floor_y {
+            tf.translation.y = floor_y;
+            c.vel.y = -c.vel.y * 0.42;
+            c.vel.x *= 0.7;
+            c.vel.z *= 0.7;
+            if c.vel.y < 0.9 {
+                c.vel.y = 0.0;
+            }
+        }
+        let s = c.spin * dt;
+        tf.rotate_x(s.x);
+        tf.rotate_y(s.y);
+        tf.rotate_z(s.z);
+        tf.scale = Vec3::splat((c.life / 0.5).clamp(0.0, 1.0));
+    }
+}
+
+/// Glides the camera smoothly into a seated view of Chillary's Blackjack table or the active 3D
+/// Slot cabinet while `stats.casino_open` (`player.rs::update_camera` stands down while seated).
+fn update_casino_station_camera(
+    time: Res<Time<Real>>,
+    stats: Res<PlayerStats>,
+    game: Res<CasinoGameState>,
+    mut sync: ResMut<Casino3dSync>,
+    mut orbit: ResMut<CameraOrbit>,
+    mut player_q: Query<&mut Visibility, With<Player>>,
+    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>)>,
+) {
+    if !stats.casino_open {
+        if sync.seated {
+            sync.seated = false;
+            for mut v in &mut player_q {
+                *v = Visibility::Visible;
+            }
+            orbit.blend_request = true;
+        }
+        return;
+    }
+    if !sync.seated {
+        sync.seated = true;
+        for mut v in &mut player_q {
+            *v = Visibility::Hidden;
+        }
+    }
+    let (pos, look) = match game.station {
+        CasinoStationKind::Blackjack => {
+            let (tp, tr) = bj_table_pose(game.bj_table);
+            (
+                tp + tr * Vec3::new(0.0, 2.65, 3.65),
+                tp + tr * Vec3::new(0.0, 1.48, -0.55),
+            )
+        }
+        CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
+            let (cp, cy) = slot_cab_pose(game.slot_cab);
+            let w = CASINO_LEVEL_ORIGIN + cp;
+            let r = Quat::from_rotation_y(cy);
+            (
+                w + r * Vec3::new(0.0, 2.05, 3.35),
+                w + r * Vec3::new(0.0, 1.65, 0.45),
+            )
+        }
+        CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {
+            let c = CASINO_LEVEL_ORIGIN + Vec3::new(0.0, 0.0, -16.8);
+            (c + Vec3::new(0.0, 3.0, 6.2), c + Vec3::new(0.0, 1.7, -1.8))
+        }
+    };
+    let dt = time.delta_secs().min(0.05);
+    let k = 1.0 - (-6.5 * dt).exp();
+    if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
+        c_tf.translation = c_tf.translation.lerp(pos, k);
+        let goal = Transform::from_translation(c_tf.translation)
+            .looking_at(look, Vec3::Y)
+            .rotation;
+        c_tf.rotation = c_tf.rotation.slerp(goal, k);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = std::f32::consts::FRAC_PI_4;
+        }
     }
 }

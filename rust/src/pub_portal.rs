@@ -840,6 +840,7 @@ pub struct PubPortalCutsceneState {
     beat_t: f32,
     total_t: f32,
     slam_played: bool,
+    beat0_spoken: bool,
 }
 
 /// (speaker, dialogue, voice_profile, min_seconds)
@@ -852,13 +853,13 @@ const PUB_PORTAL_BEATS: [(&str, &str, &str, f32); 6] = [
     ),
     (
         "TJ",
-        "Easy -- the 1990 Teenage Mutant Ninja Turtles movie! Practical rubber suits, Shredder on the rooftop, pure cinema!",
+        "Easy, the 1990 Teenage Mutant Ninja Turtles movie! Practical rubber suits, Shredder on the rooftop, pure cinema!",
         "tj",
         4.8,
     ),
     (
         "NATE",
-        "Facts! Teenage Mutant Ninja Turtles 2: Secret of the Ooze goes crazy too -- wait... hold on guys. Why have like twenty people just walked into the women's bathroom?!",
+        "Facts! Teenage Mutant Ninja Turtles 2: Secret of the Ooze goes crazy too... wait, hold on guys. Why have like twenty people just walked into the women's bathroom?!",
         "nate",
         5.2,
     ),
@@ -876,7 +877,7 @@ const PUB_PORTAL_BEATS: [(&str, &str, &str, f32); 6] = [
     ),
     (
         "TJ, NATE, GLENN & STAN",
-        "WHOA!! THE DOOR JUST BLEW OPEN!! IT'S A MAGIC PORTAL!! HOLD ON -- AAAAAHHHH!!",
+        "WHOA!! THE DOOR JUST BLEW OPEN!! IT'S A MAGIC PORTAL!! HOLD ON, AAAAAHHHH!!",
         "tj_upset",
         5.0,
     ),
@@ -1814,7 +1815,7 @@ fn enter_pub_portal_cutscene(
     }
 
     // Widescreen letterbox & dialogue subtitles UI
-    let (spk, line, voice, _) = PUB_PORTAL_BEATS[0];
+    let (spk, line, _, _) = PUB_PORTAL_BEATS[0];
     commands
         .spawn((
             PubPortalCutsceneOverlay,
@@ -1880,7 +1881,6 @@ fn enter_pub_portal_cutscene(
         });
 
     play_cutscene_music();
-    speak_voice(line, voice);
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity, clippy::too_many_lines)]
@@ -1900,6 +1900,12 @@ fn update_pub_portal_cutscene(
     let dt = time.delta_secs().min(0.05);
     p_state.beat_t += dt;
     p_state.total_t += dt;
+
+    if !p_state.beat0_spoken && p_state.total_t >= 0.12 {
+        p_state.beat0_spoken = true;
+        let (_, line, voice, _) = PUB_PORTAL_BEATS[0];
+        speak_voice(line, voice);
+    }
 
     let skipping = crate::skip::skipping();
     if skipping {

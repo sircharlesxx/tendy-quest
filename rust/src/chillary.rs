@@ -117,6 +117,28 @@ pub enum ChillaryPart {
     StanActor,
 }
 
+/// Animated limb & head tags for Chillary Clinton Blackjack dealers in Tendy Palace Casino (`casino.rs`).
+#[derive(Component, Clone, Copy)]
+pub struct ChillaryDealerPart {
+    pub table_idx: usize,
+    pub kind: ChillaryDealerLimb,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChillaryDealerLimb {
+    BodyRoot,
+    Head,
+    RightDealArm,
+    LeftIdleArm,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChillaryRigMode {
+    City,
+    Cutscene,
+    CasinoDealer { table_idx: usize },
+}
+
 /// (speaker, line, voice, min_secs, snap_caption) - strictly ASCII for Bevy's default font.
 const CHILLARY_BEATS: [(&str, &str, &str, f32, &str); 6] = [
     (
@@ -317,7 +339,34 @@ pub fn spawn_chillary_rig(
     mats: &ChillaryMaterials,
     is_cutscene: bool,
 ) {
+    let mode = if is_cutscene {
+        ChillaryRigMode::Cutscene
+    } else {
+        ChillaryRigMode::City
+    };
+    build_chillary_body(parent, meshes, mats, mode);
+}
+
+/// Builds a Chillary Clinton Blackjack dealer rig facing `+Z` across a casino table:
+/// signature turquoise pantsuit, pearls, feathered blonde bob, relaxed left hand over the rail,
+/// and right dealing arm poised with a crisp Tendy Palace playing card.
+pub fn spawn_chillary_dealer_rig(
+    parent: &mut ChildBuilder,
+    meshes: &mut Assets<Mesh>,
+    mats: &ChillaryMaterials,
+    table_idx: usize,
+) {
+    build_chillary_body(parent, meshes, mats, ChillaryRigMode::CasinoDealer { table_idx });
+}
+
+fn build_chillary_body(
+    parent: &mut ChildBuilder,
+    meshes: &mut Assets<Mesh>,
+    mats: &ChillaryMaterials,
+    mode: ChillaryRigMode,
+) {
     use crate::shapes::{self as sh, Torso};
+    let is_cutscene = mode == ChillaryRigMode::Cutscene;
 
     // Tailored dark-navy trousers & low-heeled pumps
     let leg_mesh = sh::add(meshes, sh::limb_profile(0.66, &[0.105, 0.095, 0.075], 1.0));
@@ -398,14 +447,27 @@ pub fn spawn_chillary_rig(
         ));
     }
 
-    // Left arm (relaxed/waves in Beat 2)
+    // Left arm (relaxed/waves in Beat 2, or poised gracefully over the Blackjack rail)
     let sleeve_mesh = sh::add(meshes, sh::limb_profile(0.60, &[0.094, 0.084, 0.070], 1.0));
+    let left_rot = match mode {
+        ChillaryRigMode::CasinoDealer { .. } => Quat::from_euler(EulerRot::XYZ, -0.48, 0.14, -0.10),
+        _ => Quat::from_rotation_z(-0.08),
+    };
     let mut left_arm = parent.spawn((
-        Transform::from_xyz(-0.37, 1.34, 0.02).with_rotation(Quat::from_rotation_z(-0.08)),
+        Transform::from_xyz(-0.37, 1.34, 0.02).with_rotation(left_rot),
         Visibility::default(),
     ));
-    if is_cutscene {
-        left_arm.insert(ChillaryAnim { kind: ChillaryPart::LeftArm });
+    match mode {
+        ChillaryRigMode::Cutscene => {
+            left_arm.insert(ChillaryAnim { kind: ChillaryPart::LeftArm });
+        }
+        ChillaryRigMode::CasinoDealer { table_idx } => {
+            left_arm.insert(ChillaryDealerPart {
+                table_idx,
+                kind: ChillaryDealerLimb::LeftIdleArm,
+            });
+        }
+        ChillaryRigMode::City => {}
     }
     let hand_l = sh::add(meshes, sh::hand(0.078, -1.0, false));
     left_arm.with_children(|a| {
@@ -421,14 +483,26 @@ pub fn spawn_chillary_rig(
         ));
     });
 
-    // Right arm raised holding her Snapchat smartphone toward her face
-    let selfie_base_rot = Quat::from_euler(EulerRot::XYZ, -1.18, -0.22, -0.18);
+    // Right arm: selfie smartphone in Cedar Rapids/cutscene, or dealing playing cards at Blackjack!
+    let right_rot = match mode {
+        ChillaryRigMode::CasinoDealer { .. } => Quat::from_euler(EulerRot::XYZ, -0.78, -0.16, 0.10),
+        _ => Quat::from_euler(EulerRot::XYZ, -1.18, -0.22, -0.18),
+    };
     let mut right_arm = parent.spawn((
-        Transform::from_xyz(0.37, 1.34, 0.04).with_rotation(selfie_base_rot),
+        Transform::from_xyz(0.37, 1.34, 0.04).with_rotation(right_rot),
         Visibility::default(),
     ));
-    if is_cutscene {
-        right_arm.insert(ChillaryAnim { kind: ChillaryPart::SelfieArm });
+    match mode {
+        ChillaryRigMode::Cutscene => {
+            right_arm.insert(ChillaryAnim { kind: ChillaryPart::SelfieArm });
+        }
+        ChillaryRigMode::CasinoDealer { table_idx } => {
+            right_arm.insert(ChillaryDealerPart {
+                table_idx,
+                kind: ChillaryDealerLimb::RightDealArm,
+            });
+        }
+        ChillaryRigMode::City => {}
     }
     let hand_r = sh::add(meshes, sh::hand(0.078, 1.0, true));
     right_arm.with_children(|a| {
@@ -442,30 +516,56 @@ pub fn spawn_chillary_rig(
             MeshMaterial3d(mats.skin.clone()),
             Transform::from_xyz(0.0, -0.57, 0.03),
         ));
-        // White smartphone + glowing Snapchat yellow screen
-        a.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.082, 0.148, 0.014))),
-            MeshMaterial3d(mats.phone_body.clone()),
-            Transform::from_xyz(-0.03, -0.60, 0.06).with_rotation(Quat::from_euler(EulerRot::XYZ, 0.45, -0.20, 0.0)),
-        ))
-        .with_children(|ph| {
-            ph.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.068, 0.118, 0.004))),
-                MeshMaterial3d(mats.phone_screen.clone()),
-                Transform::from_xyz(0.0, 0.004, -0.008),
-            ));
-            ph.spawn((
-                Mesh3d(meshes.add(Sphere::new(0.007))),
-                MeshMaterial3d(mats.eye_pupil.clone()),
-                Transform::from_xyz(0.0, 0.056, 0.008),
-            ));
-        });
+        if matches!(mode, ChillaryRigMode::CasinoDealer { .. }) {
+            // Crisp Tendy Palace playing card held in Chillary's dealing hand
+            a.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.095, 0.006, 0.14))),
+                MeshMaterial3d(mats.undershirt.clone()),
+                Transform::from_xyz(-0.02, -0.60, 0.07)
+                    .with_rotation(Quat::from_euler(EulerRot::XYZ, 0.35, -0.18, 0.12)),
+            ))
+            .with_children(|card| {
+                card.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.078, 0.003, 0.118))),
+                    MeshMaterial3d(mats.gold.clone()),
+                    Transform::from_xyz(0.0, 0.004, 0.0),
+                ));
+            });
+        } else {
+            // White smartphone + glowing Snapchat yellow screen
+            a.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.082, 0.148, 0.014))),
+                MeshMaterial3d(mats.phone_body.clone()),
+                Transform::from_xyz(-0.03, -0.60, 0.06).with_rotation(Quat::from_euler(EulerRot::XYZ, 0.45, -0.20, 0.0)),
+            ))
+            .with_children(|ph| {
+                ph.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.068, 0.118, 0.004))),
+                    MeshMaterial3d(mats.phone_screen.clone()),
+                    Transform::from_xyz(0.0, 0.004, -0.008),
+                ));
+                ph.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.007))),
+                    MeshMaterial3d(mats.eye_pupil.clone()),
+                    Transform::from_xyz(0.0, 0.056, 0.008),
+                ));
+            });
+        }
     });
 
     // Head assembly (+Z front)
     let mut head_root = parent.spawn((Transform::from_xyz(0.0, 1.72, 0.0), Visibility::default()));
-    if is_cutscene {
-        head_root.insert(ChillaryAnim { kind: ChillaryPart::Head });
+    match mode {
+        ChillaryRigMode::Cutscene => {
+            head_root.insert(ChillaryAnim { kind: ChillaryPart::Head });
+        }
+        ChillaryRigMode::CasinoDealer { table_idx } => {
+            head_root.insert(ChillaryDealerPart {
+                table_idx,
+                kind: ChillaryDealerLimb::Head,
+            });
+        }
+        ChillaryRigMode::City => {}
     }
     let (hr, jaw) = (0.255_f32, 0.14_f32);
     head_root.with_children(|hd| {

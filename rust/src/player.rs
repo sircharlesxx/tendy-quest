@@ -1568,6 +1568,10 @@ pub fn update_camera(
     >,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
+    // When seated at a Tendy Palace Casino game station, casino.rs drives the live 3D station cam.
+    if stats.casino_open {
+        return;
+    }
     // The camera frames the drawn body (smaller than the gameplay scale at human size in the
     // city), so the framing matches what it was tuned for.
     let cam_ps = stats.body_scale();
