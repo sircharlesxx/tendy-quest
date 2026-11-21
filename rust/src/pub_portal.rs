@@ -769,8 +769,8 @@ fn cleanup_bartender_on_exit(
 
 const PORTAL_STAGE: Vec3 = Vec3::new(0.0, 0.0, -1080.0);
 const PATRON_COUNT: usize = 6;
-const PATRON_START_TIMES: [f32; PATRON_COUNT] = [0.1, 2.2, 4.6, 7.0, 9.6, 12.2];
-const PATRON_WALK_SECS: f32 = 3.8;
+const PATRON_START_TIMES: [f32; PATRON_COUNT] = [0.5, 3.2, 6.4, 9.2, 12.0, 14.8];
+const PATRON_WALK_SECS: f32 = 4.2;
 
 #[derive(Component)]
 struct PubPortalCutsceneEntity;
@@ -875,10 +875,10 @@ const SEATED_SPOTS: [Vec3; 4] = [
     Vec3::new(1.65, 0.0, 1.35),
 ];
 const STAND_SPOTS: [Vec3; 4] = [
-    Vec3::new(-2.15, 0.0, 1.95),
-    Vec3::new(-1.05, 0.0, 1.80),
-    Vec3::new(1.05, 0.0, 1.80),
-    Vec3::new(2.15, 0.0, 1.95),
+    Vec3::new(-1.85, 0.0, 1.20),
+    Vec3::new(-1.35, 0.0, -0.15),
+    Vec3::new(1.35, 0.0, -0.15),
+    Vec3::new(1.85, 0.0, 1.20),
 ];
 
 fn yaw_toward(from: Vec3, target: Vec3, model_neg_z: bool) -> f32 {
@@ -1900,17 +1900,21 @@ fn update_pub_portal_cutscene(
                     let mut diff = (y_door - y_table + PI).rem_euclid(TAU) - PI;
                     diff *= stand_smooth;
                     let shiver = if beat == 5 { (t * 36.0 + gi as f32).sin() * 0.05 } else { 0.0 };
+                    // Subtle peer-around-the-beer-tower lean (left pair leans left, right pair leans right)
+                    let peer_side = if gi < 2 { -1.0 } else { 1.0 };
+                    let peer_lean = if beat == 4 { 0.10 * stand_smooth * peer_side } else { 0.0 };
                     tf.translation = PORTAL_STAGE + pos + Vec3::new(shiver, 0.0, 0.0);
-                    tf.rotation = Quat::from_rotation_y(y_table + diff);
+                    tf.rotation = Quat::from_rotation_y(y_table + diff) * Quat::from_rotation_z(peer_lean);
                     tf.scale = Vec3::splat(base_scale);
                 } else {
                     let bob = (t * 2.4 + gi as f32 * 1.3).sin() * 0.025;
                     let seat_p = SEATED_SPOTS[gi] + Vec3::new(0.0, -0.28 + bob, 0.0);
                     let y_table = yaw_toward(SEATED_SPOTS[gi], TABLE_CENTER, model_neg_z);
                     let turn = if beat == 2 && gi == 2 {
-                        -0.45
+                        -0.65
                     } else if beat == 3 {
-                        (t * 3.0 + gi as f32).sin() * 0.25
+                        let peer_dir = if gi < 2 { -0.55 } else { 0.55 };
+                        peer_dir + (t * 2.6 + gi as f32).sin() * 0.16
                     } else {
                         0.0
                     };
@@ -1922,61 +1926,62 @@ fn update_pub_portal_cutscene(
         }
     }
 
-    // Dynamic cinematic camera per Beat
+    // Dynamic cinematic camera per Beat: keeps focus on the guys at the table with girls casually
+    // passing in the background, then frames all 4 peering around the beer tower toward the door.
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         match beat {
             0 => {
-                // Warm orbit around all 4 guys and the 10-beer table + tower
-                let a = bt * 0.22 - 0.35;
-                c_tf.translation = PORTAL_STAGE + Vec3::new(a.sin() * 6.2, 2.95, 0.6 + a.cos() * 6.2);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.35, 0.4), Vec3::Y);
+                // Close warm orbit around the 4 guys sitting at the 10-beer table + tower
+                let a = bt * 0.18 - 0.30;
+                c_tf.translation = PORTAL_STAGE + Vec3::new(a.sin() * 4.3, 2.35, 0.6 + a.cos() * 4.3);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.28, 0.55), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.66;
+                    p.fov = 0.62;
                 }
             }
             1 => {
-                // Frame TJ & Nate talking about the 1990 TMNT movie
+                // Tighter table shot on TJ & the crew debating TMNT while girls pass casually behind
                 let k = (bt / 4.8).clamp(0.0, 1.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(2.2 - k * 0.7, 2.35, 3.6);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(-0.2, 1.35, -0.35), Vec3::Y);
+                c_tf.translation = PORTAL_STAGE + Vec3::new(2.75 - k * 0.45, 2.05, 2.75);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(-0.55, 1.28, -0.15), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.60;
+                    p.fov = 0.56;
                 }
             }
             2 => {
-                // Nate spots patrons walking into the Women's bathroom
+                // Focus on Nate at the table glancing back as girls casually enter the Women's room
                 let k = (bt / 5.2).clamp(0.0, 1.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(-2.4, 2.45, 3.3);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.4, 1.55, -2.5 - k * 2.4), Vec3::Y);
+                c_tf.translation = PORTAL_STAGE + Vec3::new(-2.85, 2.10, 2.65);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.55, 1.32, -0.45 - k * 1.4), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.64;
+                    p.fov = 0.58;
                 }
             }
             3 => {
-                // Glenn's magic portal theory: frame all 4 guys + glowing Women's door behind them
-                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.55, 5.4);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.65, -2.8), Vec3::Y);
+                // Elevated 3/4 table view: all 4 guys turning around the tower toward the glowing door
+                c_tf.translation = PORTAL_STAGE + Vec3::new(2.85, 2.25, 3.15);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(-0.25, 1.38, -1.35), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.68;
+                    p.fov = 0.62;
                 }
             }
             4 => {
-                // Guys stand up & glance together over their shoulders at the Women's door!
+                // Boys stand & peer around both sides of the beer tower to investigate the door
                 let k = (bt / 4.0).clamp(0.0, 1.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.45 - k * 0.25, 5.1 - k * 1.4);
-                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.85, -4.8), Vec3::Y);
+                c_tf.translation = PORTAL_STAGE + Vec3::new(-1.35 + k * 0.45, 2.15 - k * 0.15, 3.85 - k * 0.85);
+                c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.52, -3.2 - k * 1.6), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.64 - k * 0.08;
+                    p.fov = 0.62 - k * 0.04;
                 }
             }
             _ => {
-                // Door slams open & camera dives toward the neon portal with the swirling guys!
+                // Door slams open & camera sweeps around the beer tower straight into the portal!
                 let pull = (suck_u * 1.1).clamp(0.0, 1.0);
                 let shake = Vec3::new((t * 53.0).sin() * 0.08, (t * 67.0).cos() * 0.08, 0.0);
-                c_tf.translation = PORTAL_STAGE + Vec3::new(0.0, 2.1, 4.4 - pull * 4.8) + shake;
+                c_tf.translation = PORTAL_STAGE + Vec3::new(-0.85 * (1.0 - pull), 2.00 - pull * 0.10, 2.70 - pull * 4.30) + shake;
                 c_tf.look_at(PORTAL_STAGE + Vec3::new(0.0, 1.65, -5.8), Vec3::Y);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov = 0.70 + pull * 0.28;
+                    p.fov = 0.68 + pull * 0.28;
                 }
             }
         }
