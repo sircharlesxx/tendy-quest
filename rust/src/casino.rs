@@ -1633,10 +1633,63 @@ fn enter_casino_play(
                         }
                     });
                 }
+                // 5 Volumetric 3D Payline Beams (Center, Top, Bottom, Diag \, Diag /)
+                let payline_specs: [(f32, f32, f32); 5] = [
+                    (1.45, 0.0, 1.64),
+                    (1.72, 0.0, 1.64),
+                    (1.18, 0.0, 1.64),
+                    (1.45, -0.46, 1.84),
+                    (1.45, 0.46, 1.84),
+                ];
+                for (line, (py, rz, len)) in payline_specs.into_iter().enumerate() {
+                    c.spawn((
+                        SlotPaylineBeam { cab, line },
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(if line == 0 { neon_gold_mat.clone() } else { payline_mat.clone() }),
+                        Transform::from_xyz(0.0, py, 0.935)
+                            .with_rotation(Quat::from_rotation_z(rz))
+                            .with_scale(Vec3::new(len, 0.032, 0.022)),
+                        Visibility::Hidden,
+                    ));
+                }
+                // 3D Hold Clamp Bars + Tactile Control Shelf (3 HOLD buttons + big red SPIN button)
                 c.spawn((
                     Mesh3d(unit_box.clone()),
-                    MeshMaterial3d(payline_mat.clone()),
-                    Transform::from_xyz(0.0, 1.45, 0.93).with_scale(Vec3::new(1.64, 0.018, 0.012)),
+                    MeshMaterial3d(dark_metal_mat.clone()),
+                    Transform::from_xyz(0.0, 0.78, 0.88).with_scale(Vec3::new(1.72, 0.14, 0.52)),
+                ));
+                for col in 0..3 {
+                    let dx = (col as f32 - 1.0) * 0.52;
+                    c.spawn((
+                        SlotHoldBar { cab, col },
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(neon_cyan_mat.clone()),
+                        Transform::from_xyz(dx, 0.96, 0.88).with_scale(Vec3::new(0.42, 0.045, 0.045)),
+                        Visibility::Hidden,
+                    ));
+                    c.spawn((
+                        SlotDeckBtn { cab, col: Some(col) },
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(neon_cyan_mat.clone()),
+                        Transform::from_xyz(dx, 0.87, 0.84).with_scale(Vec3::new(0.28, 0.05, 0.14)),
+                    ));
+                }
+                c.spawn((
+                    SlotDeckBtn { cab, col: None },
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(red_runner_mat.clone()),
+                    Transform::from_xyz(0.0, 0.87, 1.04).with_scale(Vec3::new(0.50, 0.06, 0.16)),
+                ));
+                // Dedicated cabinet accent / anticipation spotlight
+                c.spawn((
+                    SlotCabLight { cab },
+                    PointLight {
+                        color: Color::srgb(1.0, 0.88, 0.56),
+                        intensity: 6_000.0,
+                        range: 9.0,
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 2.25, 1.35),
                 ));
                 // Articulated mechanical side pull lever
                 c.spawn((
@@ -2081,6 +2134,13 @@ struct CasinoGameState {
     slot_elapsed: f32,
     slot_tick_accum: f32,
     slot_stopped_cols: [bool; 3],
+    slot_held: [bool; 3],
+    slot_hold_ready: bool,
+    slot_anticipation: bool,
+    slot_anticipation_played: bool,
+    slot_free_spins: u32,
+    slot_bonus_mult: u32,
+    slot_meter: u32,
     slot_win_lines: Vec<usize>, // indices 0..=4
     slot_last_win: u32,
     slot_spins: u32,
@@ -2127,6 +2187,13 @@ impl Default for CasinoGameState {
             slot_elapsed: 0.0,
             slot_tick_accum: 0.0,
             slot_stopped_cols: [true; 3],
+            slot_held: [false; 3],
+            slot_hold_ready: false,
+            slot_anticipation: false,
+            slot_anticipation_played: false,
+            slot_free_spins: 0,
+            slot_bonus_mult: 1,
+            slot_meter: 0,
             slot_win_lines: Vec::new(),
             slot_last_win: 0,
             slot_spins: 0,
@@ -2307,6 +2374,8 @@ enum CasinoActionBtn {
     BjStand,
     BjDouble,
     SlotBet(u32),
+    SlotMaxBet,
+    SlotHold(usize),
     SlotSpin,
 }
 
@@ -2318,6 +2387,7 @@ enum CasinoDynamicText {
     BjDealerScore,
     BjPlayerScore,
     SlotPaytable,
+    SlotBonusStatus,
     CashierSummary,
 }
 
@@ -2408,13 +2478,77 @@ fn close_casino_modal(
 
 fn finish_slot_spin(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     game.slot_spinning = false;
+    game.slot_anticipation = false;
     game.slot_stopped_cols = [true; 3];
     game.slot_grid = game.slot_target;
-    let (payout, lines, msg) = evaluate_slots(&game.slot_grid, game.slot_theme, game.slot_bet);
+
+    let (base_payout, lines, mut msg) = evaluate_slots(&game.slot_grid, game.slot_theme, game.slot_bet);
+    let mult = game.slot_bonus_mult.max(1);
+    let payout = base_payout * mult;
+    if mult > 1 && payout > 0 {
+        msg = format!("[{}x FREE SPIN] {}", mult, msg);
+    }
+
+    // Check Free Spin triggers & Stampede / Heart Fever meter
+    let mut bonus_awarded = 0u32;
+    let mut bonus_mult = game.slot_bonus_mult.max(1);
+    let has_big_line = lines.iter().any(|&li| {
+        let coords = PAYLINES[li];
+        let a = game.slot_grid[coords[0].0][coords[0].1];
+        let b = game.slot_grid[coords[1].0][coords[1].1];
+        let c = game.slot_grid[coords[2].0][coords[2].1];
+        match game.slot_theme {
+            SlotTheme::Buffalo => a == b && b == c && a <= 1,
+            SlotTheme::LuckyLadies => (a == b && b == c && a <= 2) || (a <= 2 && b <= 2 && c <= 2 && a != b && b != c && a != c),
+        }
+    });
+    if has_big_line {
+        match game.slot_theme {
+            SlotTheme::Buffalo => {
+                bonus_awarded = 5;
+                bonus_mult = bonus_mult.max(3);
+            }
+            SlotTheme::LuckyLadies => {
+                bonus_awarded = 4;
+                bonus_mult = bonus_mult.max(2);
+            }
+        }
+    } else {
+        let mid_has_star = (0..3).any(|col| {
+            let s = game.slot_grid[col][1];
+            match game.slot_theme {
+                SlotTheme::Buffalo => s <= 1,
+                SlotTheme::LuckyLadies => s <= 2,
+            }
+        });
+        if mid_has_star {
+            game.slot_meter += 1;
+            if game.slot_meter >= 4 {
+                game.slot_meter = 0;
+                bonus_awarded = 3;
+                bonus_mult = bonus_mult.max(2);
+            }
+        }
+    }
+    if bonus_awarded > 0 {
+        game.slot_free_spins += bonus_awarded;
+        game.slot_bonus_mult = bonus_mult;
+        play_sfx("slot_freespins");
+        msg = format!("{} +{} FREE SPINS ({}x)!", msg, bonus_awarded, bonus_mult);
+    }
+
+    let used_hold = game.slot_held.iter().any(|&h| h);
+    game.slot_held = [false; 3];
+    game.slot_hold_ready = !used_hold && game.slot_free_spins == 0;
+    if game.slot_free_spins == 0 {
+        game.slot_bonus_mult = 1;
+    }
+
     game.slot_win_lines = lines;
     game.slot_last_win = payout;
     game.slot_msg = msg;
-    game.record_payout(game.slot_bet, payout);
+    let wager = if mult > 1 { 0 } else { game.slot_bet };
+    game.record_payout(wager, payout);
     if payout > 0 {
         stats.add_tendy_wendies(payout);
         if payout >= game.slot_bet * 4 {
@@ -2540,39 +2674,89 @@ fn blackjack_double(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     }
 }
 
+fn toggle_slot_hold(game: &mut CasinoGameState, col: usize) {
+    if game.slot_spinning || col >= 3 {
+        return;
+    }
+    if !game.slot_hold_ready {
+        game.slot_msg = if game.slot_free_spins > 0 {
+            "HOLD disabled during Free Spins!".to_string()
+        } else {
+            "Spin once first to unlock HOLD [1/2/3]!".to_string()
+        };
+        play_sfx("hack_deny");
+        return;
+    }
+    if game.slot_held[col] {
+        game.slot_held[col] = false;
+        play_sfx("slot_hold");
+    } else if game.slot_held.iter().filter(|&&h| h).count() < 2 {
+        game.slot_held[col] = true;
+        play_sfx("slot_hold");
+        game.slot_msg = format!("Reel {} LOCKED! Lock up to 2 reels, then PULL LEVER [SPACE].", col + 1);
+    } else {
+        game.slot_msg = "Max 2 reels can be HELD at once!".to_string();
+        play_sfx("hack_deny");
+    }
+}
+
 fn start_slot_spin(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     if game.slot_spinning {
         return;
     }
-    if !stats.spend_tendy_wendies(game.slot_bet) {
+    let is_free = game.slot_free_spins > 0;
+    if is_free {
+        game.slot_free_spins -= 1;
+        game.slot_held = [false; 3];
+    } else if !stats.spend_tendy_wendies(game.slot_bet) {
         game.slot_msg = format!("Need {} TW! Claim free +25 TW at Cashier or lower bet.", game.slot_bet);
         play_sfx("hack_deny");
         return;
     }
     play_sfx("slot_lever");
-    play_sfx("chip_bet");
+    if !is_free {
+        play_sfx("chip_bet");
+    }
     game.slot_spins += 1;
     game.slot_spinning = true;
     game.slot_elapsed = 0.0;
     game.slot_tick_accum = 0.0;
-    game.slot_stopped_cols = [false; 3];
     game.slot_win_lines.clear();
     game.slot_last_win = 0;
     for col in 0..3 {
-        game.slot_stop[col] = (game.next_u64() % 12) as usize;
+        if game.slot_held[col] {
+            game.slot_stopped_cols[col] = true;
+        } else {
+            game.slot_stopped_cols[col] = false;
+            game.slot_stop[col] = (game.next_u64() % 12) as usize;
+        }
     }
     game.slot_cab_stops[game.slot_cab] = game.slot_stop;
     game.slot_target = grid_from_stops(game.slot_theme, game.slot_stop);
     let c0_mid = game.slot_target[0][1];
     let c1_mid = game.slot_target[1][1];
-    let suspense = (c0_mid == c1_mid && c0_mid <= 2)
-        || (game.slot_theme == SlotTheme::Buffalo && (c0_mid == 0 || c1_mid == 0));
-    game.slot_stop_times = if suspense {
-        [0.72, 1.18, 2.12]
+    let tease_pair = (c0_mid == c1_mid && c0_mid <= 3)
+        || (game.slot_theme == SlotTheme::Buffalo && (c0_mid == 0 || c1_mid == 0))
+        || (game.slot_theme == SlotTheme::LuckyLadies && c0_mid <= 2 && c1_mid <= 2 && c0_mid != c1_mid);
+    game.slot_anticipation = !game.slot_held[2] && tease_pair;
+    game.slot_anticipation_played = false;
+    let t0 = if game.slot_held[0] { 0.05 } else { 0.68 };
+    let t1 = if game.slot_held[1] { t0 } else { t0 + 0.48 };
+    let t2 = if game.slot_held[2] {
+        t1 + 0.05
+    } else if game.slot_anticipation {
+        t1 + 1.55
     } else {
-        [0.72, 1.18, 1.65]
+        t1 + 0.48
     };
-    game.slot_msg = "Pulling lever - reels spinning!".to_string();
+    game.slot_stop_times = [t0, t1, t2];
+    game.slot_msg = if is_free {
+        format!("FREE SPIN ({}x)! {} left after this!", game.slot_bonus_mult, game.slot_free_spins)
+    } else if game.slot_held.iter().any(|&h| h) {
+        "Reels locked - spinning remaining reel(s)!".to_string()
+    } else {
+        "Pulling lever - reels spinning!".to_string()
+    };
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -2777,6 +2961,15 @@ fn update_slot_spin_timer(
             }
         }
     }
+    if game.slot_anticipation
+        && !game.slot_anticipation_played
+        && game.slot_stopped_cols[1]
+        && !game.slot_stopped_cols[2]
+    {
+        game.slot_anticipation_played = true;
+        play_sfx("slot_anticipation");
+        game.slot_msg = "TEASE! Reel 3 slowing down...".to_string();
+    }
     if game.slot_stopped_cols.iter().all(|&s| s) {
         finish_slot_spin(&mut stats, &mut game);
     }
@@ -2851,6 +3044,13 @@ fn handle_casino_modal_input(
                     play_sfx("chip_bet");
                 }
             }
+            CasinoActionBtn::SlotMaxBet => {
+                if !game.slot_spinning {
+                    game.slot_bet = 50;
+                    start_slot_spin(&mut stats, &mut game);
+                }
+            }
+            CasinoActionBtn::SlotHold(col) => toggle_slot_hold(&mut game, col),
             CasinoActionBtn::SlotSpin => start_slot_spin(&mut stats, &mut game),
         }
     }
@@ -2871,6 +3071,12 @@ fn handle_casino_modal_input(
         CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
             if keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) {
                 start_slot_spin(&mut stats, &mut game);
+            } else if keys.just_pressed(KeyCode::Digit1) {
+                toggle_slot_hold(&mut game, 0);
+            } else if keys.just_pressed(KeyCode::Digit2) {
+                toggle_slot_hold(&mut game, 1);
+            } else if keys.just_pressed(KeyCode::Digit3) {
+                toggle_slot_hold(&mut game, 2);
             }
         }
         CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {}
@@ -3290,6 +3496,23 @@ fn spawn_casino_ui(
                                 }
                             });
                         }
+                        grid.spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(4.0),
+                            margin: UiRect::top(Val::Px(2.0)),
+                            ..default()
+                        })
+                        .with_children(|holds| {
+                            for col in 0..3 {
+                                mk_btn(
+                                    holds,
+                                    CasinoActionBtn::SlotHold(col),
+                                    &format!("H{}", col + 1),
+                                    Color::srgb(0.14, 0.24, 0.34),
+                                    10.5,
+                                );
+                            }
+                        });
                     });
 
                     sl.spawn(Node {
@@ -3350,6 +3573,12 @@ fn spawn_casino_ui(
                                 }
                             });
                         right.spawn((
+                            CasinoDynamicText::SlotBonusStatus,
+                            Text::new(""),
+                            TextFont { font_size: 11.5, ..default() },
+                            TextColor(Color::srgb(0.45, 0.96, 1.0)),
+                        ));
+                        right.spawn((
                             CasinoDynamicText::SlotPaytable,
                             Text::new(""),
                             TextFont { font_size: 11.0, ..default() },
@@ -3367,6 +3596,7 @@ fn spawn_casino_ui(
                                 for bet in [5_u32, 10, 25, 50] {
                                     mk_btn(ctrl, CasinoActionBtn::SlotBet(bet), &format!("BET {} TW", bet), Color::srgb(0.28, 0.16, 0.36), 12.5);
                                 }
+                                mk_btn(ctrl, CasinoActionBtn::SlotMaxBet, "MAX BET", Color::srgb(0.56, 0.32, 0.10), 12.5);
                                 mk_btn(ctrl, CasinoActionBtn::SlotSpin, "PULL LEVER [SPACE]", Color::srgb(0.82, 0.18, 0.24), 14.0);
                             });
                     });
@@ -3493,6 +3723,22 @@ fn refresh_casino_ui(
                     "5 PAYLINES: 3x RUBY 30x | SAKURA 20x | SKYE 15x | DIAMOND 10x | 3-LADY TRIO 8x | CHERRY 6x".to_string()
                 }
             },
+            CasinoDynamicText::SlotBonusStatus => {
+                let meter_name = if game.slot_theme == SlotTheme::Buffalo {
+                    "STAMPEDE METER"
+                } else {
+                    "FEVER METER"
+                };
+                let hold_txt = if game.slot_free_spins > 0 {
+                    format!("FREE SPINS: {} ({}x PAYOUT!)", game.slot_free_spins, game.slot_bonus_mult)
+                } else if game.slot_hold_ready {
+                    let n = game.slot_held.iter().filter(|&&h| h).count();
+                    format!("HOLD READY [1/2/3] ({}/2 LOCKED)", n)
+                } else {
+                    "SPIN TO CHARGE METER & UNLOCK HOLD".to_string()
+                };
+                format!("{}: {}/4   |   {}", meter_name, game.slot_meter, hold_txt)
+            }
             CasinoDynamicText::CashierSummary => {
                 format!(
                     "WALLET BALANCE: {} Tendy Wendies (TW)\n\nEARN MORE TW:\n- Collect Kitchen Tendies (+2 TW each)\n- Collect Cedar Rapids Tendies (+5 TW each)\n- Defeat Lexie (+100 TW jackpot bonus)\n- Win Blackjack or Buffalo / Lucky Ladies Slots!\n\nSESSION STATS:\n- Blackjack Hands: {}   |   Slot Spins: {}\n- Biggest Win: {} TW   |   Session Net: {} TW",
@@ -3544,6 +3790,8 @@ fn refresh_casino_ui(
             CasinoActionBtn::Tab(k) => k == game.station,
             CasinoActionBtn::BjBet(b) => b == game.bj_bet,
             CasinoActionBtn::SlotBet(b) => b == game.slot_bet,
+            CasinoActionBtn::SlotHold(c) => game.slot_held.get(c).copied().unwrap_or(false),
+            CasinoActionBtn::SlotMaxBet => game.slot_bet == 50,
             CasinoActionBtn::Stipend => stats.tendy_wendies < 25,
             _ => false,
         };
@@ -3686,6 +3934,9 @@ fn select_slot_cab(game: &mut CasinoGameState, cab: usize) {
     game.slot_stop = game.slot_cab_stops[cab];
     game.slot_grid = grid_from_stops(game.slot_theme, game.slot_stop);
     game.slot_target = game.slot_grid;
+    game.slot_held = [false; 3];
+    game.slot_hold_ready = false;
+    game.slot_anticipation = false;
     game.slot_win_lines.clear();
     game.slot_last_win = 0;
 }
@@ -3743,6 +3994,29 @@ struct SlotCrown {
 struct SlotLeverPivot {
     cab: usize,
     t: f32,
+}
+
+#[derive(Component)]
+struct SlotPaylineBeam {
+    cab: usize,
+    line: usize,
+}
+
+#[derive(Component)]
+struct SlotHoldBar {
+    cab: usize,
+    col: usize,
+}
+
+#[derive(Component)]
+struct SlotDeckBtn {
+    cab: usize,
+    col: Option<usize>,
+}
+
+#[derive(Component)]
+struct SlotCabLight {
+    cab: usize,
 }
 
 #[derive(Component)]
@@ -3879,7 +4153,7 @@ fn update_chillary_dealers(
     }
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn update_casino_3d_slots(
     time: Res<Time<Real>>,
     stats: Res<PlayerStats>,
@@ -3888,6 +4162,25 @@ fn update_casino_3d_slots(
     mut drum_q: Query<(&mut SlotReelDrum, &mut Transform)>,
     mut lever_q: Query<(&mut SlotLeverPivot, &mut Transform), Without<SlotReelDrum>>,
     mut crown_q: Query<(&SlotCrown, &mut Transform), (Without<SlotReelDrum>, Without<SlotLeverPivot>)>,
+    mut beam_q: Query<
+        (&SlotPaylineBeam, &mut Visibility, &mut Transform),
+        (Without<SlotReelDrum>, Without<SlotLeverPivot>, Without<SlotCrown>),
+    >,
+    mut hold_q: Query<
+        (&SlotHoldBar, &mut Visibility),
+        (Without<SlotReelDrum>, Without<SlotLeverPivot>, Without<SlotCrown>, Without<SlotPaylineBeam>),
+    >,
+    mut deck_q: Query<
+        (&SlotDeckBtn, &mut Transform),
+        (
+            Without<SlotReelDrum>,
+            Without<SlotLeverPivot>,
+            Without<SlotCrown>,
+            Without<SlotPaylineBeam>,
+            Without<SlotHoldBar>,
+        ),
+    >,
+    mut cab_light_q: Query<(&SlotCabLight, &mut PointLight)>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
@@ -3904,10 +4197,15 @@ fn update_casino_3d_slots(
 
     let active_cab = game.slot_cab;
     let spinning = game.slot_spinning;
+    let el = game.slot_elapsed;
+    let in_tease = spinning
+        && game.slot_anticipation
+        && el >= game.slot_stop_times[1]
+        && !game.slot_stopped_cols[2];
+
     for (mut d, mut tf) in &mut drum_q {
         let rest = game.slot_cab_stops[d.cab][d.col] as f32 * (PI / 6.0);
-        if d.cab == active_cab && spinning {
-            let el = game.slot_elapsed;
+        if d.cab == active_cab && spinning && !game.slot_held[d.col] {
             let st = game.slot_stop_times[d.col];
             if !d.spinning {
                 d.spinning = true;
@@ -3931,10 +4229,18 @@ fn update_casino_3d_slots(
                 d.angle = from + (to - from) * e;
                 if el > st {
                     let u2 = el - st;
-                    d.angle = to + 0.14 * (-14.0 * u2).exp() * (26.0 * u2).sin();
+                    d.angle = to + 0.16 * (-13.0 * u2).exp() * (28.0 * u2).sin();
                 }
             } else {
-                let vel = if el < 0.12 { -3.2 } else { 18.5 };
+                // Dramatic anticipation deceleration on Reel 3 when Reels 1 & 2 teased
+                let vel = if el < 0.12 {
+                    -3.2
+                } else if d.col == 2 && in_tease {
+                    let tease_u = ((el - game.slot_stop_times[1]) / (st - 0.30 - game.slot_stop_times[1]).max(0.2)).clamp(0.0, 1.0);
+                    18.5 - 11.5 * tease_u
+                } else {
+                    18.5
+                };
                 d.angle += vel * dt;
             }
         } else {
@@ -3944,12 +4250,17 @@ fn update_casino_3d_slots(
                 d.settle = None;
             }
             d.after_t += dt;
-            let bounce = if d.after_t < 0.6 {
-                0.14 * (-14.0 * d.after_t).exp() * (26.0 * d.after_t).sin()
+            let lock_hum = if d.cab == active_cab && spinning && game.slot_held[d.col] && el < 0.18 {
+                (el * 75.0).sin() * 0.03
             } else {
                 0.0
             };
-            d.angle = rest + bounce;
+            let bounce = if d.after_t < 0.6 {
+                0.15 * (-14.0 * d.after_t).exp() * (26.0 * d.after_t).sin()
+            } else {
+                0.0
+            };
+            d.angle = rest + bounce + lock_hum;
         }
         tf.rotation = Quat::from_rotation_x(d.angle);
     }
@@ -3977,10 +4288,12 @@ fn update_casino_3d_slots(
         tf.rotation = Quat::from_rotation_x(-0.28 + pull);
     }
 
-    // Jackpot crown beacons strobe during spins & after wins
+    // Jackpot crown beacons strobe during spins, anticipation tease & after wins
     for (c, mut tf) in &mut crown_q {
         let amp = if c.cab == active_cab {
-            if spinning {
+            if in_tease {
+                0.85
+            } else if spinning {
                 0.45
             } else {
                 (sync.win_flash * 0.35).min(0.9)
@@ -3989,6 +4302,61 @@ fn update_casino_3d_slots(
             0.08
         };
         tf.scale = Vec3::splat(0.16 * (1.0 + amp * (t * 20.0).sin().abs()));
+    }
+
+    // Volumetric 3D Payline Beams pulse across winning lines on the active cabinet
+    let slots_open = stats.casino_open
+        && matches!(game.station, CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots);
+    for (beam, mut vis, mut tf) in &mut beam_q {
+        let won = slots_open
+            && beam.cab == active_cab
+            && !spinning
+            && game.slot_win_lines.contains(&beam.line);
+        *vis = if won { Visibility::Inherited } else { Visibility::Hidden };
+        if won {
+            let pulse = 1.0 + 0.55 * (t * 18.0 + beam.line as f32).sin().abs();
+            tf.scale.y = 0.030 * pulse;
+            tf.scale.z = 0.022 * pulse;
+        }
+    }
+
+    // 3D Hold clamp bars illuminate beneath locked reels
+    for (hbar, mut vis) in &mut hold_q {
+        let held = slots_open && hbar.cab == active_cab && game.slot_held[hbar.col];
+        *vis = if held { Visibility::Inherited } else { Visibility::Hidden };
+    }
+
+    // Tactile 3D deck buttons physically depress when held or spinning
+    for (btn, mut tf) in &mut deck_q {
+        let pressed = btn.cab == active_cab
+            && slots_open
+            && match btn.col {
+                Some(col) => game.slot_held[col],
+                None => spinning && el < 0.35,
+            };
+        tf.translation.y = if pressed { 0.848 } else { 0.87 };
+    }
+
+    // Cabinet spotlight flares during Reel-3 anticipation & flashes on big wins
+    for (cl, mut pl) in &mut cab_light_q {
+        if cl.cab == active_cab && slots_open {
+            if in_tease {
+                pl.color = Color::srgb(0.45, 0.92, 1.0);
+                pl.intensity = 52_000.0 + (t * 24.0).sin().abs() * 26_000.0;
+            } else if sync.win_flash > 0.05 || game.slot_free_spins > 0 {
+                pl.color = Color::srgb(1.0, 0.84, 0.30);
+                pl.intensity = 45_000.0 + (t * 18.0).sin().abs() * 38_000.0;
+            } else if spinning {
+                pl.color = Color::srgb(1.0, 0.88, 0.56);
+                pl.intensity = 22_000.0;
+            } else {
+                pl.color = Color::srgb(1.0, 0.88, 0.56);
+                pl.intensity = 14_000.0;
+            }
+        } else {
+            pl.color = Color::srgb(1.0, 0.88, 0.56);
+            pl.intensity = 6_000.0;
+        }
     }
 }
 
@@ -4371,26 +4739,55 @@ fn update_casino_station_camera(
             *v = Visibility::Hidden;
         }
     }
-    let (pos, look) = match game.station {
+    let t = time.elapsed_secs();
+    let in_slot_tease = matches!(
+        game.station,
+        CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots
+    ) && game.slot_spinning
+        && game.slot_anticipation
+        && game.slot_elapsed >= game.slot_stop_times[1]
+        && !game.slot_stopped_cols[2];
+
+    let (pos, look, want_fov) = match game.station {
         CasinoStationKind::Blackjack => {
             let (tp, tr) = bj_table_pose(game.bj_table);
             (
                 tp + tr * Vec3::new(0.0, 2.65, 3.65),
                 tp + tr * Vec3::new(0.0, 1.48, -0.55),
+                std::f32::consts::FRAC_PI_4,
             )
         }
         CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
             let (cp, cy) = slot_cab_pose(game.slot_cab);
             let w = CASINO_LEVEL_ORIGIN + cp;
             let r = Quat::from_rotation_y(cy);
+            let tease_off = if in_slot_tease {
+                Vec3::new(
+                    0.24 + (t * 42.0).sin() * 0.012,
+                    -0.06 + (t * 37.0).cos() * 0.012,
+                    -0.36,
+                )
+            } else {
+                let win_kick = if sync.win_flash > 0.2 {
+                    Vec3::new((t * 34.0).sin() * 0.025, (t * 29.0).cos() * 0.02, -0.14)
+                } else {
+                    Vec3::new((t * 0.9).sin() * 0.03, (t * 1.2).cos() * 0.015, 0.0)
+                };
+                win_kick
+            };
             (
-                w + r * Vec3::new(0.0, 2.05, 3.35),
-                w + r * Vec3::new(0.0, 1.65, 0.45),
+                w + r * (Vec3::new(0.0, 1.88, 2.52) + tease_off),
+                w + r * Vec3::new(if in_slot_tease { 0.22 } else { 0.0 }, 1.56, 0.35),
+                if in_slot_tease { 0.64 } else { std::f32::consts::FRAC_PI_4 },
             )
         }
         CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {
             let c = CASINO_LEVEL_ORIGIN + Vec3::new(0.0, 0.0, -16.8);
-            (c + Vec3::new(0.0, 3.0, 6.2), c + Vec3::new(0.0, 1.7, -1.8))
+            (
+                c + Vec3::new(0.0, 3.0, 6.2),
+                c + Vec3::new(0.0, 1.7, -1.8),
+                std::f32::consts::FRAC_PI_4,
+            )
         }
     };
     let dt = time.delta_secs().min(0.05);
@@ -4402,7 +4799,7 @@ fn update_casino_station_camera(
             .rotation;
         c_tf.rotation = c_tf.rotation.slerp(goal, k);
         if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = std::f32::consts::FRAC_PI_4;
+            p.fov += (want_fov - p.fov) * k;
         }
     }
 }

@@ -631,6 +631,36 @@
           mkOsc("sine", 988, 1046, 0.08, 0.15);
           return true;
         }
+        if (name === "slot_hold") {
+          mkOsc("triangle", 620, 920, 0.04, 0.14);
+          mkOsc("sine", 310, 420, 0.035, 0.10);
+          return true;
+        }
+        if (name === "slot_anticipation") {
+          mkOsc("sawtooth", 180, 560, 0.85, 0.12);
+          mkOsc("sine", 360, 1120, 0.85, 0.14);
+          mkResNoise("bandpass", 0.0, 0.85, 0.16, 400, 2200, 3.0);
+          return true;
+        }
+        if (name === "slot_freespins") {
+          [523.25, 659.25, 783.99, 987.77, 1046.5].forEach((f, idx) => {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            const t0 = ac.currentTime + idx * 0.075;
+            const o = ac.createOscillator();
+            const g = ac.createGain();
+            o.type = "triangle";
+            o.frequency.setValueAtTime(f, t0);
+            g.gain.setValueAtTime(0.001, t0);
+            g.gain.linearRampToValueAtTime(0.16, t0 + 0.015);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+            o.connect(g);
+            g.connect(masterGain);
+            o.start(t0);
+            o.stop(t0 + 0.24);
+          });
+          return true;
+        }
         if (name === "slot_jackpot") {
           const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98];
           notes.forEach((f, idx) => {
@@ -2458,7 +2488,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-98a8657d8a5210ce.js" crossorigin="anonymous" integrity="sha384-eLoOFpRykXtqSySY1KAkDdbCc8qnd7yEn7/vWNRCLAgdbyVeG1mR3fkRFDojXruE"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-98a8657d8a5210ce_bg.wasm" crossorigin="anonymous" integrity="sha384-BJVHZpOrx1PTqScg0O8S4wWs6s2edHvq5XJkdfUnx8dHMXlroyf3gJKXNhdROTYW" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-8cd8a57153ff19ec.js" crossorigin="anonymous" integrity="sha384-PELiix57I2ofK3PUaVPqalQITbDPB3v6RaQBRyVjxktSuyUJFTu9bNqkyQ+pvzwI"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-8cd8a57153ff19ec_bg.wasm" crossorigin="anonymous" integrity="sha384-9OAxKL++YIUw5eRnEz5o3ZwfE5YMo+X0jYwiQgL+SvJCyMjM2icDKFHtkhs1l6mK" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4743,8 +4773,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-98a8657d8a5210ce.js';
-const wasm = await init({ module_or_path: './tendy-quest-98a8657d8a5210ce_bg.wasm' });
+import init, * as bindings from './tendy-quest-8cd8a57153ff19ec.js';
+const wasm = await init({ module_or_path: './tendy-quest-8cd8a57153ff19ec_bg.wasm' });
 
 
 window.wasmBindings = bindings;
