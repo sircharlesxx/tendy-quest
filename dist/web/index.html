@@ -3440,9 +3440,7 @@
       const DEFAULT_TRACKERS = [
         "wss://tracker.openwebtorrent.com",
         "wss://tracker.webtorrent.dev",
-        "wss://tracker.btorrent.xyz",
         "wss://tracker.files.fm:7073/announce",
-        "wss://tracker.fastcast.nz",
       ];
       const MQTT_SIGNAL_URL = "wss://broker.emqx.io:8084/mqtt";
       const DEFAULT_STUN = [
@@ -4151,33 +4149,47 @@
           try { c.ev.send(buf); } catch (_) {}
         }
 
+        let offerPoolPromise = null;
         async function prepareOfferPool(targetCount) {
           if (closed) return;
-          const needed = Math.max(0, Math.min(3, targetCount) - pendingOffers.size);
-          const jobs = [];
-          for (let i = 0; i < needed; i++) {
-            jobs.push((async () => {
-              const offerIdBytes = new Uint32Array(3);
-              crypto.getRandomValues(offerIdBytes);
-              const offerId = Array.from(offerIdBytes, (x) => x.toString(16).padStart(8, "0")).join("").slice(0, 20);
-              const pc = new RTCPeerConnection({ iceServers });
-              const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
-              const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
-              const c = { pc, st, ev, open: false, bindsId: true, boundId: 0, offerId, createdAt: performance.now(), sdp: "" };
-              attachDataChannels(c, null);
-              pendingOffers.set(offerId, c);
-              try {
-                await pc.setLocalDescription(await pc.createOffer());
-                await iceGathered(pc, 2200);
-                if (closed || !pc.localDescription) { try { pc.close(); } catch (_) {} pendingOffers.delete(offerId); return; }
-                c.sdp = pc.localDescription.sdp;
-              } catch (_) {
-                try { pc.close(); } catch (_) {}
-                pendingOffers.delete(offerId);
-              }
-            })());
+          if (offerPoolPromise) {
+            await offerPoolPromise;
+            if (closed) return;
           }
-          await Promise.all(jobs);
+          const readyOffers = [...pendingOffers.values()].filter((c) => !!c.sdp).length;
+          const needed = Math.max(0, Math.min(3, targetCount) - readyOffers);
+          if (needed === 0) return;
+          offerPoolPromise = (async () => {
+            const jobs = [];
+            for (let i = 0; i < needed; i++) {
+              jobs.push((async () => {
+                const offerIdBytes = new Uint32Array(3);
+                crypto.getRandomValues(offerIdBytes);
+                const offerId = Array.from(offerIdBytes, (x) => x.toString(16).padStart(8, "0")).join("").slice(0, 20);
+                const pc = new RTCPeerConnection({ iceServers });
+                const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
+                const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
+                const c = { pc, st, ev, open: false, bindsId: true, boundId: 0, offerId, createdAt: performance.now(), sdp: "" };
+                attachDataChannels(c, null);
+                pendingOffers.set(offerId, c);
+                try {
+                  await pc.setLocalDescription(await pc.createOffer());
+                  await iceGathered(pc, 1800);
+                  if (closed || !pc.localDescription) { try { pc.close(); } catch (_) {} pendingOffers.delete(offerId); return; }
+                  c.sdp = pc.localDescription.sdp;
+                } catch (_) {
+                  try { pc.close(); } catch (_) {}
+                  pendingOffers.delete(offerId);
+                }
+              })());
+            }
+            await Promise.all(jobs);
+          })();
+          try {
+            await offerPoolPromise;
+          } finally {
+            offerPoolPromise = null;
+          }
         }
 
         function sendAnnounce(stEntry, forceOffers) {
@@ -4433,7 +4445,8 @@
               if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
                 try { stEntry.ws.send(new Uint8Array([0xc0, 0x00])); } catch (_) {} // MQTT PINGREQ
               }
-              if (now - stEntry.lastAnnounceAt >= (slotsLeft > 0 ? 15000 : 55000)) {
+              const announcePeriod = openConnCount() === 0 ? 5000 : (slotsLeft > 0 ? 15000 : 55000);
+              if (now - stEntry.lastAnnounceAt >= announcePeriod) {
                 sendAnnounce(stEntry, slotsLeft > 0);
               }
             }
