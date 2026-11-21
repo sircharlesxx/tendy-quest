@@ -698,6 +698,55 @@ fn spawn_phone_maze_ui(commands: &mut Commands, maze: &PhoneMazeState) {
         });
 }
 
+fn ensure_scoot_prompt_ui(
+    commands: &mut Commands,
+    scoot_ui: &mut ScootUiParams,
+    label: &str,
+) {
+    if scoot_ui.ui_q.is_empty() {
+        commands
+            .spawn((
+                ScootPromptUi,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(26.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+            ))
+            .with_children(|root| {
+                root.spawn((
+                    ScootPromptButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.08, 0.72, 0.30)),
+                    BorderColor(Color::srgb(0.45, 1.0, 0.65)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        ScootPromptText,
+                        Text::new(label.to_string()),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+            });
+    } else if let Ok(mut st) = scoot_ui.txt_q.get_single_mut() {
+        if st.0 != label {
+            st.0 = label.to_string();
+        }
+    }
+}
+
 pub fn update_city_scooter_and_phone(
     mut commands: Commands,
     time: Res<Time>,
@@ -934,53 +983,11 @@ pub fn update_city_scooter_and_phone(
 
         if let Some((se, _)) = nearest {
             let btn_label = if !stats.scooter_app_unlocked {
-                "SCOOT! (HACK PHONE APP [F/E])".to_string()
+                "SCOOT! (HACK PHONE APP [F/E])"
             } else {
-                "SCOOT! [F/E]".to_string()
+                "SCOOT! [F/E]"
             };
-
-            if scoot_ui.ui_q.is_empty() {
-                commands
-                    .spawn((
-                        ScootPromptUi,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            bottom: Val::Px(26.0),
-                            width: Val::Percent(100.0),
-                            justify_content: JustifyContent::Center,
-                            ..default()
-                        },
-                    ))
-                    .with_children(|root| {
-                        root.spawn((
-                            ScootPromptButton,
-                            Button,
-                            Node {
-                                padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
-                                border: UiRect::all(Val::Px(2.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.08, 0.72, 0.30)),
-                            BorderColor(Color::srgb(0.45, 1.0, 0.65)),
-                            BorderRadius::all(Val::Px(10.0)),
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                ScootPromptText,
-                                Text::new(btn_label.clone()),
-                                TextFont {
-                                    font_size: 16.0,
-                                    ..default()
-                                },
-                                TextColor(Color::WHITE),
-                            ));
-                        });
-                    });
-            } else if let Ok(mut st) = scoot_ui.txt_q.get_single_mut() {
-                if st.0 != btn_label {
-                    st.0 = btn_label;
-                }
-            }
+            ensure_scoot_prompt_ui(&mut commands, &mut scoot_ui, btn_label);
 
             if !stats.scooter_app_unlocked {
                 if interact {
@@ -1021,23 +1028,13 @@ pub fn update_city_scooter_and_phone(
         return;
     }
 
-    if let Ok(mut st) = scoot_ui.txt_q.get_single_mut() {
-        let lbl = "HOP OFF SCOOTER [F/E]";
-        if st.0 != lbl {
-            st.0 = lbl.to_string();
-        }
-    }
+    ensure_scoot_prompt_ui(&mut commands, &mut scoot_ui, "HOP OFF SCOOTER [F/E]");
 
     let Some(se) = stats.riding_scooter else {
         return;
     };
 
-    let airborne = scooter_q
-        .get(se)
-        .map(|(_, _, sc)| !sc.grounded)
-        .unwrap_or(false);
-
-    if interact && !airborne {
+    if interact {
         if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
             sc.occupied = false;
             sc.speed = 0.0;
@@ -1056,6 +1053,8 @@ pub fn update_city_scooter_and_phone(
             crate::skatepark::settle_dismount(&mut stf, &mut sc, &mut p_tf.translation);
             p_tf.rotation = Quat::from_rotation_y(sc.yaw + std::f32::consts::PI);
         }
+        player.velocity = Vec3::ZERO;
+        player.grounded = true;
         stats.riding_scooter = None;
         play_sfx("car_door");
         if stats.in_city {

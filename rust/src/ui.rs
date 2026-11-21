@@ -1340,6 +1340,8 @@ pub fn handle_tutorial_input(
         if stats.boss_mode {
             next_state.set(GameState::BossFight);
         } else {
+            crate::audio::net_set_online(false);
+            stats.free_roam = false;
             crate::audio::play_bgm();
             next_state.set(GameState::Playing);
         }
