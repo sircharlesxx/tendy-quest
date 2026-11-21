@@ -3442,7 +3442,9 @@
         "wss://tracker.webtorrent.dev",
         "wss://tracker.btorrent.xyz",
         "wss://tracker.files.fm:7073/announce",
+        "wss://tracker.fastcast.nz",
       ];
+      const MQTT_SIGNAL_URL = "wss://broker.emqx.io:8084/mqtt";
       const DEFAULT_STUN = [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
@@ -4002,7 +4004,69 @@
       // traffic flows peer-to-peer over browser DataChannels with RTT-elected 1-hop NAT bridging.
       function makeInfoHash(room, shard) {
         const clean = (room || "MAIN").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8).padEnd(8, "_");
-        return ("TQCR1-" + clean + "-S" + String(shard).padStart(2, "0") + "0").slice(0, 20);
+        return ("TQCR1-" + clean + "-S" + String(shard).padStart(2, "0") + "00").slice(0, 20);
+      }
+
+      // Minimal pure-JS MQTT 3.1.1 over WebSocket helpers (zero external dependencies) for fallback
+      // WebRTC signaling when public WebTorrent trackers are unreachable on a user's network.
+      function mqttRemLen(len) {
+        const out = [];
+        do {
+          let b = len & 0x7f;
+          len >>= 7;
+          if (len > 0) b |= 0x80;
+          out.push(b);
+        } while (len > 0);
+        return out;
+      }
+      function mqttStr(s) {
+        const b = new TextEncoder().encode(s);
+        return [(b.length >> 8) & 0xff, b.length & 0xff, ...b];
+      }
+      function mqttConnectPkt(clientId) {
+        const vh = [0, 4, 77, 81, 84, 84, 4, 0x02, 0, 30]; // MQTT, v4, cleanSession, keepalive=30s
+        const pl = mqttStr(clientId);
+        return new Uint8Array([0x10, ...mqttRemLen(vh.length + pl.length), ...vh, ...pl]);
+      }
+      function mqttSubscribePkt(pktId, topic) {
+        const vh = [(pktId >> 8) & 0xff, pktId & 0xff];
+        const pl = [...mqttStr(topic), 0x00]; // QoS 0
+        return new Uint8Array([0x82, ...mqttRemLen(vh.length + pl.length), ...vh, ...pl]);
+      }
+      function mqttPublishPkt(topic, text) {
+        const tb = mqttStr(topic);
+        const pb = new TextEncoder().encode(text);
+        return new Uint8Array([0x30, ...mqttRemLen(tb.length + pb.length), ...tb, ...pb]);
+      }
+      function mqttDecodePackets(buf) {
+        const u = new Uint8Array(buf);
+        const out = [];
+        let i = 0;
+        while (i < u.length) {
+          const hdr = u[i++];
+          const type = hdr >> 4;
+          let mul = 1, rem = 0;
+          while (i < u.length) {
+            const b = u[i++];
+            rem += (b & 0x7f) * mul;
+            if ((b & 0x80) === 0) break;
+            mul *= 128;
+          }
+          if (i + rem > u.length) break;
+          const body = u.subarray(i, i + rem);
+          i += rem;
+          if (type === 3 && body.length >= 2) {
+            const tlen = (body[0] << 8) | body[1];
+            let pos = 2 + tlen;
+            if ((hdr & 0x06) !== 0) pos += 2; // skip packet id if QoS > 0
+            if (pos <= body.length) {
+              out.push({ type, text: new TextDecoder().decode(body.subarray(pos)) });
+            }
+          } else {
+            out.push({ type, text: "" });
+          }
+        }
+        return out;
       }
 
       function meshTransport(room, initialShard) {
@@ -4015,14 +4079,26 @@
 
         const conns = new Map();        // peer_id -> conn record
         const pendingOffers = new Map();// offer_id -> { pc, st, ev, createdAt, announced }
-        const trackerStates = TRACKER_URLS.map((url) => ({
-          url,
-          ws: null,
-          ready: false,
-          backoffMs: 4000,
-          nextRetryAt: 0,
-          lastAnnounceAt: 0,
-        }));
+        const trackerStates = [
+          ...TRACKER_URLS.map((url) => ({
+            url,
+            isMqtt: false,
+            ws: null,
+            ready: false,
+            backoffMs: 4000,
+            nextRetryAt: 0,
+            lastAnnounceAt: 0,
+          })),
+          {
+            url: MQTT_SIGNAL_URL,
+            isMqtt: true,
+            ws: null,
+            ready: false,
+            backoffMs: 4000,
+            nextRetryAt: 0,
+            lastAnnounceAt: 0,
+          },
+        ];
 
         const iceServers = stunUrl ? [...DEFAULT_STUN, { urls: stunUrl }] : DEFAULT_STUN;
 
@@ -4126,9 +4202,23 @@
           };
           if (offersPayload.length && (forceOffers || roomSlotsLeft > 0)) payload.offers = offersPayload;
           try {
-            stEntry.ws.send(JSON.stringify(payload));
+            if (stEntry.isMqtt) {
+              stEntry.ws.send(mqttPublishPkt("tendy-quest/v1/" + infoHash, JSON.stringify(payload)));
+            } else {
+              stEntry.ws.send(JSON.stringify(payload));
+            }
             stEntry.lastAnnounceAt = performance.now();
           } catch (_) {}
+        }
+
+        function sendSignalObj(stEntry, obj) {
+          if (closed || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
+          const raw = JSON.stringify(obj);
+          if (stEntry.isMqtt) {
+            stEntry.ws.send(mqttPublishPkt("tendy-quest/v1/" + infoHash, raw));
+          } else {
+            stEntry.ws.send(raw);
+          }
         }
 
         async function handleTrackerMsg(stEntry, raw) {
@@ -4136,20 +4226,48 @@
           let msg;
           try { msg = JSON.parse(raw); } catch (_) { return; }
           if (!msg || typeof msg !== "object") return;
+          if (msg["failure reason"]) {
+            stEntry.lastError = String(msg["failure reason"]);
+            return;
+          }
           if (msg.info_hash && msg.info_hash !== infoHash) return;
+          if (msg.to_peer_id && msg.to_peer_id !== myPeerId) return;
           if (typeof msg.incomplete === "number" && msg.incomplete >= 4 && openConnCount() === 0) {
             sawRoomFullHint = true;
           }
           if (!msg.peer_id || msg.peer_id === myPeerId) return;
+
+          // MQTT broadcast fan-out: when a peer announces multiple offers on the shared topic,
+          // let the higher peer_id answer the first offer, and let the lower peer_id re-announce
+          // so both sides converge cleanly without dual-offer glare.
+          if (Array.isArray(msg.offers) && msg.offers.length && !msg.offer) {
+            if (myPeerId > msg.peer_id && !conns.has(msg.peer_id) && openConnCount() < MESH_MAX_REMOTES) {
+              const first = msg.offers[0];
+              if (first && first.offer && first.offer_id) {
+                await handleTrackerMsg(stEntry, JSON.stringify({
+                  info_hash: infoHash,
+                  peer_id: msg.peer_id,
+                  offer_id: first.offer_id,
+                  offer: first.offer,
+                }));
+              }
+            } else if (myPeerId < msg.peer_id && !conns.has(msg.peer_id) && pendingOffers.size > 0) {
+              sendAnnounce(stEntry, true);
+            }
+            return;
+          }
 
           // Incoming WebRTC offer from another Free Roam player.
           if (msg.offer && msg.offer.type === "offer" && typeof msg.offer.sdp === "string" && msg.offer_id) {
             if (openConnCount() >= MESH_MAX_REMOTES) {
               return;
             }
+            if (myPeerId < msg.peer_id && pendingOffers.size > 0) {
+              return; // Deterministic glare resolution: lower peer_id stays the offerer
+            }
             const existing = conns.get(msg.peer_id);
             if (existing) {
-              if (existing.open || myPeerId < msg.peer_id) return; // Glare resolution: lower peer_id keeps offerer role
+              if (existing.open || myPeerId < msg.peer_id) return;
               try { existing.pc.close(); } catch (_) {}
               conns.delete(msg.peer_id);
             }
@@ -4162,16 +4280,16 @@
             try {
               await pc.setRemoteDescription({ type: "offer", sdp: msg.offer.sdp });
               await pc.setLocalDescription(await pc.createAnswer());
-              await iceGathered(pc, 2200);
+              await iceGathered(pc, 2400);
               if (closed || !pc.localDescription || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
-              stEntry.ws.send(JSON.stringify({
+              sendSignalObj(stEntry, {
                 action: "announce",
                 info_hash: infoHash,
                 peer_id: myPeerId,
                 to_peer_id: msg.peer_id,
                 offer_id: msg.offer_id,
                 answer: { type: "answer", sdp: pc.localDescription.sdp },
-              }));
+              });
             } catch (_) {
               if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
               try { pc.close(); } catch (_) {}
@@ -4208,20 +4326,45 @@
         function connectTracker(stEntry) {
           if (closed || stEntry.ws) return;
           try {
-            const ws = new WebSocket(stEntry.url);
+            const ws = stEntry.isMqtt ? new WebSocket(stEntry.url, ["mqtt"]) : new WebSocket(stEntry.url);
+            if (stEntry.isMqtt) ws.binaryType = "arraybuffer";
             stEntry.ws = ws;
             ws.onopen = async () => {
               if (closed) { try { ws.close(); } catch (_) {} return; }
+              if (stEntry.isMqtt) {
+                ws.send(mqttConnectPkt("tq_" + myPeerId.slice(6)));
+                return;
+              }
               stEntry.ready = true;
               stEntry.backoffMs = 4000;
               trackersUp = trackerStates.filter((x) => x.ready).length;
-              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
+              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
               await prepareOfferPool(3 - openConnCount());
               sendAnnounce(stEntry, true);
               refreshPanel();
               updateTelemetry();
             };
-            ws.onmessage = (e) => { if (typeof e.data === "string") handleTrackerMsg(stEntry, e.data); };
+            ws.onmessage = async (e) => {
+              if (stEntry.isMqtt && e.data instanceof ArrayBuffer) {
+                for (const pkt of mqttDecodePackets(e.data)) {
+                  if (pkt.type === 2) {
+                    stEntry.ready = true;
+                    stEntry.backoffMs = 4000;
+                    trackersUp = trackerStates.filter((x) => x.ready).length;
+                    ws.send(mqttSubscribePkt(1, "tendy-quest/v1/" + infoHash));
+                    setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
+                    await prepareOfferPool(3 - openConnCount());
+                    sendAnnounce(stEntry, true);
+                    refreshPanel();
+                    updateTelemetry();
+                  } else if (pkt.type === 3 && pkt.text) {
+                    handleTrackerMsg(stEntry, pkt.text);
+                  }
+                }
+              } else if (typeof e.data === "string") {
+                handleTrackerMsg(stEntry, e.data);
+              }
+            };
             const onDown = () => {
               if (stEntry.ws !== ws) return;
               stEntry.ws = null;
@@ -4257,7 +4400,13 @@
           }
           pendingOffers.clear();
           prepareOfferPool(3).then(() => {
-            for (const stEntry of trackerStates) if (stEntry.ready) sendAnnounce(stEntry, true);
+            for (const stEntry of trackerStates) {
+              if (!stEntry.ready) continue;
+              if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
+                try { stEntry.ws.send(mqttSubscribePkt(2 + shard, "tendy-quest/v1/" + infoHash)); } catch (_) {}
+              }
+              sendAnnounce(stEntry, true);
+            }
           });
           setStatus("Shard full, trying Shard " + (shard + 1) + "...");
         }
@@ -4280,8 +4429,13 @@
           }
           for (const stEntry of trackerStates) {
             if (!stEntry.ws && now >= stEntry.nextRetryAt) connectTracker(stEntry);
-            else if (stEntry.ready && now - stEntry.lastAnnounceAt >= (slotsLeft > 0 ? 18000 : 55000)) {
-              sendAnnounce(stEntry, slotsLeft > 0);
+            else if (stEntry.ready) {
+              if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
+                try { stEntry.ws.send(new Uint8Array([0xc0, 0x00])); } catch (_) {} // MQTT PINGREQ
+              }
+              if (now - stEntry.lastAnnounceAt >= (slotsLeft > 0 ? 15000 : 55000)) {
+                sendAnnounce(stEntry, slotsLeft > 0);
+              }
             }
           }
           if (sawRoomFullHint && openConnCount() === 0 && now - shardJoinedAt > 7500) {
@@ -4582,9 +4736,14 @@
         ui.btnTabs = el("button", { id: "mp-use-tabs", type: "button", text: "Browser tabs", onclick: () => { net.transportKind = "tabs"; refreshPanel(); } });
         ui.btnRtc = el("button", { id: "mp-use-rtc", type: "button", text: "Invite code", onclick: () => { net.transportKind = "rtc"; refreshPanel(); } });
         ui.btnToggleOnline = el("button", { id: "mp-toggle-online", type: "button", text: "Online: ON", onclick: () => setOnline(!net.onlinePref) });
+        ui.meshRoom = el("input", { id: "mp-mesh-room", type: "text", maxlength: "12", size: "8", autocomplete: "off", "aria-label": "Squad room code", value: roomFromUrl || "MAIN" });
         ui.meshBox = el("div", {}, [
-          el("div", { class: "mp-row" }, [ui.btnToggleOnline]),
-          el("div", { class: "mp-note", text: "Zero-server P2P Free Mode: public WebTorrent trackers pair up to 4 browsers (Stan, Nate, Glenn, TJ) over direct WebRTC DataChannels, with lowest-latency 1-hop bridging. Direct WebRTC exposes your IP to matched squad peers; switch to Solo above or in Pause anytime." }),
+          el("div", { class: "mp-row" }, [
+            ui.btnToggleOnline,
+            el("span", { text: "Room" }), ui.meshRoom,
+            el("button", { id: "mp-mesh-join", type: "button", text: "Join", onclick: () => { if (net.onlinePref && net.inFreeRoam) joinMesh(ui.meshRoom.value); } }),
+          ]),
+          el("div", { class: "mp-note", text: "Zero-server P2P Free Mode: public WebTorrent trackers + MQTT WSS signaling pair up to 4 browsers (Stan, Nate, Glenn, TJ) over direct WebRTC DataChannels, with lowest-latency 1-hop bridging. Use the same Room (default MAIN), or use Invite Code if on a strict firewall." }),
         ]);
         ui.room = el("input", { id: "mp-room", type: "text", maxlength: "12", size: "8", autocomplete: "off", "aria-label": "Room code", value: roomFromUrl || "MAIN" });
         ui.tabsBox = el("div", {}, [
