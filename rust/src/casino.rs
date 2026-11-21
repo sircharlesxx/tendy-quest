@@ -974,6 +974,12 @@ struct CasinoChandelier {
 }
 
 #[derive(Component)]
+struct CasinoSparkle {
+    base: Vec3,
+    phase: f32,
+}
+
+#[derive(Component)]
 struct CasinoPortalSpin {
     speed: f32,
 }
@@ -1244,7 +1250,7 @@ fn enter_casino_play(
             half_extents: Vec3::new(23.0, 0.5, 23.0),
         },
     ));
-    // Central red runner carpet with gold trim borders running South Portal -> North Cashier
+    // Central red runner carpet with gold trim borders + VIP velvet stanchions + floor diamond inlays
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
@@ -1261,6 +1267,48 @@ fn enter_casino_play(
         Transform::from_translation(orig + Vec3::new(0.0, 0.025, 0.0))
             .with_scale(Vec3::new(4.8, 0.03, 38.6)),
     ));
+    for sx in [-8.5_f32, 8.5] {
+        for sz in [-12.0_f32, -4.0, 4.0, 12.0] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(gold_trim_mat.clone()),
+                Transform::from_translation(orig + Vec3::new(sx, 0.012, sz))
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4))
+                    .with_scale(Vec3::new(1.5, 0.02, 1.5)),
+            ));
+        }
+    }
+    for sx in [-2.85_f32, 2.85] {
+        for sz in [8.5_f32, 13.5] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(gold_trim_mat.clone()),
+                Transform::from_translation(orig + Vec3::new(sx, 0.48, sz))
+                    .with_scale(Vec3::new(0.09, 0.96, 0.09)),
+            ));
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(gold_trim_mat.clone()),
+                Transform::from_translation(orig + Vec3::new(sx, 1.0, sz))
+                    .with_scale(Vec3::splat(0.11)),
+            ));
+        }
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(red_runner_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(sx, 0.78, 11.0))
+                .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+                .with_scale(Vec3::new(0.05, 5.0, 0.05)),
+        ));
+    }
 
     // Perimeter Hall Walls & Vaulted Ceiling (44m x 44m x 14m) + PlatformBox colliders
     for (wx, wy, wz, sx, sy, sz, mat) in [
@@ -1299,7 +1347,7 @@ fn enter_casino_play(
         ));
     }
 
-    // Ornate corner gold columns & massive glowing overhead Chandelier
+    // Ornate corner gold columns (with pedestals & capitals), art-deco wall sconces & crystal Chandelier
     for px in [-18.5_f32, 18.5] {
         for pz in [-18.5_f32, 18.5] {
             commands.spawn((
@@ -1313,7 +1361,47 @@ fn enter_casino_play(
                     half_extents: Vec3::new(0.75, 7.0, 0.75),
                 },
             ));
+            for cy in [0.45_f32, 13.55] {
+                commands.spawn((
+                    LevelEntity,
+                    CasinoLevelEntity,
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_translation(orig + Vec3::new(px, cy, pz))
+                        .with_scale(Vec3::new(1.5, 0.9, 1.5)),
+                ));
+            }
         }
+    }
+    // Art-deco wall pilasters & glowing neon sconces along East/West/North/South walls
+    for (sx, sz, rot_y, mat) in [
+        (-21.75_f32, -10.0_f32, FRAC_PI_2, neon_gold_mat.clone()),
+        (-21.75, 10.0, FRAC_PI_2, neon_gold_mat.clone()),
+        (21.75, -10.0, -FRAC_PI_2, neon_pink_mat.clone()),
+        (21.75, 10.0, -FRAC_PI_2, neon_pink_mat.clone()),
+        (-11.0, -21.75, 0.0, neon_gold_mat.clone()),
+        (11.0, -21.75, 0.0, neon_gold_mat.clone()),
+        (-11.0, 21.75, PI, neon_pink_mat.clone()),
+        (11.0, 21.75, PI, neon_pink_mat.clone()),
+    ] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(gold_trim_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(sx, 6.2, sz))
+                .with_rotation(Quat::from_rotation_y(rot_y))
+                .with_scale(Vec3::new(1.1, 12.4, 0.35)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(mat),
+            Transform::from_translation(orig + Vec3::new(sx, 6.4, sz))
+                .with_rotation(Quat::from_rotation_y(rot_y))
+                .with_scale(Vec3::new(0.28, 7.6, 0.44)),
+        ));
     }
     commands.spawn((
         LevelEntity,
@@ -1335,6 +1423,52 @@ fn enter_casino_play(
             .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
             .with_scale(Vec3::splat(2.1)),
     ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        CasinoChandelier { speed: 0.65 },
+        Mesh3d(ring_mesh.clone()),
+        MeshMaterial3d(neon_cyan_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 10.6, 0.0))
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::splat(1.15)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(unit_sphere.clone()),
+        MeshMaterial3d(neon_gold_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(0.0, 10.4, 0.0))
+            .with_scale(Vec3::new(0.55, 0.95, 0.55)),
+    ));
+    for i in 0..8 {
+        let a = (i as f32 / 8.0) * std::f32::consts::TAU;
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_sphere.clone()),
+            MeshMaterial3d(neon_gold_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(a.cos() * 4.2, 11.1, a.sin() * 4.2))
+                .with_scale(Vec3::splat(0.24)),
+        ));
+    }
+    // Ambient floating casino gold & neon sparkles
+    for i in 0..24 {
+        let ang = (i as f32 * 2.39996) % std::f32::consts::TAU;
+        let rad = 3.5 + (i as f32 % 7.0) * 2.1;
+        let base = orig + Vec3::new(ang.cos() * rad, 1.8 + (i as f32 % 5.0) * 1.4, ang.sin() * rad);
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            CasinoSparkle {
+                base,
+                phase: i as f32 * 0.85,
+            },
+            Mesh3d(unit_sphere.clone()),
+            MeshMaterial3d(if i % 3 == 0 { neon_pink_mat.clone() } else { neon_gold_mat.clone() }),
+            Transform::from_translation(base).with_scale(Vec3::splat(0.045)),
+        ));
+    }
 
     // Huge backlit TENDY PALACE CASINO Marquee high on North wall (facing South +Z)
     commands.spawn((
@@ -1505,6 +1639,34 @@ fn enter_casino_play(
                         ));
                     }
                 }
+                // Player leather stools & overhead brass table pendant light
+                for sx in [-0.92_f32, 0.92] {
+                    t.spawn((
+                        Mesh3d(unit_cyl.clone()),
+                        MeshMaterial3d(dark_metal_mat.clone()),
+                        Transform::from_xyz(sx, 0.44, 2.08).with_scale(Vec3::new(0.14, 0.88, 0.14)),
+                    ));
+                    t.spawn((
+                        Mesh3d(unit_cyl.clone()),
+                        MeshMaterial3d(leather_mat.clone()),
+                        Transform::from_xyz(sx, 0.90, 2.08).with_scale(Vec3::new(0.52, 0.18, 0.52)),
+                    ));
+                }
+                t.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(0.0, 5.2, -0.35).with_scale(Vec3::new(0.04, 2.8, 0.04)),
+                ));
+                t.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(0.0, 3.82, -0.35).with_scale(Vec3::new(0.95, 0.24, 0.95)),
+                ));
+                t.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(neon_gold_mat.clone()),
+                    Transform::from_xyz(0.0, 3.68, -0.35).with_scale(Vec3::splat(0.20)),
+                ));
                 // Chillary Clinton dealing from behind every Blackjack table
                 t.spawn((
                     ChillaryDealerPart {
@@ -1734,7 +1896,12 @@ fn enter_casino_play(
                     MeshMaterial3d(neon_gold_mat.clone()),
                     Transform::from_xyz(0.0, 3.38, 0.25).with_scale(Vec3::splat(0.16)),
                 ));
-                // Velvet-cushioned slot stool
+                // Metallic coin payout tray + velvet-cushioned slot stool
+                c.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(0.0, 0.54, 0.72).with_scale(Vec3::new(1.18, 0.08, 0.26)),
+                ));
                 c.spawn((
                     Mesh3d(unit_cyl.clone()),
                     MeshMaterial3d(dark_metal_mat.clone()),
@@ -2004,19 +2171,24 @@ fn update_casino_props_anim(
             Without<CasinoRing>,
             Without<CasinoPortalSpin>,
             Without<CasinoChandelier>,
+            Without<CasinoSparkle>,
         ),
     >,
     mut portal_q: Query<
         (&CasinoPortalSpin, &mut Transform),
-        (Without<CasinoRing>, Without<CasinoChandelier>),
+        (Without<CasinoRing>, Without<CasinoChandelier>, Without<CasinoSparkle>),
     >,
     mut ring_q: Query<
         (&CasinoRing, &mut Transform),
-        (Without<CasinoPortalSpin>, Without<CasinoChandelier>),
+        (Without<CasinoPortalSpin>, Without<CasinoChandelier>, Without<CasinoSparkle>),
     >,
     mut chand_q: Query<
         (&CasinoChandelier, &mut Transform),
-        (Without<CasinoPortalSpin>, Without<CasinoRing>),
+        (Without<CasinoPortalSpin>, Without<CasinoRing>, Without<CasinoSparkle>),
+    >,
+    mut sparkle_q: Query<
+        (&CasinoSparkle, &mut Transform),
+        (Without<CasinoPortalSpin>, Without<CasinoRing>, Without<CasinoChandelier>),
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -2026,6 +2198,15 @@ fn update_casino_props_anim(
     }
     for (ch, mut tf) in &mut chand_q {
         tf.rotate_y(ch.speed * dt);
+    }
+    for (sp, mut tf) in &mut sparkle_q {
+        tf.translation = sp.base
+            + Vec3::new(
+                (t * 0.7 + sp.phase).sin() * 0.28,
+                (t * 1.1 + sp.phase * 1.3).sin() * 0.35,
+                (t * 0.6 + sp.phase * 0.8).cos() * 0.28,
+            );
+        tf.scale = Vec3::splat(0.032 + 0.025 * (t * 3.5 + sp.phase).sin().abs());
     }
     let p_pos = player_q.get_single().ok().map(|tf| tf.translation);
     for (ring, mut tf) in &mut ring_q {
@@ -2121,6 +2302,7 @@ struct CasinoGameState {
     bj_dealer_timer: f32,
     bj_msg: String,
     bj_hands: u32,
+    bj_streak: u32,
     // Slots
     slot_theme: SlotTheme,
     slot_cab: usize,
@@ -2147,6 +2329,7 @@ struct CasinoGameState {
     slot_msg: String,
     // Ledger & 3D FX telemetry
     session_net: i64,
+    total_wagered: u32,
     biggest_win: u32,
     display_tw: f32,
     payout_seq: u32,
@@ -2175,6 +2358,7 @@ impl Default for CasinoGameState {
             bj_dealer_timer: 0.0,
             bj_msg: "Chillary: Just chillin' at the 21 table. Pick a TW bet and hit DEAL!".to_string(),
             bj_hands: 0,
+            bj_streak: 0,
             slot_theme: SlotTheme::Buffalo,
             slot_cab: 1,
             slot_bet: 10,
@@ -2199,6 +2383,7 @@ impl Default for CasinoGameState {
             slot_spins: 0,
             slot_msg: "Select your TW bet and PULL LEVER [SPACE]!".to_string(),
             session_net: 0,
+            total_wagered: 0,
             biggest_win: 0,
             display_tw: 0.0,
             payout_seq: 0,
@@ -2242,6 +2427,7 @@ impl CasinoGameState {
     }
 
     fn record_payout(&mut self, wager: u32, payout: u32) {
+        self.total_wagered = self.total_wagered.saturating_add(wager);
         self.session_net += i64::from(payout) - i64::from(wager);
         if payout > self.biggest_win {
             self.biggest_win = payout;
@@ -2249,6 +2435,16 @@ impl CasinoGameState {
         self.last_wager = wager;
         self.last_payout = payout;
         self.payout_seq = self.payout_seq.wrapping_add(1);
+    }
+
+    fn vip_tier(&self) -> &'static str {
+        match self.total_wagered {
+            0..=99 => "BRONZE",
+            100..=349 => "SILVER",
+            350..=799 => "GOLD",
+            800..=1999 => "DIAMOND",
+            _ => "TENDY WHALE",
+        }
     }
 }
 
@@ -2373,6 +2569,7 @@ enum CasinoActionBtn {
     BjHit,
     BjStand,
     BjDouble,
+    BjSurrender,
     SlotBet(u32),
     SlotMaxBet,
     SlotHold(usize),
@@ -2584,23 +2781,35 @@ fn start_blackjack_deal(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     game.bj_player.push(c2);
     game.bj_dealer.push(c3);
 
+    // Lucky Pair side bonus on initial deal (suited = 3x, unsuited = 2x)
+    let pair_bonus = if c0.rank == c2.rank {
+        let b = if c0.suit == c2.suit { game.bj_bet * 3 } else { game.bj_bet * 2 };
+        stats.add_tendy_wendies(b);
+        play_sfx("tendy");
+        format!(" LUCKY PAIR +{} TW!", b)
+    } else {
+        String::new()
+    };
+
     let (ptot, _) = hand_total(&game.bj_player);
     let (dtot, _) = hand_total(&game.bj_dealer);
     if ptot == 21 || dtot == 21 {
         game.bj_phase = BjPhase::Settled;
         let (payout, msg) = match (ptot == 21, dtot == 21) {
             (true, false) => {
+                game.bj_streak += 1;
                 let p = game.bj_bet + (game.bj_bet * 3) / 2;
                 play_sfx("slot_jackpot");
-                (p, format!("Chillary: NATURAL BLACKJACK! Won {} TW!", p))
+                (p, format!("Chillary: NATURAL BLACKJACK! Won {} TW!{}", p, pair_bonus))
             }
             (true, true) => {
                 play_sfx("chip_bet");
-                (game.bj_bet, format!("Chillary: Both 21! Push: {} TW returned.", game.bj_bet))
+                (game.bj_bet, format!("Chillary: Both 21! Push: {} TW returned.{}", game.bj_bet, pair_bonus))
             }
             _ => {
+                game.bj_streak = 0;
                 play_sfx("hit");
-                (0, "Chillary: Dealer Blackjack! Better luck next hand.".to_string())
+                (0, format!("Chillary: Dealer Blackjack! Better luck next hand.{}", pair_bonus))
             }
         };
         if payout > 0 {
@@ -2610,7 +2819,10 @@ fn start_blackjack_deal(stats: &mut PlayerStats, game: &mut CasinoGameState) {
         game.bj_msg = msg;
     } else {
         game.bj_phase = BjPhase::PlayerTurn;
-        game.bj_msg = "Chillary: Your move - HIT [H], STAND [S], or DOUBLE [D].".to_string();
+        game.bj_msg = format!(
+            "Chillary: Your move - HIT [H], STAND [S], DOUBLE [D], or SURRENDER [R].{}",
+            pair_bonus
+        );
     }
 }
 
@@ -2623,11 +2835,19 @@ fn blackjack_hit(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     let (tot, _) = hand_total(&game.bj_player);
     if tot > 21 {
         game.bj_phase = BjPhase::Settled;
+        game.bj_streak = 0;
         game.record_payout(game.bj_bet, 0);
         game.bj_msg = format!("Chillary: BUST at {}! House collects {} TW.", tot, game.bj_bet);
         play_sfx("hit");
+    } else if game.bj_player.len() >= 5 {
+        game.bj_phase = BjPhase::Settled;
+        game.bj_streak += 1;
+        let p = (game.bj_bet * 5) / 2;
+        stats.add_tendy_wendies(p);
+        game.record_payout(game.bj_bet, p);
+        game.bj_msg = format!("Chillary: 5-CARD CHARLIE ({})! Won {} TW!", tot, p);
+        play_sfx("slot_jackpot");
     } else if tot == 21 {
-        let _ = stats;
         game.bj_phase = BjPhase::DealerTurn;
         game.bj_dealer_timer = 0.50;
         game.bj_msg = "Chillary: 21! Drawing dealer hand...".to_string();
@@ -2643,6 +2863,19 @@ fn blackjack_stand(game: &mut CasinoGameState) {
     game.bj_phase = BjPhase::DealerTurn;
     game.bj_dealer_timer = 0.50;
     game.bj_msg = "Chillary flips her hole card & draws to 17...".to_string();
+}
+
+fn blackjack_surrender(stats: &mut PlayerStats, game: &mut CasinoGameState) {
+    if game.bj_phase != BjPhase::PlayerTurn || game.bj_player.len() != 2 {
+        return;
+    }
+    let refund = (game.bj_bet / 2).max(1);
+    stats.add_tendy_wendies(refund);
+    game.bj_phase = BjPhase::Settled;
+    game.bj_streak = 0;
+    game.record_payout(game.bj_bet, refund);
+    game.bj_msg = format!("Chillary: Surrendered. {} TW returned.", refund);
+    play_sfx("chip_bet");
 }
 
 fn blackjack_double(stats: &mut PlayerStats, game: &mut CasinoGameState) {
@@ -2662,6 +2895,7 @@ fn blackjack_double(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     let (tot, _) = hand_total(&game.bj_player);
     if tot > 21 {
         game.bj_phase = BjPhase::Settled;
+        game.bj_streak = 0;
         game.record_payout(game.bj_bet, 0);
         game.bj_msg = format!("Chillary: DOUBLED & BUST at {}! Lost {} TW.", tot, game.bj_bet);
         game.bj_bet /= 2;
@@ -2900,17 +3134,32 @@ fn update_blackjack_dealer_timer(
     let active_wager = game.bj_bet;
     game.bj_phase = BjPhase::Settled;
     let (payout, msg) = if dtot > 21 || ptot > dtot {
-        let p = active_wager * 2;
+        game.bj_streak += 1;
+        let streak_pct = if game.bj_streak >= 3 {
+            25
+        } else if game.bj_streak == 2 {
+            10
+        } else {
+            0
+        };
+        let base_p = active_wager * 2;
+        let p = base_p + (base_p * streak_pct) / 100;
         if p >= 50 {
             play_sfx("slot_jackpot");
         } else {
             play_sfx("tendy");
         }
-        (p, format!("Chillary: YOU WIN ({} vs {})! +{} TW!", ptot, dtot, p))
+        let streak_txt = if streak_pct > 0 {
+            format!(" ({}x STREAK +{}%!)", game.bj_streak, streak_pct)
+        } else {
+            String::new()
+        };
+        (p, format!("Chillary: YOU WIN ({} vs {})! +{} TW!{}", ptot, dtot, p, streak_txt))
     } else if ptot == dtot {
         play_sfx("chip_bet");
         (active_wager, format!("Chillary: PUSH ({} vs {}). {} TW returned.", ptot, dtot, active_wager))
     } else {
+        game.bj_streak = 0;
         play_sfx("hit");
         (0, format!("Chillary: House wins ({} vs {}). Relax, just chillin'.", dtot, ptot))
     };
@@ -3038,6 +3287,7 @@ fn handle_casino_modal_input(
             CasinoActionBtn::BjHit => blackjack_hit(&mut stats, &mut game),
             CasinoActionBtn::BjStand => blackjack_stand(&mut game),
             CasinoActionBtn::BjDouble => blackjack_double(&mut stats, &mut game),
+            CasinoActionBtn::BjSurrender => blackjack_surrender(&mut stats, &mut game),
             CasinoActionBtn::SlotBet(b) => {
                 if !game.slot_spinning {
                     game.slot_bet = b;
@@ -3066,6 +3316,8 @@ fn handle_casino_modal_input(
                 blackjack_stand(&mut game);
             } else if keys.just_pressed(KeyCode::KeyD) {
                 blackjack_double(&mut stats, &mut game);
+            } else if keys.just_pressed(KeyCode::KeyR) {
+                blackjack_surrender(&mut stats, &mut game);
             }
         }
         CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
@@ -3437,6 +3689,7 @@ fn spawn_casino_ui(
                         mk_btn(ctrl, CasinoActionBtn::BjHit, "HIT [H]", Color::srgb(0.16, 0.44, 0.72), 13.0);
                         mk_btn(ctrl, CasinoActionBtn::BjStand, "STAND [S]", Color::srgb(0.68, 0.34, 0.14), 13.0);
                         mk_btn(ctrl, CasinoActionBtn::BjDouble, "DOUBLE [D]", Color::srgb(0.56, 0.18, 0.62), 13.0);
+                        mk_btn(ctrl, CasinoActionBtn::BjSurrender, "SURRENDER [R]", Color::srgb(0.36, 0.24, 0.28), 12.0);
                     });
                 });
 
@@ -3683,7 +3936,7 @@ fn refresh_casino_ui(
             CasinoDynamicText::HeaderBalance => {
                 let sign = if game.session_net >= 0 { "+" } else { "" };
                 let shown = game.display_tw.round().max(0.0) as u32;
-                format!("TENDY WENDIES: {} TW ({}{} TW)", shown, sign, game.session_net)
+                format!("VIP: {}  |  {} TW ({}{} TW)", game.vip_tier(), shown, sign, game.session_net)
             }
             CasinoDynamicText::StatusMsg => match game.station {
                 CasinoStationKind::Blackjack => game.bj_msg.clone(),
@@ -3703,15 +3956,21 @@ fn refresh_casino_ui(
                 }
             }
             CasinoDynamicText::BjPlayerScore => {
+                let streak_s = if game.bj_streak >= 2 {
+                    format!("  |  STREAK: {}x", game.bj_streak)
+                } else {
+                    String::new()
+                };
                 if game.bj_player.is_empty() {
-                    format!("YOUR HAND (BET {} TW)", game.bj_bet)
+                    format!("YOUR HAND (BET {} TW){}", game.bj_bet, streak_s)
                 } else {
                     let (t, soft) = hand_total(&game.bj_player);
                     format!(
-                        "YOUR HAND: {}{}  |  BET: {} TW",
+                        "YOUR HAND: {}{}  |  BET: {} TW{}",
                         t,
                         if soft { " (SOFT)" } else { "" },
-                        game.bj_bet
+                        game.bj_bet,
+                        streak_s
                     )
                 }
             }
@@ -3741,10 +4000,12 @@ fn refresh_casino_ui(
             }
             CasinoDynamicText::CashierSummary => {
                 format!(
-                    "WALLET BALANCE: {} Tendy Wendies (TW)\n\nEARN MORE TW:\n- Collect Kitchen Tendies (+2 TW each)\n- Collect Cedar Rapids Tendies (+5 TW each)\n- Defeat Lexie (+100 TW jackpot bonus)\n- Win Blackjack or Buffalo / Lucky Ladies Slots!\n\nSESSION STATS:\n- Blackjack Hands: {}   |   Slot Spins: {}\n- Biggest Win: {} TW   |   Session Net: {} TW",
+                    "WALLET BALANCE: {} Tendy Wendies (TW)   |   VIP TIER: {}\n\nEARN MORE TW:\n- Collect Kitchen Tendies (+2 TW each)\n- Collect Cedar Rapids Tendies (+5 TW each)\n- Defeat Lexie (+100 TW jackpot bonus)\n- Win Blackjack (with Lucky Pairs & 5-Card Charlie!) or Slots!\n\nSESSION STATS:\n- Blackjack Hands: {}   |   Slot Spins: {}   |   Total Wagered: {} TW\n- Biggest Win: {} TW   |   Session Net: {} TW",
                     stats.tendy_wendies,
+                    game.vip_tier(),
                     game.bj_hands,
                     game.slot_spins,
+                    game.total_wagered,
                     game.biggest_win,
                     game.session_net
                 )
