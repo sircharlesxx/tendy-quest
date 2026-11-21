@@ -111,7 +111,7 @@ pub(crate) struct CasinoArt {
     pub(crate) buffalo_icons: [Handle<Image>; 6],  // 0 Buffalo, 1 Tendy, 2 Sunset7, 3 Eagle, 4 Wolf, 5 Coin
     pub(crate) ladies_icons: [Handle<Image>; 6],   // 0 Ruby, 1 Sakura, 2 Skye, 3 Diamond, 4 Cherry, 5 Heart
     pub(crate) suit_icons: [Handle<Image>; 4],     // 0 Spade, 1 Heart, 2 Diamond, 3 Club
-    pub(crate) bartender_portrait: Handle<Image>,  // Scarlett (Pub 217 bartender)
+    pub(crate) bartender_portrait: Handle<Image>,  // Maria (Pub 217 bartender)
     pub(crate) womens_sign: Handle<Image>,         // Pub 217 Women's restroom plaque
     pub(crate) return_portal_sign: Handle<Image>,  // Casino South return portal sign
     pub(crate) blackjack_felt: Handle<Image>,      // Elliptical emerald Blackjack table layout decal
@@ -975,7 +975,7 @@ struct CasinoChandelier {
 
 #[derive(Component)]
 struct CasinoPortalSpin {
-    vel: Vec3,
+    speed: f32,
 }
 
 #[derive(Component)]
@@ -986,39 +986,6 @@ struct CasinoPromptButton;
 
 #[derive(Component)]
 struct CasinoPromptText;
-
-/// Shared *Event Horizon* Gravity Drive gimbal ring with 12 radial metallic spikes and inner
-/// Cerenkov emitter pips (reused across `casino.rs` and `pub_portal.rs`).
-pub(crate) fn spawn_gravity_drive_ring(
-    parent: &mut ChildBuilder,
-    ring_mesh: Handle<Mesh>,
-    spike_mesh: Handle<Mesh>,
-    pip_mesh: Handle<Mesh>,
-    metal_mat: Handle<StandardMaterial>,
-    pip_mat: Handle<StandardMaterial>,
-    radius: f32,
-) {
-    parent.spawn((
-        Mesh3d(ring_mesh),
-        MeshMaterial3d(metal_mat.clone()),
-        Transform::IDENTITY,
-    ));
-    for i in 0..12 {
-        let a = (i as f32 / 12.0) * std::f32::consts::TAU;
-        let dir = Vec3::new(a.cos(), 0.0, a.sin());
-        parent.spawn((
-            Mesh3d(spike_mesh.clone()),
-            MeshMaterial3d(metal_mat.clone()),
-            Transform::from_translation(dir * (radius + 0.14))
-                .with_rotation(Quat::from_rotation_arc(Vec3::Y, dir)),
-        ));
-        parent.spawn((
-            Mesh3d(pip_mesh.clone()),
-            MeshMaterial3d(pip_mat.clone()),
-            Transform::from_translation(dir * (radius - 0.06)),
-        ));
-    }
-}
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::type_complexity)]
 fn enter_casino_play(
@@ -1113,8 +1080,7 @@ fn enter_casino_play(
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
     let ring_mesh = meshes.add(Torus::new(0.14, 1.35));
-    let drive_spike_mesh = meshes.add(Cone::new(0.06, 0.28));
-    let drive_pip_mesh = meshes.add(Sphere::new(0.042));
+    let portal_ring_mesh = meshes.add(Torus::new(0.18, 2.15));
 
     let wall_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.24, 0.06, 0.14),
@@ -1183,33 +1149,16 @@ fn enter_casino_play(
         ..default()
     });
     let neon_cyan_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.42, 0.86, 1.0),
-        emissive: LinearRgba::rgb(0.85, 2.5, 4.6),
+        base_color: Color::srgb(0.32, 0.94, 1.0),
+        emissive: LinearRgba::rgb(0.55, 2.1, 2.6),
         unlit: true,
         ..default()
     });
     let portal_core_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.015, 0.02, 0.04),
-        metallic: 0.96,
-        perceptual_roughness: 0.06,
-        ..default()
-    });
-    let portal_rim_crimson = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.24, 0.12),
-        emissive: LinearRgba::rgb(2.6, 0.42, 0.14),
+        base_color: Color::srgba(0.68, 0.24, 0.96, 0.72),
+        emissive: LinearRgba::rgb(1.6, 0.55, 2.8),
+        alpha_mode: AlphaMode::Blend,
         unlit: true,
-        ..default()
-    });
-    let drive_brass_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.46, 0.36, 0.22),
-        metallic: 0.88,
-        perceptual_roughness: 0.24,
-        ..default()
-    });
-    let drive_steel_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.24, 0.27, 0.33),
-        metallic: 0.90,
-        perceptual_roughness: 0.22,
         ..default()
     });
     let marquee_mat = materials.add(StandardMaterial {
@@ -1801,61 +1750,34 @@ fn enter_casino_play(
         Transform::from_translation(cashier_p + Vec3::Y * 1.92).with_scale(Vec3::splat(0.30)),
     ));
 
-    // SOUTH WALL: *Event Horizon* Gravity Drive Singularity Return Portal to Pub 217
-    let port_p = orig + Vec3::new(0.0, 2.85, 20.3);
+    // SOUTH WALL: Swirling Magic Return Portal to Pub 217
+    let port_p = orig + Vec3::new(0.0, 2.8, 20.6);
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
-        Mesh3d(unit_sphere),
+        Mesh3d(unit_cyl.clone()),
         MeshMaterial3d(portal_core_mat),
-        Transform::from_translation(port_p).with_scale(Vec3::new(1.12, 1.22, 0.48)),
+        Transform::from_translation(port_p)
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::new(2.05, 0.14, 2.55)),
     ));
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
-        Mesh3d(meshes.add(Torus::new(0.055, 1.42))),
-        MeshMaterial3d(neon_cyan_mat.clone()),
-        Transform::from_translation(port_p).with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
+        CasinoPortalSpin { speed: 1.8 },
+        Mesh3d(portal_ring_mesh.clone()),
+        MeshMaterial3d(neon_pink_mat.clone()),
+        Transform::from_translation(port_p).with_scale(Vec3::new(1.05, 1.25, 1.0)),
     ));
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
-        Mesh3d(meshes.add(Torus::new(0.035, 1.22))),
-        MeshMaterial3d(portal_rim_crimson),
-        Transform::from_translation(port_p + Vec3::new(0.0, 0.0, -0.06))
-            .with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
+        CasinoPortalSpin { speed: -2.4 },
+        Mesh3d(portal_ring_mesh),
+        MeshMaterial3d(neon_cyan_mat),
+        Transform::from_translation(port_p + Vec3::new(0.0, 0.0, -0.15))
+            .with_scale(Vec3::new(0.84, 1.02, 1.0)),
     ));
-    for (idx, (radius, vel, metal)) in [
-        (1.55_f32, Vec3::new(1.35, 0.85, 1.65), drive_brass_mat.clone()),
-        (1.88, Vec3::new(-1.10, 1.75, -0.75), drive_steel_mat.clone()),
-        (2.22, Vec3::new(0.75, -1.45, 2.15), drive_brass_mat),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let gimbal_torus = meshes.add(Torus::new(0.085, radius));
-        commands
-            .spawn((
-                LevelEntity,
-                CasinoLevelEntity,
-                CasinoPortalSpin { vel },
-                Transform::from_translation(port_p)
-                    .with_rotation(Quat::from_rotation_x(FRAC_PI_2 + idx as f32 * 0.48)),
-                Visibility::default(),
-            ))
-            .with_children(|g| {
-                spawn_gravity_drive_ring(
-                    g,
-                    gimbal_torus,
-                    drive_spike_mesh.clone(),
-                    drive_pip_mesh.clone(),
-                    metal,
-                    neon_cyan_mat.clone(),
-                    radius,
-                );
-            });
-    }
-    let _ = unit_cyl;
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
@@ -2047,9 +1969,7 @@ fn update_casino_props_anim(
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
     for (spin, mut tf) in &mut portal_q {
-        tf.rotate_x(spin.vel.x * dt);
-        tf.rotate_y(spin.vel.y * dt);
-        tf.rotate_z(spin.vel.z * dt);
+        tf.rotate_z(spin.speed * dt);
     }
     for (ch, mut tf) in &mut chand_q {
         tf.rotate_y(ch.speed * dt);

@@ -116,7 +116,7 @@ fn main() {
         .add_plugins(ferris::FerrisPlugin)
         // Tendy Palace Casino: Level 3 Blackjack & Buffalo / Lucky Ladies slots in Tendy Wendies (casino.rs).
         .add_plugins(casino::CasinoPlugin)
-        // Pub 217 Scarlett bartender, "ORDER 10 BEERS" prompt & Women's Bathroom Portal cutscene (pub_portal.rs).
+        // Pub 217 Maria bartender, "ORDER 10 BEERS" prompt & Women's Bathroom Portal cutscene (pub_portal.rs).
         .add_plugins(pub_portal::PubPortalPlugin)
         // Distributed Free Mode P2P multiplayer (WebRTC mesh via public WebTorrent trackers, inert outside Free Mode; see net.rs).
         .add_plugins(net::NetPlugin)

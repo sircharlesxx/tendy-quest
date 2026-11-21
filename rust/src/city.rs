@@ -5508,7 +5508,7 @@ pub enum PropAction {
     Wheel,
     /// Chillary Clinton NPC beside the Ferris wheel plaza (`chillary.rs`).
     Chillary,
-    /// Scarlett the Pub 217 bartender (`pub_portal.rs`).
+    /// Maria the Pub 217 bartender (`pub_portal.rs`).
     Bartender,
 }
 

@@ -658,10 +658,9 @@
           return true;
         }
         if (name === "portal_suck") {
-          mkOsc("sawtooth", 64, 26, 1.8, 0.34);
-          mkOsc("sine", 52, 22, 2.0, 0.32);
-          mkOsc("triangle", 110, 680, 1.35, 0.18);
-          mkResNoise("bandpass", 0.0, 1.5, 0.30, 260, 2600, 2.6);
+          mkOsc("sine", 140, 880, 0.95, 0.24);
+          mkOsc("triangle", 220, 1180, 0.85, 0.16);
+          mkResNoise("bandpass", 0.0, 0.95, 0.28, 350, 2800, 2.2);
           return true;
         }
         return false;
@@ -1575,7 +1574,7 @@
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
           // Voice profile for the optional River Star boardwalk easter-egg NPC.
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
-          // Voice profile for Scarlett, the Pub 217 bartender.
+          // Voice profile for Maria, the Pub 217 bartender.
           bartender: { pitch: 1.16, rate: 0.96, volume: 1.0, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.

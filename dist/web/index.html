@@ -658,10 +658,9 @@
           return true;
         }
         if (name === "portal_suck") {
-          mkOsc("sawtooth", 64, 26, 1.8, 0.34);
-          mkOsc("sine", 52, 22, 2.0, 0.32);
-          mkOsc("triangle", 110, 680, 1.35, 0.18);
-          mkResNoise("bandpass", 0.0, 1.5, 0.30, 260, 2600, 2.6);
+          mkOsc("sine", 140, 880, 0.95, 0.24);
+          mkOsc("triangle", 220, 1180, 0.85, 0.16);
+          mkResNoise("bandpass", 0.0, 0.95, 0.28, 350, 2800, 2.2);
           return true;
         }
         return false;
@@ -1575,7 +1574,7 @@
           mike: { pitch: 0.94, rate: 0.80, volume: 0.95, g: "m" },
           // Voice profile for the optional River Star boardwalk easter-egg NPC.
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
-          // Voice profile for Scarlett, the Pub 217 bartender.
+          // Voice profile for Maria, the Pub 217 bartender.
           bartender: { pitch: 1.16, rate: 0.96, volume: 1.0, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
@@ -2459,7 +2458,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-5e3d63450014d814.js" crossorigin="anonymous" integrity="sha384-CsRJhz/9tBbNBPUQ4ENmlRMypg4VFnZ/kfuBR8LpxH8m9s1nSUHOgjR4hQG3pRv4"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-5e3d63450014d814_bg.wasm" crossorigin="anonymous" integrity="sha384-FXzP0GHhZ/7FfkDCw9YYEKX4NJWAgs/VGS2Lpj5z/1j+tvrSEJ6uGJG5wDogST9Z" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-98a8657d8a5210ce.js" crossorigin="anonymous" integrity="sha384-eLoOFpRykXtqSySY1KAkDdbCc8qnd7yEn7/vWNRCLAgdbyVeG1mR3fkRFDojXruE"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-98a8657d8a5210ce_bg.wasm" crossorigin="anonymous" integrity="sha384-BJVHZpOrx1PTqScg0O8S4wWs6s2edHvq5XJkdfUnx8dHMXlroyf3gJKXNhdROTYW" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4744,8 +4743,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-5e3d63450014d814.js';
-const wasm = await init({ module_or_path: './tendy-quest-5e3d63450014d814_bg.wasm' });
+import init, * as bindings from './tendy-quest-98a8657d8a5210ce.js';
+const wasm = await init({ module_or_path: './tendy-quest-98a8657d8a5210ce_bg.wasm' });
 
 
 window.wasmBindings = bindings;

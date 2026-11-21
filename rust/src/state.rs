@@ -117,7 +117,7 @@ pub struct PlayerStats {
     pub in_casino_level: bool,
     /// Set when stepping into the Casino South Portal to return directly to Pub 217 (`CityPlay`).
     pub casino_return_city: bool,
-    /// True while talking to Scarlett the bartender inside Pub 217 (`pub_portal.rs`).
+    /// True while talking to Maria the bartender inside Pub 217 (`pub_portal.rs`).
     pub bartender_open: bool,
     /// Stan's Cedar Rapids scale saved before warping into Casino Level 3, restored on return.
     pub saved_casino_city_scale: f32,
