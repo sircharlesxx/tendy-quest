@@ -308,7 +308,8 @@ const BTN_SOUND: usize = 1;
 const BTN_RESTART: usize = 2;
 const BTN_CLEAR_SAVE: usize = 3;
 const BTN_MULTIPLAYER: usize = 4;
-/// Real seconds the "press again to restart" (or "to clear save") confirmation stays armed.
+const BTN_CLEAR_CACHE: usize = 5;
+/// Real seconds the "press again to restart" (or "to clear save" / "to clear cache") confirmation stays armed.
 const RESTART_CONFIRM_SECS: f32 = 3.0;
 /// Ignore Esc-to-close this long after opening, so the Esc that dropped pointer lock (which can
 /// arrive as a key event a frame after the lock change) doesn't close the menu again.
@@ -316,9 +317,16 @@ const ESC_CLOSE_GRACE_SECS: f64 = 0.35;
 
 fn pause_buttons(state: &GameState, stats: &PlayerStats) -> Vec<usize> {
     if *state == GameState::CityPlay && stats.free_roam && crate::audio::net_enabled() {
-        vec![BTN_RESUME, BTN_SOUND, BTN_MULTIPLAYER, BTN_RESTART, BTN_CLEAR_SAVE]
+        vec![
+            BTN_RESUME,
+            BTN_SOUND,
+            BTN_MULTIPLAYER,
+            BTN_RESTART,
+            BTN_CLEAR_CACHE,
+            BTN_CLEAR_SAVE,
+        ]
     } else {
-        vec![BTN_RESUME, BTN_SOUND, BTN_RESTART, BTN_CLEAR_SAVE]
+        vec![BTN_RESUME, BTN_SOUND, BTN_RESTART, BTN_CLEAR_CACHE, BTN_CLEAR_SAVE]
     }
 }
 
@@ -335,6 +343,10 @@ pub struct PauseMenu {
     confirm_clear: f32,
     /// Set when Clear save is confirmed; consumed by [`run_pause_clear_save`].
     clear_pending: bool,
+    /// > 0 while the Clear cache button is armed (real seconds left).
+    confirm_clear_cache: f32,
+    /// Set once Clear cache is confirmed and a browser reload is in progress.
+    cache_reloading: bool,
 }
 
 #[derive(Component)]
@@ -390,7 +402,7 @@ fn spawn_pause_menu(
                 Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(if short { 7.0 } else { 10.0 }),
+                    row_gap: Val::Px(if short { 5.0 } else { 10.0 }),
                     padding: UiRect::axes(Val::Px(20.0), Val::Px(if short { 12.0 } else { 18.0 })),
                     width: Val::Percent(94.0),
                     max_width: Val::Px(if short { 680.0 } else { 580.0 }),
@@ -446,7 +458,7 @@ fn spawn_pause_menu(
                 card.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Stretch,
-                    row_gap: Val::Px(if short { 6.0 } else { 8.0 }),
+                    row_gap: Val::Px(if short { 4.0 } else { 8.0 }),
                     width: Val::Percent(100.0),
                     max_width: Val::Px(300.0),
                     margin: UiRect::top(Val::Px(4.0)),
@@ -460,7 +472,7 @@ fn spawn_pause_menu(
                             Node {
                                 padding: UiRect::axes(
                                     Val::Px(16.0),
-                                    Val::Px(if short { 6.0 } else { 9.0 }),
+                                    Val::Px(if short { 5.0 } else { 9.0 }),
                                 ),
                                 justify_content: JustifyContent::Center,
                                 border: UiRect::all(Val::Px(2.0)),
@@ -586,6 +598,9 @@ fn update_pause_menu(
     if menu.confirm_clear > 0.0 {
         menu.confirm_clear = (menu.confirm_clear - dt).max(0.0);
     }
+    if menu.confirm_clear_cache > 0.0 {
+        menu.confirm_clear_cache = (menu.confirm_clear_cache - dt).max(0.0);
+    }
     drain_queued_actions();
     // A lock change while paused is our own unlock (or a stale event); never act on it.
     let _ = crate::audio::take_pointer_lock_lost();
@@ -626,6 +641,9 @@ fn update_pause_menu(
     if menu.selected != prev_sel && selected_id != BTN_CLEAR_SAVE {
         menu.confirm_clear = 0.0;
     }
+    if menu.selected != prev_sel && selected_id != BTN_CLEAR_CACHE {
+        menu.confirm_clear_cache = 0.0;
+    }
     if activate.is_none() && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space)) {
         // Keyboard (or gamepad A, which arrives as a Space key event).
         activate = Some((selected_id, false));
@@ -659,6 +677,29 @@ fn update_pause_menu(
                 return;
             }
             menu.confirm_restart = RESTART_CONFIRM_SECS;
+        }
+        Some((BTN_CLEAR_CACHE, _)) => {
+            if menu.cache_reloading {
+                return;
+            }
+            if menu.confirm_clear_cache > 0.0 {
+                menu.confirm_clear_cache = 0.0;
+                menu.cache_reloading = true;
+                if !stats.free_roam {
+                    match state.get() {
+                        GameState::CityPlay | GameState::CasinoPlay => {
+                            crate::ui::save_game_checkpoint("city", &stats);
+                        }
+                        GameState::BossFight => {
+                            crate::ui::save_game_checkpoint("boss", &stats);
+                        }
+                        _ => {}
+                    }
+                }
+                crate::audio::clear_cache_and_reload();
+                return;
+            }
+            menu.confirm_clear_cache = RESTART_CONFIRM_SECS;
         }
         Some((BTN_CLEAR_SAVE, _)) => {
             if menu.confirm_clear > 0.0 {
@@ -700,6 +741,8 @@ fn refresh_pause_menu(
     }
     let armed = menu.confirm_restart > 0.0;
     let armed_clear = menu.confirm_clear > 0.0;
+    let armed_cache = menu.confirm_clear_cache > 0.0;
+    let reloading_cache = menu.cache_reloading;
     let selected_id = menu.buttons.get(menu.selected).copied().unwrap_or(BTN_RESUME);
     let online = crate::audio::net_is_online();
     for (btn, mut bg, mut border) in &mut btn_q {
@@ -707,6 +750,7 @@ fn refresh_pause_menu(
         let want_bg = match (btn.0, selected) {
             (BTN_RESTART, _) if armed => Color::srgb(0.70, 0.06, 0.06),
             (BTN_CLEAR_SAVE, _) if armed_clear => Color::srgb(0.70, 0.06, 0.06),
+            (BTN_CLEAR_CACHE, _) if armed_cache || reloading_cache => Color::srgb(0.10, 0.45, 0.72),
             (_, true) => Color::srgb(0.82, 0.14, 0.16),
             _ => Color::srgba(1.0, 1.0, 1.0, 0.08),
         };
@@ -729,6 +773,9 @@ fn refresh_pause_menu(
             BTN_SOUND => "SOUND: ON",
             BTN_MULTIPLAYER if online => "FREE ROAM: ONLINE (P2P)",
             BTN_MULTIPLAYER => "FREE ROAM: SOLO",
+            BTN_CLEAR_CACHE if reloading_cache => "CLEARING CACHE...",
+            BTN_CLEAR_CACHE if armed_cache => "PRESS AGAIN TO CLEAR CACHE",
+            BTN_CLEAR_CACHE => "CLEAR CACHE (KEEPS SAVE)",
             BTN_CLEAR_SAVE if armed_clear => "PRESS AGAIN TO CLEAR SAVE",
             BTN_CLEAR_SAVE => "CLEAR SAVE",
             _ if armed => "PRESS AGAIN TO RESTART LEVEL",

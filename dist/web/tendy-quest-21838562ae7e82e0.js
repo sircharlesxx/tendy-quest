@@ -284,6 +284,9 @@ function __wbg_get_imports() {
         __wbg_clearBufferuiv_e723936f302725de: function(arg0, arg1, arg2, arg3, arg4) {
             arg0.clearBufferuiv(arg1 >>> 0, arg2, getArrayU32FromWasm0(arg3, arg4));
         },
+        __wbg_clearCacheAndReload_de99213c33956813: function() {
+            window.tendySave.clearCacheAndReload();
+        },
         __wbg_clearDepth_3417be30229e823a: function(arg0, arg1) {
             arg0.clearDepth(arg1);
         },

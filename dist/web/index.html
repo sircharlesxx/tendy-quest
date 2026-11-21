@@ -16,20 +16,59 @@
       const BUILD_ID = (document.querySelector('meta[name="tq-build"]')?.content || "").trim();
       window.TQ_BUILD_ID = BUILD_ID;
 
-      function clearCaches() {
+      async function clearCachesAsync() {
+        const tasks = [];
         try {
           if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
-            navigator.serviceWorker.getRegistrations().then((regs) => {
-              for (const r of regs) try { r.unregister(); } catch (_) {}
-            }).catch(() => {});
-          }
-          if (window.caches && caches.keys) {
-            caches.keys().then((keys) => {
-              for (const k of keys) try { caches.delete(k); } catch (_) {}
-            }).catch(() => {});
+            tasks.push(
+              navigator.serviceWorker.getRegistrations().then((regs) =>
+                Promise.allSettled(regs.map((r) => r.unregister()))
+              )
+            );
           }
         } catch (_) {}
+        try {
+          if (window.caches && caches.keys) {
+            tasks.push(
+              caches.keys().then((keys) =>
+                Promise.allSettled(keys.map((k) => caches.delete(k)))
+              )
+            );
+          }
+        } catch (_) {}
+        if (!tasks.length) return;
+        await Promise.race([
+          Promise.allSettled(tasks),
+          new Promise((res) => setTimeout(res, 1200)),
+        ]);
       }
+
+      function clearCaches() {
+        void clearCachesAsync();
+      }
+
+      window.tqClearCacheAndReload = async function () {
+        try { sessionStorage.removeItem("tq_reloaded_v"); } catch (_) {}
+        await clearCachesAsync();
+        let remoteVer = "";
+        try {
+          const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+          const timer = ctrl ? setTimeout(() => ctrl.abort(), 1500) : null;
+          const res = await fetch("./version.json?_cb=" + Date.now(), {
+            cache: "no-store",
+            signal: ctrl ? ctrl.signal : undefined,
+          });
+          if (timer) clearTimeout(timer);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && typeof data.v === "string") remoteVer = data.v.trim();
+          }
+        } catch (_) {}
+        const u = new URL(location.href);
+        if (remoteVer) u.searchParams.set("_v", remoteVer);
+        u.searchParams.set("_cb", String(Date.now()));
+        location.replace(u.toString());
+      };
 
       function applyUpdate(remoteVer) {
         try {
@@ -152,6 +191,15 @@
           localStorage.removeItem("tendy_wendies_v1");
         } catch (_) {}
         if (window.tendyTelemetry) window.tendyTelemetry.tendyWendies = 100;
+      },
+      clearCacheAndReload() {
+        if (typeof window.tqClearCacheAndReload === "function") {
+          void window.tqClearCacheAndReload();
+          return;
+        }
+        const u = new URL(location.href);
+        u.searchParams.set("_cb", String(Date.now()));
+        location.replace(u.toString());
       },
     };
     window.tendyTelemetry = {
@@ -2568,7 +2616,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-de17e8227281161f.js" crossorigin="anonymous" integrity="sha384-/JC/RIJArX7NtUU9wOpCNsrCTgkupIofeWLWraAj3NRdP6XmGiK7ifyfxZ1Cd4d/"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-de17e8227281161f_bg.wasm" crossorigin="anonymous" integrity="sha384-xmtzC56OUEmaZvaQumF9saQiktCyRHPhYjIuTQuNnAtoCfZlXgXs6gmeFpOiQ9rV" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-21838562ae7e82e0.js" crossorigin="anonymous" integrity="sha384-6sSCYCFBRt4jSc3aTrw3bYoCW8AjrtvwztLX+61Uj9WWWavLAtu7lKPbQI1f/DId"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-21838562ae7e82e0_bg.wasm" crossorigin="anonymous" integrity="sha384-Dv57gHXi7wY0cl+ucegJjiXjABDiDgNrpjKbxEcjv70OjzsvQAUeJeV5lsGJrEGF" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -5300,8 +5348,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-de17e8227281161f.js';
-const wasm = await init({ module_or_path: './tendy-quest-de17e8227281161f_bg.wasm' });
+import init, * as bindings from './tendy-quest-21838562ae7e82e0.js';
+const wasm = await init({ module_or_path: './tendy-quest-21838562ae7e82e0_bg.wasm' });
 
 
 window.wasmBindings = bindings;

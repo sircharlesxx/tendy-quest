@@ -172,6 +172,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearAllProgress)]
         fn js_clear_all_progress();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = clearCacheAndReload)]
+        fn js_clear_cache_and_reload();
+
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveTendyWendies)]
         fn js_save_tendy_wendies(amount: u32);
 
@@ -448,6 +451,11 @@ mod imp {
     /// Pause-menu Clear save: drops both localStorage keys (checkpoint + Mom-defeated).
     pub fn clear_all_progress() {
         js_clear_all_progress();
+    }
+
+    /// Pause-menu Clear cache: unregisters SW/CacheStorage and reloads without touching localStorage saves.
+    pub fn clear_cache_and_reload() {
+        js_clear_cache_and_reload();
     }
 
     /// Persists the player's Tendy Wendies currency wallet for casino & future features.
@@ -730,6 +738,8 @@ mod imp {
 
     pub fn clear_all_progress() {}
 
+    pub fn clear_cache_and_reload() {}
+
     pub fn save_tendy_wendies(_amount: u32) {}
 
     pub fn load_tendy_wendies() -> u32 {
@@ -783,7 +793,10 @@ pub use imp::{
     touch_move_y, update_telemetry,
 };
 // Pause menu / controls strip bridge (controls.rs).
-pub use imp::{clear_all_progress, last_input_gamepad, take_debug_pause, take_menu_nav, take_pointer_lock_lost};
+pub use imp::{
+    clear_all_progress, clear_cache_and_reload, last_input_gamepad, take_debug_pause, take_menu_nav,
+    take_pointer_lock_lost,
+};
 // Tendy Wendies persistent currency wallet (state.rs, casino.rs, ui.rs).
 pub use imp::{load_tendy_wendies, save_tendy_wendies};
 // Debug start at the Pub 217 beer tower (beer_fx.rs).

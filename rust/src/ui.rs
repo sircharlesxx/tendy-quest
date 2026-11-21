@@ -1178,7 +1178,7 @@ pub fn check_url_test_mode(
         }
         // `free_roam=1`: direct Cedar Rapids free roam (preserves any unfinished story save).
         17 => {
-            stats.game_beaten = saved_game_beaten(&crate::audio::load_checkpoint());
+            hydrate_beaten_free_roam_stats(&mut stats);
             stats.prepare_free_roam();
             next_state.set_from_black(GameState::CityPlay);
         }
@@ -1223,13 +1223,9 @@ pub fn check_url_test_mode(
     }
 }
 
-/// Enters Cedar Rapids Free Mode from the Start Menu in either Solo or Online P2P mode while
-/// preserving unfinished campaign progress.
-fn enter_free_mode_from_menu(
-    stats: &mut PlayerStats,
-    next_state: &mut crate::transition::SceneTransition,
-    multiplayer: bool,
-) {
+/// Hydrates beaten-campaign score, tendy credits, and driver's license before entering Free Mode,
+/// leaving unfinished campaign saves untouched (`game_beaten = false`).
+fn hydrate_beaten_free_roam_stats(stats: &mut PlayerStats) {
     let saved = crate::audio::load_checkpoint();
     let parts: Vec<&str> = saved.split('|').collect();
     if saved_game_beaten(&saved) {
@@ -1247,6 +1243,16 @@ fn enter_free_mode_from_menu(
         // Keep unfinished campaign progress untouched while entering Free Mode.
         stats.game_beaten = false;
     }
+}
+
+/// Enters Cedar Rapids Free Mode from the Start Menu in either Solo or Online P2P mode while
+/// preserving unfinished campaign progress.
+fn enter_free_mode_from_menu(
+    stats: &mut PlayerStats,
+    next_state: &mut crate::transition::SceneTransition,
+    multiplayer: bool,
+) {
+    hydrate_beaten_free_roam_stats(stats);
     crate::audio::net_set_online(multiplayer);
     stats.prepare_free_roam();
     next_state.set(GameState::CityPlay);
