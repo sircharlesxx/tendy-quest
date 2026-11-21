@@ -5012,11 +5012,40 @@ fn update_casino_station_camera(
     let (pos, look, want_fov) = match game.station {
         CasinoStationKind::Blackjack => {
             let (tp, tr) = bj_table_pose(game.bj_table);
-            (
-                tp + tr * Vec3::new(0.0, 2.65, 3.65),
-                tp + tr * Vec3::new(0.0, 1.48, -0.55),
-                std::f32::consts::FRAC_PI_4,
-            )
+            let (local_pos, local_look, fov) = match game.bj_phase {
+                BjPhase::Betting => (
+                    // Table-level establishing shot: seated eye-level across the felt & slot floor
+                    Vec3::new((t * 0.7).sin() * 0.08, 2.08, 3.15),
+                    Vec3::new(0.0, 1.56, -0.85),
+                    0.74,
+                ),
+                BjPhase::PlayerTurn => (
+                    // Action push-in: tighter over the felt framing cards, chips & Chillary
+                    Vec3::new((t * 0.9).sin() * 0.05, 1.94, 2.38),
+                    Vec3::new(0.0, 1.44, -0.35),
+                    0.64,
+                ),
+                BjPhase::DealerTurn => (
+                    // Low felt-skimming macro close-up on Chillary's card reveal & chip stacks
+                    Vec3::new(0.16, 1.72, 1.92),
+                    Vec3::new(0.0, 1.40, -0.45),
+                    0.56,
+                ),
+                BjPhase::Settled => {
+                    // Pull-back reaction/celebration shot capturing the table & coin fountain
+                    let win_kick = if sync.win_flash > 0.2 {
+                        Vec3::new((t * 32.0).sin() * 0.025, (t * 28.0).cos() * 0.02, 0.0)
+                    } else {
+                        Vec3::ZERO
+                    };
+                    (
+                        Vec3::new(0.0, 2.32, 3.50) + win_kick,
+                        Vec3::new(0.0, 1.58, -0.65),
+                        0.76,
+                    )
+                }
+            };
+            (tp + tr * local_pos, tp + tr * local_look, fov)
         }
         CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
             let (cp, cy) = slot_cab_pose(game.slot_cab);
