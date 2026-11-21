@@ -519,7 +519,7 @@ pub fn update_pub_bartender(
         prompt.pressed = false;
         return;
     };
-    if !stats.in_city || stats.bartender_open || stats.phone_open || stats.riding_wheel || help.open {
+    if !stats.in_city || stats.bartender_open || stats.phone_open || stats.riding_wheel || stats.char_select_open || help.open {
         prompt.pressed = false;
         return;
     }

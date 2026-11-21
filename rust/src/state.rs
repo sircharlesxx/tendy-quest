@@ -119,6 +119,8 @@ pub struct PlayerStats {
     pub casino_return_city: bool,
     /// True while talking to Maria the bartender inside Pub 217 (`pub_portal.rs`).
     pub bartender_open: bool,
+    /// True while the Free Mode multiplayer Character Select screen is open (`net.rs` / `index.html`).
+    pub char_select_open: bool,
     /// Stan's Cedar Rapids scale saved before warping into Casino Level 3, restored on return.
     pub saved_casino_city_scale: f32,
     pub scooter_app_unlocked: bool,
@@ -222,6 +224,7 @@ impl Default for PlayerStats {
             in_casino_level: false,
             casino_return_city: false,
             bartender_open: false,
+            char_select_open: false,
             saved_casino_city_scale: 1.8,
             scooter_app_unlocked: false,
             riding_scooter: None,

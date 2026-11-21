@@ -613,7 +613,7 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if stats.casino_open || stats.bartender_open {
+    if stats.casino_open || stats.bartender_open || stats.char_select_open {
         return;
     }
     if let Ok(mut window) = window_q.get_single_mut() {
@@ -838,6 +838,7 @@ pub fn player_movement(
         || stats.phone_open
         || stats.casino_open
         || stats.bartender_open
+        || stats.char_select_open
     {
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;

@@ -785,6 +785,7 @@ pub fn update_city_scooter_and_phone(
         && stats.riding_scooter.is_none()
         && !stats.bartender_open
         && !stats.casino_open
+        && !stats.char_select_open
     {
         if stats.phone_open {
             stats.phone_open = false;

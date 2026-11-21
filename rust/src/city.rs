@@ -3186,6 +3186,7 @@ pub fn enter_city_play(
     stats.in_casino_level = false;
     stats.casino_open = false;
     stats.bartender_open = false;
+    stats.char_select_open = false;
 
     spawn_nyc_world_if_needed(
         &mut commands,
@@ -3669,6 +3670,7 @@ pub fn exit_city_play(
     stats.phone_open = false;
     stats.casino_open = false;
     stats.bartender_open = false;
+    stats.char_select_open = false;
     if let Ok(mut vis) = player_q.get_single_mut() {
         *vis = Visibility::Visible;
     }
@@ -3778,7 +3780,7 @@ pub fn update_city_driving(
         || std::mem::take(&mut stats.car_prompt_tap);
 
     // 1. If currently on foot, check for nearby hijackable car
-    if stats.driving_car.is_none() && stats.riding_scooter.is_none() && !stats.riding_wheel {
+    if stats.driving_car.is_none() && stats.riding_scooter.is_none() && !stats.riding_wheel && !stats.char_select_open {
         if stats.player_scale >= 6.0 {
             return;
         }
@@ -4182,7 +4184,7 @@ pub fn update_city_traffic(
         return;
     };
     let in_active_play = *state.get() == GameState::CityPlay;
-    let is_driving = stats.driving_car.is_some() || stats.phone_open || stats.bartender_open;
+    let is_driving = stats.driving_car.is_some() || stats.phone_open || stats.bartender_open || stats.char_select_open;
     let hit_radius = 1.9 + stats.player_scale * 0.22;
 
     for (mut car_tf, mut car) in &mut car_q {
@@ -5556,6 +5558,7 @@ pub fn update_city_props(
         && stats.riding_scooter.is_none()
         && !stats.phone_open
         && !stats.bartender_open
+        && !stats.char_select_open
         && p.y < 4.0;
 
     // Open from the start; only shut while Stan stands where Mike's own [F / E] could fire

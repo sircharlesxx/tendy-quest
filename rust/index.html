@@ -2,11 +2,91 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <meta name="tq-build" content="__TQ_BUILD_ID__" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Tendy Quest — Giant Kitchen</title>
+  <script>
+    (function () {
+      const BUILD_ID = (document.querySelector('meta[name="tq-build"]')?.content || "").trim();
+      window.TQ_BUILD_ID = BUILD_ID;
+
+      function clearCaches() {
+        try {
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            navigator.serviceWorker.getRegistrations().then((regs) => {
+              for (const r of regs) try { r.unregister(); } catch (_) {}
+            }).catch(() => {});
+          }
+          if (window.caches && caches.keys) {
+            caches.keys().then((keys) => {
+              for (const k of keys) try { caches.delete(k); } catch (_) {}
+            }).catch(() => {});
+          }
+        } catch (_) {}
+      }
+
+      function applyUpdate(remoteVer) {
+        try {
+          if (sessionStorage.getItem("tq_reloaded_v") === remoteVer) return false;
+          sessionStorage.setItem("tq_reloaded_v", remoteVer);
+        } catch (_) {}
+        clearCaches();
+        const u = new URL(location.href);
+        u.searchParams.set("_v", remoteVer);
+        location.replace(u.toString());
+        return true;
+      }
+
+      function showUpdateBanner(remoteVer) {
+        const make = () => {
+          if (document.getElementById("tq-update-banner") || !document.body) return;
+          const b = document.createElement("button");
+          b.id = "tq-update-banner";
+          b.type = "button";
+          b.textContent = "New version (" + remoteVer + ") available - Tap to update";
+          b.style.cssText =
+            "position:fixed;top:10px;right:10px;z-index:99;padding:8px 12px;border-radius:10px;" +
+            "border:2px solid #ffd84a;background:rgba(12,20,36,.95);color:#ffd84a;" +
+            "font:700 12px system-ui,sans-serif;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)";
+          b.addEventListener("click", () => {
+            try { sessionStorage.removeItem("tq_reloaded_v"); } catch (_) {}
+            applyUpdate(remoteVer);
+          });
+          document.body.appendChild(b);
+        };
+        if (document.body) make();
+        else document.addEventListener("DOMContentLoaded", make, { once: true });
+      }
+
+      async function checkVersion(autoReload) {
+        if (!BUILD_ID || BUILD_ID === "__TQ_" + "BUILD_ID__") return;
+        try {
+          const res = await fetch("./version.json?_cb=" + Date.now(), { cache: "no-store" });
+          if (!res.ok) return;
+          const data = await res.json();
+          const remoteVer = data && typeof data.v === "string" ? data.v.trim() : "";
+          if (remoteVer && remoteVer !== BUILD_ID) {
+            if (autoReload && applyUpdate(remoteVer)) return;
+            showUpdateBanner(remoteVer);
+          }
+        } catch (_) {}
+      }
+
+      checkVersion(true);
+      window.addEventListener("pageshow", (e) => {
+        if (e.persisted) checkVersion(true);
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") checkVersion(false);
+      });
+    })();
+  </script>
   <link data-trunk rel="copy-dir" href="../assets/models" data-target-path="assets/models" />
   <link data-trunk rel="copy-dir" href="../assets/audio" data-target-path="assets/audio" />
   <link data-trunk rel="copy-dir" href="../assets/sprites" data-target-path="assets/sprites" />
@@ -3430,10 +3510,10 @@
       const RATE_PER_S = 35, RATE_BURST = 40;
       const CITY_HALF = 135, Y_MIN = -2, Y_MAX = 60;
       const CHARS = {
-        0: { name: "STAN", color: "#2ef5ff" },
-        1: { name: "NATE", color: "#4da6ff" },
-        2: { name: "GLENN", color: "#ff5c33" },
-        3: { name: "TJ", color: "#52eb63" },
+        0: { name: "STAN", color: "#2ef5ff", role: "Tendy Hunter", bio: "Red plaid hoodie, Vikings visor & lightsaber." },
+        1: { name: "NATE", color: "#4da6ff", role: "Des Moines Rival", bio: "Street brawler with kung-fu stance." },
+        2: { name: "GLENN", color: "#ff5c33", role: "Pub 217 Powerhouse", bio: "Curly-haired legend with DBZ energy." },
+        3: { name: "TJ", color: "#52eb63", role: "TMNT Superfan", bio: "Cedar Rapids skater & crew MVP." },
       };
       const SLOT_COLORS = { 2: "#ff8c1a", 3: "#f24dd9", 4: "#66f259", 5: "#ffe633", 6: "#ff5252" };
 
@@ -3476,6 +3556,10 @@
         shard: 0,
         status: "Solo (offline)",
         myChar: 0,           // 0=STAN, 1=NATE, 2=GLENN, 3=TJ
+        charLocked: false,   // true once a character is picked (or Solo offline)
+        charSelectOpen: false,
+        charClaimedAt: 0,
+        charSelectNotice: "",
         joinedAt: performance.now(),
         peers: new Map(),    // sender id (u32) -> { slot, charId, last, tokens, fill, conn, directOpen, rttMs, rttSamples, avgRttMs, directCount, directMap, mobile, veteran, full, bridgedVia, connectedAt }
         inbox: [],           // Float64Array records for drain()
@@ -3548,12 +3632,16 @@
         if (isTouchHint) mflags |= 1;
         if (isVeteran()) mflags |= 2;
         if (net.peers.size >= maxRemotes()) mflags |= 4;
+        if (net.charLocked) mflags |= 8;
         v.setUint8(13, mflags);
         const avg = computeOwnAvgRtt();
         v.setUint16(14, avg >= 0 ? clamp(avg, 0, 65534) : 65535, true);
         const directPeers = [...net.peers.entries()].filter(([, p]) => p.directOpen).slice(0, 3);
         v.setUint8(16, directPeers.length);
-        v.setUint8(17, 0);
+        const claimAgeSec = net.charLocked
+          ? clamp(Math.floor((performance.now() - net.charClaimedAt) / 1000), 0, 255)
+          : 0;
+        v.setUint8(17, claimAgeSec);
         for (let i = 0; i < 3; i++) {
           const off = 18 + i * 6;
           if (i < directPeers.length) {
@@ -3569,10 +3657,9 @@
       }
 
       // ---- Character Claiming (Stan / Nate / Glenn / TJ) ----
-      // Conflict-free sticky claiming: Stan defaults to 0 when solo, while random newcomers
-      // joining an active squad claim one of the free crew slots (Nate, Glenn, TJ). Ties are
-      // deterministically broken so both browsers converge immediately without reshuffling
-      // existing players when someone leaves.
+      // Real-time locked-character tracking: peers on the Character Select screen broadcast
+      // charLocked=false (mflags & 8 == 0) so only actively played characters are disabled for
+      // other players. Simultaneous selections resolve deterministically via claim age / veteran / peerId.
       function pickFreeChar(excludeTaken) {
         const crewFree = [1, 2, 3].filter((c) => !excludeTaken.has(c));
         if (crewFree.length) return crewFree[Math.floor(Math.random() * crewFree.length)];
@@ -3580,26 +3667,85 @@
         return ((myId % 3) + 1);
       }
 
+      function getTakenChars() {
+        const taken = new Set();
+        for (const p of net.peers.values()) {
+          if (p.charLocked && p.charId >= 0 && p.charId <= 3) taken.add(p.charId);
+        }
+        return taken;
+      }
+
+      function openCharSelect(notice) {
+        if (!net.inFreeRoam || !net.transport) return;
+        net.charLocked = false;
+        net.charClaimedAt = 0;
+        net.charSelectOpen = true;
+        net.charSelectNotice = notice || "";
+        if (ui.panel) togglePanel(false);
+        sendMeta();
+        refreshCharSelect();
+        refreshPanel();
+        updateTelemetry();
+      }
+
+      function selectChar(charId) {
+        const cid = Number(charId);
+        if (!Number.isInteger(cid) || cid < 0 || cid > 3) return false;
+        const taken = getTakenChars();
+        if (taken.has(cid)) {
+          net.charSelectNotice = (CHARS[cid]?.name || "That character") + " is currently being played! Pick another.";
+          refreshCharSelect();
+          updateTelemetry();
+          return false;
+        }
+        net.myChar = cid;
+        net.charLocked = true;
+        net.charSelectOpen = false;
+        net.charClaimedAt = performance.now();
+        net.charSelectNotice = "";
+        sendMeta();
+        if (net.lastState) {
+          net.lastBuf = encodeState(net.lastState);
+          sendBuf(net.lastBuf, false);
+        }
+        refreshCharSelect();
+        refreshPanel();
+        updateTelemetry();
+        return true;
+      }
+
       function resolveCharClaims(sourceId, peer) {
         if (!net.transport || net.peers.size === 0) return;
-        if (peer.charId !== net.myChar) return;
-        const mineVet = isVeteran();
-        const theirVet = !!peer.veteran;
+        if (!net.charLocked || !peer.charLocked || peer.charId !== net.myChar) return;
+        const myAge = Math.floor((performance.now() - net.charClaimedAt) / 1000);
+        const theirAge = peer.claimAgeSec || 0;
         let iYield = false;
-        if (mineVet !== theirVet) {
-          iYield = !mineVet;
+        if (Math.abs(myAge - theirAge) >= 2) {
+          iYield = myAge < theirAge;
         } else {
-          iYield = myId > sourceId;
+          const mineVet = isVeteran();
+          const theirVet = !!peer.veteran;
+          if (mineVet !== theirVet) iYield = !mineVet;
+          else iYield = myId > sourceId;
         }
         if (!iYield) return;
-        const taken = new Set();
-        for (const p of net.peers.values()) taken.add(p.charId);
+        const wasRecent = (performance.now() - net.charClaimedAt) < 8000;
+        const taken = getTakenChars();
+        if (wasRecent) {
+          openCharSelect((CHARS[peer.charId]?.name || "That character") + " is already being played! Pick an available character.");
+          return;
+        }
         const nextChar = pickFreeChar(taken);
         if (nextChar !== net.myChar) {
           net.myChar = nextChar;
-          if (net.lastState) net.lastBuf = encodeState(net.lastState);
+          net.charLocked = true;
+          net.charClaimedAt = performance.now();
+          if (net.lastState) {
+            net.lastBuf = encodeState(net.lastState);
+            sendBuf(net.lastBuf, false);
+          }
           sendMeta();
-          if (net.lastBuf) sendBuf(net.lastBuf, false);
+          refreshCharSelect();
           refreshPanel();
           updateTelemetry();
         }
@@ -3656,6 +3802,7 @@
           net.transport.send(buf, true, p.conn);
         }
         updateAnchorElection();
+        refreshCharSelect();
         refreshPanel();
       }
 
@@ -3674,6 +3821,7 @@
           if (dstPeer.directMap && dstPeer.directMap.has(srcId)) continue;
           if (srcPeer.directMap && srcPeer.directMap.has(dstId)) continue;
           const myCost = srcRtt + (dstPeer.rttMs >= 0 ? dstPeer.rttMs : 120);
+          const myBucket = Math.floor(myCost / 25);
           let betterExists = false;
           for (const [midId, midPeer] of net.peers) {
             if (midId === srcId || midId === dstId || !midPeer.directOpen || !midPeer.directMap) continue;
@@ -3681,7 +3829,8 @@
             const r2 = midPeer.directMap.get(dstId);
             if (r1 !== undefined && r2 !== undefined) {
               const otherCost = (r1 < 65535 ? r1 : 120) + (r2 < 65535 ? r2 : 120);
-              if (otherCost < myCost || (otherCost === myCost && midId < myId)) {
+              const otherBucket = Math.floor(otherCost / 25);
+              if (otherBucket < myBucket || (otherBucket === myBucket && midId < myId)) {
                 betterExists = true;
                 break;
               }
@@ -3779,6 +3928,7 @@
           const mflags = v.getUint8(13);
           const avgRtt = v.getUint16(14, true);
           const dCount = v.getUint8(16);
+          const claimAgeSec = v.getUint8(17);
           if (dCount > 3) return drop();
           const dMap = new Map();
           for (let i = 0; i < dCount; i++) {
@@ -3793,6 +3943,8 @@
             mobile: (mflags & 1) !== 0,
             veteran: (mflags & 2) !== 0,
             full: (mflags & 4) !== 0,
+            locked: (mflags & 8) !== 0,
+            claimAgeSec,
             avgRttMs: avgRtt < 65535 ? avgRtt : -1,
             directCount: dCount,
             directMap: dMap,
@@ -3826,6 +3978,8 @@
           peer = {
             slot,
             charId: msgChar !== null ? msgChar : ((slot - 1) & 3),
+            charLocked: metaInfo ? metaInfo.locked : (type === T_STATE),
+            claimAgeSec: metaInfo ? metaInfo.claimAgeSec : 0,
             last: now,
             tokens: RATE_BURST,
             fill: now,
@@ -3843,10 +3997,12 @@
             connectedAt: now,
           };
           net.peers.set(id, peer);
+          if (isMesh) setStatus("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (net.shard + 1) + ")");
           sendHello();
           sendMeta();
-          if (net.lastBuf) sendBuf(net.lastBuf, false);
+          if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
           updateAnchorElection();
+          refreshCharSelect();
           refreshPanel();
         } else if (!bridged && conn && !peer.directOpen) {
           peer.conn = conn;
@@ -3855,11 +4011,19 @@
           peer.connectedAt = now;
         }
 
+        let charChanged = false;
         if (msgChar !== null && peer.charId !== msgChar) {
           peer.charId = msgChar;
-          refreshPanel();
+          charChanged = true;
+        }
+        if (type === T_STATE && !peer.charLocked) {
+          peer.charLocked = true;
+          charChanged = true;
         }
         if (metaInfo) {
+          if (peer.charLocked !== metaInfo.locked) charChanged = true;
+          peer.charLocked = metaInfo.locked;
+          peer.claimAgeSec = metaInfo.claimAgeSec;
           peer.mobile = metaInfo.mobile;
           peer.veteran = metaInfo.veteran;
           peer.full = metaInfo.full;
@@ -3868,7 +4032,12 @@
           peer.directMap = metaInfo.directMap;
           updateAnchorElection();
         }
-        if (msgChar !== null) resolveCharClaims(id, peer);
+        if (charChanged) {
+          refreshCharSelect();
+          refreshPanel();
+          updateTelemetry();
+        }
+        if (msgChar !== null && peer.charLocked) resolveCharClaims(id, peer);
 
         // Token bucket rate limiter per sender.
         peer.tokens = Math.min(RATE_BURST, peer.tokens + ((now - peer.fill) / 1000) * RATE_PER_S);
@@ -3953,7 +4122,9 @@
               if (ui.panel) togglePanel(false);
               sendHello();
               sendMeta();
-              if (net.lastBuf) sendBuf(net.lastBuf, false);
+              if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
+              if (net.inFreeRoam && !net.charLocked && !net.charSelectOpen) openCharSelect("");
+              else refreshCharSelect();
             };
             const closed = () => {
               if (!c.open && conns.indexOf(c) < 0) return;
@@ -4072,13 +4243,15 @@
         let shard = initialShard | 0;
         let infoHash = makeInfoHash(room, shard);
         let shardJoinedAt = performance.now();
+        let sawFirstSignal = false;
         let sawRoomFullHint = false;
         let trackersUp = 0;
 
         const conns = new Map();        // peer_id -> conn record
         const pendingOffers = new Map();// offer_id -> { pc, st, ev, createdAt, announced }
         const trackerStates = [
-          ...TRACKER_URLS.map((url) => ({
+          ...TRACKER_URLS.map((url, idx) => ({
+            idx,
             url,
             isMqtt: false,
             ws: null,
@@ -4088,6 +4261,7 @@
             lastAnnounceAt: 0,
           })),
           {
+            idx: TRACKER_URLS.length,
             url: MQTT_SIGNAL_URL,
             isMqtt: true,
             ws: null,
@@ -4106,6 +4280,12 @@
           return n;
         }
 
+        function readyOfferCount() {
+          let n = 0;
+          for (const c of pendingOffers.values()) if (c.sdp) n++;
+          return n;
+        }
+
         function attachDataChannels(c, remotePeerId) {
           c.remotePeerId = remotePeerId || c.remotePeerId || "";
           c.st.binaryType = "arraybuffer";
@@ -4118,9 +4298,10 @@
             net.joinedAt = Math.min(net.joinedAt, performance.now());
             sendHello();
             sendMeta();
-            if (net.lastBuf) sendBuf(net.lastBuf, false);
+            if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
             setTimeout(() => sendPingToConn(c), 150);
             setStatus("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")");
+            refreshCharSelect();
             refreshPanel();
             updateTelemetry();
           };
@@ -4194,12 +4375,19 @@
 
         function sendAnnounce(stEntry, forceOffers) {
           if (closed || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
+          if (performance.now() - stEntry.lastAnnounceAt < 1200) return;
           const roomSlotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
           const offersPayload = [];
           if (roomSlotsLeft > 0) {
-            for (const [oid, c] of pendingOffers) {
-              if (!c.sdp) continue;
-              if (offersPayload.length >= Math.min(3, roomSlotsLeft)) break;
+            const ready = [];
+            for (const entry of pendingOffers) {
+              if (entry[1].sdp) ready.push(entry);
+            }
+            if (ready.length === 0) return;
+            const rot = (stEntry.idx || 0) % ready.length;
+            const limit = Math.min(3, ready.length);
+            for (let k = 0; k < limit; k++) {
+              const [oid, c] = ready[(rot + k) % ready.length];
               offersPayload.push({ offer_id: oid, offer: { type: "offer", sdp: c.sdp } });
             }
           }
@@ -4244,26 +4432,34 @@
           }
           if (msg.info_hash && msg.info_hash !== infoHash) return;
           if (msg.to_peer_id && msg.to_peer_id !== myPeerId) return;
-          if (typeof msg.incomplete === "number" && msg.incomplete >= 4 && openConnCount() === 0) {
+          if (typeof msg.incomplete === "number" && msg.incomplete >= MESH_MAX_REMOTES + 2 && openConnCount() === 0) {
             sawRoomFullHint = true;
           }
           if (!msg.peer_id || msg.peer_id === myPeerId) return;
 
           // MQTT broadcast fan-out: when a peer announces multiple offers on the shared topic,
-          // let the higher peer_id answer the first offer, and let the lower peer_id re-announce
-          // so both sides converge cleanly without dual-offer glare.
+          // let each higher peer_id deterministically pick an offer index, and let the lower peer_id
+          // re-announce so both sides converge cleanly without dual-offer glare.
           if (Array.isArray(msg.offers) && msg.offers.length && !msg.offer) {
-            if (myPeerId > msg.peer_id && !conns.has(msg.peer_id) && openConnCount() < MESH_MAX_REMOTES) {
-              const first = msg.offers[0];
-              if (first && first.offer && first.offer_id) {
+            const existing = conns.get(msg.peer_id);
+            const staleHalfOpen = existing && !existing.open && (
+              performance.now() - (existing.createdAt || 0) >= 4500 ||
+              existing.pc.connectionState === "failed" ||
+              existing.pc.connectionState === "closed"
+            );
+            if (myPeerId > msg.peer_id && (!existing || staleHalfOpen) && openConnCount() < MESH_MAX_REMOTES) {
+              let h = 0;
+              for (let i = 0; i < myPeerId.length; i++) h = ((h * 31) + myPeerId.charCodeAt(i)) | 0;
+              const pick = msg.offers[Math.abs(h) % msg.offers.length];
+              if (pick && pick.offer && pick.offer_id) {
                 await handleTrackerMsg(stEntry, JSON.stringify({
                   info_hash: infoHash,
                   peer_id: msg.peer_id,
-                  offer_id: first.offer_id,
-                  offer: first.offer,
+                  offer_id: pick.offer_id,
+                  offer: pick.offer,
                 }));
               }
-            } else if (myPeerId < msg.peer_id && !conns.has(msg.peer_id) && pendingOffers.size > 0) {
+            } else if (myPeerId < msg.peer_id && (!existing || !existing.open) && pendingOffers.size > 0) {
               sendAnnounce(stEntry, true);
             }
             return;
@@ -4280,13 +4476,21 @@
             const existing = conns.get(msg.peer_id);
             if (existing) {
               if (existing.open || myPeerId < msg.peer_id) return;
+              if (existing.offerId && existing.offerId === msg.offer_id) return;
+              if (
+                performance.now() - (existing.createdAt || 0) < 4500 &&
+                existing.pc.connectionState !== "failed" &&
+                existing.pc.connectionState !== "closed"
+              ) {
+                return;
+              }
               try { existing.pc.close(); } catch (_) {}
               conns.delete(msg.peer_id);
             }
             const pc = new RTCPeerConnection({ iceServers });
             const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
             const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
-            const c = { pc, st, ev, open: false, bindsId: true, boundId: 0 };
+            const c = { pc, st, ev, open: false, bindsId: true, boundId: 0, offerId: msg.offer_id, createdAt: performance.now() };
             attachDataChannels(c, msg.peer_id);
             conns.set(msg.peer_id, c);
             try {
@@ -4325,6 +4529,7 @@
             }
             pendingOffers.delete(msg.offer_id);
             c.remotePeerId = msg.peer_id;
+            c.createdAt = performance.now();
             conns.set(msg.peer_id, c);
             try {
               await c.pc.setRemoteDescription({ type: "answer", sdp: msg.answer.sdp });
@@ -4349,9 +4554,10 @@
               }
               stEntry.ready = true;
               stEntry.backoffMs = 4000;
+              if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = performance.now(); }
               trackersUp = trackerStates.filter((x) => x.ready).length;
               setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
-              await prepareOfferPool(3 - openConnCount());
+              if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(3);
               sendAnnounce(stEntry, true);
               refreshPanel();
               updateTelemetry();
@@ -4362,10 +4568,11 @@
                   if (pkt.type === 2) {
                     stEntry.ready = true;
                     stEntry.backoffMs = 4000;
+                    if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = performance.now(); }
                     trackersUp = trackerStates.filter((x) => x.ready).length;
                     ws.send(mqttSubscribePkt(1, "tendy-quest/v1/" + infoHash));
                     setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
-                    await prepareOfferPool(3 - openConnCount());
+                    if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(3);
                     sendAnnounce(stEntry, true);
                     refreshPanel();
                     updateTelemetry();
@@ -4417,6 +4624,7 @@
               if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
                 try { stEntry.ws.send(mqttSubscribePkt(2 + shard, "tendy-quest/v1/" + infoHash)); } catch (_) {}
               }
+              stEntry.lastAnnounceAt = 0;
               sendAnnounce(stEntry, true);
             }
           });
@@ -4435,9 +4643,16 @@
               try { c.pc.close(); } catch (_) {}
             }
           }
+          // Prune stale half-open connections older than 10s so retries can proceed.
+          for (const [pid, c] of [...conns]) {
+            if (!c.open && now - (c.createdAt || 0) > 10000) {
+              conns.delete(pid);
+              try { c.pc.close(); } catch (_) {}
+            }
+          }
           const slotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
-          if (slotsLeft > 0 && pendingOffers.size < slotsLeft) {
-            await prepareOfferPool(slotsLeft);
+          if (slotsLeft > 0 && readyOfferCount() < 3) {
+            await prepareOfferPool(3);
           }
           for (const stEntry of trackerStates) {
             if (!stEntry.ws && now >= stEntry.nextRetryAt) connectTracker(stEntry);
@@ -4445,13 +4660,13 @@
               if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
                 try { stEntry.ws.send(new Uint8Array([0xc0, 0x00])); } catch (_) {} // MQTT PINGREQ
               }
-              const announcePeriod = openConnCount() === 0 ? 5000 : (slotsLeft > 0 ? 15000 : 55000);
+              const announcePeriod = openConnCount() === 0 ? 4500 : (slotsLeft > 0 ? (now - shardJoinedAt < 45000 ? 5500 : 15000) : 55000);
               if (now - stEntry.lastAnnounceAt >= announcePeriod) {
                 sendAnnounce(stEntry, slotsLeft > 0);
               }
             }
           }
-          if (sawRoomFullHint && openConnCount() === 0 && now - shardJoinedAt > 7500) {
+          if (sawRoomFullHint && openConnCount() === 0 && now - shardJoinedAt > 16000) {
             bumpShard();
           }
         }, 3000);
@@ -4556,9 +4771,14 @@
         net.transport = null;
         for (const id of [...net.peers.keys()]) removePeer(id);
         net.myChar = 0;
+        net.charLocked = false;
+        net.charSelectOpen = false;
+        net.charClaimedAt = 0;
+        net.charSelectNotice = "";
         net.anchorId = myId;
         net.anchorRttMs = -1;
         setStatus(net.onlinePref ? "Paused / offline" : "Solo (offline)");
+        refreshCharSelect();
       }
 
       function joinMesh(room) {
@@ -4570,6 +4790,7 @@
         net.myChar = 0;
         net.transport = meshTransport(net.room, 0);
         setStatus("Searching Cedar Rapids squad (Shard 1)...");
+        openCharSelect("");
         refreshPanel();
         updateTelemetry();
       }
@@ -4586,6 +4807,7 @@
         setStatus("Tabs room " + room + ": open this page in another tab of this browser");
         sendHello();
         sendMeta();
+        if (net.inFreeRoam) openCharSelect("");
       }
 
       async function rtcCreateInvite() {
@@ -4643,8 +4865,12 @@
 
       setInterval(() => {
         const now = performance.now();
-        if (net.transport && net.lastBuf && now - net.lastSendAt > KEEPALIVE_MS - 100) {
-          sendBuf(net.lastBuf, false);
+        if (net.transport && now - net.lastSendAt > KEEPALIVE_MS - 100) {
+          if (net.charLocked && net.lastBuf) {
+            sendBuf(net.lastBuf, false);
+          } else {
+            sendMeta();
+          }
           net.lastSendAt = now;
         }
         for (const [id, p] of [...net.peers]) if (now - p.last > PEER_TIMEOUT_MS) removePeer(id);
@@ -4677,14 +4903,47 @@
       }
       function setStatus(s) {
         net.status = s;
+        refreshCharSelect();
         refreshPanel();
         updateTelemetry();
+      }
+      function refreshCharSelect() {
+        if (!ui.charBox) return;
+        const show = !!(net.inFreeRoam && net.transport && net.charSelectOpen);
+        ui.charBox.style.display = show ? "flex" : "none";
+        if (!show) return;
+        const taken = getTakenChars();
+        const sigUp = net.transport && typeof net.transport.trackersUp === "number" ? net.transport.trackersUp : 0;
+        const squadCount = net.peers.size + 1;
+        ui.charSub.textContent = "Room: " + net.room + "  |  Squad: " + squadCount + "/4"
+          + (net.transportKind === "mesh" ? ("  |  Signal: " + sigUp + "/4") : "")
+          + "  |  " + net.status;
+        if (net.charSelectNotice) {
+          ui.charNotice.textContent = net.charSelectNotice;
+          ui.charNotice.style.display = "";
+        } else {
+          ui.charNotice.textContent = "";
+          ui.charNotice.style.display = "none";
+        }
+        for (let i = 0; i < 4; i++) {
+          const card = ui.charCards[i];
+          const badge = ui.charBadges[i];
+          const meta = CHARS[i];
+          if (!card || !badge || !meta) continue;
+          const isTaken = taken.has(i);
+          card.disabled = isTaken;
+          card.classList.toggle("taken", isTaken);
+          card.style.borderColor = isTaken ? "#4a4f66" : meta.color;
+          badge.textContent = isTaken ? "IN USE" : ("AVAILABLE [" + (i + 1) + "]");
+          badge.className = "mp-char-badge " + (isTaken ? "busy" : "free");
+        }
       }
       function updatePillVisibility() {
         if (!ui.pill) return;
         const show = net.inFreeRoam || mpParam === "tabs" || mpParam === "rtc" || mpParam === "1";
         ui.pill.style.display = show ? "" : "none";
         if (!show && ui.panel) togglePanel(false);
+        refreshCharSelect();
       }
       function refreshPanel() {
         if (!ui.panel) return;
@@ -4695,17 +4954,22 @@
         ui.status.textContent = net.status;
         if (net.transport) {
           const rttStr = avg >= 0 ? (" | " + avg + "ms") : "";
-          ui.pillText.textContent = (net.transport.kind === "mesh" ? "ONLINE: " : "MP: ") + myMeta.name + " (" + n + "/" + (1 + maxRemotes()) + rttStr + ")";
+          const selfName = net.charLocked ? myMeta.name : "PICKING";
+          ui.pillText.textContent = (net.transport.kind === "mesh" ? "ONLINE: " : "MP: ") + selfName + " (" + n + "/" + (1 + maxRemotes()) + rttStr + ")";
         } else {
           ui.pillText.textContent = "SOLO (OFFLINE)";
         }
         ui.peers.textContent = "";
         const anchorStar = net.anchorId === myId && net.peers.size > 0 ? " *" : "";
-        ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + myMeta.color, text: myMeta.name + " (YOU" + anchorStar + ")" }));
+        ui.peers.appendChild(el("span", {
+          class: "mp-chip",
+          style: "border-color:" + (net.charLocked ? myMeta.color : "#8a99b8"),
+          text: (net.charLocked ? myMeta.name : "PICKING") + " (YOU" + anchorStar + ")",
+        }));
         for (const [id, p] of [...net.peers.entries()].sort((a, b) => a[1].slot - b[1].slot)) {
           const cMeta = CHARS[p.charId];
-          const label = (p.slot <= 4 && cMeta) ? cMeta.name : ("P" + p.slot);
-          const color = (p.slot <= 4 && cMeta) ? cMeta.color : (SLOT_COLORS[p.slot] || "#aaa");
+          const label = !p.charLocked ? ("P" + p.slot + " PICKING") : ((p.slot <= 4 && cMeta) ? cMeta.name : ("P" + p.slot));
+          const color = !p.charLocked ? "#8a99b8" : ((p.slot <= 4 && cMeta) ? cMeta.color : (SLOT_COLORS[p.slot] || "#aaa"));
           const suffix = p.directOpen ? (p.rttMs >= 0 ? (" " + p.rttMs + "ms") : "") : " (bridged)";
           const aMark = net.anchorId === id ? " *" : "";
           ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + color, text: label + suffix + aMark }));
@@ -4719,6 +4983,7 @@
         ui.btnRtc.classList.toggle("on", k === "rtc");
         ui.btnToggleOnline.textContent = net.onlinePref ? "Online: ON (click for Solo)" : "Solo: ON (click to go Online)";
         ui.btnLeave.disabled = !net.transport;
+        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || !net.inFreeRoam;
       }
       function buildPanel() {
         const style = el("style", {});
@@ -4740,7 +5005,28 @@
           #mp-panel label{display:block;margin-top:8px;font-weight:600}
           #mp-panel .mp-note{font-size:11px;opacity:.8;margin-top:8px}
           #mp-panel .mp-chip{display:inline-block;border:2px solid;border-radius:10px;padding:0 7px;margin-right:4px}
-          #mp-status{margin-top:8px;padding:5px 7px;background:#0d1626;border-radius:6px;min-height:18px}`;
+          #mp-status{margin-top:8px;padding:5px 7px;background:#0d1626;border-radius:6px;min-height:18px}
+          #mp-char-select{position:fixed;inset:0;z-index:45;display:none;align-items:center;justify-content:center;padding:16px;
+            background:rgba(6,10,20,.84);backdrop-filter:blur(4px);font:14px/1.35 system-ui,sans-serif;color:#e8f1ff}
+          .mp-char-modal{width:min(580px,96vw);background:#0c1424;border:2px solid #4ac8ff;border-radius:14px;padding:18px;box-shadow:0 18px 48px rgba(0,0,0,.65)}
+          .mp-char-modal h2{margin:0 0 4px;font-size:20px;letter-spacing:.4px;color:#ffd84a}
+          #mp-char-sub{font-size:12px;color:#a8c0e4;margin-bottom:12px}
+          #mp-char-notice{display:none;margin-bottom:10px;padding:7px 10px;border-radius:8px;background:rgba(220,55,75,.22);border:1px solid #ff6b7a;color:#ffd4d9;font-size:12.5px;font-weight:600}
+          .mp-char-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+          .mp-char-card{text-align:left;display:flex;flex-direction:column;gap:5px;padding:12px;border-radius:10px;border:2px solid #4a6a99;
+            background:#121e34;color:#e8f1ff;cursor:pointer;transition:transform .12s,background .12s}
+          .mp-char-card:hover:not(:disabled){transform:translateY(-2px);background:#192b4a}
+          .mp-char-card.taken{opacity:.45;cursor:not-allowed;filter:grayscale(.55)}
+          .mp-char-head{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%}
+          .mp-char-name{font-size:16px;font-weight:800;letter-spacing:.5px}
+          .mp-char-badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:10px}
+          .mp-char-badge.free{background:rgba(50,210,120,.18);color:#6df2a3;border:1px solid #45d182}
+          .mp-char-badge.busy{background:rgba(240,70,85,.22);color:#ff8a95;border:1px solid #e65563}
+          .mp-char-role{font-size:12px;font-weight:600;color:#b8cdf0}
+          .mp-char-bio{font-size:11.5px;color:#8fa6c9}
+          .mp-char-foot{display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:8px;flex-wrap:wrap}
+          .mp-char-foot button{font:600 12px system-ui,sans-serif;color:#e8f1ff;background:#1b2a44;border:1px solid #4a6a99;border-radius:6px;padding:7px 12px;cursor:pointer}
+          @media (max-width:500px){.mp-char-grid{grid-template-columns:1fr}}`;
         document.head.appendChild(style);
 
         ui.pillText = el("span", { text: "SOLO" });
@@ -4791,24 +5077,73 @@
         ui.status = el("div", { id: "mp-status", role: "status", "aria-live": "polite" });
         ui.peers = el("div", { id: "mp-peers", class: "mp-row" });
         ui.btnLeave = el("button", { id: "mp-leave", type: "button", text: "Leave", onclick: leave });
+        ui.btnChangeChar = el("button", { id: "mp-btn-change-char", type: "button", text: "Change character", onclick: () => openCharSelect("Pick an available character") });
         ui.panel = el("div", { id: "mp-panel", role: "dialog", "aria-label": "Free Mode Multiplayer" }, [
           el("h2", { text: "Free Mode Multiplayer" }),
           el("div", { class: "mp-row" }, [ui.btnMesh, ui.btnTabs, ui.btnRtc]),
           ui.meshBox, ui.tabsBox, ui.rtcBox, ui.status, ui.peers,
           el("div", { class: "mp-row" }, [
+            ui.btnChangeChar,
             ui.btnLeave,
             el("button", { type: "button", text: "Hide panel", onclick: () => togglePanel(false) }),
+            el("span", { style: "margin-left:auto;font-size:11px;opacity:.75", text: "Build: " + (window.TQ_BUILD_ID && window.TQ_BUILD_ID !== "__TQ_" + "BUILD_ID__" ? window.TQ_BUILD_ID : "dev") }),
+          ]),
+        ]);
+        ui.charSub = el("div", { id: "mp-char-sub", text: "Connecting..." });
+        ui.charNotice = el("div", { id: "mp-char-notice", text: "" });
+        ui.charCards = [];
+        ui.charBadges = [];
+        const charGrid = el("div", { class: "mp-char-grid" });
+        for (let i = 0; i < 4; i++) {
+          const meta = CHARS[i];
+          const badge = el("span", { class: "mp-char-badge free", text: "AVAILABLE [" + (i + 1) + "]" });
+          const card = el("button", {
+            id: "mp-char-" + i,
+            type: "button",
+            class: "mp-char-card",
+            style: "border-color:" + meta.color,
+            onclick: () => selectChar(i),
+          }, [
+            el("div", { class: "mp-char-head" }, [
+              el("span", { class: "mp-char-name", style: "color:" + meta.color, text: meta.name }),
+              badge,
+            ]),
+            el("div", { class: "mp-char-role", text: meta.role }),
+            el("div", { class: "mp-char-bio", text: meta.bio }),
+          ]);
+          ui.charCards.push(card);
+          ui.charBadges.push(badge);
+          charGrid.appendChild(card);
+        }
+        ui.charBox = el("div", { id: "mp-char-select", role: "dialog", "aria-modal": "true", "aria-label": "Choose Your Character" }, [
+          el("div", { class: "mp-char-modal" }, [
+            el("h2", { text: "CHOOSE YOUR CHARACTER" }),
+            ui.charSub,
+            ui.charNotice,
+            charGrid,
+            el("div", { class: "mp-char-foot" }, [
+              el("span", { class: "mp-bio", style: "font-size:11.5px;color:#9bb2d4", text: "Characters in use by squad peers cannot be selected. Press 1-4 or click a card." }),
+              el("button", { id: "mp-char-solo", type: "button", text: "Play Solo (Offline)", onclick: () => setOnline(false) }),
+            ]),
           ]),
         ]);
         ui.pill.addEventListener("click", () => togglePanel(ui.panel.style.display === "none"));
-        for (const node of [ui.pill, ui.panel]) {
+        for (const node of [ui.pill, ui.panel, ui.charBox]) {
           for (const type of ["touchstart", "touchmove", "touchend", "touchcancel", "pointerdown", "mousedown", "wheel", "keydown", "keyup"]) {
             node.addEventListener(type, (e) => e.stopPropagation(), { passive: true });
           }
           document.body.appendChild(node);
         }
+        window.addEventListener("keydown", (e) => {
+          if (!net.charSelectOpen || !net.inFreeRoam || !net.transport) return;
+          if (e.key >= "1" && e.key <= "4") {
+            const idx = Number(e.key) - 1;
+            selectChar(idx);
+          }
+        });
         togglePanel(mpParam === "1" || mpParam === "rtc");
         refreshPanel();
+        refreshCharSelect();
       }
       function togglePanel(show) {
         if (!ui.panel) return;
@@ -4821,6 +5156,7 @@
         const myMeta = CHARS[net.myChar] || CHARS[0];
         t.mp = Object.assign({ remote: [], local: null }, net.game || {}, {
           enabled: true,
+          buildId: window.TQ_BUILD_ID || "dev",
           inFreeRoam: net.inFreeRoam,
           online: net.onlinePref,
           transport: net.transport ? net.transport.kind : "",
@@ -4828,6 +5164,9 @@
           shard: net.shard,
           char: myMeta.name,
           charId: net.myChar,
+          charLocked: net.charLocked,
+          charSelectOpen: net.charSelectOpen,
+          takenChars: [...getTakenChars()],
           avgRttMs: computeOwnAvgRtt(),
           anchorId: net.anchorId,
           anchorRttMs: net.anchorRttMs,
@@ -4852,6 +5191,10 @@
         net.inFreeRoam = want;
         if (!want) {
           if (mpParam !== "tabs" && mpParam !== "rtc") leave();
+          else {
+            net.charSelectOpen = false;
+            refreshCharSelect();
+          }
           updatePillVisibility();
           refreshPanel();
           updateTelemetry();
@@ -4859,11 +5202,16 @@
         }
         if (mpParam === "tabs") {
           if (!net.transport || net.transport.kind !== "tabs") joinTabs(roomFromUrl || "MAIN");
+          else if (!net.charLocked && !net.charSelectOpen) openCharSelect("");
         } else if (mpParam === "rtc") {
           if (!net.transport) setStatus("Not connected: pick a transport or Create invite");
+          else if (net.transport.connCount() > 0 && !net.charLocked && !net.charSelectOpen) openCharSelect("");
         } else if (net.onlinePref) {
           joinMesh(roomFromUrl || "MAIN");
         } else {
+          net.myChar = 0;
+          net.charLocked = true;
+          net.charSelectOpen = false;
           setStatus("Solo (offline)");
         }
         updatePillVisibility();
@@ -4877,11 +5225,15 @@
         writeOnlinePref(want);
         if (!want) {
           leave();
+          net.myChar = 0;
+          net.charLocked = true;
+          net.charSelectOpen = false;
           setStatus("Solo (offline)");
         } else if (net.inFreeRoam) {
           if (mpParam === "tabs") joinTabs(roomFromUrl || "MAIN");
           else if (mpParam !== "rtc") joinMesh(roomFromUrl || "MAIN");
         }
+        refreshCharSelect();
         refreshPanel();
         updateTelemetry();
       }
@@ -4904,10 +5256,12 @@
           if (!state || state.length !== 14) return;
           net.lastState = Float32Array.from(state);
           net.lastBuf = encodeState(net.lastState);
-          if (!net.transport) return;
+          if (!net.transport || !net.charLocked) return;
           sendBuf(net.lastBuf, false);
           net.lastSendAt = performance.now();
         },
+        selectChar,
+        openCharSelect,
         event(code, value) {
           if (!net.transport) return;
           const [buf, v] = header(T_EVENT, LEN[T_EVENT]);
@@ -4923,6 +5277,7 @@
           if (net.onlinePref || mpParam === "tabs" || mpParam === "rtc") flagsMask |= 1;
           if (net.transport) flagsMask |= 2;
           if (net.anchorId === myId) flagsMask |= 4;
+          if (net.charSelectOpen) flagsMask |= 8;
           out[0] = performance.now();
           out[1] = net.peers.size;
           out[2] = n;

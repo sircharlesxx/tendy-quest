@@ -710,15 +710,19 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
 fn receive_remote_states(
     mut commands: Commands,
     mut net: ResMut<NetState>,
-    stats: Res<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut window_q: Query<&mut Window, With<bevy::window::PrimaryWindow>>,
     mut text_q: Query<&mut Text>,
     mut color_q: Query<(&mut BorderColor, &mut BackgroundColor)>,
     mut text_color_q: Query<&mut TextColor>,
+    mut was_char_select: Local<bool>,
 ) {
     if !stats.free_roam {
+        stats.char_select_open = false;
+        *was_char_select = false;
         return;
     }
     let net = &mut *net;
@@ -735,6 +739,19 @@ fn receive_remote_states(
     net.online_active = (flags_mask & 1) != 0;
     net.transport_active = (flags_mask & 2) != 0;
     net.is_anchor = (flags_mask & 4) != 0;
+    let char_select = (flags_mask & 8) != 0;
+    stats.char_select_open = char_select;
+    if char_select && !*was_char_select {
+        if let Ok(mut window) = window_q.get_single_mut() {
+            window.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
+            window.cursor_options.visible = true;
+        }
+        crate::audio::set_touch_playing(false);
+    } else if !char_select && *was_char_select {
+        crate::audio::set_touch_playing(true);
+        let _ = crate::audio::take_pointer_lock_lost();
+    }
+    *was_char_select = char_select;
     net.avg_rtt_ms = if data[5] >= 0.0 {
         (data[5] as i32).min(9999)
     } else {
@@ -877,7 +894,7 @@ fn publish_local_state(
     player_q: Query<(&Transform, &Player, &Visibility)>,
     tf_q: Query<&Transform, Without<Player>>,
 ) {
-    if !stats.free_roam {
+    if !stats.free_roam || stats.char_select_open {
         return;
     }
     if let Some(prev) = net.last_score {
@@ -1031,7 +1048,7 @@ fn sync_claimed_pub_crew(
 ) {
     let mut mask: u8 = 0;
     if stats.free_roam {
-        if net.local_char <= 3 {
+        if !stats.char_select_open && net.local_char <= 3 {
             mask |= 1 << net.local_char;
         }
         for r in &net.remotes {
@@ -1715,13 +1732,14 @@ fn update_net_overlay(
 fn leave_city(
     mut commands: Commands,
     mut net: ResMut<NetState>,
-    stats: Res<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     player_q: Query<&Children, With<Player>>,
     local_crew_q: Query<(), With<LocalCrewVisual>>,
     npc_q: Query<Entity, Or<(With<CityNate>, With<CityGlenn>, With<TjCityActor>)>>,
     mut vis_q: Query<&mut Visibility, (Without<Player>, Without<LocalCrewVisual>)>,
     ui_q: Query<Entity, With<NetEntity>>,
 ) {
+    stats.char_select_open = false;
     if stats.free_roam {
         let away = f32::from(MODE_AWAY);
         crate::audio::net_publish(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.8, away, 0.0, 0.0]);

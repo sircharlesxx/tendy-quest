@@ -25,6 +25,11 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
+      - name: Stamp build version for mobile cache-busting
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:8}"
+          printf '{"v":"%s"}\n' "$SHORT_SHA" > dist/web/version.json
+          sed -i "s/__TQ_BUILD_ID__/${SHORT_SHA}/g" dist/web/index.html
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
