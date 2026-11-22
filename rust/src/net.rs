@@ -1641,19 +1641,26 @@ fn animate_local_crew_visual(
     }
 }
 
-fn spawn_net_hud(mut commands: Commands, stats: Res<PlayerStats>, mut net: ResMut<NetState>) {
-    if !stats.free_roam {
-        return;
-    }
+fn spawn_net_hud(
+    mut commands: Commands,
+    state: Res<State<GameState>>,
+    stats: Res<PlayerStats>,
+    mut net: ResMut<NetState>,
+) {
     net.last_score = None;
     net.last_drunk = stats.drunk_timer;
-    // Under the radar (city.rs: top 132 px, about 146 px tall), same right edge.
+    // Under the radar in CityPlay (top 132..278 px), or right below the top-right score card elsewhere.
+    let top_px = if *state.get() == GameState::CityPlay {
+        286.0
+    } else {
+        96.0
+    };
     commands
         .spawn((
             NetEntity,
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(286.0),
+                top: Val::Px(top_px),
                 right: Val::Px(12.0),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::FlexEnd,
@@ -1795,7 +1802,17 @@ fn update_net_overlay(
 
     let total = 1 + net.peers.max(net.remotes.len() as u32);
     let my_name = char_name(net.local_char, 1);
-    let status_line = if !net.online_active {
+    let status_line = if net.local_scene_id == 0 {
+        let sq = crate::audio::net_squad_info();
+        if net.avg_rtt_ms >= 0 && net.peers > 0 {
+            format!(
+                "ONLINE: {}/4 | LVL1 READY {}/{} | {}ms",
+                total.min(4), sq[1], sq[2], net.avg_rtt_ms
+            )
+        } else {
+            format!("ONLINE: {}/4 | LVL1 READY {}/{}", total.min(4), sq[1], sq[2])
+        }
+    } else if !net.online_active {
         "FREE ROAM: SOLO".to_string()
     } else if net.avg_rtt_ms >= 0 && net.peers > 0 {
         format!("ONLINE ({}) | {}/4 | {}ms", my_name, total.min(4), net.avg_rtt_ms)
