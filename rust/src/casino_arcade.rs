@@ -1402,6 +1402,117 @@ fn spawn_casino_arcade_machines(
         ));
     }
 
+    // Stargate Roller Coaster Boarding Arch & Glowing 3D "COASTER" Marquee Sign
+    let (rc_pos, rc_yaw) = ArcadeKind::RollerCoaster.pose();
+    let rc_world = CASINO_LEVEL_ORIGIN + rc_pos;
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Transform::from_translation(rc_world).with_rotation(Quat::from_rotation_y(rc_yaw)),
+            Visibility::default(),
+        ))
+        .with_children(|arch| {
+            // Twin neon boarding pillars flanking the boarding zone
+            for px in [-1.95_f32, 1.95] {
+                arch.spawn((
+                    Mesh3d(cyl_mesh.clone()),
+                    MeshMaterial3d(cr_bldg_dark.clone()),
+                    Transform::from_xyz(px, 1.8, -1.15).with_scale(Vec3::new(0.24, 3.6, 0.24)),
+                ));
+                arch.spawn((
+                    Mesh3d(cyl_mesh.clone()),
+                    MeshMaterial3d(neon_cyan.clone()),
+                    Transform::from_xyz(px, 1.8, -1.03).with_scale(Vec3::new(0.08, 3.4, 0.08)),
+                ));
+                arch.spawn((
+                    Mesh3d(sphere_mesh.clone()),
+                    MeshMaterial3d(neon_gold.clone()),
+                    Transform::from_xyz(px, 3.7, -1.15).with_scale(Vec3::splat(0.22)),
+                ));
+            }
+            // Dark obsidian marquee backing + gold frame + glowing pink trim
+            arch.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(cr_bldg_dark.clone()),
+                Transform::from_xyz(0.0, 3.35, -1.15).with_scale(Vec3::new(4.4, 1.35, 0.24)),
+            ));
+            arch.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(trim_gold.clone()),
+                Transform::from_xyz(0.0, 4.06, -1.15).with_scale(Vec3::new(4.55, 0.10, 0.30)),
+            ));
+            arch.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(neon_pink.clone()),
+                Transform::from_xyz(0.0, 2.64, -1.15).with_scale(Vec3::new(4.55, 0.10, 0.30)),
+            ));
+            // Halo Stargate ring + display mini-coaster car perched on top of the sign
+            arch.spawn((
+                Mesh3d(ring_mesh.clone()),
+                MeshMaterial3d(neon_cyan.clone()),
+                Transform::from_xyz(0.0, 4.55, -1.15).with_scale(Vec3::new(0.95, 0.95, 0.35)),
+            ));
+            arch.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(coaster_car_mat.clone()),
+                Transform::from_xyz(0.0, 4.35, -1.15)
+                    .with_rotation(Quat::from_rotation_z(0.18))
+                    .with_scale(Vec3::new(0.95, 0.34, 0.50)),
+            ));
+            // Downward neon pointer arrow above the boarding ring
+            arch.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(neon_cyan.clone()),
+                Transform::from_xyz(0.0, 2.28, -0.55).with_scale(Vec3::new(0.14, 0.42, 0.14)),
+            ));
+            arch.spawn((
+                Mesh3d(meshes.add(Cone::new(0.24, 0.32))),
+                MeshMaterial3d(neon_gold.clone()),
+                Transform::from_xyz(0.0, 1.98, -0.55).with_rotation(Quat::from_rotation_x(PI)),
+            ));
+
+            // Crisp 3D voxel-block letters spelling "COASTER" on both front & back of the marquee
+            const GLYPHS: [&[&str]; 7] = [
+                // C
+                &["1111", "1000", "1000", "1000", "1111"],
+                // O
+                &["1111", "1001", "1001", "1001", "1111"],
+                // A
+                &["0110", "1001", "1111", "1001", "1001"],
+                // S
+                &["1111", "1000", "1111", "0001", "1111"],
+                // T
+                &["1111", "0110", "0110", "0110", "0110"],
+                // E
+                &["1111", "1000", "1110", "1000", "1111"],
+                // R
+                &["1110", "1001", "1110", "1010", "1001"],
+            ];
+            let cell = 0.125_f32;
+            let total_w = 7.0 * 4.0 * cell + 6.0 * (cell * 0.9);
+            let start_x = -total_w * 0.5 + cell * 0.5;
+            for (li, rows) in GLYPHS.iter().enumerate() {
+                let lx_base = start_x + li as f32 * (4.0 * cell + cell * 0.9);
+                for (ry, row) in rows.iter().enumerate() {
+                    let py = 3.35 + (2.0 - ry as f32) * (cell * 1.15);
+                    for (cx, ch) in row.bytes().enumerate() {
+                        if ch == b'1' {
+                            let px = lx_base + cx as f32 * cell;
+                            for z_face in [-0.14_f32, 0.14] {
+                                arch.spawn((
+                                    Mesh3d(box_mesh.clone()),
+                                    MeshMaterial3d(neon_gold.clone()),
+                                    Transform::from_xyz(px, py, -1.15 + z_face)
+                                        .with_scale(Vec3::new(cell * 0.92, cell * 1.05, 0.06)),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
     // 4-car neon coaster train
     for ci in 0..4_usize {
         let (p, rot) = coaster_sample(0.0);
