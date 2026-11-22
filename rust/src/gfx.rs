@@ -83,6 +83,8 @@ enum SceneKind {
     Anime,
     /// Hand-styled cutscene sets (bedroom, memory void, manga, TJ, finale): leave their look alone.
     Stylized,
+    /// Tendy Palace Casino: obsidian mirror floor, neon bloom, and chandelier reflections.
+    Casino,
 }
 
 #[derive(Resource)]
@@ -742,8 +744,8 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         // (`SceneKind::Stylized` gives crisp 20k noon sunlight and bright blue ClearColor sky instead
         // of `SceneKind::City`'s dusk sunset dome). Gameplay impact: visual lighting/sky only.
         | GameState::ChillaryCutscene
-        | GameState::PubPortalCutscene
-        | GameState::CasinoPlay => SceneKind::Stylized,
+        | GameState::PubPortalCutscene => SceneKind::Stylized,
+        GameState::CasinoPlay => SceneKind::Casino,
     }
 }
 
@@ -776,7 +778,7 @@ fn sky_for(kind: SceneKind, clear: Color) -> Option<SkyColors> {
                 ground: horizon * 0.6,
             })
         }
-        SceneKind::Apartment | SceneKind::Stylized => None,
+        SceneKind::Apartment | SceneKind::Stylized | SceneKind::Casino => None,
     }
 }
 
@@ -816,6 +818,7 @@ fn apply_scene_rig(
         SceneKind::City => 3.6,
         SceneKind::Anime => 1.0,
         SceneKind::Stylized => 1.0,
+        SceneKind::Casino => 0.48,
     };
     let (base, written) = *ambient_track;
     let new_base = if (ambient.brightness - written).abs() > 1e-3 {
@@ -863,6 +866,12 @@ fn apply_scene_rig(
             Color::srgb(1.0, 0.96, 0.86),
             Vec3::new(12.0, 42.0, 28.0),
             80.0,
+        ),
+        SceneKind::Casino => (
+            1_400.0,
+            Color::srgb(0.68, 0.58, 1.0),
+            Vec3::new(8.0, 34.0, 18.0),
+            60.0,
         ),
     };
     let sig = (kind, (shadow_far * 2.0) as i32);
@@ -950,6 +959,7 @@ fn apply_scene_rig(
             SceneKind::City | SceneKind::Anime => 0.07,
             SceneKind::Apartment => 0.05,
             SceneKind::Stylized => 0.06,
+            SceneKind::Casino => 0.15,
         };
         if let Some(mut bloom) = bloom {
             if (bloom.intensity - want_bloom).abs() > 1e-4 {
@@ -959,6 +969,8 @@ fn apply_scene_rig(
         // The city palette is already saturated (sidewalk orange, grass green): grade it neutral.
         let (post_sat, mid_sat) = if kind == SceneKind::City {
             (0.97, 1.0)
+        } else if kind == SceneKind::Casino {
+            (1.24, 1.14)
         } else {
             (1.12, 1.06)
         };

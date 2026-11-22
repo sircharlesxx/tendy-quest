@@ -90,6 +90,7 @@ impl Plugin for CasinoPlugin {
                     update_casino_3d_blackjack.run_if(sim_running),
                     update_casino_3d_slots.run_if(sim_running),
                     update_buffalo_stampede.run_if(sim_running),
+                    update_casino_mirror_and_hair.run_if(sim_running),
                     update_casino_coins.run_if(sim_running),
                     update_casino_station_camera.run_if(sim_running),
                     refresh_casino_ui,
@@ -119,6 +120,7 @@ pub(crate) struct CasinoArt {
     pub(crate) chillary_portrait: Handle<Image>,   // Chillary Clinton dealer portrait
     pub(crate) card_back: Handle<Image>,           // Royal crimson & gold card back
     pub(crate) card_faces: Vec<Handle<Image>>,     // 52 crisp playing card faces (suit * 13 + rank - 1)
+    pub(crate) env_cubemap: Handle<Image>,         // Procedural neon-gold Casino IBL reflection cubemap
 }
 
 struct PxCanvas {
@@ -910,6 +912,61 @@ fn paint_return_portal_sign() -> Image {
     c.into_image()
 }
 
+fn paint_casino_env_cubemap() -> Image {
+    use bevy::render::render_asset::RenderAssetUsages;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension};
+    let s = 16_u32;
+    let mut data = Vec::with_capacity((s * s * 6 * 4) as usize);
+    for face in 0..6_u32 {
+        for y in 0..s {
+            for x in 0..s {
+                let u = x as f32 / (s - 1) as f32;
+                let v = y as f32 / (s - 1) as f32;
+                let (r, g, b) = match face {
+                    // +Y: obsidian ceiling with bright gold chandelier halos
+                    2 => {
+                        let d = ((u - 0.5).powi(2) + (v - 0.5).powi(2)).sqrt();
+                        if d < 0.24 {
+                            (255, 220, 120)
+                        } else {
+                            (28, 12, 46)
+                        }
+                    }
+                    // -Y: deep obsidian floor bounce
+                    3 => (12, 10, 24),
+                    // Side walls: neon magenta / cyan / gold horizontal strips
+                    _ => {
+                        if (v - 0.28).abs() < 0.08 {
+                            (255, 195, 65)
+                        } else if (v - 0.52).abs() < 0.07 {
+                            if face % 2 == 0 { (55, 225, 255) } else { (255, 70, 195) }
+                        } else {
+                            (22, 10, 38)
+                        }
+                    }
+                };
+                data.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+    }
+    let mut img = Image::new(
+        Extent3d {
+            width: s,
+            height: s,
+            depth_or_array_layers: 6,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::Cube),
+        ..default()
+    });
+    img
+}
+
 fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let marquee = images.add(paint_marquee_banner());
     let mut b_canv = PxCanvas::new(160, 96);
@@ -952,8 +1009,28 @@ fn setup_casino_textures(mut commands: Commands, mut images: ResMut<Assets<Image
         chillary_portrait,
         card_back,
         card_faces,
+        env_cubemap: images.add(paint_casino_env_cubemap()),
     });
 }
+
+#[derive(Component)]
+struct MirrorPlayerProxy {
+    base_scale: f32,
+}
+
+#[derive(Component)]
+struct HairPhysicsStrand {
+    is_player: bool,
+    rest_pitch: f32,
+    angle_x: f32,
+    angle_z: f32,
+    vel_x: f32,
+    vel_z: f32,
+    phase: f32,
+}
+
+#[derive(Component)]
+struct CasinoChandelierCrystal(f32);
 
 // =================================================================================================
 // 3D Grand Tendy Palace Casino Level (GameState::CasinoPlay)
@@ -1007,10 +1084,10 @@ fn enter_casino_play(
     old_casino_q: Query<Entity, With<CasinoLevelEntity>>,
     mut hud_q: Query<(&mut Node, &mut Visibility), With<HudOverlay>>,
     mut player_q: Query<
-        (&mut Transform, &mut crate::player::Player, &mut Visibility),
+        (Entity, &mut Transform, &mut crate::player::Player, &mut Visibility),
         (With<Player>, Without<HudOverlay>, Without<Camera3d>),
     >,
-    mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<HudOverlay>)>,
+    mut cam_q: Query<(Entity, &mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<HudOverlay>)>,
 ) {
     for e in &old_casino_q {
         commands.entity(e).despawn_recursive();
@@ -1039,13 +1116,15 @@ fn enter_casino_play(
         *vis = Visibility::Inherited;
     }
 
-    commands.insert_resource(ClearColor(Color::srgb(0.05, 0.02, 0.07)));
+    commands.insert_resource(ClearColor(Color::srgb(0.015, 0.008, 0.028)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.96, 0.88, 0.96),
-        brightness: 540.0,
+        color: Color::srgb(0.45, 0.34, 0.72),
+        brightness: 220.0,
     });
 
-    if let Ok((mut p_tf, mut player, mut vis)) = player_q.get_single_mut() {
+    let mut player_entity_opt = None;
+    if let Ok((pe, mut p_tf, mut player, mut vis)) = player_q.get_single_mut() {
+        player_entity_opt = Some(pe);
         p_tf.translation = CASINO_SPAWN_POS;
         p_tf.scale = Vec3::splat(stats.body_scale());
         p_tf.rotation = Quat::IDENTITY;
@@ -1066,21 +1145,27 @@ fn enter_casino_play(
     orbit.blend_t = crate::state::CAMERA_BLEND_SECS;
     orbit.push_offset = Vec3::ZERO;
 
-    if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
+    let Some(art) = art else {
+        return;
+    };
+
+    if let Ok((ce, mut c_tf, mut proj)) = cam_q.get_single_mut() {
         c_tf.translation = CASINO_SPAWN_POS + Vec3::new(0.0, 4.4, 8.6);
         c_tf.look_at(CASINO_SPAWN_POS + Vec3::new(0.0, 2.0, -4.0), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
             p.fov = std::f32::consts::FRAC_PI_4;
         }
+        commands.entity(ce).insert(EnvironmentMapLight {
+            diffuse_map: art.env_cubemap.clone(),
+            specular_map: art.env_cubemap.clone(),
+            intensity: 850.0,
+            rotation: Quat::IDENTITY,
+        });
     }
 
     set_touch_playing(true);
     set_touch_boss_mode(false);
     play_casino_jazz_music();
-
-    let Some(art) = art else {
-        return;
-    };
 
     let orig = CASINO_LEVEL_ORIGIN;
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
@@ -1100,19 +1185,30 @@ fn enter_casino_play(
         ..default()
     });
     let gold_trim_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.78, 0.24),
-        metallic: 0.76,
-        perceptual_roughness: 0.24,
+        base_color: Color::srgb(0.98, 0.80, 0.24),
+        metallic: 0.96,
+        perceptual_roughness: 0.08,
+        clearcoat: 1.0,
+        clearcoat_perceptual_roughness: 0.05,
         ..default()
     });
-    let carpet_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.38, 0.05, 0.12),
-        perceptual_roughness: 0.88,
+    let mirror_floor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.012, 0.012, 0.025, 0.80),
+        alpha_mode: AlphaMode::Blend,
+        metallic: 0.96,
+        perceptual_roughness: 0.03,
+        clearcoat: 1.0,
+        clearcoat_perceptual_roughness: 0.02,
+        ..default()
+    });
+    let void_floor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.006, 0.004, 0.014),
+        unlit: true,
         ..default()
     });
     let red_runner_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.76, 0.08, 0.16),
-        perceptual_roughness: 0.84,
+        base_color: Color::srgb(0.54, 0.04, 0.10),
+        perceptual_roughness: 0.72,
         ..default()
     });
     let felt_green_mat = materials.add(StandardMaterial {
@@ -1239,18 +1335,203 @@ fn enter_casino_play(
         ));
     }
 
-    // Main floor slab + PlatformBox collider (top surface at y = 0.0)
+    // Invisible floor PlatformBox collider (top at y = 0.0) + Obsidian Mirror Marble Plane + Deep Void
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
-        Mesh3d(unit_box.clone()),
-        MeshMaterial3d(carpet_mat.clone()),
-        Transform::from_translation(orig + Vec3::new(0.0, -0.5, 0.0))
-            .with_scale(Vec3::new(46.0, 1.0, 46.0)),
+        Transform::from_translation(orig + Vec3::new(0.0, -0.5, 0.0)),
         PlatformBox {
             half_extents: Vec3::new(23.0, 0.5, 23.0),
         },
     ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(23.0)))),
+        MeshMaterial3d(mirror_floor_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, 0.002, 0.0)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::splat(30.0)))),
+        MeshMaterial3d(void_floor_mat),
+        Transform::from_translation(orig + Vec3::new(0.0, -12.0, 0.0)),
+    ));
+
+    // Real-time mirrored reflection layer beneath the translucent obsidian mirror floor (y < 0.0)
+    let mirror_player_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.42, 0.14, 0.18),
+        emissive: LinearRgba::rgb(0.28, 0.08, 0.12),
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    let mirror_head_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.45, 0.34, 0.28),
+        emissive: LinearRgba::rgb(0.18, 0.12, 0.10),
+        ..default()
+    });
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            MirrorPlayerProxy {
+                base_scale: stats.body_scale(),
+            },
+            Transform::from_translation(CASINO_SPAWN_POS * Vec3::new(1.0, -1.0, 1.0))
+                .with_scale(Vec3::new(stats.body_scale(), -stats.body_scale(), stats.body_scale())),
+            Visibility::default(),
+        ))
+        .with_children(|mp| {
+            mp.spawn((
+                Mesh3d(unit_box.clone()),
+                MeshMaterial3d(mirror_player_mat),
+                Transform::from_xyz(0.0, 0.56, 0.0).with_scale(Vec3::new(0.55, 0.72, 0.34)),
+            ));
+            mp.spawn((
+                Mesh3d(unit_sphere.clone()),
+                MeshMaterial3d(mirror_head_mat),
+                Transform::from_xyz(0.0, 1.08, 0.0).with_scale(Vec3::splat(0.24)),
+            ));
+        });
+
+    // Inverted architectural & neon reflections for Blackjack tables, Slot banks, and Pillars
+    let mirror_gold_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.55, 0.42, 0.12),
+        emissive: LinearRgba::rgb(0.65, 0.45, 0.08),
+        unlit: true,
+        ..default()
+    });
+    let mirror_pink_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.20, 0.60),
+        emissive: LinearRgba::rgb(1.1, 0.25, 0.85),
+        unlit: true,
+        ..default()
+    });
+    let mirror_cyan_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.15, 0.72, 0.85),
+        emissive: LinearRgba::rgb(0.25, 1.0, 1.3),
+        unlit: true,
+        ..default()
+    });
+    for (tp, yaw) in BJ_TABLES {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_cyl.clone()),
+            MeshMaterial3d(mirror_gold_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(tp.x, -1.25, tp.z))
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::new(2.45, 0.16, 1.75)),
+        ));
+    }
+    for cab in 0..SLOT_CABS {
+        let (cp, cy) = slot_cab_pose(cab);
+        let mmat = if cab < 4 { mirror_gold_mat.clone() } else { mirror_pink_mat.clone() };
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(mmat),
+            Transform::from_translation(orig + Vec3::new(cp.x, -1.35, cp.z))
+                .with_rotation(Quat::from_rotation_y(cy))
+                .with_scale(Vec3::new(1.1, 2.4, 0.9)),
+        ));
+    }
+    for sx in [-12.0_f32, 12.0] {
+        for sz in [-11.0_f32, 0.0, 11.0] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(unit_cyl.clone()),
+                MeshMaterial3d(mirror_cyan_mat.clone()),
+                Transform::from_translation(orig + Vec3::new(sx, -3.5, sz))
+                    .with_scale(Vec3::new(0.45, 7.0, 0.45)),
+            ));
+        }
+    }
+
+    // Overhead rotating Crystal Chandeliers + mirrored chandelier reflections
+    let crystal_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 0.96, 1.0),
+        emissive: LinearRgba::rgb(1.4, 1.8, 2.4),
+        metallic: 0.9,
+        perceptual_roughness: 0.05,
+        ..default()
+    });
+    for (cx, cz, phase) in [(-6.0_f32, -3.0_f32, 0.0_f32), (6.0, -3.0, 1.5), (0.0, 6.5, 3.0)] {
+        commands
+            .spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                CasinoChandelierCrystal(phase),
+                Transform::from_translation(orig + Vec3::new(cx, 6.6, cz)),
+                Visibility::default(),
+            ))
+            .with_children(|ch| {
+                ch.spawn((
+                    Mesh3d(ring_mesh.clone()),
+                    MeshMaterial3d(gold_trim_mat.clone()),
+                    Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(1.4, 0.35, 1.4)),
+                ));
+                for k in 0..8 {
+                    let a = k as f32 * std::f32::consts::TAU / 8.0;
+                    ch.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(crystal_mat.clone()),
+                        Transform::from_xyz(a.cos() * 1.45, -0.35, a.sin() * 1.45)
+                            .with_scale(Vec3::new(0.10, 0.55, 0.10)),
+                    ));
+                }
+            });
+        // Mirrored chandelier glow under the floor
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(ring_mesh.clone()),
+            MeshMaterial3d(mirror_gold_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(cx, -6.6, cz))
+                .with_scale(Vec3::new(1.4, 0.35, 1.4)),
+        ));
+    }
+
+    // Attach 4 spring-pendulum HairPhysicsStrands to the Player's head!
+    if let Some(pe) = player_entity_opt {
+        let player_hair_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.28, 0.16, 0.10),
+            perceptual_roughness: 0.42,
+            ..default()
+        });
+        commands.entity(pe).with_children(|p| {
+            for (hi, (hx, hy, hz, pitch)) in [
+                (0.0_f32, 1.24_f32, 0.12_f32, 0.35_f32),
+                (-0.10, 1.22, 0.14, 0.42),
+                (0.10, 1.22, 0.14, 0.42),
+                (0.0, 1.14, 0.19, 0.55),
+            ]
+            .iter()
+            .enumerate()
+            {
+                p.spawn((
+                    CasinoLevelEntity,
+                    HairPhysicsStrand {
+                        is_player: true,
+                        rest_pitch: *pitch,
+                        angle_x: *pitch,
+                        angle_z: 0.0,
+                        vel_x: 0.0,
+                        vel_z: 0.0,
+                        phase: hi as f32 * 1.3,
+                    },
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(player_hair_mat.clone()),
+                    Transform::from_xyz(*hx, *hy, *hz)
+                        .with_rotation(Quat::from_rotation_x(*pitch))
+                        .with_scale(Vec3::new(0.07, 0.24, 0.07)),
+                ));
+            }
+        });
+    }
     // Central red runner carpet with gold trim borders + VIP velvet stanchions + floor diamond inlays
     commands.spawn((
         LevelEntity,
@@ -1668,7 +1949,12 @@ fn enter_casino_play(
                     MeshMaterial3d(neon_gold_mat.clone()),
                     Transform::from_xyz(0.0, 3.68, -0.35).with_scale(Vec3::splat(0.20)),
                 ));
-                // Chillary Clinton dealing from behind every Blackjack table
+                // Chillary Clinton dealing from behind every Blackjack table (+ spring hair strands!)
+                let chillary_hair_mat = materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.95, 0.80, 0.34),
+                    perceptual_roughness: 0.35,
+                    ..default()
+                });
                 t.spawn((
                     ChillaryDealerPart {
                         table_idx: ti,
@@ -1680,6 +1966,24 @@ fn enter_casino_play(
                 ))
                 .with_children(|d| {
                     crate::chillary::spawn_chillary_dealer_rig(d, &mut meshes, &chillary_mats, ti);
+                    for (hi, hx) in [-0.14_f32, 0.0, 0.14].iter().enumerate() {
+                        d.spawn((
+                            HairPhysicsStrand {
+                                is_player: false,
+                                rest_pitch: -0.24,
+                                angle_x: -0.24,
+                                angle_z: 0.0,
+                                vel_x: 0.0,
+                                vel_z: 0.0,
+                                phase: (ti * 3 + hi) as f32 * 0.9,
+                            },
+                            Mesh3d(unit_box.clone()),
+                            MeshMaterial3d(chillary_hair_mat.clone()),
+                            Transform::from_xyz(*hx, 1.34, -0.18)
+                                .with_rotation(Quat::from_rotation_x(-0.24))
+                                .with_scale(Vec3::new(0.08, 0.32, 0.08)),
+                        ));
+                    }
                 });
             });
     }
@@ -2136,10 +2440,14 @@ fn exit_casino_play(
     mut game: ResMut<CasinoGameState>,
     mut sync: ResMut<Casino3dSync>,
     mut player_q: Query<&mut Visibility, With<Player>>,
+    cam_q: Query<Entity, With<Camera3d>>,
     level_q: Query<Entity, With<CasinoLevelEntity>>,
     ui_q: Query<Entity, With<CasinoUiRoot>>,
     prompt_q: Query<Entity, With<CasinoPromptUi>>,
 ) {
+    for ce in &cam_q {
+        commands.entity(ce).remove::<EnvironmentMapLight>();
+    }
     if game.slot_spinning {
         finish_slot_spin(&mut stats, &mut game);
     }
@@ -4902,6 +5210,53 @@ fn update_buffalo_stampede(
     }
     for (leg, mut tf) in &mut leg_q {
         tf.rotation = Quat::from_rotation_x((t * 16.0 + leg.phase).sin() * leg.amp);
+    }
+}
+
+fn update_casino_mirror_and_hair(
+    time: Res<Time<Real>>,
+    player_q: Query<(&Transform, &crate::player::Player, &Visibility), (Without<MirrorPlayerProxy>, Without<HairPhysicsStrand>, Without<CasinoChandelierCrystal>)>,
+    mut mirror_q: Query<(&MirrorPlayerProxy, &mut Transform, &mut Visibility), (Without<Player>, Without<HairPhysicsStrand>, Without<CasinoChandelierCrystal>)>,
+    mut hair_q: Query<(&mut HairPhysicsStrand, &mut Transform), (Without<Player>, Without<MirrorPlayerProxy>, Without<CasinoChandelierCrystal>)>,
+    mut chand_q: Query<(&CasinoChandelierCrystal, &mut Transform), (Without<Player>, Without<MirrorPlayerProxy>, Without<HairPhysicsStrand>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    let mut p_vel = Vec3::ZERO;
+    if let Ok((p_tf, player, p_vis)) = player_q.get_single() {
+        p_vel = player.velocity;
+        for (mp, mut m_tf, mut m_vis) in &mut mirror_q {
+            m_tf.translation = Vec3::new(p_tf.translation.x, -p_tf.translation.y.max(0.0), p_tf.translation.z);
+            m_tf.rotation = Quat::from_rotation_y(player.facing_yaw);
+            m_tf.scale = Vec3::new(mp.base_scale, -mp.base_scale, mp.base_scale);
+            *m_vis = *p_vis;
+        }
+    }
+
+    let horiz_speed = Vec2::new(p_vel.x, p_vel.z).length();
+    for (mut h, mut tf) in &mut hair_q {
+        let (target_x, target_z) = if h.is_player {
+            let whip = (horiz_speed * 0.09).min(0.85) + (-p_vel.y * 0.05).clamp(-0.4, 0.55);
+            let flutter = (t * 8.5 + h.phase).sin() * 0.08 * (0.2 + horiz_speed * 0.1);
+            (h.rest_pitch + whip, flutter)
+        } else {
+            let sway_x = h.rest_pitch + (t * 2.8 + h.phase).sin() * 0.14;
+            let sway_z = (t * 2.1 + h.phase * 1.4).cos() * 0.12;
+            (sway_x, sway_z)
+        };
+        let stiff = 64.0;
+        let damp = 9.0;
+        let ax = (target_x - h.angle_x) * stiff - h.vel_x * damp;
+        let az = (target_z - h.angle_z) * stiff - h.vel_z * damp;
+        h.vel_x += ax * dt;
+        h.vel_z += az * dt;
+        h.angle_x += h.vel_x * dt;
+        h.angle_z += h.vel_z * dt;
+        tf.rotation = Quat::from_rotation_x(h.angle_x) * Quat::from_rotation_z(h.angle_z);
+    }
+
+    for (ch, mut tf) in &mut chand_q {
+        tf.rotation = Quat::from_rotation_y(t * 0.45 + ch.0);
     }
 }
 
