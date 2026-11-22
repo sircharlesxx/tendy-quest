@@ -89,6 +89,7 @@ impl Plugin for CasinoPlugin {
                     handle_casino_modal_input.run_if(sim_running),
                     update_casino_3d_blackjack.run_if(sim_running),
                     update_casino_3d_slots.run_if(sim_running),
+                    update_buffalo_stampede.run_if(sim_running),
                     update_casino_coins.run_if(sim_running),
                     update_casino_station_camera.run_if(sim_running),
                     refresh_casino_ui,
@@ -1085,8 +1086,8 @@ fn enter_casino_play(
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
     let unit_sphere = meshes.add(Sphere::new(1.0));
-    let ring_mesh = meshes.add(Torus::new(0.14, 1.35));
-    let portal_ring_mesh = meshes.add(Torus::new(0.18, 2.15));
+    let ring_mesh = meshes.add(Torus::new(1.16, 1.35));
+    let portal_ring_mesh = meshes.add(Torus::new(1.92, 2.15));
 
     let wall_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.24, 0.06, 0.14),
@@ -1560,8 +1561,8 @@ fn enter_casino_play(
             ..default()
         })
     });
-    let rail_torus = meshes.add(Torus::new(0.065, 1.0));
-    let gold_rail_torus = meshes.add(Torus::new(0.035, 1.0));
+    let rail_torus = meshes.add(Torus::new(0.92, 1.02));
+    let gold_rail_torus = meshes.add(Torus::new(0.95, 1.02));
     let decal_mesh = meshes.add(Plane3d::new(Vec3::Y, Vec2::new(1.6, 1.0)));
     for (ti, (tp, yaw)) in BJ_TABLES.iter().enumerate() {
         let tpos = orig + *tp;
@@ -2327,6 +2328,8 @@ struct CasinoGameState {
     slot_last_win: u32,
     slot_spins: u32,
     slot_msg: String,
+    buffalo_stampede_timer: f32,
+    trigger_stampede: bool,
     // Ledger & 3D FX telemetry
     session_net: i64,
     total_wagered: u32,
@@ -2382,6 +2385,8 @@ impl Default for CasinoGameState {
             slot_last_win: 0,
             slot_spins: 0,
             slot_msg: "Select your TW bet and PULL LEVER [SPACE]!".to_string(),
+            buffalo_stampede_timer: 0.0,
+            trigger_stampede: false,
             session_net: 0,
             total_wagered: 0,
             biggest_win: 0,
@@ -2583,8 +2588,6 @@ enum CasinoDynamicText {
     StatusMsg,
     BjDealerScore,
     BjPlayerScore,
-    SlotPaytable,
-    SlotBonusStatus,
     CashierSummary,
 }
 
@@ -2604,29 +2607,12 @@ struct BjCardSuitImg;
 struct BjCardBackMask;
 
 #[derive(Component)]
-struct SlotCell {
-    col: usize,
-    row: usize,
-}
-
-#[derive(Component)]
-struct SlotCellImg;
-
-#[derive(Component)]
-struct LadyShowcaseFrame(usize);
-
-#[derive(Component)]
 enum CasinoPanel {
+    TopHeader,
     Blackjack,
-    Slots,
+    SlotBar,
     Cashier,
 }
-
-#[derive(Component)]
-struct BuffaloBannerPanel;
-
-#[derive(Component)]
-struct LadiesBannerPanel;
 
 fn open_casino_modal(
     commands: &mut Commands,
@@ -2739,6 +2725,12 @@ fn finish_slot_spin(stats: &mut PlayerStats, game: &mut CasinoGameState) {
     game.slot_hold_ready = !used_hold && game.slot_free_spins == 0;
     if game.slot_free_spins == 0 {
         game.slot_bonus_mult = 1;
+    }
+
+    if game.slot_theme == SlotTheme::Buffalo && (payout >= game.slot_bet * 30 || has_big_line) {
+        game.buffalo_stampede_timer = 7.0;
+        game.trigger_stampede = true;
+        msg = format!("{} THE HERD IS STAMPEDING!!", msg);
     }
 
     game.slot_win_lines = lines;
@@ -3323,6 +3315,17 @@ fn handle_casino_modal_input(
         CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
             if keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) {
                 start_slot_spin(&mut stats, &mut game);
+            } else if keys.just_pressed(KeyCode::KeyB) && !game.slot_spinning {
+                game.slot_bet = match game.slot_bet {
+                    5 => 10,
+                    10 => 25,
+                    25 => 50,
+                    _ => 5,
+                };
+                play_sfx("chip_bet");
+            } else if keys.just_pressed(KeyCode::KeyF) {
+                close_casino_modal(&mut commands, &mut stats, &mut game, &ui_q);
+                return;
             } else if keys.just_pressed(KeyCode::Digit1) {
                 toggle_slot_hold(&mut game, 0);
             } else if keys.just_pressed(KeyCode::Digit2) {
@@ -3460,6 +3463,7 @@ fn spawn_casino_ui(
             })
             .with_children(|top| {
                 top.spawn((
+                    CasinoPanel::TopHeader,
                     Node {
                         width: Val::Percent(100.0),
                         flex_direction: FlexDirection::Column,
@@ -3683,176 +3687,50 @@ fn spawn_casino_ui(
                     })
                     .with_children(|ctrl| {
                         for bet in [5_u32, 10, 25, 50, 100] {
-                            mk_btn(ctrl, CasinoActionBtn::BjBet(bet), &format!("{} TW", bet), Color::srgb(0.24, 0.20, 0.34), 12.0);
+                            mk_btn(ctrl, CasinoActionBtn::BjBet(bet), &format!("{} TW", bet), Color::srgb(0.24, 0.20, 0.34), 11.0);
                         }
-                        mk_btn(ctrl, CasinoActionBtn::BjDeal, "DEAL [SPACE]", Color::srgb(0.16, 0.56, 0.26), 13.0);
-                        mk_btn(ctrl, CasinoActionBtn::BjHit, "HIT [H]", Color::srgb(0.16, 0.44, 0.72), 13.0);
-                        mk_btn(ctrl, CasinoActionBtn::BjStand, "STAND [S]", Color::srgb(0.68, 0.34, 0.14), 13.0);
-                        mk_btn(ctrl, CasinoActionBtn::BjDouble, "DOUBLE [D]", Color::srgb(0.56, 0.18, 0.62), 13.0);
-                        mk_btn(ctrl, CasinoActionBtn::BjSurrender, "SURRENDER [R]", Color::srgb(0.36, 0.24, 0.28), 12.0);
+                        mk_btn(ctrl, CasinoActionBtn::BjDeal, "DEAL [SPACE]", Color::srgb(0.16, 0.56, 0.26), 11.5);
+                        mk_btn(ctrl, CasinoActionBtn::BjHit, "HIT [H]", Color::srgb(0.16, 0.44, 0.72), 11.5);
+                        mk_btn(ctrl, CasinoActionBtn::BjStand, "STAND [S]", Color::srgb(0.68, 0.34, 0.14), 11.5);
+                        mk_btn(ctrl, CasinoActionBtn::BjDouble, "DOUBLE [D]", Color::srgb(0.56, 0.18, 0.62), 11.5);
+                        mk_btn(ctrl, CasinoActionBtn::BjSurrender, "SURRENDER [R]", Color::srgb(0.36, 0.24, 0.28), 11.0);
                     });
                 });
 
-                // SLOTS DOCK (compact payline mirror + pull lever, while 3D drums spin above!)
+                // THIRD-PERSON SLOTS BAR: Minimal bottom-edge action strip (zero popup window!)
                 dock.spawn((
-                    CasinoPanel::Slots,
+                    CasinoPanel::SlotBar,
                     Node {
                         flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
                         align_items: AlignItems::Center,
-                        column_gap: Val::Px(14.0),
-                        padding: UiRect::all(Val::Px(8.0)),
+                        justify_content: JustifyContent::Center,
+                        column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(4.0),
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                         border: UiRect::all(Val::Px(1.5)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.14, 0.06, 0.14, 0.86)),
-                    BorderColor(Color::srgb(0.98, 0.74, 0.24)),
-                    BorderRadius::all(Val::Px(10.0)),
+                    BackgroundColor(Color::srgba(0.08, 0.04, 0.10, 0.72)),
+                    BorderColor(Color::srgba(0.98, 0.74, 0.24, 0.78)),
+                    BorderRadius::all(Val::Px(999.0)),
                 ))
-                .with_children(|sl| {
-                    sl.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(3.0),
-                        ..default()
-                    })
-                    .with_children(|grid| {
-                        for row in 0..3 {
-                            grid.spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                column_gap: Val::Px(4.0),
-                                ..default()
-                            })
-                            .with_children(|rnode| {
-                                for col in 0..3 {
-                                    rnode
-                                        .spawn((
-                                            SlotCell { col, row },
-                                            Node {
-                                                padding: UiRect::all(Val::Px(2.0)),
-                                                border: UiRect::all(Val::Px(2.0)),
-                                                ..default()
-                                            },
-                                            BackgroundColor(Color::srgb(0.06, 0.04, 0.08)),
-                                            BorderColor(Color::srgb(0.45, 0.36, 0.52)),
-                                            BorderRadius::all(Val::Px(5.0)),
-                                        ))
-                                        .with_children(|cell| {
-                                            cell.spawn((
-                                                SlotCellImg,
-                                                ImageNode::new(art.buffalo_icons[0].clone()),
-                                                Node {
-                                                    width: Val::Px(36.0),
-                                                    height: Val::Px(36.0),
-                                                    ..default()
-                                                },
-                                            ));
-                                        });
-                                }
-                            });
-                        }
-                        grid.spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            column_gap: Val::Px(4.0),
-                            margin: UiRect::top(Val::Px(2.0)),
-                            ..default()
-                        })
-                        .with_children(|holds| {
-                            for col in 0..3 {
-                                mk_btn(
-                                    holds,
-                                    CasinoActionBtn::SlotHold(col),
-                                    &format!("H{}", col + 1),
-                                    Color::srgb(0.14, 0.24, 0.34),
-                                    10.5,
-                                );
-                            }
-                        });
-                    });
-
-                    sl.spawn(Node {
-                        flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(6.0),
-                        max_width: Val::Px(460.0),
-                        ..default()
-                    })
-                    .with_children(|right| {
-                        right.spawn((
-                            BuffaloBannerPanel,
-                            ImageNode::new(art.buffalo_banner.clone()),
-                            Node {
-                                width: Val::Px(84.0),
-                                height: Val::Px(50.0),
-                                ..default()
-                            },
-                        ));
-                        right
-                            .spawn((
-                                LadiesBannerPanel,
-                                Node {
-                                    flex_direction: FlexDirection::Row,
-                                    column_gap: Val::Px(6.0),
-                                    ..default()
-                                },
-                            ))
-                            .with_children(|trio| {
-                                for (i, label) in ["RUBY 30x", "SAKURA 20x", "SKYE 15x"].iter().enumerate() {
-                                    trio.spawn((
-                                        LadyShowcaseFrame(i),
-                                        Node {
-                                            flex_direction: FlexDirection::Column,
-                                            align_items: AlignItems::Center,
-                                            padding: UiRect::all(Val::Px(2.0)),
-                                            border: UiRect::all(Val::Px(2.0)),
-                                            ..default()
-                                        },
-                                        BackgroundColor(Color::srgb(0.24, 0.06, 0.20)),
-                                        BorderColor(Color::srgb(1.0, 0.62, 0.85)),
-                                        BorderRadius::all(Val::Px(6.0)),
-                                    ))
-                                    .with_children(|frame| {
-                                        frame.spawn((
-                                            ImageNode::new(art.girl_banners[i].clone()),
-                                            Node {
-                                                width: Val::Px(40.0),
-                                                height: Val::Px(40.0),
-                                                ..default()
-                                            },
-                                        ));
-                                        frame.spawn((
-                                            Text::new(*label),
-                                            TextFont { font_size: 9.0, ..default() },
-                                            TextColor(Color::srgb(1.0, 0.86, 0.94)),
-                                        ));
-                                    });
-                                }
-                            });
-                        right.spawn((
-                            CasinoDynamicText::SlotBonusStatus,
-                            Text::new(""),
-                            TextFont { font_size: 11.5, ..default() },
-                            TextColor(Color::srgb(0.45, 0.96, 1.0)),
-                        ));
-                        right.spawn((
-                            CasinoDynamicText::SlotPaytable,
-                            Text::new(""),
-                            TextFont { font_size: 11.0, ..default() },
-                            TextColor(Color::srgb(0.86, 0.80, 0.92)),
-                        ));
-                        right
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                flex_wrap: FlexWrap::Wrap,
-                                column_gap: Val::Px(6.0),
-                                row_gap: Val::Px(6.0),
-                                ..default()
-                            })
-                            .with_children(|ctrl| {
-                                for bet in [5_u32, 10, 25, 50] {
-                                    mk_btn(ctrl, CasinoActionBtn::SlotBet(bet), &format!("BET {} TW", bet), Color::srgb(0.28, 0.16, 0.36), 12.5);
-                                }
-                                mk_btn(ctrl, CasinoActionBtn::SlotMaxBet, "MAX BET", Color::srgb(0.56, 0.32, 0.10), 12.5);
-                                mk_btn(ctrl, CasinoActionBtn::SlotSpin, "PULL LEVER [SPACE]", Color::srgb(0.82, 0.18, 0.24), 14.0);
-                            });
-                    });
+                .with_children(|ctrl| {
+                    for bet in [5_u32, 10, 25, 50] {
+                        mk_btn(ctrl, CasinoActionBtn::SlotBet(bet), &format!("{} TW", bet), Color::srgb(0.24, 0.16, 0.34), 11.5);
+                    }
+                    mk_btn(ctrl, CasinoActionBtn::SlotMaxBet, "MAX", Color::srgb(0.56, 0.32, 0.10), 11.5);
+                    for col in 0..3 {
+                        mk_btn(
+                            ctrl,
+                            CasinoActionBtn::SlotHold(col),
+                            &format!("H{}", col + 1),
+                            Color::srgb(0.14, 0.24, 0.34),
+                            11.5,
+                        );
+                    }
+                    mk_btn(ctrl, CasinoActionBtn::SlotSpin, "SPIN [SPACE]", Color::srgb(0.82, 0.18, 0.24), 13.0);
+                    mk_btn(ctrl, CasinoActionBtn::Leave, "LEAVE [ESC]", Color::srgb(0.45, 0.14, 0.18), 11.5);
                 });
             });
         });
@@ -3867,61 +3745,19 @@ fn refresh_casino_ui(
     mut dyn_text_q: Query<(&CasinoDynamicText, &mut Text)>,
     mut panel_q: Query<
         (&CasinoPanel, &mut Node),
-        (
-            Without<BuffaloBannerPanel>,
-            Without<LadiesBannerPanel>,
-            Without<BjCardSlot>,
-            Without<BjCardBackMask>,
-        ),
-    >,
-    mut buffalo_q: Query<
-        &mut Node,
-        (
-            With<BuffaloBannerPanel>,
-            Without<CasinoPanel>,
-            Without<LadiesBannerPanel>,
-            Without<BjCardSlot>,
-            Without<BjCardBackMask>,
-        ),
-    >,
-    mut ladies_q: Query<
-        &mut Node,
-        (
-            With<LadiesBannerPanel>,
-            Without<CasinoPanel>,
-            Without<BuffaloBannerPanel>,
-            Without<BjCardSlot>,
-            Without<BjCardBackMask>,
-        ),
+        (Without<BjCardSlot>, Without<BjCardBackMask>),
     >,
     mut btn_q: Query<(&CasinoActionBtn, &mut BorderColor)>,
     mut card_q: Query<
         (&BjCardSlot, &mut Node, &Children),
-        (
-            Without<CasinoPanel>,
-            Without<BuffaloBannerPanel>,
-            Without<LadiesBannerPanel>,
-            Without<BjCardBackMask>,
-        ),
+        (Without<CasinoPanel>, Without<BjCardBackMask>),
     >,
     mut card_rank_q: Query<(&mut Text, &mut TextColor), (With<BjCardRankText>, Without<CasinoDynamicText>)>,
-    mut card_suit_q: Query<&mut ImageNode, (With<BjCardSuitImg>, Without<SlotCellImg>)>,
+    mut card_suit_q: Query<&mut ImageNode, With<BjCardSuitImg>>,
     mut card_back_q: Query<
         &mut Node,
-        (
-            With<BjCardBackMask>,
-            Without<BjCardSlot>,
-            Without<CasinoPanel>,
-            Without<BuffaloBannerPanel>,
-            Without<LadiesBannerPanel>,
-        ),
+        (With<BjCardBackMask>, Without<BjCardSlot>, Without<CasinoPanel>),
     >,
-    mut slot_cell_q: Query<
-        (&SlotCell, &mut BorderColor, &Children),
-        (Without<CasinoActionBtn>, Without<LadyShowcaseFrame>),
-    >,
-    mut slot_img_q: Query<&mut ImageNode, (With<SlotCellImg>, Without<BjCardSuitImg>)>,
-    mut lady_frame_q: Query<(&LadyShowcaseFrame, &mut BorderColor), (Without<CasinoActionBtn>, Without<SlotCell>)>,
 ) {
     if !stats.casino_open || ui_q.is_empty() {
         return;
@@ -3940,7 +3776,15 @@ fn refresh_casino_ui(
             }
             CasinoDynamicText::StatusMsg => match game.station {
                 CasinoStationKind::Blackjack => game.bj_msg.clone(),
-                CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => game.slot_msg.clone(),
+                CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots => {
+                    let shown = game.display_tw.round().max(0.0) as u32;
+                    let fs = if game.slot_free_spins > 0 {
+                        format!(" | FREE SPINS: {} ({}x)", game.slot_free_spins, game.slot_bonus_mult)
+                    } else {
+                        String::new()
+                    };
+                    format!("{} TW{} | {}", shown, fs, game.slot_msg)
+                }
                 CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {
                     "Tendy Wendies persist across Story Mode, Free Mode & future updates!".to_string()
                 }
@@ -3974,30 +3818,6 @@ fn refresh_casino_ui(
                     )
                 }
             }
-            CasinoDynamicText::SlotPaytable => match game.slot_theme {
-                SlotTheme::Buffalo => {
-                    "5 PAYLINES: 3x BUFFALO 30x (WILD=2x!) | TENDY 15x | 7 12x | EAGLE 10x | WOLF 8x | TW 5x".to_string()
-                }
-                SlotTheme::LuckyLadies => {
-                    "5 PAYLINES: 3x RUBY 30x | SAKURA 20x | SKYE 15x | DIAMOND 10x | 3-LADY TRIO 8x | CHERRY 6x".to_string()
-                }
-            },
-            CasinoDynamicText::SlotBonusStatus => {
-                let meter_name = if game.slot_theme == SlotTheme::Buffalo {
-                    "STAMPEDE METER"
-                } else {
-                    "FEVER METER"
-                };
-                let hold_txt = if game.slot_free_spins > 0 {
-                    format!("FREE SPINS: {} ({}x PAYOUT!)", game.slot_free_spins, game.slot_bonus_mult)
-                } else if game.slot_hold_ready {
-                    let n = game.slot_held.iter().filter(|&&h| h).count();
-                    format!("HOLD READY [1/2/3] ({}/2 LOCKED)", n)
-                } else {
-                    "SPIN TO CHARGE METER & UNLOCK HOLD".to_string()
-                };
-                format!("{}: {}/4   |   {}", meter_name, game.slot_meter, hold_txt)
-            }
             CasinoDynamicText::CashierSummary => {
                 format!(
                     "WALLET BALANCE: {} Tendy Wendies (TW)   |   VIP TIER: {}\n\nEARN MORE TW:\n- Collect Kitchen Tendies (+2 TW each)\n- Collect Cedar Rapids Tendies (+5 TW each)\n- Defeat Lexie (+100 TW jackpot bonus)\n- Win Blackjack (with Lucky Pairs & 5-Card Charlie!) or Slots!\n\nSESSION STATS:\n- Blackjack Hands: {}   |   Slot Spins: {}   |   Total Wagered: {} TW\n- Biggest Win: {} TW   |   Session Net: {} TW",
@@ -4016,30 +3836,18 @@ fn refresh_casino_ui(
         }
     }
 
+    let is_slots = matches!(
+        game.station,
+        CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots
+    );
     for (panel, mut node) in &mut panel_q {
         let show = match panel {
+            CasinoPanel::TopHeader => !is_slots,
             CasinoPanel::Blackjack => game.station == CasinoStationKind::Blackjack,
-            CasinoPanel::Slots => matches!(
-                game.station,
-                CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots
-            ),
+            CasinoPanel::SlotBar => is_slots,
             CasinoPanel::Cashier => game.station == CasinoStationKind::Cashier,
         };
         let want = if show { Display::Flex } else { Display::None };
-        if node.display != want {
-            node.display = want;
-        }
-    }
-
-    let is_buffalo = game.slot_theme == SlotTheme::Buffalo;
-    for mut node in &mut buffalo_q {
-        let want = if is_buffalo { Display::Flex } else { Display::None };
-        if node.display != want {
-            node.display = want;
-        }
-    }
-    for mut node in &mut ladies_q {
-        let want = if !is_buffalo { Display::Flex } else { Display::None };
         if node.display != want {
             node.display = want;
         }
@@ -4097,45 +3905,6 @@ fn refresh_casino_ui(
                 }
             }
         }
-    }
-
-    // Update 3x3 Slot Reel Images & Gold Winning Payline Borders
-    let mut win_cells = [[false; 3]; 3];
-    for &line_idx in &game.slot_win_lines {
-        if let Some(coords) = PAYLINES.get(line_idx) {
-            for &(c, r) in coords {
-                win_cells[c][r] = true;
-            }
-        }
-    }
-    for (cell, mut border, children) in &mut slot_cell_q {
-        let sym = game.slot_grid[cell.col][cell.row].min(5);
-        border.0 = if win_cells[cell.col][cell.row] {
-            Color::srgb(1.0, 0.88, 0.22)
-        } else {
-            Color::srgb(0.45, 0.36, 0.52)
-        };
-        for &ch in children.iter() {
-            if let Ok(mut img) = slot_img_q.get_mut(ch) {
-                img.image = if is_buffalo {
-                    art.buffalo_icons[sym].clone()
-                } else {
-                    art.ladies_icons[sym].clone()
-                };
-            }
-        }
-    }
-
-    // Highlight matching Lucky Ladies showcase portrait if won on grid
-    for (frame, mut border) in &mut lady_frame_q {
-        let won_lady = !is_buffalo
-            && game.slot_last_win > 0
-            && (0..3).any(|c| (0..3).any(|r| win_cells[c][r] && game.slot_grid[c][r] == frame.0));
-        border.0 = if won_lady {
-            Color::srgb(1.0, 0.88, 0.24)
-        } else {
-            Color::srgb(1.0, 0.62, 0.85)
-        };
     }
 }
 
@@ -4973,38 +4742,212 @@ fn update_casino_coins(
     }
 }
 
-/// Glides the camera smoothly into a seated view of Chillary's Blackjack table or the active 3D
-/// Slot cabinet while `stats.casino_open` (`player.rs::update_camera` stands down while seated).
+#[derive(Component)]
+struct BuffaloStampedeMob {
+    speed: f32,
+    phase: f32,
+    base_x: f32,
+    sway_amp: f32,
+}
+
+#[derive(Component)]
+struct BuffaloLeg {
+    phase: f32,
+    amp: f32,
+}
+
+/// Spawns a thundering herd of 14 articulated 3D buffaloes charging straight through the casino!
+fn spawn_buffalo_herd(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let fur_dark = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.12, 0.06),
+        perceptual_roughness: 0.92,
+        ..default()
+    });
+    let fur_hump = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.17, 0.08),
+        perceptual_roughness: 0.90,
+        ..default()
+    });
+    let horn_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.86, 0.68),
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let eye_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.65, 0.1),
+        emissive: LinearRgba::rgb(2.2, 1.1, 0.1),
+        ..default()
+    });
+    let body_mesh = meshes.add(Sphere::new(0.68));
+    let hump_mesh = meshes.add(Sphere::new(0.62));
+    let head_mesh = meshes.add(Cuboid::new(0.56, 0.56, 0.62));
+    let horn_mesh = meshes.add(Cone::new(0.08, 0.42));
+    let leg_mesh = meshes.add(Cylinder::new(0.10, 0.68));
+    let eye_mesh = meshes.add(Sphere::new(0.055));
+
+    for i in 0..14_u32 {
+        let lane_x = -9.8 + (i % 7) as f32 * 3.25 + (hash01(i * 17 + 3) - 0.5) * 1.4;
+        let wave_z = if i < 7 {
+            -18.5 - hash01(i * 31 + 1) * 6.0
+        } else {
+            -27.5 - hash01(i * 43 + 7) * 7.5
+        };
+        let speed = 10.0 + hash01(i * 59 + 11) * 3.6;
+        let sc = 0.95 + hash01(i * 71 + 5) * 0.32;
+        let phase = hash01(i * 89 + 9) * TAU;
+
+        commands
+            .spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                BuffaloStampedeMob {
+                    speed,
+                    phase,
+                    base_x: lane_x,
+                    sway_amp: 0.35 + hash01(i * 23) * 0.45,
+                },
+                Transform::from_translation(CASINO_LEVEL_ORIGIN + Vec3::new(lane_x, 0.0, wave_z))
+                    .with_scale(Vec3::splat(sc)),
+                Visibility::default(),
+            ))
+            .with_children(|b| {
+                // Main shaggy torso
+                b.spawn((
+                    Mesh3d(body_mesh.clone()),
+                    MeshMaterial3d(fur_dark.clone()),
+                    Transform::from_xyz(0.0, 0.98, -0.05).with_scale(Vec3::new(0.95, 0.85, 1.48)),
+                ));
+                // Massive front shoulder hump
+                b.spawn((
+                    Mesh3d(hump_mesh.clone()),
+                    MeshMaterial3d(fur_hump.clone()),
+                    Transform::from_xyz(0.0, 1.24, 0.45).with_scale(Vec3::new(1.06, 1.05, 1.02)),
+                ));
+                // Charging head (+Z forward)
+                b.spawn((
+                    Mesh3d(head_mesh.clone()),
+                    MeshMaterial3d(fur_dark.clone()),
+                    Transform::from_xyz(0.0, 0.98, 1.02)
+                        .with_rotation(Quat::from_rotation_x(0.24)),
+                ));
+                // Curved ivory horns
+                for side in [-1.0_f32, 1.0] {
+                    b.spawn((
+                        Mesh3d(horn_mesh.clone()),
+                        MeshMaterial3d(horn_mat.clone()),
+                        Transform::from_xyz(side * 0.34, 1.28, 1.02).with_rotation(
+                            Quat::from_rotation_z(-side * 0.82) * Quat::from_rotation_x(0.35),
+                        ),
+                    ));
+                    b.spawn((
+                        Mesh3d(eye_mesh.clone()),
+                        MeshMaterial3d(eye_mat.clone()),
+                        Transform::from_xyz(side * 0.22, 1.08, 1.28),
+                    ));
+                }
+                // 4 galloping legs
+                let leg_coords = [
+                    (-0.34_f32, 0.56_f32, 0.0_f32),
+                    (0.34, 0.56, 0.45),
+                    (-0.32, -0.58, std::f32::consts::PI),
+                    (0.32, -0.58, std::f32::consts::PI + 0.45),
+                ];
+                for (lx, lz, lphase) in leg_coords {
+                    b.spawn((
+                        BuffaloLeg {
+                            phase: lphase,
+                            amp: 0.72,
+                        },
+                        Mesh3d(leg_mesh.clone()),
+                        MeshMaterial3d(fur_dark.clone()),
+                        Transform::from_xyz(lx, 0.36, lz),
+                    ));
+                }
+            });
+    }
+}
+
+fn update_buffalo_stampede(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    mut game: ResMut<CasinoGameState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut mob_q: Query<(Entity, &BuffaloStampedeMob, &mut Transform)>,
+    mut leg_q: Query<(&BuffaloLeg, &mut Transform), Without<BuffaloStampedeMob>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    if game.trigger_stampede {
+        game.trigger_stampede = false;
+        spawn_buffalo_herd(&mut commands, &mut meshes, &mut materials);
+    }
+    if game.buffalo_stampede_timer > 0.0 {
+        game.buffalo_stampede_timer = (game.buffalo_stampede_timer - dt).max(0.0);
+    }
+
+    let t = time.elapsed_secs();
+    for (e, mob, mut tf) in &mut mob_q {
+        tf.translation.z += mob.speed * dt;
+        let gallop = (t * 14.0 + mob.phase).sin();
+        tf.translation.y = gallop.abs() * 0.22;
+        tf.translation.x = CASINO_LEVEL_ORIGIN.x + mob.base_x + (t * 2.4 + mob.phase).sin() * mob.sway_amp;
+        tf.rotation = Quat::from_rotation_x(-gallop * 0.08);
+        if tf.translation.z > CASINO_LEVEL_ORIGIN.z + 20.5 || game.buffalo_stampede_timer <= 0.0 {
+            commands.entity(e).despawn_recursive();
+        }
+    }
+    for (leg, mut tf) in &mut leg_q {
+        tf.rotation = Quat::from_rotation_x((t * 16.0 + leg.phase).sin() * leg.amp);
+    }
+}
+
+/// Glides the camera smoothly into a seated view of Chillary's Blackjack table or a third-person
+/// over-the-shoulder view of the player at the active 3D Slot cabinet while `stats.casino_open`
+/// (`player.rs::update_camera` stands down while seated).
 fn update_casino_station_camera(
     time: Res<Time<Real>>,
     stats: Res<PlayerStats>,
     game: Res<CasinoGameState>,
     mut sync: ResMut<Casino3dSync>,
     mut orbit: ResMut<CameraOrbit>,
-    mut player_q: Query<&mut Visibility, With<Player>>,
+    mut player_q: Query<(&mut Visibility, &mut Transform), With<Player>>,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>)>,
 ) {
     if !stats.casino_open {
         if sync.seated {
             sync.seated = false;
-            for mut v in &mut player_q {
+            for (mut v, _) in &mut player_q {
                 *v = Visibility::Visible;
             }
             orbit.blend_request = true;
         }
         return;
     }
-    if !sync.seated {
-        sync.seated = true;
-        for mut v in &mut player_q {
+
+    let is_slots = matches!(
+        game.station,
+        CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots
+    );
+    sync.seated = true;
+    for (mut v, mut p_tf) in &mut player_q {
+        if is_slots {
+            *v = Visibility::Visible;
+            let (cp, cy) = slot_cab_pose(game.slot_cab);
+            let r = Quat::from_rotation_y(cy);
+            p_tf.translation = CASINO_LEVEL_ORIGIN + cp + r * Vec3::new(-0.92, 0.0, 1.62);
+            p_tf.rotation = r;
+        } else {
             *v = Visibility::Hidden;
         }
     }
+
     let t = time.elapsed_secs();
-    let in_slot_tease = matches!(
-        game.station,
-        CasinoStationKind::BuffaloSlots | CasinoStationKind::LuckyLadiesSlots
-    ) && game.slot_spinning
+    let in_slot_tease = is_slots
+        && game.slot_spinning
         && game.slot_anticipation
         && game.slot_elapsed >= game.slot_stop_times[1]
         && !game.slot_stopped_cols[2];
@@ -5014,34 +4957,34 @@ fn update_casino_station_camera(
             let (tp, tr) = bj_table_pose(game.bj_table);
             let (local_pos, local_look, fov) = match game.bj_phase {
                 BjPhase::Betting => (
-                    // Table-level establishing shot: seated eye-level across the felt & slot floor
-                    Vec3::new((t * 0.7).sin() * 0.08, 2.08, 3.15),
-                    Vec3::new(0.0, 1.56, -0.85),
-                    0.74,
+                    // Elevated table-establishing shot framing the green felt, chips & Chillary
+                    Vec3::new((t * 0.7).sin() * 0.08, 2.75, 2.70),
+                    Vec3::new(0.0, 1.34, -0.45),
+                    0.72,
                 ),
                 BjPhase::PlayerTurn => (
-                    // Action push-in: tighter over the felt framing cards, chips & Chillary
-                    Vec3::new((t * 0.9).sin() * 0.05, 1.94, 2.38),
-                    Vec3::new(0.0, 1.44, -0.35),
-                    0.64,
+                    // Elevated angled card shot framing both player & dealer cards + Chillary below HUD
+                    Vec3::new((t * 0.9).sin() * 0.04, 2.52, 2.30),
+                    Vec3::new(0.0, 1.44, -0.45),
+                    0.68,
                 ),
                 BjPhase::DealerTurn => (
-                    // Low felt-skimming macro close-up on Chillary's card reveal & chip stacks
-                    Vec3::new(0.16, 1.72, 1.92),
-                    Vec3::new(0.0, 1.40, -0.45),
-                    0.56,
+                    // 3/4 macro close-up on Chillary's card reveal & chip stacks
+                    Vec3::new(0.75, 2.34, 1.95),
+                    Vec3::new(0.0, 1.44, -0.60),
+                    0.64,
                 ),
                 BjPhase::Settled => {
-                    // Pull-back reaction/celebration shot capturing the table & coin fountain
+                    // Pull-back celebration shot capturing the table, Chillary & coin fountain
                     let win_kick = if sync.win_flash > 0.2 {
                         Vec3::new((t * 32.0).sin() * 0.025, (t * 28.0).cos() * 0.02, 0.0)
                     } else {
                         Vec3::ZERO
                     };
                     (
-                        Vec3::new(0.0, 2.32, 3.50) + win_kick,
-                        Vec3::new(0.0, 1.58, -0.65),
-                        0.76,
+                        Vec3::new(0.0, 2.90, 3.05) + win_kick,
+                        Vec3::new(0.0, 1.44, -0.55),
+                        0.74,
                     )
                 }
             };
@@ -5051,25 +4994,38 @@ fn update_casino_station_camera(
             let (cp, cy) = slot_cab_pose(game.slot_cab);
             let w = CASINO_LEVEL_ORIGIN + cp;
             let r = Quat::from_rotation_y(cy);
-            let tease_off = if in_slot_tease {
+            let stampede = game.buffalo_stampede_timer > 0.0;
+            let shake = if stampede {
+                Vec3::new((t * 36.0).sin() * 0.04, (t * 31.0).cos() * 0.035, 0.0)
+            } else if in_slot_tease {
                 Vec3::new(
-                    0.24 + (t * 42.0).sin() * 0.012,
-                    -0.06 + (t * 37.0).cos() * 0.012,
-                    -0.36,
+                    0.18 + (t * 42.0).sin() * 0.012,
+                    -0.12 + (t * 37.0).cos() * 0.012,
+                    -0.55,
                 )
+            } else if sync.win_flash > 0.2 {
+                Vec3::new((t * 34.0).sin() * 0.025, (t * 29.0).cos() * 0.02, -0.14)
             } else {
-                let win_kick = if sync.win_flash > 0.2 {
-                    Vec3::new((t * 34.0).sin() * 0.025, (t * 29.0).cos() * 0.02, -0.14)
-                } else {
-                    Vec3::new((t * 0.9).sin() * 0.03, (t * 1.2).cos() * 0.015, 0.0)
-                };
-                win_kick
+                Vec3::new((t * 0.9).sin() * 0.03, (t * 1.2).cos() * 0.015, 0.0)
             };
-            (
-                w + r * (Vec3::new(0.0, 1.88, 2.52) + tease_off),
-                w + r * Vec3::new(if in_slot_tease { 0.22 } else { 0.0 }, 1.56, 0.35),
-                if in_slot_tease { 0.64 } else { std::f32::consts::FRAC_PI_4 },
-            )
+            let cam_local = if stampede {
+                Vec3::new(1.55, 2.45, 3.85) + shake
+            } else {
+                Vec3::new(1.15, 2.20, 3.25) + shake
+            };
+            let look_local = if stampede {
+                Vec3::new(0.45, 1.50, 0.0)
+            } else {
+                Vec3::new(-0.15, 1.55, 0.0)
+            };
+            let fov = if stampede {
+                0.88
+            } else if in_slot_tease {
+                0.66
+            } else {
+                0.76
+            };
+            (w + r * cam_local, w + r * look_local, fov)
         }
         CasinoStationKind::Cashier | CasinoStationKind::ReturnPortal => {
             let c = CASINO_LEVEL_ORIGIN + Vec3::new(0.0, 0.0, -16.8);
