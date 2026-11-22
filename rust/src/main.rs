@@ -11,6 +11,7 @@ mod ferris;
 mod gfx;
 mod glenn;
 mod level;
+mod lexie_battle;
 mod lexie_victory;
 mod nate;
 mod net;
@@ -130,6 +131,7 @@ fn main() {
         .init_resource::<MikeCutsceneDialog>()
         .init_resource::<DerekCutsceneState>()
         .init_resource::<LexieVictoryState>()
+        .init_resource::<lexie_battle::RpgBattleState>()
         .init_resource::<NateCutsceneState>()
         .init_resource::<GlennCutsceneState>()
         // Optional boardwalk easter-egg cutscene resources; independent of crew/boss progression.
@@ -427,6 +429,22 @@ fn main() {
             )
                 .run_if(in_state(GameState::CasinoPlay))
                 .run_if(gameplay_running),
+        )
+        .add_systems(
+            OnEnter(GameState::LexieBattle),
+            (unlock_cursor, lexie_battle::enter_lexie_battle),
+        )
+        .add_systems(OnExit(GameState::LexieBattle), lexie_battle::exit_lexie_battle)
+        .add_systems(
+            Update,
+            (
+                lexie_battle::update_lexie_battle,
+                lexie_battle::animate_lexie_battle_stage,
+                lexie_battle::animate_lexie_battle_limbs,
+                lexie_battle::update_lexie_battle_ui,
+            )
+                .run_if(in_state(GameState::LexieBattle))
+                .run_if(sim_running),
         )
         .add_systems(OnEnter(GameState::LexieVictoryCutscene), enter_lexie_victory_cutscene)
         .add_systems(OnExit(GameState::LexieVictoryCutscene), exit_lexie_victory_cutscene)

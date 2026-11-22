@@ -28,6 +28,8 @@ pub enum GameState {
     PubPortalCutscene,
     /// Level 3: Dedicated spacious Tendy Palace Casino hall (`casino.rs`).
     CasinoPlay,
+    /// Turn-based 5-hero RPG showdown against Giant Lexie (`lexie_battle.rs`).
+    LexieBattle,
     LexieVictoryCutscene,
     StageClear,
     GameOver,

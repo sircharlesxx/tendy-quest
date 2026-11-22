@@ -4647,15 +4647,23 @@ pub fn update_city_lexie(
             }
         }
 
-        // Take Stan's Skyscraper Lightsaber Slash!
-        // Shared scale-aware test (player.rs `saber_contact`): reach to her surface, swing arc,
-        // active window of the visible strike, one hit per swing.
+        // Take Stan's Skyscraper Lightsaber Slash — or enter the Turn-Based 5-Hero RPG Showdown
+        // once all 50 tendies are collected!
         let lexie_contact = crate::player::saber_contact(
             &player,
             &stats,
             p_tf.translation,
             &crate::player::SaberTarget::lexie(&lx_tf),
         );
+        if !stats.free_roam
+            && stats.tendies >= 50
+            && !stats.lexie_defeated
+            && (!lexie.on_tower && dist < 26.0 || lexie_contact.is_some())
+        {
+            commands.entity(lexie_ent).despawn_recursive();
+            next_state.set(GameState::LexieBattle);
+            return;
+        }
         if let (Some(contact), true) = (lexie_contact, lexie.last_saber_swing != player.swing_id) {
             lexie.last_saber_swing = player.swing_id;
             lexie.hit_flash = 0.32;

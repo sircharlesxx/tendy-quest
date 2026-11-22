@@ -338,6 +338,8 @@
       let headphoneTimer = null;
       let headphoneStep = 0;
       let jazzTimer = null;
+      let lexieRpgTimer = null;
+      let lexieRpgStep = 0;
 
       // Music changes crossfade instead of hard-stopping: every procedural track plays through
       // its own bus gain that ramps in over MUSIC_FADE_S; on a change the old bus ramps out while
@@ -387,7 +389,7 @@
 
       function stopSpecialAudio() {
         try {
-          const timers = [bossTimer, vikingTimer, headphoneTimer, jazzTimer];
+          const timers = [bossTimer, vikingTimer, headphoneTimer, jazzTimer, lexieRpgTimer];
           const oscs = [droneOsc1, droneOsc2];
           const oldDrone = droneGain;
           const oldBus = musicBus;
@@ -395,6 +397,7 @@
           vikingTimer = null;
           headphoneTimer = null;
           jazzTimer = null;
+          lexieRpgTimer = null;
           droneOsc1 = null;
           droneOsc2 = null;
           droneGain = null;
@@ -494,6 +497,48 @@
           mkOsc("square", 1500, 1900, 0.10, 0.20);
           mkOsc("triangle", 2400, 1200, 0.24, 0.18);
           mkOsc("sawtooth", 220, 110, 0.18, 0.20);
+          return true;
+        }
+        if (name === "powerbomb") {
+          mkOsc("sine", 160, 28, 0.55, 0.45);
+          mkOsc("sawtooth", 220, 42, 0.42, 0.30);
+          mkNoise(0.28, 0.36, 320);
+          return true;
+        }
+        if (name === "kamehameha") {
+          mkOsc("sawtooth", 220, 880, 0.45, 0.26);
+          mkOsc("sine", 440, 1320, 0.65, 0.24);
+          mkNoise(0.45, 0.22, 1800);
+          return true;
+        }
+        if (name === "spirit_bomb") {
+          mkOsc("sine", 140, 560, 0.75, 0.28);
+          mkOsc("triangle", 280, 1120, 0.85, 0.24);
+          mkOsc("sawtooth", 90, 45, 0.70, 0.26);
+          return true;
+        }
+        if (name === "sonic_spin") {
+          mkOsc("sawtooth", 300, 1600, 0.40, 0.24);
+          mkOsc("square", 450, 1950, 0.38, 0.16);
+          return true;
+        }
+        if (name === "esxi_click") {
+          mkOsc("square", 1320, 1760, 0.06, 0.22);
+          mkOsc("sine", 880, 1320, 0.14, 0.18);
+          return true;
+        }
+        if (name === "stun_bell") {
+          mkOsc("triangle", 988, 1318, 0.22, 0.25);
+          mkOsc("sine", 1568, 1046, 0.32, 0.20);
+          return true;
+        }
+        if (name === "bubble_pop") {
+          mkOsc("sine", 260, 920, 0.14, 0.28);
+          mkNoise(0.08, 0.24, 1200);
+          return true;
+        }
+        if (name === "sleep_snore") {
+          mkOsc("triangle", 110, 78, 0.45, 0.18);
           return true;
         }
         if (name === "guard_break") {
@@ -1312,6 +1357,175 @@
                 } catch (_) {}
               }
             }, 106);
+          } catch (_) {}
+        },
+        playLexieRpgBossMusic() {
+          if (isTrackRestart("lexie_rpg")) return;
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
+
+            // Symphonic choir/organ sub-drone (D2 + A2 + D3 fifth)
+            droneGain = ac.createGain();
+            droneGain.gain.setValueAtTime(0.065, ac.currentTime);
+            droneGain.connect(out);
+            droneOsc1 = ac.createOscillator();
+            droneOsc1.type = "sawtooth";
+            droneOsc1.frequency.value = 73.42; // D2
+            droneOsc2 = ac.createOscillator();
+            droneOsc2.type = "triangle";
+            droneOsc2.frequency.value = 110.0; // A2
+            const droneLp = ac.createBiquadFilter();
+            droneLp.type = "lowpass";
+            droneLp.frequency.value = 340;
+            droneOsc1.connect(droneLp);
+            droneOsc2.connect(droneLp);
+            droneLp.connect(droneGain);
+            droneOsc1.start();
+            droneOsc2.start();
+
+            // 8-bar (128-step @ ~156 BPM, 16th note = 96ms) Epic JRPG Final Boss Theme in D Harmonic Minor
+            const chordRoots = [
+              73.42, 73.42, 58.27, 65.41, // Dm -> Dm -> Bb -> C
+              73.42, 58.27, 69.30, 55.00, // Dm -> Bb -> C#dim/A -> A7
+            ];
+            const arps = [
+              [293.66, 349.23, 440.00, 587.33, 440.00, 349.23, 523.25, 587.33], // Dm
+              [293.66, 349.23, 440.00, 698.46, 587.33, 440.00, 349.23, 440.00], // Dm high
+              [233.08, 293.66, 349.23, 466.16, 349.23, 293.66, 466.16, 587.33], // Bb
+              [261.63, 329.63, 392.00, 523.25, 392.00, 329.63, 523.25, 659.25], // C
+              [293.66, 349.23, 440.00, 587.33, 698.46, 587.33, 440.00, 587.33], // Dm climax
+              [233.08, 293.66, 349.23, 466.16, 587.33, 466.16, 349.23, 293.66], // Bb
+              [277.18, 349.23, 440.00, 554.37, 698.46, 554.37, 440.00, 349.23], // A7/C#
+              [220.00, 277.18, 329.63, 440.00, 554.37, 659.25, 880.00, 554.37], // A7 soar
+            ];
+            const leadPhrases = [
+              587.33, 0, 698.46, 0, 659.25, 0, 587.33, 523.25, 587.33, 0, 0, 0, 440.00, 0, 523.25, 0,
+              587.33, 0, 698.46, 0, 880.00, 0, 783.99, 698.46, 659.25, 0, 0, 0, 523.25, 0, 659.25, 0,
+              587.33, 0, 466.16, 0, 587.33, 0, 698.46, 0, 880.00, 0, 783.99, 698.46, 659.25, 0, 587.33, 0,
+              554.37, 0, 659.25, 0, 880.00, 0, 1174.66, 0, 1108.73, 0, 880.00, 0, 659.25, 0, 554.37, 0,
+            ];
+
+            lexieRpgStep = 0;
+            lexieRpgTimer = setInterval(() => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const step = lexieRpgStep % 128;
+              const bar = step >> 4;
+              const inBar = step & 15;
+              lexieRpgStep += 1;
+
+              // 1. Orchestral timpani + double-kick metal drums
+              if (inBar === 0 || inBar === 3 || inBar === 6 || inBar === 8 || inBar === 11 || inBar === 14) {
+                const ko = ac.createOscillator();
+                const kg = ac.createGain();
+                ko.type = "sine";
+                ko.frequency.setValueAtTime(inBar === 0 ? 155 : 130, now);
+                ko.frequency.exponentialRampToValueAtTime(36, now + 0.13);
+                kg.gain.setValueAtTime(inBar === 0 ? 0.34 : 0.24, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                ko.connect(kg);
+                kg.connect(out);
+                ko.start(now);
+                ko.stop(now + 0.15);
+              }
+              if (inBar === 4 || inBar === 12) {
+                mkNoise(0.11, 0.26, 2200, out);
+              }
+              if (inBar % 2 === 0) {
+                mkNoise(inBar === 0 ? 0.24 : 0.04, inBar === 0 ? 0.14 : 0.055, inBar === 0 ? 5400 : 7800, out);
+              }
+
+              // 2. Driving octave bass pulse
+              if (inBar % 2 === 0) {
+                const root = chordRoots[bar];
+                const bOsc = ac.createOscillator();
+                const bGain = ac.createGain();
+                bOsc.type = "sawtooth";
+                bOsc.frequency.setValueAtTime((inBar % 4 === 2) ? root * 2.0 : root, now);
+                const bLp = ac.createBiquadFilter();
+                bLp.type = "lowpass";
+                bLp.frequency.value = 520;
+                bGain.gain.setValueAtTime(0.14, now);
+                bGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+                bOsc.connect(bLp);
+                bLp.connect(bGain);
+                bGain.connect(out);
+                bOsc.start(now);
+                bOsc.stop(now + 0.16);
+              }
+
+              // 3. Rapid JRPG baroque harpsichord/synth arpeggio
+              const arpSet = arps[bar];
+              const arpF = arpSet[inBar % arpSet.length];
+              const aOsc = ac.createOscillator();
+              const aGain = ac.createGain();
+              aOsc.type = "triangle";
+              aOsc.frequency.setValueAtTime(arpF, now);
+              aGain.gain.setValueAtTime(0.075, now);
+              aGain.gain.exponentialRampToValueAtTime(0.001, now + 0.085);
+              aOsc.connect(aGain);
+              aGain.connect(out);
+              aOsc.start(now);
+              aOsc.stop(now + 0.09);
+
+              // 4. Sweeping brass/choir chord hit at bar start
+              if (inBar === 0) {
+                const root = chordRoots[bar];
+                for (const mult of [2.0, 2.996, 4.0]) {
+                  const co = ac.createOscillator();
+                  const cg = ac.createGain();
+                  const clp = ac.createBiquadFilter();
+                  clp.type = "lowpass";
+                  clp.frequency.setValueAtTime(1600, now);
+                  clp.frequency.exponentialRampToValueAtTime(620, now + 0.65);
+                  co.type = "sawtooth";
+                  co.frequency.setValueAtTime(root * mult, now);
+                  cg.gain.setValueAtTime(0.001, now);
+                  cg.gain.linearRampToValueAtTime(0.055, now + 0.03);
+                  cg.gain.exponentialRampToValueAtTime(0.001, now + 0.72);
+                  co.connect(clp);
+                  clp.connect(cg);
+                  cg.connect(out);
+                  co.start(now);
+                  co.stop(now + 0.74);
+                }
+              }
+
+              // 5. Soaring orchestral lead melody
+              const lFreq = leadPhrases[step >> 1];
+              if (lFreq > 0 && (step & 1) === 0) {
+                const lOsc1 = ac.createOscillator();
+                const lOsc2 = ac.createOscillator();
+                const lGain = ac.createGain();
+                lOsc1.type = "sawtooth";
+                lOsc2.type = "square";
+                lOsc1.frequency.setValueAtTime(lFreq * 0.997, now);
+                lOsc2.frequency.setValueAtTime(lFreq * 1.003, now);
+                const lLp = ac.createBiquadFilter();
+                lLp.type = "lowpass";
+                lLp.frequency.value = 2600;
+                lGain.gain.setValueAtTime(0.001, now);
+                lGain.gain.linearRampToValueAtTime(0.085, now + 0.02);
+                lGain.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+                lOsc1.connect(lLp);
+                lOsc2.connect(lLp);
+                lLp.connect(lGain);
+                lGain.connect(out);
+                lOsc1.start(now);
+                lOsc2.start(now);
+                lOsc1.stop(now + 0.36);
+                lOsc2.stop(now + 0.36);
+              }
+            }, 96);
           } catch (_) {}
         },
         playHackingMusic() {
@@ -3180,6 +3394,7 @@
         if (s.includes("chillary=1")) return 18;
         if (s.includes("casino=1")) return 19;
         if (s.includes("pub_portal=1")) return 20;
+        if (s.includes("lexie_battle=1")) return 21;
         return 0;
       })();
       const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);

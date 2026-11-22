@@ -1219,6 +1219,21 @@ pub fn check_url_test_mode(
             stats.saved_casino_city_scale = 1.8;
             next_state.set_from_black(GameState::PubPortalCutscene);
         }
+        // `?lexie_battle=1`: QA/dev direct-preview link for the Turn-Based RPG Lexie Showdown.
+        21 => {
+            stats.in_city = true;
+            stats.tendies = 50;
+            stats.total_tendies = 50;
+            stats.player_scale = 18.0;
+            stats.tj_recruited = true;
+            stats.derek_recruited = true;
+            stats.nate_recruited = true;
+            stats.glenn_recruited = true;
+            stats.mike_smoked = true;
+            stats.boss_hp = 950.0;
+            stats.boss_max_hp = 950.0;
+            next_state.set_from_black(GameState::LexieBattle);
+        }
         _ => {}
     }
 }

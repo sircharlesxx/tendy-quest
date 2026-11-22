@@ -141,32 +141,40 @@ pub fn spawn_glenn_rig(
 ) {
     use crate::shapes::{self as sh, ring};
 
-    // Thick muscular quads, calves & gym sneakers
+    // Thick muscular quads, calves & gym sneakers (hip-pivoted for RPG dance & stride)
     let quad_mesh = sh::add(meshes, sh::limb_profile(0.70, &[0.17, 0.178, 0.155, 0.13], 1.0));
     let calf_mesh = sh::add(meshes, sh::limb_profile(0.52, &[0.105, 0.132, 0.11, 0.075], 1.0));
     let shoe_mesh = sh::add(meshes, sh::shoe(0.23, 0.13, 0.34));
     let sole_mesh = sh::add(meshes, sh::shoe_sole(0.23, 0.13, 0.34));
     for sx in [-0.20_f32, 0.20] {
-        parent.spawn((
-            Mesh3d(quad_mesh.clone()),
-            MeshMaterial3d(mats.shorts.clone()),
-            Transform::from_xyz(sx, 0.55, 0.0),
-        ));
-        parent.spawn((
-            Mesh3d(calf_mesh.clone()),
-            MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx, 0.27, 0.0),
-        ));
-        parent.spawn((
-            Mesh3d(shoe_mesh.clone()),
-            MeshMaterial3d(mats.shoe.clone()),
-            Transform::from_xyz(sx, 0.065, 0.05),
-        ));
-        parent.spawn((
-            Mesh3d(sole_mesh.clone()),
-            MeshMaterial3d(mats.eye_white.clone()),
-            Transform::from_xyz(sx, 0.065, 0.05),
-        ));
+        parent
+            .spawn((
+                Transform::from_xyz(sx, 0.85, 0.0),
+                Visibility::default(),
+                crate::net::CrewStrideLeg { is_left: sx < 0.0 },
+            ))
+            .with_children(|leg| {
+                leg.spawn((
+                    Mesh3d(quad_mesh.clone()),
+                    MeshMaterial3d(mats.shorts.clone()),
+                    Transform::from_xyz(0.0, -0.30, 0.0),
+                ));
+                leg.spawn((
+                    Mesh3d(calf_mesh.clone()),
+                    MeshMaterial3d(mats.skin.clone()),
+                    Transform::from_xyz(0.0, -0.58, 0.0),
+                ));
+                leg.spawn((
+                    Mesh3d(shoe_mesh.clone()),
+                    MeshMaterial3d(mats.shoe.clone()),
+                    Transform::from_xyz(0.0, -0.785, 0.05),
+                ));
+                leg.spawn((
+                    Mesh3d(sole_mesh.clone()),
+                    MeshMaterial3d(mats.eye_white.clone()),
+                    Transform::from_xyz(0.0, -0.785, 0.05),
+                ));
+            });
     }
 
     // Massive V-tapered muscular torso (one continuous black tank), sculpted pecs & traps
@@ -206,34 +214,42 @@ pub fn spawn_glenn_rig(
         Transform::from_xyz(0.0, 1.49, -0.03),
     ));
 
-    // Giant boulder shoulders + thick bulging biceps & forearms
+    // Giant boulder shoulders + thick bulging biceps & forearms (shoulder-pivoted)
     let bicep_mesh = sh::add(meshes, sh::limb_profile(0.71, &[0.15, 0.188, 0.172, 0.13], 1.0));
     let forearm_mesh = sh::add(meshes, sh::limb_profile(0.63, &[0.145, 0.152, 0.125, 0.098], 1.0));
     for sx in [-0.62_f32, 0.62] {
-        // Boulder delt
-        parent.spawn((
-            Mesh3d(meshes.add(Sphere::new(0.25))),
-            MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx, 1.40, 0.0).with_scale(Vec3::new(1.0, 0.94, 0.96)),
-        ));
-        // Huge bicep
-        parent.spawn((
-            Mesh3d(bicep_mesh.clone()),
-            MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx * 1.06, 1.12, 0.03)
-                .with_rotation(Quat::from_rotation_z(if sx < 0.0 { 0.16 } else { -0.16 })),
-        ));
-        // Thick forearm + fist
-        parent.spawn((
-            Mesh3d(forearm_mesh.clone()),
-            MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx * 1.10, 0.78, 0.08),
-        ));
-        parent.spawn((
-            Mesh3d(sh::add(meshes, sh::hand(0.13, sx.signum(), true))),
-            MeshMaterial3d(mats.skin.clone()),
-            Transform::from_xyz(sx * 1.10, 0.52, 0.10),
-        ));
+        parent
+            .spawn((
+                Transform::from_xyz(sx, 1.40, 0.0),
+                Visibility::default(),
+                crate::net::CrewStrideArm { is_left: sx < 0.0 },
+            ))
+            .with_children(|arm| {
+                // Boulder delt
+                arm.spawn((
+                    Mesh3d(meshes.add(Sphere::new(0.25))),
+                    MeshMaterial3d(mats.skin.clone()),
+                    Transform::from_scale(Vec3::new(1.0, 0.94, 0.96)),
+                ));
+                // Huge bicep
+                arm.spawn((
+                    Mesh3d(bicep_mesh.clone()),
+                    MeshMaterial3d(mats.skin.clone()),
+                    Transform::from_xyz(sx * 0.06, -0.28, 0.03)
+                        .with_rotation(Quat::from_rotation_z(if sx < 0.0 { 0.16 } else { -0.16 })),
+                ));
+                // Thick forearm + fist
+                arm.spawn((
+                    Mesh3d(forearm_mesh.clone()),
+                    MeshMaterial3d(mats.skin.clone()),
+                    Transform::from_xyz(sx * 0.10, -0.62, 0.08),
+                ));
+                arm.spawn((
+                    Mesh3d(sh::add(meshes, sh::hand(0.13, sx.signum(), true))),
+                    MeshMaterial3d(mats.skin.clone()),
+                    Transform::from_xyz(sx * 0.10, -0.88, 0.10),
+                ));
+            });
     }
 
     // Thick muscular neck + head

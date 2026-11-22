@@ -729,9 +729,10 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         | GameState::DerekCutscene
         | GameState::NateCutscene
         | GameState::GlennCutscene
-        // Why: `LexieVictoryCutscene` needs the 900m Cedar Rapids twilight `SkyDome`, warm
+        // Why: `LexieBattle` & `LexieVictoryCutscene` need the 900m Cedar Rapids twilight `SkyDome`, warm
         // atmospheric fog, and city sun light so the burning Quaker Oats plant and surrounding
         // downtown skyline sit against dusk sky instead of black void. Gameplay impact: visual only.
+        | GameState::LexieBattle
         | GameState::LexieVictoryCutscene => SceneKind::City,
         GameState::Cutscene
         | GameState::HeadphoneCutscene
