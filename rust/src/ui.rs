@@ -843,7 +843,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     .with_children(|btn| {
                         btn.spawn((
                             TutorialBtnText,
-                            Text::new("START CO-OP QUEST (SPACE / TAP)"),
+                            Text::new("START QUEST (SPACE / TAP)"),
                             TextFont {
                                 font_size: 16.5,
                                 ..default()
@@ -853,12 +853,12 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     });
                     let (free_label, free_bg) = if beaten {
                         (
-                            "FREE MODE: CEDAR RAPIDS [F / C] (LEXIE BEATEN!)",
+                            "FREE MODE [F / C] (LEXIE BEATEN!)",
                             Color::srgb(0.14, 0.58, 0.28),
                         )
                     } else {
                         (
-                            "FREE MODE: CEDAR RAPIDS [F]",
+                            "FREE MODE [F]",
                             Color::srgb(0.11, 0.46, 0.72),
                         )
                     };
