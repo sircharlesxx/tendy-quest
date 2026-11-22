@@ -70,14 +70,28 @@
         location.replace(u.toString());
       };
 
-      function applyUpdate(remoteVer) {
+      async function applyUpdate(remoteVer, preserveFreeRoam) {
         try {
           if (sessionStorage.getItem("tq_reloaded_v") === remoteVer) return false;
           sessionStorage.setItem("tq_reloaded_v", remoteVer);
         } catch (_) {}
-        clearCaches();
+        try {
+          if (document.body && !document.getElementById("tq-updating-overlay")) {
+            const ov = document.createElement("div");
+            ov.id = "tq-updating-overlay";
+            ov.textContent = "Updating to latest build (" + remoteVer + ")... Save preserved!";
+            ov.style.cssText =
+              "position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;" +
+              "background:rgba(8,12,24,.92);color:#ffd84a;font:700 18px system-ui,sans-serif;" +
+              "text-align:center;padding:24px";
+            document.body.appendChild(ov);
+          }
+        } catch (_) {}
+        await clearCachesAsync();
         const u = new URL(location.href);
         u.searchParams.set("_v", remoteVer);
+        u.searchParams.set("_cb", String(Date.now()));
+        if (preserveFreeRoam) u.searchParams.set("free_roam", "1");
         location.replace(u.toString());
         return true;
       }
@@ -95,7 +109,7 @@
             "font:700 12px system-ui,sans-serif;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)";
           b.addEventListener("click", () => {
             try { sessionStorage.removeItem("tq_reloaded_v"); } catch (_) {}
-            applyUpdate(remoteVer);
+            void applyUpdate(remoteVer, !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam()));
           });
           document.body.appendChild(b);
         };
@@ -103,26 +117,51 @@
         else document.addEventListener("DOMContentLoaded", make, { once: true });
       }
 
-      async function checkVersion(autoReload) {
+      async function checkVersion(autoReload, preserveFreeRoam) {
         if (!BUILD_ID || BUILD_ID === "__TQ_" + "BUILD_ID__") return;
         try {
-          const res = await fetch("./version.json?_cb=" + Date.now(), { cache: "no-store" });
+          const ctrl = typeof AbortController === "function" ? new AbortController() : null;
+          const timer = ctrl ? setTimeout(() => ctrl.abort(), 1500) : null;
+          const res = await fetch("./version.json?_cb=" + Date.now(), {
+            cache: "no-store",
+            signal: ctrl ? ctrl.signal : undefined,
+          });
+          if (timer) clearTimeout(timer);
           if (!res.ok) return;
           const data = await res.json();
           const remoteVer = data && typeof data.v === "string" ? data.v.trim() : "";
           if (remoteVer && remoteVer !== BUILD_ID) {
-            if (autoReload && applyUpdate(remoteVer)) return;
+            if (autoReload && (await applyUpdate(remoteVer, preserveFreeRoam))) return;
             showUpdateBanner(remoteVer);
           }
         } catch (_) {}
       }
 
-      checkVersion(true);
+      let lastEnsureCheckMs = 0;
+      let ensureCheckPromise = null;
+      // Called when entering Free Mode or when a peer joins in Free Mode so everyone runs
+      // the latest deployed build while preserving all localStorage save data.
+      window.tqEnsureLatestBuild = function (preserveFreeRoam) {
+        if (!BUILD_ID || BUILD_ID === "__TQ_" + "BUILD_ID__") return Promise.resolve();
+        const now = performance.now();
+        if (ensureCheckPromise) return ensureCheckPromise;
+        if (now - lastEnsureCheckMs < 10000) return Promise.resolve();
+        lastEnsureCheckMs = now;
+        ensureCheckPromise = checkVersion(true, !!preserveFreeRoam).finally(() => {
+          ensureCheckPromise = null;
+        });
+        return ensureCheckPromise;
+      };
+
+      void checkVersion(true, false);
       window.addEventListener("pageshow", (e) => {
-        if (e.persisted) checkVersion(true);
+        if (e.persisted) void checkVersion(true, !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam()));
       });
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") checkVersion(false);
+        if (document.visibilityState === "visible") {
+          const inFree = !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam());
+          void checkVersion(inFree, inFree);
+        }
       });
     })();
   </script>
@@ -4283,6 +4322,9 @@
             connectedAt: now,
           };
           net.peers.set(id, peer);
+          if (net.inFreeRoam && typeof window.tqEnsureLatestBuild === "function") {
+            void window.tqEnsureLatestBuild(true);
+          }
           if (isMesh) setStatus("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (net.shard + 1) + ")");
           sendHello();
           sendMeta();
@@ -5470,6 +5512,9 @@
 
       function setFreeRoam(active) {
         net.inFreeRoam = !!active;
+        if (net.inFreeRoam && typeof window.tqEnsureLatestBuild === "function") {
+          void window.tqEnsureLatestBuild(true);
+        }
         updatePillVisibility();
         refreshPanel();
         updateTelemetry();
@@ -5520,6 +5565,7 @@
       return {
         enabled() { return true; },
         setFreeRoam,
+        isInFreeRoam() { return !!net.inFreeRoam; },
         setOnline,
         isOnline() { return true; },
         setScene,
