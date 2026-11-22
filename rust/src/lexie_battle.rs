@@ -1,3 +1,12 @@
+//! Turn-Based 5-Hero RPG Showdown against Giant Lexie (`GameState::LexieBattle`).
+//!
+//! Triggered in Story Mode (`CityPlay`) once all 50 tendies are collected and Stan engages Lexie
+//! (or directly via `?lexie_battle=1`). All 5 squad heroes (`Stan`, `Glenn`, `Nate`, `Derek`, `TJ`)
+//! face Lexie with bespoke animated Light `[1]` and Heavy `[2]` moves, rhythmic idle dance/sway,
+//! damage recoil reactions, status effects (`STUNNED`, Stan's 4-hour `ASLEEP`), and 156 BPM
+//! symphonic JRPG boss music (`playLexieRpgBossMusic` in `rust/index.html`). Defeating Lexie
+//! awards +15,000 pts / +100 TW, saves the checkpoint, and transitions to `LexieVictoryCutscene`.
+
 use bevy::prelude::*;
 use std::f32::consts::PI;
 

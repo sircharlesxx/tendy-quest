@@ -1,13 +1,13 @@
-//! Distributed free-roam multiplayer for Cedar Rapids Free Mode (`NetPlugin`).
+//! Full-game co-op multiplayer (`NetPlugin`).
 //!
-//! Why: Connects players automatically with zero self-hosted servers or manual invite codes
-//! when entering Cedar Rapids Free Mode (unless switched to Solo in the Pause menu or `?mp=off`),
-//! assigning each participant a distinct playable crew character (`STAN`, `NATE`, `GLENN`, or `TJ`)
-//! using the game's existing procedural 3D character rigs.
+//! Why: Automatically pairs up to 4 browsers in a zero-server WebRTC DataChannel mesh from boot,
+//! keeping the same shard across Level 1 (Apartment, everyone as Stan), Mom's Fight (integer-scaled
+//! HP), Cedar Rapids (5-character select: Stan, Nate, Glenn, TJ, Derek), Pub 217 / Tendy Palace
+//! Casino (optional squad teleport on `ORDER 10 BEERS`), and Lexie's Turn-Based RPG Showdown.
 //!
-//! Gameplay impact: Up to 4 players roam Cedar Rapids together over direct WebRTC DataChannels
-//! (or up to 6 in local `?mp=tabs` / `?mp=rtc` tests), while traffic, pickups, and NPCs stay
-//! local and lightweight with zero player-to-player collision interference.
+//! Scene isolation: `T_META` and `T_STATE` carry `scene_id` (`0 = menu/cutscene/legacy`, `1 = Level 1`,
+//! `2 = MomBoss`, `3 = CityPlay`, `4 = CasinoPlay`). Keeping `0` reserved for menus/legacy builds
+//! prevents peers in other levels or older cached clients from appearing as floating avatars.
 
 use std::collections::VecDeque;
 use std::f32::consts::PI;
@@ -307,13 +307,16 @@ fn net_init(mut net: ResMut<NetState>) {
     net.enabled = crate::audio::net_enabled();
 }
 
+/// Maps `GameState` to a wire `scene_id`.
+/// `0` is intentionally reserved for menus/cutscenes/legacy builds so un-tagged packets never match
+/// an active 3D level (`1..=4`).
 fn scene_id_for_state(state: &GameState) -> u8 {
     match state {
-        GameState::Playing => 0,
-        GameState::BossFight => 1,
-        GameState::CityPlay => 2,
-        GameState::CasinoPlay => 3,
-        _ => 4,
+        GameState::Playing => 1,
+        GameState::BossFight => 2,
+        GameState::CityPlay => 3,
+        GameState::CasinoPlay => 4,
+        _ => 0,
     }
 }
 
@@ -1236,7 +1239,7 @@ fn place_remote_avatars(
         let Some(s) = sample_at(&r.samples, render_t) else {
             continue;
         };
-        let away = s.mode == MODE_AWAY || s.scene_id != local_scene_id;
+        let away = s.mode == MODE_AWAY || s.scene_id == 0 || s.scene_id != local_scene_id;
         let show_hero = !away && s.mode != MODE_CAR && s.flags & FLAG_HIDDEN == 0;
 
         if let Ok((mut tf, mut vis, mut pose)) = avatar_q.get_mut(r.avatar) {
@@ -1802,7 +1805,7 @@ fn update_net_overlay(
 
     let total = 1 + net.peers.max(net.remotes.len() as u32);
     let my_name = char_name(net.local_char, 1);
-    let status_line = if net.local_scene_id == 0 {
+    let status_line = if net.local_scene_id == 1 {
         let sq = crate::audio::net_squad_info();
         if net.avg_rtt_ms >= 0 && net.peers > 0 {
             format!(
@@ -1863,7 +1866,7 @@ fn leave_city(
     stats.char_select_open = false;
     let away = f32::from(MODE_AWAY);
     crate::audio::net_publish(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.8, away, 0.0, 0.0]);
-    crate::audio::net_set_scene(4, stats.tendies >= 12);
+    crate::audio::net_set_scene(0, stats.tendies >= 12);
     if let Ok(children) = player_q.get_single() {
         for &child in children.iter() {
             if local_crew_q.get(child).is_err() {

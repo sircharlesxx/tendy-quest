@@ -2830,7 +2830,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-e80b1ecac2ba42dd.js" crossorigin="anonymous" integrity="sha384-JeAEns3cmEEYnVx85OHl7jmH0NZvklkBg14GpeASe6KJ80ipK7M/gM9uYv22ZcRm"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-e80b1ecac2ba42dd_bg.wasm" crossorigin="anonymous" integrity="sha384-Whf8YAz1x5eweouQHSkJfCOVDlI2NhIdfZ9CtXG6Z7UBCWVv88VkKBAxTx9UkkbA" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-2253ec7688c6e2ef.js" crossorigin="anonymous" integrity="sha384-JeAEns3cmEEYnVx85OHl7jmH0NZvklkBg14GpeASe6KJ80ipK7M/gM9uYv22ZcRm"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-2253ec7688c6e2ef_bg.wasm" crossorigin="anonymous" integrity="sha384-uodKyM8MiLjcev2nagGH98C/pbB3OtfnjWMc3ng4KmmJXzLbneSQ1v1xdQk6GQMQ" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3997,7 +3997,7 @@
       }
 
       function resolveCharClaims(sourceId, peer) {
-        if (!net.transport || net.peers.size === 0 || net.sceneId < 2) return;
+        if (!net.transport || net.peers.size === 0 || net.sceneId < 3) return;
         if (!net.charLocked || !peer.charLocked || peer.charId !== net.myChar) return;
         const myAge = Math.floor((performance.now() - net.charClaimedAt) / 1000);
         const theirAge = peer.claimAgeSec || 0;
@@ -5272,7 +5272,7 @@
         ui.btnTabs.classList.toggle("on", k === "tabs");
         ui.btnRtc.classList.toggle("on", k === "rtc");
         ui.btnLeave.disabled = !net.transport;
-        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || net.sceneId < 2;
+        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || net.sceneId < 3;
       }
       function buildPanel() {
         const style = el("style", {});
@@ -5495,10 +5495,10 @@
       }
 
       function squadInfo() {
-        let inLvl1 = net.sceneId === 0 ? 1 : 0;
-        let readyLvl1 = (net.sceneId === 0 && net.level1Ready) ? 1 : 0;
+        let inLvl1 = net.sceneId === 1 ? 1 : 0;
+        let readyLvl1 = (net.sceneId === 1 && net.level1Ready) ? 1 : 0;
         for (const p of net.peers.values()) {
-          if ((p.sceneId || 0) === 0) {
+          if ((p.sceneId || 0) === 1) {
             inLvl1++;
             if (p.level1Ready) readyLvl1++;
           }
@@ -5573,8 +5573,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-e80b1ecac2ba42dd.js';
-const wasm = await init({ module_or_path: './tendy-quest-e80b1ecac2ba42dd_bg.wasm' });
+import init, * as bindings from './tendy-quest-2253ec7688c6e2ef.js';
+const wasm = await init({ module_or_path: './tendy-quest-2253ec7688c6e2ef_bg.wasm' });
 
 
 window.wasmBindings = bindings;

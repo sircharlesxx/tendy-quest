@@ -1,10 +1,10 @@
-# Multiplayer in Free Mode
+# Full-Game Co-Op Multiplayer
 
-Status: shipped for Cedar Rapids Free Mode (`GameState::CityPlay` with `stats.free_roam = true`), compiled to static WASM/WebGL2 on GitHub Pages with **zero self-hosted backend or relay server**.
+Status: shipped across the entire game (`Playing`, `BossFight`, `CityPlay`, `CasinoPlay`, `LexieBattle`), compiled to static WASM/WebGL2 on GitHub Pages with **zero self-hosted backend or relay server**.
 
 ## 1. Architecture Overview
 
-When a player clicks **`ENTER FREE MODE (MULTIPLAYER)`** on the Start Menu (explicitly enabling Online P2P), or enters Free Mode via post-victory `Continue` / `?free_roam=1` with Online mode enabled (`localStorage.tendy_mp_online`, default On unless entering via the Solo `FREE MODE: CEDAR RAPIDS [F]` button), the browser automatically pairs them into a **4-player distributed WebRTC DataChannel mesh**:
+Multiplayer is **enforced on boot** across every stage of the adventure: players connect into the same **4-player distributed WebRTC DataChannel mesh** shard from the Title Screen onward and remain in that same shard through Level 1, Mom's Fight, Cedar Rapids, Pub 217 / Tendy Palace Casino, and Lexie's Turn-Based RPG Showdown.
 
 1. **Zero-Server Bootstrap (`meshTransport` in [`rust/index.html`](../rust/index.html)):**
    - Connects in parallel to **3 public WebTorrent WebSocket trackers** (`wss://tracker.openwebtorrent.com`, `wss://tracker.webtorrent.dev`, `wss://tracker.files.fm:7073/announce` — dead trackers removed) **plus** a pure-JS **MQTT 3.1.1 over WSS fallback** (`wss://broker.emqx.io:8084/mqtt`, topic `tendy-quest/v1/<info_hash>`) using exact **20-byte** deterministic room shard hashes (`TQCR1-MAIN____-S0000`, `TQCR1-MAIN____-S0100`, ...) and public STUN servers (`stun:stun.l.google.com:19302`, `stun:stun1.l.google.com:19302`, `stun:stun.cloudflare.com:3478`).
@@ -18,11 +18,12 @@ When a player clicks **`ENTER FREE MODE (MULTIPLAYER)`** on the Start Menu (expl
    - Peers gossip direct-connectivity maps via `T_META` and deterministically elect the lowest-latency mutual peer as room anchor (preferring full connectivity, lowest average RTT with a small mobile bias, then lowest `senderId`).
    - After a `2 s` link warmup, if two peers inside a shard fail direct NAT traversal while sharing connected mutual peers, `maybeBridgePacket` forwards one **1-hop bridged** copy (`VER_BRIDGED = 129`, `TTL = 1`) from the lowest **25 ms bucketed** combined-RTT mutual peer (`Math.floor((rtt(self, src) + rtt(self, dst)) / 25)` with `midId < myId` tie-breaking). Bridged packets are accepted only when no direct open link exists and are never re-bridged.
 
-3. **Squad Character Roles & Live Character Select (`STAN`, `NATE`, `GLENN`, `TJ`):**
-   - Each 4-player Free Mode shard maps to the four crew members: `0 = STAN` (Cyan `#2ef5ff`), `1 = NATE` (Blue `#4da6ff`), `2 = GLENN` (Red-Orange `#ff5c33`), `3 = TJ` (Green `#52eb63`).
-   - **Character Select Modal (`#mp-char-select`):** Connecting online in Free Mode opens **CHOOSE YOUR CHARACTER** (`STAN`, `NATE`, `GLENN`, `TJ` cards via click/tap or keys `1–4`, plus **Play Solo (Offline)**). Characters actively played by connected peers (`charLocked == true`) are marked **`IN USE`** and disabled in real time. While the picker is open (`char_select_open`), gameplay inputs are gated, `T_STATE` packets are withheld, and keepalives broadcast `T_META` with `charLocked = false` so unchosen players never appear as ghost avatars.
-   - **Conflict Resolution & Role Switching:** Simultaneous claims resolve deterministically in `resolveCharClaims` (`claimAgeSec` delta `>= 2 s` -> veteran `>= 4 s` -> lower `senderId`; a newly picked `< 8 s` yielder is returned to Character Select with a conflict notice rather than auto-reassigned). Players can switch characters anytime via **Change character** (`#mp-btn-change-char`) in `#mp-panel`. Entering Solo offline (`FREE MODE: CEDAR RAPIDS [F]` or switching to **Solo**) skips Character Select and spawns directly as `STAN (0)`.
-   - [`rust/src/net.rs`](../rust/src/net.rs) renders remote crew players using the real procedural 3D character builders (`spawn_nate_rig`, `spawn_glenn_rig`, `spawn_tj_rig(..., with_cast=false, attach_city_markers=false)`) rotated `PI` around Y to match Stan's `-Z` forward axis, swaps the local player's mesh cleanly (`sync_local_crew_avatar`) when playing as Nate/Glenn/TJ, and hides matching Pub 217 AI crew NPCs (`sync_claimed_pub_crew`) so human-controlled characters are never duplicated.
+3. **Squad Character Roles & Live Character Select (`STAN`, `NATE`, `GLENN`, `TJ`, `DEREK`):**
+   - Level 1 (`Playing`) and Mom's Fight (`BossFight`) lock every player to `0 = STAN` while tracking individual `12/12` tendy completion (`level1Ready`) and scaling Mom's integer HP (`200 + (players - 1) * 120`).
+   - Upon entering Cedar Rapids (`CityPlay` after Mom's victory or Free Mode), each 4-player shard chooses from all **five** crew members: `0 = STAN` (Cyan `#2ef5ff`), `1 = NATE` (Blue `#4da6ff`), `2 = GLENN` (Red-Orange `#ff5c33`), `3 = TJ` (Green `#52eb63`), `4 = DEREK` (Gold `#ffd23f`).
+   - **Character Select Modal (`#mp-char-select`):** Opens **CHOOSE YOUR CHARACTER** (`1–5` hotkeys or click/tap). Characters actively played by connected peers (`charLocked == true`) are marked **`IN USE`** and disabled in real time. While the picker is open (`char_select_open`), gameplay inputs are gated, `T_STATE` packets are withheld, and keepalives broadcast `T_META` with `charLocked = false` so unchosen players never appear as ghost avatars.
+   - **Scene Isolation (`scene_id`):** `0` is reserved for menus/cutscenes/legacy cached builds, while `1 = Level 1`, `2 = MomBoss`, `3 = CityPlay`, and `4 = CasinoPlay`. `net.rs` hides any remote avatar whose `scene_id == 0` or `scene_id != local_scene_id`, preventing cross-level or legacy-client floating ghosts.
+   - **Pub 217 Teleport Prompt:** Pressing **`ORDER 10 BEERS`** in Pub 217 prompts **`TELEPORT EVERYONE`** (sending `EVENT_CASINO_WARP_ALL = 6` to warp the shard together) vs **`GO ALONE`** when squadmates are connected.
 
 4. **Online / Solo Toggle & Fallback Transports:**
    - **Pause Menu (`Esc` / `H` / `Start` / `HELP`):** `FREE ROAM: ONLINE (P2P)` / `FREE ROAM: SOLO` button inside Free Mode immediately toggles P2P connectivity and restores Stan when returning to Solo.
@@ -49,11 +50,11 @@ Binary, little-endian, versioned, max 64 bytes per packet. Every message begins 
 | `8..11` | Sender clock in ms (`performance.now() >>> 0`, `u32`) |
 
 Fixed payload lengths by message type (anything mismatched is dropped unread):
-- **`T_STATE` (44 B):** `f32 x,y,z` | `i16 qx,qy,qz,qw` (×32767) | `i16 vx,vy,vz` (cm/s) | `u16 scale` (×1000) | `u8 mode` (`0..=4`) | `u8 flags` (`0..=127`) | `u8 action` (×255) | `u8 charId` (`0..=3`). *(Withheld while `charLocked == false` so picking players do not spawn ghost avatars.)*
+- **`T_STATE` (44 B):** `f32 x,y,z` | `i16 qx,qy,qz,qw` (×32767) | `i16 vx,vy,vz` (cm/s) | `u16 scale` (×1000) | `u8 mode` (`0..=4`, packed with `sceneId << 4` in `drain()`) | `u8 flags` (`0..=127`) | `u8 action` (×255) | `u8 charId` (`0..=4`). *(Withheld while `charLocked == false` so picking players do not spawn ghost avatars.)*
 - **`T_HELLO` / `T_BYE` / `T_FULL` (12 B):** header only.
-- **`T_EVENT` (20 B):** `u8 code` (`1 = scooter trick`, `2 = beer`), 3 padding bytes, `u32 value` (`<= 1,000,000`).
+- **`T_EVENT` (20 B):** `u8 code` (`1 = scooter trick`, `2 = beer`, `3 = enter Mom boss`, `4 = Mom damage`, `5 = crew unlock`, `6 = casino warp all`, `7 = Lexie RPG battle`), 3 padding bytes, `u32 value` (`<= 1,000,000`).
 - **`T_PING` / `T_PONG` (16 B):** `u32 txMs`.
-- **`T_META` (36 B):** `u8 charId`, `u8 metaFlags` (`bit 0 (1) = touch`, `bit 1 (2) = veteran`, `bit 2 (4) = roomFull`, `bit 3 (8) = charLocked`), `u16 avgRttMs`, `u8 directCount`, `u8 claimAgeSec` (seconds since character lock, `0..=255`, `0` while unlocked), `3 × (u32 peerId + u16 peerRttMs)`.
+- **`T_META` (36 B):** `u8 charId` (`0..=4`), `u8 metaFlags` (`bit 0 = touch`, `bit 1 = veteran`, `bit 2 = roomFull`, `bit 3 = charLocked`, `bits 4..6 = sceneId (0..=4)`, `bit 7 = level1Ready`), `u16 avgRttMs`, `u8 directCount`, `u8 claimAgeSec` (seconds since character lock, `0..=255`, `0` while unlocked), `3 × (u32 peerId + u16 peerRttMs)`.
 
 `window.tendyNet.drain()` returns a `Float64Array` with `HEADER_W = 7` header floats (`[now_ms, peers, n, local_char, flags_mask, avg_rtt_ms, shard_idx]`, where `flags_mask` encodes `bit 0 = online`, `bit 1 = transport active`, `bit 2 = is_anchor`, `bit 3 = char_select_open`) followed by `n` records of width `REC_W = 20` (`[..., char_id]`). `T_STATE` packets are withheld until `charLocked == true`.
 
