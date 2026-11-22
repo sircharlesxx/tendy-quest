@@ -2102,7 +2102,14 @@ pub fn animate_and_collect_pickups(
         let dy = (p_pos.y - f_tf.translation.y).abs();
         if horiz_d < 4.5 && dy < 3.0 {
             if stats.tendies >= stats.total_tendies || stats.player_scale >= 5.95 {
-                if stats.fridge_open <= 0.0 {
+                let squad = crate::audio::net_squad_info();
+                let all_ready = squad[2] <= 1 || squad[1] >= squad[2];
+                if !all_ready {
+                    stats.hint_text = format!(
+                        "WAITING FOR SQUAD TO EAT 12/12 TENDIES! ({}/{} READY)",
+                        squad[1], squad[2]
+                    );
+                } else if stats.fridge_open <= 0.0 {
                     stats.fridge_open = 0.02;
                     stats.score += 5000;
                     crate::audio::play_sfx("win");
@@ -2127,6 +2134,7 @@ pub fn animate_and_collect_pickups(
             }
         }
         if stats.fridge_open >= 0.72 {
+            crate::audio::net_event(3, 1);
             next_state.set(GameState::Cutscene);
         }
     }

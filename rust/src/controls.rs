@@ -315,19 +315,8 @@ const RESTART_CONFIRM_SECS: f32 = 3.0;
 /// arrive as a key event a frame after the lock change) doesn't close the menu again.
 const ESC_CLOSE_GRACE_SECS: f64 = 0.35;
 
-fn pause_buttons(state: &GameState, stats: &PlayerStats) -> Vec<usize> {
-    if *state == GameState::CityPlay && stats.free_roam && crate::audio::net_enabled() {
-        vec![
-            BTN_RESUME,
-            BTN_SOUND,
-            BTN_MULTIPLAYER,
-            BTN_RESTART,
-            BTN_CLEAR_CACHE,
-            BTN_CLEAR_SAVE,
-        ]
-    } else {
-        vec![BTN_RESUME, BTN_SOUND, BTN_RESTART, BTN_CLEAR_CACHE, BTN_CLEAR_SAVE]
-    }
+fn pause_buttons(_state: &GameState, _stats: &PlayerStats) -> Vec<usize> {
+    vec![BTN_RESUME, BTN_SOUND, BTN_RESTART, BTN_CLEAR_CACHE, BTN_CLEAR_SAVE]
 }
 
 #[derive(Resource, Default)]

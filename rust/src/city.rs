@@ -583,6 +583,7 @@ pub fn enter_mom_victory_cutscene(
     for mut node in &mut hud_q {
         node.display = Display::None;
     }
+    stats.needs_city_char_select = true;
     crate::audio::mark_mom_defeated();
     crate::audio::mark_mom_defeated();
     crate::ui::save_game_checkpoint("city", &stats);
@@ -2876,6 +2877,7 @@ pub fn enter_city_intro_cutscene(
     for mut node in &mut hud_q {
         node.display = Display::None;
     }
+    stats.needs_city_char_select = true;
     crate::audio::mark_mom_defeated();
     crate::audio::mark_mom_defeated();
     crate::ui::save_game_checkpoint("city", &stats);
@@ -4660,6 +4662,7 @@ pub fn update_city_lexie(
             && !stats.lexie_defeated
             && (!lexie.on_tower && dist < 26.0 || lexie_contact.is_some())
         {
+            crate::audio::net_event(crate::net::EVENT_LEXIE_BATTLE, 1);
             commands.entity(lexie_ent).despawn_recursive();
             next_state.set(GameState::LexieBattle);
             return;

@@ -24,12 +24,6 @@ pub struct ContinueButton;
 #[derive(Component)]
 pub struct FreeModeButton;
 
-/// Start-menu button launching Cedar Rapids Free Mode with distributed P2P networking enabled.
-/// Why: lets players jump straight into the 4-player WebRTC crew squad right from launch.
-/// Gameplay impact: activates `window.tendyNet` WebTorrent-tracker matchmaking before entering Cedar Rapids.
-#[derive(Component)]
-pub struct FreeModeMpButton;
-
 /// StageClear "Continue" (post-game free roam) button; shown only after the Lexie win.
 #[derive(Component)]
 pub struct RoamButton;
@@ -849,7 +843,7 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     .with_children(|btn| {
                         btn.spawn((
                             TutorialBtnText,
-                            Text::new("START QUEST (SPACE / TAP)"),
+                            Text::new("START CO-OP QUEST (SPACE / TAP)"),
                             TextFont {
                                 font_size: 16.5,
                                 ..default()
@@ -881,26 +875,6 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     .with_children(|btn| {
                         btn.spawn((
                             Text::new(free_label),
-                            TextFont {
-                                font_size: 14.5,
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
-                    row.spawn((
-                        FreeModeMpButton,
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(18.0), Val::Px(9.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.46, 0.24, 0.78)),
-                        BorderRadius::all(Val::Px(10.0)),
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("ENTER FREE MODE (MULTIPLAYER)"),
                             TextFont {
                                 font_size: 14.5,
                                 ..default()
@@ -1282,7 +1256,6 @@ pub fn handle_tutorial_input(
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     cont_q: Query<&Interaction, (Changed<Interaction>, With<ContinueButton>)>,
     free_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeButton>)>,
-    free_mp_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeMpButton>)>,
 ) {
     // Debug scene skips, only with `?debug=1` in the URL.
     if keys.just_pressed(KeyCode::KeyK) && crate::audio::debug_keys_enabled() {
@@ -1293,13 +1266,9 @@ pub fn handle_tutorial_input(
         next_state.set(GameState::BossFight);
         return;
     }
-    if free_mp_q.iter().any(|i| *i == Interaction::Pressed) {
-        enter_free_mode_from_menu(&mut stats, &mut next_state, true);
-        return;
-    }
     let free_clicked = free_q.iter().any(|i| *i == Interaction::Pressed);
     if free_clicked || keys.just_pressed(KeyCode::KeyF) {
-        enter_free_mode_from_menu(&mut stats, &mut next_state, false);
+        enter_free_mode_from_menu(&mut stats, &mut next_state, true);
         return;
     }
     let cont_clicked = cont_q.iter().any(|i| *i == Interaction::Pressed);
@@ -1361,8 +1330,8 @@ pub fn handle_tutorial_input(
         if stats.boss_mode {
             next_state.set(GameState::BossFight);
         } else {
-            crate::audio::net_set_online(false);
             stats.free_roam = false;
+            stats.needs_city_char_select = true;
             crate::audio::play_bgm();
             next_state.set(GameState::Playing);
         }

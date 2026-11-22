@@ -15,6 +15,7 @@ use std::f32::consts::PI;
 use bevy::prelude::*;
 use bevy::scene::SceneInstanceReady;
 
+use crate::derek::{make_derek_materials, spawn_derek_rig};
 use crate::glenn::{CityGlenn, make_glenn_materials, spawn_glenn_rig};
 use crate::nate::{CityNate, make_nate_materials, spawn_nate_rig};
 use crate::player::{CameraSet, LIGHT_SWING_SECS, Player, ROLL_SECS};
@@ -38,10 +39,10 @@ const MAX_REMOTES: usize = 5;
 const HEADER_W: usize = 7;
 const REC_W: usize = 20;
 
-/// Free roam keeps the hero 180 cm (gameplay scale 1.8); anything outside this range is clamped.
-const SCALE_RANGE: (f32, f32) = (0.5, 3.0);
-/// Lowest / highest plausible hero height in the city (street level to the Ferris wheel top).
-const Y_RANGE: (f32, f32) = (-2.0, 60.0);
+/// Hero scale range across Level 1 (0.55..6.0) and Cedar Rapids Kaiju (1.8..18.0).
+const SCALE_RANGE: (f32, f32) = (0.4, 20.0);
+/// Lowest / highest plausible hero height (Level 1 floor is y = -6.0; Ferris wheel top is ~50).
+const Y_RANGE: (f32, f32) = (-10.0, 60.0);
 const MAX_SPEED: f32 = 80.0;
 
 const MODE_WALK: u8 = 0;
@@ -61,11 +62,22 @@ const FLAG_HIDDEN: u8 = 64;
 
 const EVENT_TRICK: u32 = 1;
 const EVENT_BEER: u32 = 2;
+pub const EVENT_ENTER_MOM_BOSS: u32 = 3;
+pub const EVENT_MOM_DAMAGE: u32 = 4;
+pub const EVENT_CREW_UNLOCK: u32 = 5;
+pub const EVENT_CASINO_WARP_ALL: u32 = 6;
+pub const EVENT_LEXIE_BATTLE: u32 = 7;
 
 pub const CHAR_STAN: u8 = 0;
 pub const CHAR_NATE: u8 = 1;
 pub const CHAR_GLENN: u8 = 2;
 pub const CHAR_TJ: u8 = 3;
+pub const CHAR_DEREK: u8 = 4;
+
+#[derive(Resource, Default)]
+pub struct NetCoopEvents {
+    pub mom_damage: f32,
+}
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
 /// kept separate from `TjLegPivot` / `NateLegPivot` so story/cutscene systems never touch MP rigs.
@@ -94,37 +106,48 @@ struct LocalCrewVisual {
 
 pub struct NetPlugin;
 
+fn mp_playable(state: Res<State<GameState>>) -> bool {
+    matches!(
+        *state.get(),
+        GameState::Playing | GameState::BossFight | GameState::CityPlay | GameState::CasinoPlay
+    )
+}
+
 impl Plugin for NetPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NetState>()
-            .add_systems(Startup, net_init)
-            .add_systems(
-                OnEnter(GameState::CityPlay),
-                (
-                    enter_city_net.after(crate::city::enter_city_play),
-                    spawn_net_hud.after(enter_city_net),
-                )
-                    .run_if(net_enabled),
+            .init_resource::<NetCoopEvents>()
+            .add_systems(Startup, net_init);
+        for st in [
+            GameState::Playing,
+            GameState::BossFight,
+            GameState::CityPlay,
+            GameState::CasinoPlay,
+        ] {
+            app.add_systems(
+                OnEnter(st),
+                (enter_city_net, spawn_net_hud.after(enter_city_net)).run_if(net_enabled),
             )
-            .add_systems(OnExit(GameState::CityPlay), leave_city.run_if(net_enabled))
-            .add_systems(
-                Update,
-                (
-                    receive_remote_states,
-                    publish_local_state,
-                    sync_local_crew_avatar,
-                    sync_claimed_pub_crew,
-                    place_remote_avatars,
-                    animate_remote_avatars,
-                    animate_local_crew_visual,
-                    update_net_overlay,
-                )
-                    .chain()
-                    // After the follow camera so labels track this frame's view.
-                    .after(CameraSet::Follow)
-                    .run_if(in_state(GameState::CityPlay))
-                    .run_if(net_enabled),
-            );
+            .add_systems(OnExit(st), leave_city.run_if(net_enabled));
+        }
+        app.add_systems(
+            Update,
+            (
+                receive_remote_states,
+                publish_local_state,
+                sync_local_crew_avatar,
+                sync_claimed_pub_crew,
+                place_remote_avatars,
+                animate_remote_avatars,
+                animate_local_crew_visual,
+                update_net_overlay,
+            )
+                .chain()
+                // After the follow camera so labels track this frame's view.
+                .after(CameraSet::Follow)
+                .run_if(mp_playable)
+                .run_if(net_enabled),
+        );
     }
 }
 
@@ -135,6 +158,7 @@ fn char_name(char_id: u8, slot: u8) -> String {
             CHAR_NATE => "NATE".to_string(),
             CHAR_GLENN => "GLENN".to_string(),
             CHAR_TJ => "TJ".to_string(),
+            CHAR_DEREK => "DEREK".to_string(),
             _ => format!("P{}", slot),
         }
     } else {
@@ -149,6 +173,7 @@ fn char_color(char_id: u8, slot: u8) -> Color {
             CHAR_NATE => Color::srgb(0.30, 0.65, 1.0),
             CHAR_GLENN => Color::srgb(1.0, 0.36, 0.20),
             CHAR_TJ => Color::srgb(0.32, 0.92, 0.39),
+            CHAR_DEREK => Color::srgb(0.98, 0.80, 0.25),
             _ => slot_color(slot),
         }
     } else {
@@ -177,6 +202,7 @@ struct Sample {
     vel: Vec3,
     scale: f32,
     mode: u8,
+    scene_id: u8,
     flags: u8,
     action: f32,
 }
@@ -213,6 +239,7 @@ pub struct NetState {
     send_accum: f32,
     peers: u32,
     local_char: u8,
+    local_scene_id: u8,
     online_active: bool,
     transport_active: bool,
     is_anchor: bool,
@@ -280,12 +307,39 @@ fn net_init(mut net: ResMut<NetState>) {
     net.enabled = crate::audio::net_enabled();
 }
 
-/// Activates or deactivates distributed JS P2P discovery only when actually in Cedar Rapids Free Mode.
-fn enter_city_net(stats: Res<PlayerStats>, mut net: ResMut<NetState>) {
-    crate::audio::net_set_free_roam(stats.free_roam);
-    net.online_active = crate::audio::net_is_online();
-    if !stats.free_roam {
-        net.local_char = CHAR_STAN;
+fn scene_id_for_state(state: &GameState) -> u8 {
+    match state {
+        GameState::Playing => 0,
+        GameState::BossFight => 1,
+        GameState::CityPlay => 2,
+        GameState::CasinoPlay => 3,
+        _ => 4,
+    }
+}
+
+/// Configures multiplayer scene state & character rules on entering any playable 3D state.
+fn enter_city_net(
+    state: Res<State<GameState>>,
+    mut stats: ResMut<PlayerStats>,
+    mut net: ResMut<NetState>,
+) {
+    let sid = scene_id_for_state(state.get());
+    net.local_scene_id = sid;
+    crate::audio::net_set_free_roam(true);
+    crate::audio::net_set_scene(u32::from(sid), stats.tendies >= 12);
+    net.online_active = true;
+    match *state.get() {
+        GameState::Playing | GameState::BossFight => {
+            net.local_char = CHAR_STAN;
+            crate::audio::net_lock_char(u32::from(CHAR_STAN));
+        }
+        GameState::CityPlay => {
+            if stats.needs_city_char_select || stats.free_roam {
+                stats.needs_city_char_select = false;
+                crate::audio::net_open_char_select("");
+            }
+        }
+        _ => {}
     }
 }
 
@@ -360,6 +414,10 @@ fn spawn_crew_rig_child(
             }
             CHAR_TJ => {
                 spawn_tj_rig(rig, meshes, materials, false, false);
+            }
+            CHAR_DEREK => {
+                let mats = make_derek_materials(materials);
+                spawn_derek_rig(rig, meshes, &mats, false);
             }
             _ => {}
         });
@@ -682,8 +740,10 @@ fn on_remote_scene_ready(
 /// `[kind, slot, seq, sender_ms, recv_ms, x, y, z, qx, qy, qz, qw, vx, vy, vz, scale, mode, flags, action, char_id]`.
 fn parse_sample(rec: &[f64]) -> Option<Sample> {
     let f = |i: usize| rec[i] as f32;
-    let mode = rec[16];
-    if mode.fract() != 0.0 || !(0.0..=f64::from(MODE_AWAY)).contains(&mode) {
+    let raw_mode = rec[16] as u32;
+    let mode = (raw_mode & 0x07) as u8;
+    let scene_id = ((raw_mode >> 4) & 0x07) as u8;
+    if rec[16].fract() != 0.0 || mode > MODE_AWAY {
         return None;
     }
     let half = crate::city::CITY_HALF_EXTENT;
@@ -700,7 +760,8 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
         rot,
         vel: Vec3::new(f(12), f(13), f(14)).clamp_length_max(MAX_SPEED),
         scale: f(15).clamp(SCALE_RANGE.0, SCALE_RANGE.1),
-        mode: mode as u8,
+        mode,
+        scene_id,
         flags: (rec[17] as u32 & 0x7f) as u8,
         action: f(18).clamp(0.0, 1.0),
     })
@@ -709,7 +770,10 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
 #[allow(clippy::too_many_arguments)]
 fn receive_remote_states(
     mut commands: Commands,
+    state: Res<State<GameState>>,
+    mut next_state: crate::transition::SceneTransition,
     mut net: ResMut<NetState>,
+    mut coop: ResMut<NetCoopEvents>,
     mut stats: ResMut<PlayerStats>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -720,11 +784,10 @@ fn receive_remote_states(
     mut text_color_q: Query<&mut TextColor>,
     mut was_char_select: Local<bool>,
 ) {
-    if !stats.free_roam {
-        stats.char_select_open = false;
-        *was_char_select = false;
-        return;
-    }
+    let sid = scene_id_for_state(state.get());
+    net.local_scene_id = sid;
+    crate::audio::net_set_scene(u32::from(sid), stats.tendies >= 12);
+
     let net = &mut *net;
     ensure_assets(net, &asset_server, &mut meshes, &mut materials);
     let data = crate::audio::net_drain();
@@ -734,7 +797,7 @@ fn receive_remote_states(
     net.now_ms = data[0];
     net.peers = (data[1].max(0.0) as u32).min(MAX_REMOTES as u32);
     let count = (data[2].max(0.0) as usize).min((data.len() - HEADER_W) / REC_W);
-    net.local_char = (data[3].clamp(0.0, 3.0) as u8).min(3);
+    net.local_char = (data[3].clamp(0.0, 4.0) as u8).min(4);
     let flags_mask = data[4].max(0.0) as u32;
     net.online_active = (flags_mask & 1) != 0;
     net.transport_active = (flags_mask & 2) != 0;
@@ -768,7 +831,7 @@ fn receive_remote_states(
             continue;
         }
         let slot = slot as u8;
-        let char_id = (rec[19].clamp(0.0, 3.0) as u8).min(3);
+        let char_id = (rec[19].clamp(0.0, 4.0) as u8).min(4);
         match rec[0] as u32 {
             1 => {
                 let Some(s) = parse_sample(rec) else {
@@ -867,6 +930,41 @@ fn receive_remote_states(
                 net.event_line = match rec[2] as u32 {
                     EVENT_TRICK => format!("{} SCOOTER SCORE +{}", label, value),
                     EVENT_BEER => format!("{} DRANK A BEER", label),
+                    EVENT_ENTER_MOM_BOSS => {
+                        if *state.get() == GameState::Playing {
+                            next_state.set(GameState::Cutscene);
+                        }
+                        format!("{} OPENED THE FRIDGE!", label)
+                    }
+                    EVENT_MOM_DAMAGE => {
+                        if *state.get() == GameState::BossFight {
+                            coop.mom_damage += value as f32;
+                        }
+                        continue;
+                    }
+                    EVENT_CREW_UNLOCK => {
+                        match value {
+                            1 => stats.tj_recruited = true,
+                            2 => stats.derek_recruited = true,
+                            3 => stats.nate_recruited = true,
+                            4 => stats.glenn_recruited = true,
+                            5 => stats.mike_smoked = true,
+                            _ => {}
+                        }
+                        format!("{} RECRUITED CREW!", label)
+                    }
+                    EVENT_CASINO_WARP_ALL => {
+                        if *state.get() == GameState::CityPlay {
+                            next_state.set(GameState::PubPortalCutscene);
+                        }
+                        format!("{} TELEPORTED SQUAD TO CASINO!", label)
+                    }
+                    EVENT_LEXIE_BATTLE => {
+                        if *state.get() == GameState::CityPlay && !stats.free_roam {
+                            next_state.set(GameState::LexieBattle);
+                        }
+                        format!("{} STARTED LEXIE SHOWDOWN!", label)
+                    }
                     _ => continue,
                 };
                 net.event_timer = 4.0;
@@ -889,12 +987,13 @@ fn receive_remote_states(
 
 fn publish_local_state(
     time: Res<Time<Real>>,
+    state: Res<State<GameState>>,
     mut net: ResMut<NetState>,
     stats: Res<PlayerStats>,
     player_q: Query<(&Transform, &Player, &Visibility)>,
     tf_q: Query<&Transform, Without<Player>>,
 ) {
-    if !stats.free_roam || stats.char_select_open {
+    if stats.char_select_open || !mp_playable(state) {
         return;
     }
     if let Some(prev) = net.last_score {
@@ -975,7 +1074,7 @@ fn publish_local_state(
 /// glTF scene child) while letting newcomers play as Nate, Glenn, or TJ.
 fn sync_local_crew_avatar(
     mut commands: Commands,
-    stats: Res<PlayerStats>,
+    state: Res<State<GameState>>,
     net: Res<NetState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -983,7 +1082,10 @@ fn sync_local_crew_avatar(
     local_crew_q: Query<(Entity, &LocalCrewVisual)>,
     mut vis_q: Query<&mut Visibility, (Without<Player>, Without<LocalCrewVisual>)>,
 ) {
-    let want_crew = if stats.free_roam && matches!(net.local_char, CHAR_NATE | CHAR_GLENN | CHAR_TJ) {
+    let in_city_or_casino = matches!(*state.get(), GameState::CityPlay | GameState::CasinoPlay);
+    let want_crew = if in_city_or_casino
+        && matches!(net.local_char, CHAR_NATE | CHAR_GLENN | CHAR_TJ | CHAR_DEREK)
+    {
         Some(net.local_char)
     } else {
         None
@@ -1047,13 +1149,13 @@ fn sync_claimed_pub_crew(
     >,
 ) {
     let mut mask: u8 = 0;
-    if stats.free_roam {
-        if !stats.char_select_open && net.local_char <= 3 {
+    if stats.free_roam || stats.crew_count() >= 4 {
+        if !stats.char_select_open && net.local_char <= 4 {
             mask |= 1 << net.local_char;
         }
         for r in &net.remotes {
             let away = r.shown.map(|s| s.mode == MODE_AWAY).unwrap_or(false);
-            if !away && r.char_id <= 3 && r.slot <= 4 {
+            if !away && r.char_id <= 4 && r.slot <= 4 {
                 mask |= 1 << r.char_id;
             }
         }
@@ -1104,6 +1206,7 @@ fn sample_at(samples: &VecDeque<Sample>, render_t: f64) -> Option<Sample> {
         vel: a.vel.lerp(b.vel, k),
         scale: a.scale + (b.scale - a.scale) * k,
         mode: b.mode,
+        scene_id: b.scene_id,
         flags: if k < 0.5 { a.flags } else { b.flags },
         action: if a.flags & (FLAG_ROLL | FLAG_ATTACK) == b.flags & (FLAG_ROLL | FLAG_ATTACK) {
             a.action + (b.action - a.action) * k
@@ -1121,6 +1224,7 @@ fn place_remote_avatars(
 ) {
     let dt = time.delta_secs().min(0.1);
     let now = net.now_ms;
+    let local_scene_id = net.local_scene_id;
     for r in &mut net.remotes {
         let Some(offset) = r.offset else {
             continue;
@@ -1132,7 +1236,7 @@ fn place_remote_avatars(
         let Some(s) = sample_at(&r.samples, render_t) else {
             continue;
         };
-        let away = s.mode == MODE_AWAY;
+        let away = s.mode == MODE_AWAY || s.scene_id != local_scene_id;
         let show_hero = !away && s.mode != MODE_CAR && s.flags & FLAG_HIDDEN == 0;
 
         if let Ok((mut tf, mut vis, mut pose)) = avatar_q.get_mut(r.avatar) {
@@ -1740,11 +1844,9 @@ fn leave_city(
     ui_q: Query<Entity, With<NetEntity>>,
 ) {
     stats.char_select_open = false;
-    if stats.free_roam {
-        let away = f32::from(MODE_AWAY);
-        crate::audio::net_publish(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.8, away, 0.0, 0.0]);
-    }
-    crate::audio::net_set_free_roam(false);
+    let away = f32::from(MODE_AWAY);
+    crate::audio::net_publish(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.8, away, 0.0, 0.0]);
+    crate::audio::net_set_scene(4, stats.tendies >= 12);
     if let Ok(children) = player_q.get_single() {
         for &child in children.iter() {
             if local_crew_q.get(child).is_err() {
@@ -1765,6 +1867,5 @@ fn leave_city(
         }
     }
     net.remotes.clear();
-    net.local_char = CHAR_STAN;
     net.send_accum = 0.0;
 }

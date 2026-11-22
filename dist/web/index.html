@@ -2830,7 +2830,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-4014023e38464a2f.js" crossorigin="anonymous" integrity="sha384-mZZn17xw0x3Xr97HSXRmd8K2MHWD5n1dlO4rGYCEtvsW+B8Nf9APELC3z9Hz7WcN"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-4014023e38464a2f_bg.wasm" crossorigin="anonymous" integrity="sha384-HwXFxX+7peT/3ECDSRigEVA60aF3/W8/hzuglkDbkZXaWySnrHWZTcSzjhikJMmZ" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-a89edff9f734b4b6.js" crossorigin="anonymous" integrity="sha384-k/JsrT4yVYVTGjIUzNCv6JQnR6UidU5Gf9bA9OfXCxLvyq7i3F6REZmegUrjv2hm"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-a89edff9f734b4b6_bg.wasm" crossorigin="anonymous" integrity="sha384-K2N4kTbsnUWKCh9nY9GSz+GLHo5P8luFwwGmgJlRKXfrAOLf3NhNfwpkEMHOCatM" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3771,12 +3771,13 @@
       const PROBE_INTERVAL_MS = 2500;
       const VETERAN_MS = 4000;
       const RATE_PER_S = 35, RATE_BURST = 40;
-      const CITY_HALF = 135, Y_MIN = -2, Y_MAX = 60;
+      const CITY_HALF = 135, Y_MIN = -10, Y_MAX = 60;
       const CHARS = {
         0: { name: "STAN", color: "#2ef5ff", role: "Tendy Hunter", bio: "Red plaid hoodie, Vikings visor & lightsaber." },
         1: { name: "NATE", color: "#4da6ff", role: "Des Moines Rival", bio: "Street brawler with kung-fu stance." },
         2: { name: "GLENN", color: "#ff5c33", role: "Pub 217 Powerhouse", bio: "Curly-haired legend with DBZ energy." },
         3: { name: "TJ", color: "#52eb63", role: "TMNT Superfan", bio: "Cedar Rapids skater & crew MVP." },
+        4: { name: "DEREK", color: "#ffd23f", role: "Cedar Rapids Brawler", bio: "Elbow sweat & Kamehameha master." },
       };
       const SLOT_COLORS = { 2: "#ff8c1a", 3: "#f24dd9", 4: "#66f259", 5: "#ffe633", 6: "#ff5252" };
 
@@ -3811,17 +3812,19 @@
 
       const initialKind = mpParam === "tabs" ? "tabs" : mpParam === "rtc" ? "rtc" : "mesh";
       const net = {
-        inFreeRoam: false,
-        onlinePref: readOnlinePref(),
+        inFreeRoam: true,
+        onlinePref: true,
+        sceneId: 0,
+        level1Ready: false,
         transport: null,     // { kind, send(buf, reliable, exceptConn), close(), connCount(), ... }
         transportKind: initialKind,
         room: roomFromUrl || "MAIN",
         shard: 0,
-        status: "Solo (offline)",
-        myChar: 0,           // 0=STAN, 1=NATE, 2=GLENN, 3=TJ
-        charLocked: false,   // true once a character is picked (or Solo offline)
+        status: "Connecting...",
+        myChar: 0,           // 0=STAN, 1=NATE, 2=GLENN, 3=TJ, 4=DEREK
+        charLocked: true,    // Stan is locked in Level 1 until post-Mom Character Select
         charSelectOpen: false,
-        charClaimedAt: 0,
+        charClaimedAt: performance.now(),
         charSelectNotice: "",
         joinedAt: performance.now(),
         peers: new Map(),    // sender id (u32) -> { slot, charId, last, tokens, fill, conn, directOpen, rttMs, rttSamples, avgRttMs, directCount, directMap, mobile, veteran, full, bridgedVia, connectedAt }
@@ -3873,7 +3876,7 @@
         v.setUint8(40, clamp(s[11] | 0, 0, 255));
         v.setUint8(41, clamp(s[12] | 0, 0, 255));
         v.setUint8(42, clamp(Math.round(s[13] * 255), 0, 255));
-        v.setUint8(43, net.myChar & 3);
+        v.setUint8(43, net.myChar & 7);
         return buf;
       }
 
@@ -3890,12 +3893,14 @@
 
       function encodeMeta() {
         const [buf, v] = header(T_META, LEN[T_META]);
-        v.setUint8(12, net.myChar & 3);
+        v.setUint8(12, net.myChar & 7);
         let mflags = 0;
         if (isTouchHint) mflags |= 1;
         if (isVeteran()) mflags |= 2;
         if (net.peers.size >= maxRemotes()) mflags |= 4;
         if (net.charLocked) mflags |= 8;
+        mflags |= (net.sceneId & 7) << 4;
+        if (net.level1Ready) mflags |= 128;
         v.setUint8(13, mflags);
         const avg = computeOwnAvgRtt();
         v.setUint16(14, avg >= 0 ? clamp(avg, 0, 65534) : 65535, true);
@@ -3924,22 +3929,22 @@
       // charLocked=false (mflags & 8 == 0) so only actively played characters are disabled for
       // other players. Simultaneous selections resolve deterministically via claim age / veteran / peerId.
       function pickFreeChar(excludeTaken) {
-        const crewFree = [1, 2, 3].filter((c) => !excludeTaken.has(c));
+        const crewFree = [1, 2, 3, 4].filter((c) => !excludeTaken.has(c));
         if (crewFree.length) return crewFree[Math.floor(Math.random() * crewFree.length)];
-        for (let c = 0; c <= 3; c++) if (!excludeTaken.has(c)) return c;
-        return ((myId % 3) + 1);
+        for (let c = 0; c <= 4; c++) if (!excludeTaken.has(c)) return c;
+        return ((myId % 4) + 1);
       }
 
       function getTakenChars() {
         const taken = new Set();
         for (const p of net.peers.values()) {
-          if (p.charLocked && p.charId >= 0 && p.charId <= 3) taken.add(p.charId);
+          if (p.charLocked && p.charId >= 0 && p.charId <= 4) taken.add(p.charId);
         }
         return taken;
       }
 
       function openCharSelect(notice) {
-        if (!net.inFreeRoam || !net.transport) return;
+        if (!net.transport) return;
         net.charLocked = false;
         net.charClaimedAt = 0;
         net.charSelectOpen = true;
@@ -3951,9 +3956,23 @@
         updateTelemetry();
       }
 
+      function lockChar(charId) {
+        const cid = Number(charId);
+        if (!Number.isInteger(cid) || cid < 0 || cid > 4) return;
+        net.myChar = cid;
+        net.charLocked = true;
+        net.charSelectOpen = false;
+        net.charClaimedAt = performance.now();
+        net.charSelectNotice = "";
+        sendMeta();
+        refreshCharSelect();
+        refreshPanel();
+        updateTelemetry();
+      }
+
       function selectChar(charId) {
         const cid = Number(charId);
-        if (!Number.isInteger(cid) || cid < 0 || cid > 3) return false;
+        if (!Number.isInteger(cid) || cid < 0 || cid > 4) return false;
         const taken = getTakenChars();
         if (taken.has(cid)) {
           net.charSelectNotice = (CHARS[cid]?.name || "That character") + " is currently being played! Pick another.";
@@ -3978,7 +3997,7 @@
       }
 
       function resolveCharClaims(sourceId, peer) {
-        if (!net.transport || net.peers.size === 0) return;
+        if (!net.transport || net.peers.size === 0 || net.sceneId < 2) return;
         if (!net.charLocked || !peer.charLocked || peer.charId !== net.myChar) return;
         const myAge = Math.floor((performance.now() - net.charClaimedAt) / 1000);
         const theirAge = peer.claimAgeSec || 0;
@@ -4170,7 +4189,7 @@
           if (![x, y, z].every(Number.isFinite)) return drop();
           if (Math.abs(x) > CITY_HALF + 1 || Math.abs(z) > CITY_HALF + 1 || y < Y_MIN - 1 || y > Y_MAX + 1) return drop();
           const mode = v.getUint8(40), flags = v.getUint8(41), charId = v.getUint8(43);
-          if (mode > 4 || flags > 127 || charId > 3) return drop();
+          if (mode > 4 || flags > 127 || charId > 4) return drop();
           msgChar = charId;
           rec = new Float64Array(REC_W);
           rec[0] = 1; rec[2] = v.getUint16(2, true); rec[3] = v.getUint32(8, true);
@@ -4182,12 +4201,12 @@
           rec[19] = charId;
         } else if (type === T_EVENT) {
           const code = v.getUint8(12), value = v.getUint32(16, true);
-          if (code < 1 || code > 2 || value > 1000000) return drop();
+          if (code < 1 || code > 12 || value > 1000000) return drop();
           rec = new Float64Array(REC_W);
           rec[0] = 3; rec[2] = code; rec[3] = value;
         } else if (type === T_META) {
           const charId = v.getUint8(12);
-          if (charId > 3) return drop();
+          if (charId > 4) return drop();
           const mflags = v.getUint8(13);
           const avgRtt = v.getUint16(14, true);
           const dCount = v.getUint8(16);
@@ -4207,6 +4226,8 @@
             veteran: (mflags & 2) !== 0,
             full: (mflags & 4) !== 0,
             locked: (mflags & 8) !== 0,
+            sceneId: (mflags >> 4) & 7,
+            level1Ready: (mflags & 128) !== 0,
             claimAgeSec,
             avgRttMs: avgRtt < 65535 ? avgRtt : -1,
             directCount: dCount,
@@ -4242,6 +4263,8 @@
             slot,
             charId: msgChar !== null ? msgChar : ((slot - 1) & 3),
             charLocked: metaInfo ? metaInfo.locked : (type === T_STATE),
+            sceneId: metaInfo ? metaInfo.sceneId : 0,
+            level1Ready: metaInfo ? metaInfo.level1Ready : false,
             claimAgeSec: metaInfo ? metaInfo.claimAgeSec : 0,
             last: now,
             tokens: RATE_BURST,
@@ -4286,6 +4309,8 @@
         if (metaInfo) {
           if (peer.charLocked !== metaInfo.locked) charChanged = true;
           peer.charLocked = metaInfo.locked;
+          peer.sceneId = metaInfo.sceneId;
+          peer.level1Ready = metaInfo.level1Ready;
           peer.claimAgeSec = metaInfo.claimAgeSec;
           peer.mobile = metaInfo.mobile;
           peer.veteran = metaInfo.veteran;
@@ -4312,7 +4337,10 @@
 
         if (rec) {
           rec[1] = peer.slot;
-          if (rec[0] === 1) rec[4] = now;
+          if (rec[0] === 1) {
+            rec[4] = now;
+            rec[16] = (rec[16] & 0x07) | (((peer.sceneId || 0) & 7) << 4);
+          }
           rec[19] = peer.charId;
           pushRecord(rec);
         }
@@ -5051,9 +5079,10 @@
         net.shard = 0;
         net.joinedAt = performance.now();
         net.myChar = 0;
+        net.charLocked = true;
+        net.charClaimedAt = performance.now();
         net.transport = meshTransport(net.room, 0);
-        setStatus("Searching Cedar Rapids squad (Shard 1)...");
-        openCharSelect("");
+        setStatus("Searching squad (Shard 1)...");
         refreshPanel();
         updateTelemetry();
       }
@@ -5172,7 +5201,7 @@
       }
       function refreshCharSelect() {
         if (!ui.charBox) return;
-        const show = !!(net.inFreeRoam && net.transport && net.charSelectOpen);
+        const show = !!(net.transport && net.charSelectOpen);
         ui.charBox.style.display = show ? "flex" : "none";
         if (!show) return;
         const taken = getTakenChars();
@@ -5188,7 +5217,7 @@
           ui.charNotice.textContent = "";
           ui.charNotice.style.display = "none";
         }
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 5; i++) {
           const card = ui.charCards[i];
           const badge = ui.charBadges[i];
           const meta = CHARS[i];
@@ -5203,9 +5232,7 @@
       }
       function updatePillVisibility() {
         if (!ui.pill) return;
-        const show = net.inFreeRoam || mpParam === "tabs" || mpParam === "rtc" || mpParam === "1";
-        ui.pill.style.display = show ? "" : "none";
-        if (!show && ui.panel) togglePanel(false);
+        ui.pill.style.display = "";
         refreshCharSelect();
       }
       function refreshPanel() {
@@ -5244,9 +5271,8 @@
         ui.btnMesh.classList.toggle("on", k === "mesh");
         ui.btnTabs.classList.toggle("on", k === "tabs");
         ui.btnRtc.classList.toggle("on", k === "rtc");
-        ui.btnToggleOnline.textContent = net.onlinePref ? "Online: ON (click for Solo)" : "Solo: ON (click to go Online)";
         ui.btnLeave.disabled = !net.transport;
-        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || !net.inFreeRoam;
+        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || net.sceneId < 2;
       }
       function buildPanel() {
         const style = el("style", {});
@@ -5292,18 +5318,16 @@
           @media (max-width:500px){.mp-char-grid{grid-template-columns:1fr}}`;
         document.head.appendChild(style);
 
-        ui.pillText = el("span", { text: "SOLO" });
+        ui.pillText = el("span", { text: "ONLINE" });
         ui.pill = el("button", { id: "mp-pill", type: "button", "aria-expanded": "false", "aria-controls": "mp-panel" }, [ui.pillText]);
-        ui.btnMesh = el("button", { id: "mp-use-mesh", type: "button", text: "Distributed P2P", onclick: () => { net.transportKind = "mesh"; if (net.onlinePref && net.inFreeRoam) joinMesh(net.room); refreshPanel(); } });
+        ui.btnMesh = el("button", { id: "mp-use-mesh", type: "button", text: "Distributed P2P", onclick: () => { net.transportKind = "mesh"; joinMesh(net.room); refreshPanel(); } });
         ui.btnTabs = el("button", { id: "mp-use-tabs", type: "button", text: "Browser tabs", onclick: () => { net.transportKind = "tabs"; refreshPanel(); } });
         ui.btnRtc = el("button", { id: "mp-use-rtc", type: "button", text: "Invite code", onclick: () => { net.transportKind = "rtc"; refreshPanel(); } });
-        ui.btnToggleOnline = el("button", { id: "mp-toggle-online", type: "button", text: "Online: ON", onclick: () => setOnline(!net.onlinePref) });
         ui.meshRoom = el("input", { id: "mp-mesh-room", type: "text", maxlength: "12", size: "8", autocomplete: "off", "aria-label": "Squad room code", value: roomFromUrl || "MAIN" });
         ui.meshBox = el("div", {}, [
           el("div", { class: "mp-row" }, [
-            ui.btnToggleOnline,
             el("span", { text: "Room" }), ui.meshRoom,
-            el("button", { id: "mp-mesh-join", type: "button", text: "Join", onclick: () => { if (net.onlinePref && net.inFreeRoam) joinMesh(ui.meshRoom.value); } }),
+            el("button", { id: "mp-mesh-join", type: "button", text: "Join", onclick: () => { joinMesh(ui.meshRoom.value); } }),
           ]),
           el("div", { class: "mp-note", text: "Zero-server P2P Free Mode: public WebTorrent trackers + MQTT WSS signaling pair up to 4 browsers (Stan, Nate, Glenn, TJ) over direct WebRTC DataChannels, with lowest-latency 1-hop bridging. Use the same Room (default MAIN), or use Invite Code if on a strict firewall." }),
         ]);
@@ -5357,7 +5381,7 @@
         ui.charCards = [];
         ui.charBadges = [];
         const charGrid = el("div", { class: "mp-char-grid" });
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 5; i++) {
           const meta = CHARS[i];
           const badge = el("span", { class: "mp-char-badge free", text: "AVAILABLE [" + (i + 1) + "]" });
           const card = el("button", {
@@ -5385,8 +5409,7 @@
             ui.charNotice,
             charGrid,
             el("div", { class: "mp-char-foot" }, [
-              el("span", { class: "mp-bio", style: "font-size:11.5px;color:#9bb2d4", text: "Characters in use by squad peers cannot be selected. Press 1-4 or click a card." }),
-              el("button", { id: "mp-char-solo", type: "button", text: "Play Solo (Offline)", onclick: () => setOnline(false) }),
+              el("span", { class: "mp-bio", style: "font-size:11.5px;color:#9bb2d4", text: "Characters in use by squad peers cannot be selected. Press 1-5 or click a card." }),
             ]),
           ]),
         ]);
@@ -5398,8 +5421,8 @@
           document.body.appendChild(node);
         }
         window.addEventListener("keydown", (e) => {
-          if (!net.charSelectOpen || !net.inFreeRoam || !net.transport) return;
-          if (e.key >= "1" && e.key <= "4") {
+          if (!net.charSelectOpen || !net.transport) return;
+          if (e.key >= "1" && e.key <= "5") {
             const idx = Number(e.key) - 1;
             selectChar(idx);
           }
@@ -5446,67 +5469,51 @@
       }
 
       function setFreeRoam(active) {
-        const want = !!active;
-        if (net.inFreeRoam === want) {
-          updatePillVisibility();
-          return;
-        }
-        net.inFreeRoam = want;
-        if (!want) {
-          if (mpParam !== "tabs" && mpParam !== "rtc") leave();
-          else {
-            net.charSelectOpen = false;
-            refreshCharSelect();
-          }
-          updatePillVisibility();
-          refreshPanel();
-          updateTelemetry();
-          return;
-        }
-        if (mpParam === "tabs") {
-          if (!net.transport || net.transport.kind !== "tabs") joinTabs(roomFromUrl || "MAIN");
-          else if (!net.charLocked && !net.charSelectOpen) openCharSelect("");
-        } else if (mpParam === "rtc") {
-          if (!net.transport) setStatus("Not connected: pick a transport or Create invite");
-          else if (net.transport.connCount() > 0 && !net.charLocked && !net.charSelectOpen) openCharSelect("");
-        } else if (net.onlinePref) {
-          joinMesh(roomFromUrl || "MAIN");
-        } else {
-          net.myChar = 0;
-          net.charLocked = true;
-          net.charSelectOpen = false;
-          setStatus("Solo (offline)");
-        }
+        net.inFreeRoam = !!active;
         updatePillVisibility();
         refreshPanel();
         updateTelemetry();
       }
 
-      function setOnline(on) {
-        const want = !!on;
-        net.onlinePref = want;
-        writeOnlinePref(want);
-        if (!want) {
-          leave();
-          net.myChar = 0;
-          net.charLocked = true;
-          net.charSelectOpen = false;
-          setStatus("Solo (offline)");
-        } else if (net.inFreeRoam) {
-          if (mpParam === "tabs") joinTabs(roomFromUrl || "MAIN");
-          else if (mpParam !== "rtc") joinMesh(roomFromUrl || "MAIN");
-        }
-        refreshCharSelect();
+      function setOnline(_on) {
+        net.onlinePref = true;
         refreshPanel();
         updateTelemetry();
+      }
+
+      function setScene(sceneId, level1Ready) {
+        const sid = Number(sceneId) & 7;
+        const rdy = !!level1Ready;
+        const changed = net.sceneId !== sid || net.level1Ready !== rdy;
+        net.sceneId = sid;
+        net.level1Ready = rdy;
+        if (changed && net.transport) {
+          sendMeta();
+          refreshPanel();
+          updateTelemetry();
+        }
+      }
+
+      function squadInfo() {
+        let inLvl1 = net.sceneId === 0 ? 1 : 0;
+        let readyLvl1 = (net.sceneId === 0 && net.level1Ready) ? 1 : 0;
+        for (const p of net.peers.values()) {
+          if ((p.sceneId || 0) === 0) {
+            inLvl1++;
+            if (p.level1Ready) readyLvl1++;
+          }
+        }
+        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1]);
       }
 
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);
       else buildPanel();
       if (mpParam === "tabs") {
         joinTabs(roomFromUrl || "MAIN");
-      } else if (mpParam === "rtc" || mpParam === "1") {
-        setStatus("Not connected: pick a transport");
+      } else if (mpParam === "rtc") {
+        setStatus("Not connected: pick a transport or Create invite");
+      } else {
+        joinMesh(roomFromUrl || "MAIN");
       }
 
       // ---- Bridge used by rust/src/audio.rs (rust/src/net.rs) ----
@@ -5514,7 +5521,10 @@
         enabled() { return true; },
         setFreeRoam,
         setOnline,
-        isOnline() { return net.onlinePref; },
+        isOnline() { return true; },
+        setScene,
+        lockChar,
+        squadInfo,
         publish(state) {
           if (!state || state.length !== 14) return;
           net.lastState = Float32Array.from(state);
@@ -5563,8 +5573,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-4014023e38464a2f.js';
-const wasm = await init({ module_or_path: './tendy-quest-4014023e38464a2f_bg.wasm' });
+import init, * as bindings from './tendy-quest-a89edff9f734b4b6.js';
+const wasm = await init({ module_or_path: './tendy-quest-a89edff9f734b4b6_bg.wasm' });
 
 
 window.wasmBindings = bindings;

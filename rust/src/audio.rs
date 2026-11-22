@@ -509,6 +509,18 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = isOnline)]
         fn js_net_is_online() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = setScene)]
+        fn js_net_set_scene(scene_id: u32, level1_ready: bool);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = openCharSelect)]
+        fn js_net_open_char_select(notice: &str);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = lockChar)]
+        fn js_net_lock_char(char_id: u32);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = squadInfo)]
+        fn js_net_squad_info() -> Vec<u32>;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = publish)]
         fn js_net_publish(state: &[f32]);
 
@@ -540,6 +552,27 @@ mod imp {
     /// Whether Online P2P multiplayer is preferred for Free Mode.
     pub fn net_is_online() -> bool {
         js_net_is_online()
+    }
+
+    pub fn net_set_scene(scene_id: u32, level1_ready: bool) {
+        js_net_set_scene(scene_id, level1_ready);
+    }
+
+    pub fn net_open_char_select(notice: &str) {
+        js_net_open_char_select(notice);
+    }
+
+    pub fn net_lock_char(char_id: u32) {
+        js_net_lock_char(char_id);
+    }
+
+    pub fn net_squad_info() -> [u32; 3] {
+        let v = js_net_squad_info();
+        [
+            v.first().copied().unwrap_or(1),
+            v.get(1).copied().unwrap_or(0),
+            v.get(2).copied().unwrap_or(1),
+        ]
     }
 
     /// Local hero state for the wire (see net.rs `publish_local_state` for the field order).
@@ -777,7 +810,17 @@ mod imp {
     pub fn net_set_online(_online: bool) {}
 
     pub fn net_is_online() -> bool {
-        false
+        true
+    }
+
+    pub fn net_set_scene(_scene_id: u32, _level1_ready: bool) {}
+
+    pub fn net_open_char_select(_notice: &str) {}
+
+    pub fn net_lock_char(_char_id: u32) {}
+
+    pub fn net_squad_info() -> [u32; 3] {
+        [1, 0, 1]
     }
 
     pub fn net_publish(_state: &[f32]) {}
@@ -814,5 +857,5 @@ pub use imp::debug_at_beer;
 pub use imp::{debug_park_demo, park_log, touch_jump_held};
 // Ferris wheel debug driver and telemetry (ferris.rs).
 pub use imp::{debug_wheel_demo, set_wheel_telemetry};
-// Distributed free-roam multiplayer bridge (net.rs & controls.rs).
-pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_publish, net_set_free_roam, net_set_online, net_telemetry};
+// Distributed multiplayer bridge (net.rs & controls.rs).
+pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_lock_char, net_open_char_select, net_publish, net_set_free_roam, net_set_online, net_set_scene, net_squad_info, net_telemetry};

@@ -123,6 +123,8 @@ pub struct PlayerStats {
     pub bartender_open: bool,
     /// True while the Free Mode multiplayer Character Select screen is open (`net.rs` / `index.html`).
     pub char_select_open: bool,
+    /// True once Mom is defeated in Story Mode so entering Cedar Rapids opens Character Select.
+    pub needs_city_char_select: bool,
     /// Stan's Cedar Rapids scale saved before warping into Casino Level 3, restored on return.
     pub saved_casino_city_scale: f32,
     pub scooter_app_unlocked: bool,
@@ -227,6 +229,7 @@ impl Default for PlayerStats {
             casino_return_city: false,
             bartender_open: false,
             char_select_open: false,
+            needs_city_char_select: false,
             saved_casino_city_scale: 1.8,
             scooter_app_unlocked: false,
             riding_scooter: None,

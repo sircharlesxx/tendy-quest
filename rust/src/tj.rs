@@ -1028,12 +1028,14 @@ pub fn update_tj_cutscene(
         } else if target_beat == 8 {
             stats.cutscene_timer = t;
             stats.tj_recruited = true;
+    crate::audio::net_event(crate::net::EVENT_CREW_UNLOCK, 1);
             next_state.set(GameState::CityPlay);
             return;
         }
     } else if target_beat == 8 && (skipping || !crate::audio::is_voice_speaking()) {
         stats.cutscene_timer = t;
         stats.tj_recruited = true;
+    crate::audio::net_event(crate::net::EVENT_CREW_UNLOCK, 1);
         next_state.set(GameState::CityPlay);
         return;
     }
@@ -1221,4 +1223,5 @@ pub fn exit_tj_cutscene(
         *vis = Visibility::Inherited;
     }
     stats.tj_recruited = true;
+    crate::audio::net_event(crate::net::EVENT_CREW_UNLOCK, 1);
 }

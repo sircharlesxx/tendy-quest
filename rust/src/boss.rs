@@ -3322,12 +3322,15 @@ pub fn enter_boss_fight(
     crate::audio::play_sfx("mom_yell");
     crate::audio::speak_voice("Stan! You must eat your veggies! Final warning!", "mom");
 
+    let total_players = crate::audio::net_squad_info()[0].max(1);
+    let scaled_max_hp = (200 + (total_players - 1) * 120) as f32;
+
     let resuming_from_headphone = stats.boss_mode && stats.headphone_return_boss;
     stats.headphone_return_boss = false;
     let init_hp = if resuming_from_headphone {
         stats.boss_hp.max(12.5)
     } else {
-        100.0
+        scaled_max_hp
     };
 
     stats.boss_mode = true;
@@ -3338,7 +3341,7 @@ pub fn enter_boss_fight(
     } else {
         3.2
     };
-    stats.boss_max_hp = 100.0;
+    stats.boss_max_hp = scaled_max_hp;
     stats.boss_hp = init_hp;
     if !resuming_from_headphone {
         stats.estus_flasks = stats.max_estus_flasks;
@@ -3381,7 +3384,7 @@ pub fn enter_boss_fight(
     );
     commands.entity(mom_ent).insert(MomBoss {
         hp: init_hp,
-        max_hp: 100.0,
+        max_hp: scaled_max_hp,
         state: MomState::Pursue,
         timer: 0.0,
         voice_timer: 5.5,
@@ -3636,6 +3639,7 @@ pub fn update_boss_fight(
     time: Res<Time>,
     asset_server: Res<AssetServer>,
     mut stats: ResMut<PlayerStats>,
+    mut coop: ResMut<crate::net::NetCoopEvents>,
     mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut mom_q: Query<(Entity, &mut Transform, &mut MomBoss, &Children), Without<Player>>,
@@ -3665,6 +3669,11 @@ pub fn update_boss_fight(
     let Ok((mom_ent, mut mom_tf, mut mom, mom_children)) = mom_q.get_single_mut() else {
         return;
     };
+    if coop.mom_damage > 0.0 {
+        mom.hp = (mom.hp - coop.mom_damage).max(0.0);
+        stats.boss_hp = mom.hp;
+        coop.mom_damage = 0.0;
+    }
 
     if mom.hit_cooldown > 0.0 {
         mom.hit_cooldown = (mom.hit_cooldown - dt).max(0.0);
@@ -3733,6 +3742,7 @@ pub fn update_boss_fight(
                 stats.shake_request = stats.shake_request.max(0.5);
                 mom.hp = (mom.hp - MOM_GUARD_BREAK_DAMAGE).max(0.0);
                 stats.boss_hp = mom.hp;
+                crate::audio::net_event(4, MOM_GUARD_BREAK_DAMAGE.round() as u32);
                 stats.score += 500;
                 mom.guard_open = MOM_GUARD_BREAK_SECS;
                 mom.guarding = false;
@@ -3770,6 +3780,7 @@ pub fn update_boss_fight(
                 let dmg = base_dmg * if stats.heavy_attack { 1.85 } else { 1.0 };
                 mom.hp = (mom.hp - dmg).max(0.0);
                 stats.boss_hp = mom.hp;
+                crate::audio::net_event(4, dmg.round() as u32);
                 stats.score += 1000;
                 player.dodge_counter_timer = 0.0;
                 mom.state = MomState::Staggered;

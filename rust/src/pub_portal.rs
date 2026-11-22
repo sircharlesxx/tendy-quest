@@ -366,6 +366,8 @@ struct BartenderUiRoot;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum BartenderAction {
     OrderTenBeers,
+    TeleportEveryone,
+    GoAlone,
     Leave,
 }
 
@@ -740,6 +742,26 @@ fn handle_bartender_modal_input(
             stop_voice();
         }
         BartenderAction::OrderTenBeers => {
+            if crate::audio::net_squad_info()[0] > 1 {
+                stats.bartender_open = true;
+                spawn_casino_teleport_prompt(&mut commands);
+                return;
+            }
+            stop_voice();
+            play_sfx("estus_drink");
+            stats.saved_city_pos = bartender_bar_trigger_pos();
+            stats.saved_casino_city_scale = stats.player_scale;
+            next_state.set(GameState::PubPortalCutscene);
+        }
+        BartenderAction::TeleportEveryone => {
+            crate::audio::net_event(crate::net::EVENT_CASINO_WARP_ALL, 1);
+            stop_voice();
+            play_sfx("estus_drink");
+            stats.saved_city_pos = bartender_bar_trigger_pos();
+            stats.saved_casino_city_scale = stats.player_scale;
+            next_state.set(GameState::PubPortalCutscene);
+        }
+        BartenderAction::GoAlone => {
             stop_voice();
             play_sfx("estus_drink");
             stats.saved_city_pos = bartender_bar_trigger_pos();
@@ -747,6 +769,121 @@ fn handle_bartender_modal_input(
             next_state.set(GameState::PubPortalCutscene);
         }
     }
+}
+
+fn spawn_casino_teleport_prompt(commands: &mut Commands) {
+    commands
+        .spawn((
+            BartenderUiRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.01, 0.05, 0.62)),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    width: Val::Px(500.0),
+                    max_width: Val::Percent(92.0),
+                    padding: UiRect::all(Val::Px(22.0)),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(14.0),
+                    border: UiRect::all(Val::Px(2.5)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.08, 0.04, 0.14, 0.96)),
+                BorderColor(Color::srgb(0.95, 0.76, 0.25)),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|card| {
+                card.spawn((
+                    Text::new("TELEPORT EVERYONE TO TENDY PALACE CASINO?"),
+                    TextFont {
+                        font_size: 18.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(1.0, 0.88, 0.35)),
+                ));
+                card.spawn((
+                    Text::new("Other players are in your squad shard. Bring everyone through the Pub 217 portal or go alone?"),
+                    TextFont {
+                        font_size: 13.5,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(0.88, 0.92, 0.98)),
+                ));
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::FlexEnd,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    row.spawn((
+                        BartenderAction::Leave,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.24, 0.14, 0.22)),
+                        BorderColor(Color::srgba(1.0, 0.82, 0.42, 0.6)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("CANCEL [ESC]"),
+                            TextFont { font_size: 13.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                    row.spawn((
+                        BartenderAction::GoAlone,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.14, 0.32, 0.56)),
+                        BorderColor(Color::srgb(0.42, 0.78, 1.0)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("GO ALONE"),
+                            TextFont { font_size: 13.5, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                    row.spawn((
+                        BartenderAction::TeleportEveryone,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(9.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.76, 0.44, 0.08)),
+                        BorderColor(Color::srgb(1.0, 0.88, 0.34)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("TELEPORT EVERYONE"),
+                            TextFont { font_size: 14.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
+            });
+        });
 }
 
 fn cleanup_bartender_on_exit(

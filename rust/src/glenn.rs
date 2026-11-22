@@ -1142,6 +1142,7 @@ pub fn exit_glenn_cutscene(
         g.recruited = true;
     }
     stats.glenn_recruited = true;
+    crate::audio::net_event(crate::net::EVENT_CREW_UNLOCK, 4);
     stats.hearts = (stats.hearts + 2).min(stats.max_hearts);
     stats.dash_energy = 100.0;
     stats.tendy_credits += 25;
