@@ -717,172 +717,244 @@ fn spawn_casino_arcade_machines(
             ));
         });
 
-    // ---- 5. CORNER JAZZ BAND STAGE (North-West Corner, source of the Casino's smooth jazz!) ----
+    // ---- 5. ART BLAKEY & THE JAZZ MESSENGERS STAGE (North-West Corner, larger 1.4x scale!) ----
     let (jz_pos, jz_yaw) = ArcadeKind::JazzBand.pose();
     let jz_world = CASINO_LEVEL_ORIGIN + jz_pos;
-    let tux_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.06, 0.06, 0.09),
+    let suit_charcoal = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.08, 0.11),
         perceptual_roughness: 0.35,
         ..default()
     });
-    let skin_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.76, 0.56, 0.42),
-        perceptual_roughness: 0.60,
+    let suit_navy = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.07, 0.12, 0.28),
+        perceptual_roughness: 0.32,
+        ..default()
+    });
+    let suit_burgundy = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.07, 0.14),
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let shirt_white = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.94, 0.92),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let skin_deep = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.19, 0.12),
+        perceptual_roughness: 0.52,
+        ..default()
+    });
+    let skin_warm = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.42, 0.25, 0.16),
+        perceptual_roughness: 0.52,
+        ..default()
+    });
+    let chrome_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.86, 0.88, 0.92),
+        metallic: 0.95,
+        perceptual_roughness: 0.12,
         ..default()
     });
     let bass_wood = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.46, 0.20, 0.08),
-        perceptual_roughness: 0.28,
+        base_color: Color::srgb(0.52, 0.22, 0.08),
+        perceptual_roughness: 0.22,
+        clearcoat: 0.85,
         ..default()
     });
     commands.spawn((
         LevelEntity,
         CasinoLevelEntity,
-        Transform::from_translation(jz_world + Vec3::Y * 0.22),
+        Transform::from_translation(jz_world + Vec3::Y * 0.30),
         PlatformBox {
-            half_extents: Vec3::new(1.9, 0.22, 1.4),
+            half_extents: Vec3::new(2.7, 0.30, 1.95),
         },
     ));
     commands
         .spawn((
             LevelEntity,
             CasinoLevelEntity,
-            Transform::from_translation(jz_world).with_rotation(Quat::from_rotation_y(jz_yaw)),
+            Transform::from_translation(jz_world)
+                .with_rotation(Quat::from_rotation_y(jz_yaw))
+                .with_scale(Vec3::splat(1.40)),
             Visibility::default(),
         ))
         .with_children(|jz| {
-            // Raised walnut stage + gold rim + warm jazz spotlight + backdrop sign
+            // Raised walnut stage + gold trim + drum riser + velvet curtain backdrop + spotlights
             jz.spawn((
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(wood_mat.clone()),
-                Transform::from_xyz(0.0, 0.16, 0.0).with_scale(Vec3::new(3.8, 0.32, 2.8)),
+                Transform::from_xyz(0.0, 0.16, 0.0).with_scale(Vec3::new(3.9, 0.32, 2.9)),
             ));
             jz.spawn((
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(trim_gold.clone()),
-                Transform::from_xyz(0.0, 0.33, 0.0).with_scale(Vec3::new(3.9, 0.04, 2.9)),
+                Transform::from_xyz(0.0, 0.33, 0.0).with_scale(Vec3::new(4.0, 0.04, 3.0)),
+            ));
+            // Drum riser for Art Blakey in back center
+            jz.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(wood_mat.clone()),
+                Transform::from_xyz(0.0, 0.43, -0.58).with_scale(Vec3::new(1.75, 0.16, 1.35)),
             ));
             jz.spawn((
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(cab_red.clone()),
-                Transform::from_xyz(0.0, 1.55, -1.25).with_scale(Vec3::new(3.6, 2.2, 0.12)),
+                Transform::from_xyz(0.0, 1.65, -1.35).with_scale(Vec3::new(3.8, 2.4, 0.12)),
             ));
             jz.spawn((
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(neon_gold.clone()),
-                Transform::from_xyz(0.0, 2.52, -1.16).with_scale(Vec3::new(2.2, 0.26, 0.08)),
+                Transform::from_xyz(0.0, 2.68, -1.26).with_scale(Vec3::new(2.6, 0.24, 0.08)),
             ));
             jz.spawn((
                 PointLight {
                     color: Color::srgb(1.0, 0.78, 0.35),
-                    intensity: 420_000.0,
-                    range: 14.0,
+                    intensity: 540_000.0,
+                    range: 16.0,
                     ..default()
                 },
-                Transform::from_xyz(0.0, 3.3, 0.6),
+                Transform::from_xyz(0.0, 3.4, 0.6),
             ));
 
-            // Glowing golden Tip Jar in front of the stage
+            // Glowing golden Tip Jar + 2 Brass Music Stands in front
             jz.spawn((
                 Mesh3d(cyl_mesh.clone()),
                 MeshMaterial3d(glass_mat.clone()),
-                Transform::from_xyz(0.0, 0.56, 1.15).with_scale(Vec3::new(0.22, 0.36, 0.22)),
+                Transform::from_xyz(0.0, 0.56, 1.24).with_scale(Vec3::new(0.22, 0.36, 0.22)),
             ));
             jz.spawn((
                 Mesh3d(cyl_mesh.clone()),
                 MeshMaterial3d(neon_gold.clone()),
-                Transform::from_xyz(0.0, 0.45, 1.15).with_scale(Vec3::new(0.18, 0.14, 0.18)),
+                Transform::from_xyz(0.0, 0.45, 1.24).with_scale(Vec3::new(0.18, 0.14, 0.18)),
             ));
+            for sx in [-0.95_f32, 0.95] {
+                jz.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(chrome_mat.clone()), Transform::from_xyz(sx, 0.72, 0.96).with_scale(Vec3::new(0.025, 0.78, 0.025))));
+                jz.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(sx, 1.12, 0.96).with_rotation(Quat::from_rotation_x(-0.55)).with_scale(Vec3::new(0.36, 0.26, 0.03))));
+            }
 
-            // Musician 0: Trumpet Player (front center)
-            let t_base = Vec3::new(0.0, 0.35, 0.35);
+            // Musician 0: Lee Morgan-style Trumpeter (front-left, midnight navy suit + 6-part brass trumpet)
+            let t_base = Vec3::new(-0.92, 0.35, 0.48);
             jz.spawn((
                 JazzMusician { role: 0, base_pos: t_base },
                 Transform::from_translation(t_base),
                 Visibility::default(),
             ))
             .with_children(|m| {
-                // Tuxedo legs, torso, white shirtfront, head, sunglasses, fedora
-                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.55, 0.0).with_scale(Vec3::new(0.46, 0.72, 0.28))));
-                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.18, 0.0).with_scale(Vec3::new(0.36, 0.36, 0.22))));
-                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_mat.clone()), Transform::from_xyz(0.0, 1.08, 0.0).with_scale(Vec3::splat(0.19))));
-                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.10, 0.16).with_scale(Vec3::new(0.26, 0.06, 0.08))));
-                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.26, 0.0).with_scale(Vec3::new(0.28, 0.04, 0.28))));
-                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.34, 0.0).with_scale(Vec3::new(0.18, 0.14, 0.18))));
-                // Brass Trumpet pivot
+                // Legs, tailored navy suit jacket, white collar/shirt V, tie, pocket square, head, shades
+                for lx in [-0.10_f32, 0.10] {
+                    m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(suit_navy.clone()), Transform::from_xyz(lx, 0.26, 0.0).with_scale(Vec3::new(0.09, 0.52, 0.09))));
+                }
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_navy.clone()), Transform::from_xyz(0.0, 0.72, 0.0).with_scale(Vec3::new(0.42, 0.48, 0.24))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(0.0, 0.82, 0.115).with_scale(Vec3::new(0.12, 0.24, 0.03))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(-0.13, 0.84, 0.125).with_scale(Vec3::new(0.06, 0.03, 0.02))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_warm.clone()), Transform::from_xyz(0.0, 1.12, 0.0).with_scale(Vec3::splat(0.18))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 1.24, -0.01).with_scale(Vec3::new(0.17, 0.09, 0.17))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 1.14, 0.15).with_scale(Vec3::new(0.24, 0.055, 0.07))));
+                for sx in [-0.25_f32, 0.25] {
+                    m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(suit_navy.clone()), Transform::from_xyz(sx, 0.84, 0.14).with_rotation(Quat::from_rotation_x(-1.0)).with_scale(Vec3::new(0.065, 0.34, 0.065))));
+                }
+                // Detailed 6-part Brass Trumpet + Harmon Mute
                 m.spawn((
                     JazzTrumpetPivot,
-                    Transform::from_xyz(0.0, 1.00, 0.18),
+                    Transform::from_xyz(0.0, 1.03, 0.18),
                     Visibility::default(),
                 ))
                 .with_children(|tp| {
-                    tp.spawn((
-                        Mesh3d(cyl_mesh.clone()),
-                        MeshMaterial3d(trim_gold.clone()),
-                        Transform::from_xyz(0.0, 0.0, 0.26)
-                            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
-                            .with_scale(Vec3::new(0.03, 0.48, 0.03)),
-                    ));
-                    tp.spawn((
-                        Mesh3d(meshes.add(Cone::new(0.11, 0.20))),
-                        MeshMaterial3d(neon_gold.clone()),
-                        Transform::from_xyz(0.0, 0.0, 0.54)
-                            .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
-                    ));
+                    tp.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(0.0, 0.0, 0.24).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(0.024, 0.46, 0.024))));
+                    tp.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(0.0, -0.04, 0.26).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(0.018, 0.24, 0.018))));
+                    for vz in [0.22_f32, 0.26, 0.30] {
+                        tp.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(chrome_mat.clone()), Transform::from_xyz(0.0, 0.01, vz).with_scale(Vec3::new(0.018, 0.13, 0.018))));
+                    }
+                    tp.spawn((Mesh3d(meshes.add(Cone::new(0.11, 0.20))), MeshMaterial3d(neon_gold.clone()), Transform::from_xyz(0.0, 0.0, 0.52).with_rotation(Quat::from_rotation_x(-FRAC_PI_2))));
+                    tp.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(chrome_mat.clone()), Transform::from_xyz(0.0, 0.0, 0.59).with_scale(Vec3::new(0.055, 0.055, 0.07))));
                 });
             });
 
-            // Musician 1: Upright Bassist (left)
-            let b_base = Vec3::new(-1.05, 0.35, -0.35);
+            // Musician 1: Jymie Merritt-style Upright Bassist (front-right, burgundy suit, pork-pie hat, carved double bass)
+            let b_base = Vec3::new(0.95, 0.35, 0.40);
             jz.spawn((
                 JazzMusician { role: 1, base_pos: b_base },
                 Transform::from_translation(b_base),
                 Visibility::default(),
             ))
             .with_children(|m| {
-                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.55, 0.0).with_scale(Vec3::new(0.46, 0.72, 0.28))));
-                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_mat.clone()), Transform::from_xyz(0.0, 1.08, 0.0).with_scale(Vec3::splat(0.19))));
-                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.26, 0.0).with_scale(Vec3::new(0.28, 0.04, 0.28))));
-                // Tall wooden upright bass
-                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(bass_wood.clone()), Transform::from_xyz(0.22, 0.62, 0.28).with_scale(Vec3::new(0.28, 0.52, 0.16))));
-                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(wood_mat.clone()), Transform::from_xyz(0.22, 1.24, 0.28).with_scale(Vec3::new(0.06, 0.68, 0.06))));
+                for lx in [-0.10_f32, 0.10] {
+                    m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(suit_burgundy.clone()), Transform::from_xyz(lx, 0.26, 0.0).with_scale(Vec3::new(0.09, 0.52, 0.09))));
+                }
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_burgundy.clone()), Transform::from_xyz(0.0, 0.72, 0.0).with_scale(Vec3::new(0.42, 0.48, 0.24))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(0.0, 0.82, 0.115).with_scale(Vec3::new(0.11, 0.22, 0.03))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_deep.clone()), Transform::from_xyz(0.0, 1.12, 0.0).with_scale(Vec3::splat(0.18))));
+                // Pork-pie hat & glasses
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 1.26, 0.0).with_scale(Vec3::new(0.26, 0.035, 0.26))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 1.32, 0.0).with_scale(Vec3::new(0.17, 0.10, 0.17))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 1.14, 0.15).with_scale(Vec3::new(0.24, 0.05, 0.06))));
+                // Carved hourglass Upright Double Bass + 4 gold strings + endpin
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(chrome_mat.clone()), Transform::from_xyz(0.24, 0.16, 0.30).with_scale(Vec3::new(0.02, 0.32, 0.02))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(bass_wood.clone()), Transform::from_xyz(0.24, 0.52, 0.30).with_scale(Vec3::new(0.30, 0.30, 0.16))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(bass_wood.clone()), Transform::from_xyz(0.24, 0.82, 0.30).with_scale(Vec3::new(0.23, 0.25, 0.15))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.24, 1.28, 0.30).with_scale(Vec3::new(0.06, 0.68, 0.05))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(bass_wood.clone()), Transform::from_xyz(0.24, 1.66, 0.30).with_scale(Vec3::splat(0.065))));
+                for sx in [-0.02_f32, -0.007, 0.007, 0.02] {
+                    m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(0.24 + sx, 0.96, 0.39).with_scale(Vec3::new(0.006, 1.18, 0.006))));
+                }
                 m.spawn((
                     JazzBassArm,
-                    Mesh3d(box_mesh.clone()),
-                    MeshMaterial3d(tux_mat.clone()),
-                    Transform::from_xyz(0.28, 0.78, 0.18).with_scale(Vec3::new(0.10, 0.32, 0.10)),
+                    Mesh3d(cyl_mesh.clone()),
+                    MeshMaterial3d(suit_burgundy.clone()),
+                    Transform::from_xyz(0.28, 0.78, 0.18).with_scale(Vec3::new(0.08, 0.32, 0.08)),
                 ));
             });
 
-            // Musician 2: Jazz Drummer + Drum Kit (right)
-            let d_base = Vec3::new(1.05, 0.35, -0.45);
+            // Musician 2: Art Blakey (center-back on riser, horn-rimmed glasses, vintage 5-piece Gretsch-style drum kit!)
+            let d_base = Vec3::new(0.0, 0.51, -0.58);
             jz.spawn((
                 JazzMusician { role: 2, base_pos: d_base },
                 Transform::from_translation(d_base),
                 Visibility::default(),
             ))
             .with_children(|m| {
-                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.45, 0.0).with_scale(Vec3::new(0.46, 0.62, 0.28))));
-                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_mat.clone()), Transform::from_xyz(0.0, 0.94, 0.0).with_scale(Vec3::splat(0.18))));
-                for (side, is_l) in [(-0.26_f32, true), (0.26, false)] {
+                // Seated charcoal suit, white shirt + thin tie, horn-rimmed glasses, warm smile
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 0.54, 0.0).with_scale(Vec3::new(0.46, 0.54, 0.26))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(0.0, 0.62, 0.125).with_scale(Vec3::new(0.13, 0.28, 0.03))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 0.60, 0.145).with_scale(Vec3::new(0.035, 0.24, 0.02))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_deep.clone()), Transform::from_xyz(0.0, 0.96, 0.0).with_scale(Vec3::splat(0.19))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(suit_charcoal.clone()), Transform::from_xyz(0.0, 0.98, 0.16).with_scale(Vec3::new(0.25, 0.05, 0.06))));
+                for (side, is_l) in [(-0.28_f32, true), (0.28, false)] {
                     m.spawn((
                         JazzDrumArm(is_l),
-                        Mesh3d(box_mesh.clone()),
-                        MeshMaterial3d(tux_mat.clone()),
-                        Transform::from_xyz(side, 0.68, 0.22).with_scale(Vec3::new(0.09, 0.30, 0.09)),
-                    ));
+                        Mesh3d(cyl_mesh.clone()),
+                        MeshMaterial3d(suit_charcoal.clone()),
+                        Transform::from_xyz(side, 0.68, 0.22).with_scale(Vec3::new(0.07, 0.30, 0.07)),
+                    ))
+                    .with_children(|arm| {
+                        // Wooden drumstick
+                        arm.spawn((
+                            Mesh3d(cyl_mesh.clone()),
+                            MeshMaterial3d(shirt_white.clone()),
+                            Transform::from_xyz(0.0, -0.18, 0.18)
+                                .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+                                .with_scale(Vec3::new(0.015, 0.34, 0.015)),
+                        ));
+                    });
                 }
-                // Bass drum, snare, and twin brass cymbals
-                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(cab_red.clone()), Transform::from_xyz(0.0, 0.30, 0.50).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(0.32, 0.32, 0.32))));
-                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(-0.36, 0.85, 0.42).with_scale(Vec3::new(0.24, 0.02, 0.24))));
-                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(0.36, 0.88, 0.42).with_scale(Vec3::new(0.26, 0.02, 0.26))));
+                // Vintage 5-piece Drum Kit: Bass drum + gold rims, Snare, Rack Tom, Floor Tom, Ride/Crash/Hi-Hat cymbals
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(cab_red.clone()), Transform::from_xyz(0.0, 0.34, 0.52).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(0.36, 0.36, 0.36))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(0.0, 0.34, 0.71).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(0.33, 0.02, 0.33))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(shirt_white.clone()), Transform::from_xyz(-0.26, 0.56, 0.36).with_scale(Vec3::new(0.16, 0.12, 0.16))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(cab_red.clone()), Transform::from_xyz(0.12, 0.72, 0.46).with_rotation(Quat::from_rotation_x(0.35)).with_scale(Vec3::new(0.15, 0.14, 0.15))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(cab_red.clone()), Transform::from_xyz(0.38, 0.42, 0.38).with_scale(Vec3::new(0.20, 0.30, 0.20))));
+                for (cx, cy, cz, cr) in [(-0.46_f32, 0.88_f32, 0.36_f32, 0.19_f32), (-0.36, 1.05, 0.54, 0.25), (0.48, 0.96, 0.48, 0.28)] {
+                    m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(chrome_mat.clone()), Transform::from_xyz(cx, cy * 0.5, cz).with_scale(Vec3::new(0.02, cy, 0.02))));
+                    m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(cx, cy, cz).with_scale(Vec3::new(cr, 0.02, cr))));
+                }
             });
 
             // Floating glowing musical note orbs rising above the stage
-            for ni in 0..6_usize {
-                let np = Vec3::new(-1.1 + ni as f32 * 0.44, 1.9 + (ni % 2) as f32 * 0.35, 0.1);
+            for ni in 0..8_usize {
+                let np = Vec3::new(-1.4 + ni as f32 * 0.40, 2.0 + (ni % 2) as f32 * 0.35, 0.1);
                 jz.spawn((
-                    JazzNoteOrb { base: np, phase: ni as f32 * 1.1 },
+                    JazzNoteOrb { base: np, phase: ni as f32 * 0.9 },
                     Mesh3d(sphere_mesh.clone()),
                     MeshMaterial3d(if ni % 2 == 0 { neon_gold.clone() } else { neon_pink.clone() }),
                     Transform::from_translation(np).with_scale(Vec3::splat(0.09)),
