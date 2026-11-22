@@ -146,20 +146,13 @@ pub struct RpgBattleState {
     lexie_attack_kind: u8,
     lexie_target: usize,
     turn_round: u32,
-    waiting_for_remote: bool,
+    local_vote: Option<bool>,
+    remote_votes: Vec<(u8, bool)>,
+    vote_coop_active: bool,
+    vote_total_players: usize,
+    vote_time_left: f32,
     banner_msg: String,
     party: [PartyMember; 5],
-}
-
-fn net_char_to_rpg_actor(char_id: u8) -> usize {
-    match char_id {
-        0 => 0, // STAN
-        1 => 2, // NATE
-        2 => 1, // GLENN
-        3 => 4, // TJ
-        4 => 3, // DEREK
-        _ => 0,
-    }
 }
 
 impl Default for RpgBattleState {
@@ -181,7 +174,11 @@ impl Default for RpgBattleState {
             lexie_attack_kind: 0,
             lexie_target: 0,
             turn_round: 1,
-            waiting_for_remote: false,
+            local_vote: None,
+            remote_votes: Vec::new(),
+            vote_coop_active: false,
+            vote_total_players: 1,
+            vote_time_left: 0.0,
             banner_msg: "ALL 5 HEROES VS LEXIE! PICK YOUR MOVE!".to_string(),
             party: [
                 PartyMember {
@@ -1065,97 +1062,126 @@ pub fn update_lexie_battle(
         }
         RpgPhase::PlayerSelect => {
             let coop_active = net.as_ref().is_some_and(|n| n.is_coop_active());
-            let local_actor = net
-                .as_ref()
-                .map(|n| net_char_to_rpg_actor(n.local_char_id()))
-                .unwrap_or(0);
-            let is_anchor = net.as_ref().is_some_and(|n| n.is_room_anchor());
-            let mut remote_actors = [false; 5];
-            if let Some(ref n) = net {
-                for cid in n.remote_char_ids() {
-                    let ra = net_char_to_rpg_actor(cid);
-                    if ra != local_actor {
-                        remote_actors[ra] = true;
+            let total_voters = if coop_active {
+                1 + net.as_ref().map(|n| n.remote_peer_count().max(1)).unwrap_or(1)
+            } else {
+                1
+            };
+            if coop_active {
+                if let Some(ref mut ce) = coop {
+                    let cur_actor = battle.actor;
+                    let mut remaining = Vec::new();
+                    for (slot, actor, is_heavy) in ce.lexie_moves.drain(..) {
+                        if actor == cur_actor {
+                            if let Some(existing) = battle.remote_votes.iter_mut().find(|(s, _)| *s == slot) {
+                                existing.1 = is_heavy;
+                            } else {
+                                battle.remote_votes.push((slot, is_heavy));
+                            }
+                        } else {
+                            remaining.push((slot, actor, is_heavy));
+                        }
                     }
+                    ce.lexie_moves = remaining;
                 }
+            } else if let Some(ref mut ce) = coop {
+                ce.lexie_moves.clear();
             }
-            let is_remote_turn = coop_active && remote_actors[battle.actor];
-            let wait_for_anchor_ai = coop_active && !is_remote_turn && battle.actor != local_actor && !is_anchor;
-            battle.waiting_for_remote = is_remote_turn || wait_for_anchor_ai;
 
             let mut chosen: Option<bool> = None;
-            if battle.waiting_for_remote {
-                if let Some(ref mut ce) = coop {
-                    if let Some(pos) = ce.lexie_moves.iter().position(|&(a, _)| a == battle.actor) {
-                        let (_, is_heavy) = ce.lexie_moves.remove(pos);
-                        chosen = Some(is_heavy);
-                    }
-                }
-                let timeout = if is_remote_turn { 25.0 } else { 6.0 };
-                if chosen.is_none() && battle.phase_timer >= timeout {
-                    chosen = Some(false);
-                }
-            } else {
-                if let Some(ref mut ce) = coop {
-                    ce.lexie_moves.retain(|&(a, _)| a != battle.actor);
-                }
-                if keys.just_pressed(KeyCode::Digit1) {
-                    chosen = Some(false);
-                } else if keys.just_pressed(KeyCode::Digit2) {
-                    chosen = Some(true);
-                } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
+            if keys.just_pressed(KeyCode::Digit1) {
+                chosen = Some(false);
+            } else if keys.just_pressed(KeyCode::Digit2) {
+                chosen = Some(true);
+            } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
+                battle.selected_btn = 0;
+            } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
+                battle.selected_btn = 1;
+            } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+                chosen = Some(battle.selected_btn == 1);
+            }
+
+            for gp in &gamepads {
+                if gp.just_pressed(GamepadButton::DPadLeft) {
                     battle.selected_btn = 0;
-                } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
+                } else if gp.just_pressed(GamepadButton::DPadRight) {
                     battle.selected_btn = 1;
-                } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
+                } else if gp.just_pressed(GamepadButton::South) {
                     chosen = Some(battle.selected_btn == 1);
                 }
+            }
 
-                for gp in &gamepads {
-                    if gp.just_pressed(GamepadButton::DPadLeft) {
-                        battle.selected_btn = 0;
-                    } else if gp.just_pressed(GamepadButton::DPadRight) {
-                        battle.selected_btn = 1;
-                    } else if gp.just_pressed(GamepadButton::South) {
-                        chosen = Some(battle.selected_btn == 1);
-                    }
+            for (btn, inter, mut bg, mut border) in &mut btn_q {
+                let hovered = *inter == Interaction::Hovered;
+                let pressed = *inter == Interaction::Pressed;
+                if hovered {
+                    battle.selected_btn = btn.0;
                 }
-
-                for (btn, inter, mut bg, mut border) in &mut btn_q {
-                    let hovered = *inter == Interaction::Hovered;
-                    let pressed = *inter == Interaction::Pressed;
-                    if hovered {
-                        battle.selected_btn = btn.0;
-                    }
-                    if pressed {
-                        chosen = Some(btn.0 == 1);
-                    }
-                    let sel = battle.selected_btn == btn.0;
-                    *bg = BackgroundColor(if sel {
-                        Color::srgb(0.16, 0.30, 0.56)
-                    } else {
-                        Color::srgb(0.08, 0.14, 0.26)
-                    });
-                    *border = BorderColor(if sel {
-                        Color::srgb(1.0, 0.88, 0.25)
-                    } else {
-                        Color::srgb(0.32, 0.65, 0.90)
-                    });
+                if pressed {
+                    chosen = Some(btn.0 == 1);
                 }
+                let voted_this = battle.local_vote == Some(btn.0 == 1);
+                let sel = battle.selected_btn == btn.0 || voted_this;
+                *bg = BackgroundColor(if voted_this {
+                    Color::srgb(0.14, 0.42, 0.28)
+                } else if sel {
+                    Color::srgb(0.16, 0.30, 0.56)
+                } else {
+                    Color::srgb(0.08, 0.14, 0.26)
+                });
+                *border = BorderColor(if voted_this {
+                    Color::srgb(0.45, 1.0, 0.55)
+                } else if sel {
+                    Color::srgb(1.0, 0.88, 0.25)
+                } else {
+                    Color::srgb(0.32, 0.65, 0.90)
+                });
+            }
 
+            if !coop_active {
+                battle.vote_coop_active = false;
+                battle.vote_total_players = 1;
+                battle.vote_time_left = 0.0;
                 if let Some(is_heavy) = chosen {
-                    if coop_active {
+                    begin_hero_action(&mut battle, is_heavy);
+                }
+            } else {
+                if let Some(is_heavy) = chosen {
+                    if battle.local_vote != Some(is_heavy) {
+                        battle.local_vote = Some(is_heavy);
                         crate::audio::net_event(
                             crate::net::EVENT_LEXIE_MOVE,
                             ((battle.actor as u32) << 8) | (is_heavy as u32),
                         );
                     }
                 }
-            }
+                let total_cast = (battle.local_vote.is_some() as usize) + battle.remote_votes.len();
+                let deadline = if total_cast > 0 { 8.0 } else { 15.0 };
+                battle.vote_coop_active = true;
+                battle.vote_total_players = total_voters;
+                battle.vote_time_left = (deadline - battle.phase_timer).max(0.0);
 
-            if let Some(is_heavy) = chosen {
-                battle.waiting_for_remote = false;
-                begin_hero_action(&mut battle, is_heavy);
+                if total_cast >= total_voters || battle.phase_timer >= deadline {
+                    let mut light_votes = usize::from(battle.local_vote == Some(false));
+                    let mut heavy_votes = usize::from(battle.local_vote == Some(true));
+                    for &(_, h) in &battle.remote_votes {
+                        if h {
+                            heavy_votes += 1;
+                        } else {
+                            light_votes += 1;
+                        }
+                    }
+                    let winner_is_heavy = if heavy_votes > light_votes {
+                        true
+                    } else if light_votes > heavy_votes {
+                        false
+                    } else {
+                        (battle.turn_round + battle.actor as u32) % 2 == 1
+                    };
+                    battle.local_vote = None;
+                    battle.remote_votes.clear();
+                    begin_hero_action(&mut battle, winner_is_heavy);
+                }
             }
         }
         RpgPhase::HeroAction => {
@@ -1265,6 +1291,8 @@ fn start_actor_turn(battle: &mut RpgBattleState, actor: usize) {
     battle.actor = actor;
     battle.selected_btn = 0;
     battle.phase_timer = 0.0;
+    battle.local_vote = None;
+    battle.remote_votes.clear();
     if battle.party[actor].asleep_turns > 0 {
         battle.phase = RpgPhase::HeroAsleepSkip;
         battle.phase_duration = 1.65;
@@ -2461,16 +2489,32 @@ pub fn update_lexie_battle_ui(
     }
     if battle.phase == RpgPhase::PlayerSelect {
         let m = &battle.party[battle.actor];
+        let light_v = usize::from(battle.local_vote == Some(false))
+            + battle.remote_votes.iter().filter(|&&(_, h)| !h).count();
+        let heavy_v = usize::from(battle.local_vote == Some(true))
+            + battle.remote_votes.iter().filter(|&&(_, h)| h).count();
         if let Ok(mut hdr) = txt_qs.p4().get_single_mut() {
-            hdr.0 = if battle.waiting_for_remote {
-                format!("WAITING FOR {} (SQUAD PLAYER)...", m.name)
+            hdr.0 = if battle.vote_coop_active {
+                format!(
+                    "SQUAD VOTE FOR {}! ({}/{} VOTED - {:.0}s)",
+                    m.name,
+                    light_v + heavy_v,
+                    battle.vote_total_players,
+                    battle.vote_time_left.ceil()
+                )
             } else {
                 format!("{}'S TURN - PRESS [1 / 2] OR CLICK", m.name)
             };
         }
         for (bt, mut txt) in &mut txt_qs.p5() {
             txt.0 = if bt.0 == 0 {
-                format!("[1] LIGHT: {}\n({})", m.light_name, m.light_tag)
+                if battle.vote_coop_active {
+                    format!("[1] LIGHT: {}  [{} VOTE{}]\n({})", m.light_name, light_v, if light_v == 1 { "" } else { "S" }, m.light_tag)
+                } else {
+                    format!("[1] LIGHT: {}\n({})", m.light_name, m.light_tag)
+                }
+            } else if battle.vote_coop_active {
+                format!("[2] HEAVY: {}  [{} VOTE{}]\n({})", m.heavy_name, heavy_v, if heavy_v == 1 { "" } else { "S" }, m.heavy_tag)
             } else {
                 format!("[2] HEAVY: {}\n({})", m.heavy_name, m.heavy_tag)
             };

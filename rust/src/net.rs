@@ -78,7 +78,7 @@ pub const CHAR_DEREK: u8 = 4;
 #[derive(Resource, Default)]
 pub struct NetCoopEvents {
     pub mom_damage: f32,
-    pub lexie_moves: Vec<(usize, bool)>,
+    pub lexie_moves: Vec<(u8, usize, bool)>,
 }
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
@@ -267,16 +267,8 @@ impl NetState {
         self.online_active && self.peers > 0
     }
 
-    pub fn local_char_id(&self) -> u8 {
-        self.local_char
-    }
-
-    pub fn is_room_anchor(&self) -> bool {
-        self.is_anchor
-    }
-
-    pub fn remote_char_ids(&self) -> Vec<u8> {
-        self.remotes.iter().map(|r| r.char_id).collect()
+    pub fn remote_peer_count(&self) -> usize {
+        self.remotes.len()
     }
 }
 
@@ -997,9 +989,9 @@ fn receive_remote_states(
                     EVENT_LEXIE_MOVE => {
                         let actor = ((value >> 8) & 7) as usize;
                         let is_heavy = (value & 1) != 0;
-                        coop.lexie_moves.push((actor, is_heavy));
+                        coop.lexie_moves.push((slot, actor, is_heavy));
                         format!(
-                            "{} CHOSE {}!",
+                            "{} VOTED {}!",
                             label,
                             if is_heavy { "HEAVY" } else { "LIGHT" }
                         )
