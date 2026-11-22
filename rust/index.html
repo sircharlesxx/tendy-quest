@@ -47,8 +47,40 @@
         void clearCachesAsync();
       }
 
+      const SAVE_KEYS = ["tendy_quest_save_v1", "tendy_quest_mom_defeated_v1", "tendy_wendies_v1"];
+      function snapshotSavesBeforeReload() {
+        const snap = {};
+        try {
+          for (const k of SAVE_KEYS) {
+            const v = localStorage.getItem(k);
+            if (v !== null && v !== "") snap[k] = v;
+          }
+          if (Object.keys(snap).length) {
+            sessionStorage.setItem("tq_save_snap_v1", JSON.stringify(snap));
+          }
+        } catch (_) {}
+      }
+      function restoreSavesIfMissing() {
+        try {
+          const raw = sessionStorage.getItem("tq_save_snap_v1");
+          if (!raw) return;
+          const snap = JSON.parse(raw);
+          if (snap && typeof snap === "object") {
+            for (const k of SAVE_KEYS) {
+              const cur = localStorage.getItem(k);
+              if ((cur === null || cur === "") && typeof snap[k] === "string" && snap[k] !== "") {
+                localStorage.setItem(k, snap[k]);
+              }
+            }
+          }
+          sessionStorage.removeItem("tq_save_snap_v1");
+        } catch (_) {}
+      }
+      restoreSavesIfMissing();
+
       window.tqClearCacheAndReload = async function () {
         try { sessionStorage.removeItem("tq_reloaded_v"); } catch (_) {}
+        snapshotSavesBeforeReload();
         await clearCachesAsync();
         let remoteVer = "";
         try {
@@ -87,6 +119,7 @@
             document.body.appendChild(ov);
           }
         } catch (_) {}
+        snapshotSavesBeforeReload();
         await clearCachesAsync();
         const u = new URL(location.href);
         u.searchParams.set("_v", remoteVer);

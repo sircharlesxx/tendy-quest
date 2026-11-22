@@ -676,7 +676,10 @@ fn update_pause_menu(
                 menu.cache_reloading = true;
                 if !stats.free_roam {
                     match state.get() {
-                        GameState::CityPlay | GameState::CasinoPlay => {
+                        GameState::CityPlay
+                        | GameState::CasinoPlay
+                        | GameState::LexieBattle
+                        | GameState::LexieVictoryCutscene => {
                             crate::ui::save_game_checkpoint("city", &stats);
                         }
                         GameState::BossFight => {
