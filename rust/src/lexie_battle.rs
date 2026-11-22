@@ -10,7 +10,7 @@
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
-use crate::audio::{play_lexie_rpg_music, play_sfx, speak_voice, stop_voice};
+use crate::audio::{is_voice_speaking, play_lexie_rpg_music, play_sfx, speak_voice, stop_voice};
 use crate::derek::DerekArmPivot;
 use crate::nate::{NateArmPivot, NateLegPivot};
 use crate::net::{CrewStrideArm, CrewStrideLeg};
@@ -1035,7 +1035,7 @@ pub fn update_lexie_battle(
 
     match battle.phase {
         RpgPhase::Intro => {
-            if battle.phase_timer >= battle.phase_duration {
+            if phase_finished_with_voice(&battle, 6.0) {
                 start_actor_turn(&mut battle, 0);
             }
         }
@@ -1105,7 +1105,7 @@ pub fn update_lexie_battle(
                 &mut battle,
                 &mut stats,
             );
-            if battle.phase_timer >= battle.phase_duration {
+            if phase_finished_with_voice(&battle, 6.0) {
                 if battle.lexie_hp <= 0.0 {
                     battle.lexie_hp = 0.0;
                     battle.phase = RpgPhase::VictoryDelay;
@@ -1124,7 +1124,7 @@ pub fn update_lexie_battle(
         }
         RpgPhase::LexieWindup => {
             if battle.lexie_stunned > 0 {
-                if battle.phase_timer >= 1.9 {
+                if phase_finished_with_voice(&battle, 5.0) {
                     battle.lexie_stunned -= 1;
                     battle.turn_round += 1;
                     if let Some(first) = find_next_alive_actor(&battle.party, None) {
@@ -1167,7 +1167,7 @@ pub fn update_lexie_battle(
             }
         }
         RpgPhase::VictoryDelay => {
-            if battle.phase_timer >= battle.phase_duration {
+            if phase_finished_with_voice(&battle, 6.0) {
                 stats.score += 15000;
                 stats.add_tendy_wendies(100);
                 stats.lexie_defeated = true;
@@ -1184,6 +1184,19 @@ pub fn update_lexie_battle(
             }
         }
     }
+}
+
+/// Returns `true` once the phase's animation duration has elapsed and any active TTS voice
+/// line has finished speaking (bounded by `max_extra_voice_wait` so a stalled speech engine
+/// can never soft-lock the battle).
+fn phase_finished_with_voice(battle: &RpgBattleState, max_extra_voice_wait: f32) -> bool {
+    if battle.phase_timer < battle.phase_duration {
+        return false;
+    }
+    if !is_voice_speaking() {
+        return true;
+    }
+    battle.phase_timer >= battle.phase_duration + max_extra_voice_wait
 }
 
 fn start_actor_turn(battle: &mut RpgBattleState, actor: usize) {
