@@ -33,6 +33,7 @@ impl Plugin for CasinoArcadePlugin {
                     step_plinko_physics.run_if(sim_running),
                     step_skeeball_physics.run_if(sim_running),
                     animate_jazz_band.run_if(sim_running),
+                    step_coaster_and_stargate.run_if(sim_running),
                     update_arcade_camera.run_if(sim_running),
                     refresh_arcade_hud,
                 )
@@ -53,6 +54,7 @@ pub enum ArcadeKind {
     Plinko,
     Skeeball,
     JazzBand,
+    RollerCoaster,
 }
 
 impl ArcadeKind {
@@ -63,6 +65,7 @@ impl ArcadeKind {
             Self::Plinko => "PLINKO TOWER (5 TW) [F/E]",
             Self::Skeeball => "SKEEBALL ALLEY (5 TW / 3 BALLS) [F/E]",
             Self::JazzBand => "TIP JAZZ BAND (5 TW) - TRUMPET SOLO! [F/E]",
+            Self::RollerCoaster => "RIDE STARGATE COASTER (2001 TRIP!) [F/E]",
         }
     }
 
@@ -73,6 +76,7 @@ impl ArcadeKind {
             Self::Plinko => (Vec3::new(-9.2, 0.0, 11.2), FRAC_PI_2),
             Self::Skeeball => (Vec3::new(9.2, 0.0, 11.2), -FRAC_PI_2),
             Self::JazzBand => (Vec3::new(-14.6, 0.0, -14.8), 0.72),
+            Self::RollerCoaster => (Vec3::new(13.8, 0.0, 14.2), -FRAC_PI_2),
         }
     }
 
@@ -80,6 +84,7 @@ impl ArcadeKind {
         match self {
             Self::Skeeball => Vec3::new(0.0, 0.16, 3.6),
             Self::JazzBand => Vec3::new(0.0, 0.16, 2.7),
+            Self::RollerCoaster => Vec3::ZERO,
             _ => Vec3::new(0.0, 0.16, 2.1),
         }
     }
@@ -121,6 +126,8 @@ struct ArcadeState {
     skee_cooldown: f32,
     // Jazz Band
     jazz_solo_timer: f32,
+    // Stargate Coaster
+    coaster_u: f32,
 }
 
 impl Default for ArcadeState {
@@ -145,6 +152,7 @@ impl Default for ArcadeState {
             skee_balls_left: 0,
             skee_cooldown: 0.0,
             jazz_solo_timer: 0.0,
+            coaster_u: 0.0,
         }
     }
 }
@@ -277,6 +285,94 @@ struct JazzBassArm;
 struct JazzNoteOrb {
     base: Vec3,
     phase: f32,
+}
+
+#[derive(Component)]
+struct CoasterTrainCar(usize);
+
+#[derive(Component)]
+struct CoasterStargateRib {
+    idx: usize,
+    base_pos: Vec3,
+    rot: Quat,
+}
+
+#[derive(Component)]
+struct CoasterStrobeLight(usize);
+
+/// Closed 18-waypoint Catmull-Rom coaster spline with a Giant 360° Vertical Loop,
+/// 720° Double Corkscrew Barrel Roll, and 2001 Stargate Dive overhead!
+const COASTER_WAYPOINTS: [(Vec3, f32); 18] = [
+    (Vec3::new(14.0, 7.2, 11.0), 0.15),
+    (Vec3::new(14.5, 11.5, 2.0), 0.25),
+    (Vec3::new(13.5, 16.0, -8.0), 0.35),
+    (Vec3::new(5.0, 14.5, -13.5), 0.20),
+    // Giant Vertical 360° Loop over Center Casino!
+    (Vec3::new(-2.0, 8.2, -7.0), 0.0),
+    (Vec3::new(-2.0, 12.2, -2.5), 0.0),
+    (Vec3::new(-2.0, 16.2, -7.0), 0.0),
+    (Vec3::new(-2.0, 12.2, -11.5), 0.0),
+    (Vec3::new(-2.0, 8.2, -7.0), 0.0),
+    // 2001 Stargate Tunnel + 720° Double Corkscrew Barrel Roll!
+    (Vec3::new(-9.5, 10.5, -2.0), std::f32::consts::PI * 0.6),
+    (Vec3::new(-13.5, 13.5, 4.5), std::f32::consts::PI * 1.4),
+    (Vec3::new(-5.0, 15.2, 9.5), std::f32::consts::PI * 2.2),
+    (Vec3::new(4.5, 13.8, 8.5), std::f32::consts::PI * 3.1),
+    (Vec3::new(12.5, 10.8, 3.0), std::f32::consts::PI * 4.0),
+    // High-speed swoop & dive back to station
+    (Vec3::new(11.0, 8.0, 12.5), 0.45),
+    (Vec3::new(0.0, 9.8, 15.0), -0.35),
+    (Vec3::new(6.5, 7.5, 14.5), -0.15),
+    (Vec3::new(12.0, 7.2, 13.0), 0.05),
+];
+
+fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
+fn coaster_sample(u: f32) -> (Vec3, Quat) {
+    let n = COASTER_WAYPOINTS.len();
+    let u = u.rem_euclid(1.0);
+    let scaled = u * n as f32;
+    let seg = (scaled.floor() as usize) % n;
+    let t = scaled - scaled.floor();
+
+    let (p0, _) = COASTER_WAYPOINTS[(seg + n - 1) % n];
+    let (p1, r1) = COASTER_WAYPOINTS[seg];
+    let (p2, r2) = COASTER_WAYPOINTS[(seg + 1) % n];
+    let (p3, _) = COASTER_WAYPOINTS[(seg + 2) % n];
+
+    let pos = CASINO_LEVEL_ORIGIN + catmull_rom(p0, p1, p2, p3, t);
+    let dt = 0.006;
+    let u2 = (u + dt).rem_euclid(1.0);
+    let s2 = u2 * n as f32;
+    let seg2 = (s2.floor() as usize) % n;
+    let t2 = s2 - s2.floor();
+    let next_pos = CASINO_LEVEL_ORIGIN
+        + catmull_rom(
+            COASTER_WAYPOINTS[(seg2 + n - 1) % n].0,
+            COASTER_WAYPOINTS[seg2].0,
+            COASTER_WAYPOINTS[(seg2 + 1) % n].0,
+            COASTER_WAYPOINTS[(seg2 + 2) % n].0,
+            t2,
+        );
+    let fwd = (next_pos - pos).normalize_or_zero();
+    let bank = r1 + (r2 - r1) * t;
+    // Handle vertical loop upside-down orientation cleanly near waypoints 5..7
+    let base_up = if (4..=8).contains(&seg) && pos.y > 12.8 {
+        -Vec3::Y
+    } else {
+        Vec3::Y
+    };
+    let right = fwd.cross(base_up).normalize_or_zero();
+    let up = right.cross(fwd).normalize_or_zero();
+    let rot = Quat::from_mat3(&Mat3::from_cols(right, up, -fwd)) * Quat::from_rotation_z(bank);
+    (pos, rot)
 }
 
 #[derive(Resource)]
@@ -962,13 +1058,156 @@ fn spawn_casino_arcade_machines(
             }
         });
 
-    // Floor interaction rings for all 4 arcade machines + Jazz Band tip jar
+    // Overhead Stargate Roller Coaster (360 vertical loop, 720 corkscrews, 2001 slit-scan light tunnel & strobes)
+    let coaster_rail_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.18, 0.90, 1.0),
+        emissive: LinearRgba::new(0.25, 1.65, 2.8, 1.0),
+        metallic: 0.90,
+        perceptual_roughness: 0.14,
+        ..default()
+    });
+    let coaster_tie_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.16, 0.78),
+        emissive: LinearRgba::new(2.2, 0.25, 1.6, 1.0),
+        metallic: 0.75,
+        perceptual_roughness: 0.22,
+        ..default()
+    });
+    let coaster_car_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.84, 0.18),
+        emissive: LinearRgba::new(0.7, 0.5, 0.05, 1.0),
+        metallic: 0.88,
+        perceptual_roughness: 0.12,
+        ..default()
+    });
+
+    const TRACK_SEGS: usize = 144;
+    for i in 0..TRACK_SEGS {
+        let u0 = i as f32 / TRACK_SEGS as f32;
+        let u1 = (i + 1) as f32 / TRACK_SEGS as f32;
+        let (p0, r0) = coaster_sample(u0);
+        let (p1, _) = coaster_sample(u1);
+        let mid = CASINO_LEVEL_ORIGIN + (p0 + p1) * 0.5;
+        let seg_len = (p1 - p0).length().max(0.15) + 0.06;
+        // Twin glowing neon rails
+        for side in [-0.42_f32, 0.42] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(coaster_rail_mat.clone()),
+                Transform::from_translation(mid + r0 * Vec3::new(side, 0.0, 0.0))
+                    .with_rotation(r0)
+                    .with_scale(Vec3::new(0.09, 0.09, seg_len)),
+            ));
+        }
+        // Cross-tie spine & glowing neon tie every 2nd segment
+        if i % 2 == 0 {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(coaster_tie_mat.clone()),
+                Transform::from_translation(mid + r0 * Vec3::new(0.0, -0.14, 0.0))
+                    .with_rotation(r0)
+                    .with_scale(Vec3::new(0.96, 0.08, 0.14)),
+            ));
+        }
+    }
+
+    // 2001: A Space Odyssey Stargate Slit-Scan Dimensional Tunnel along the high corkscrew (u = 0.46..0.78)
+    for ri in 0..28_usize {
+        let u = 0.46 + (ri as f32 / 27.0) * 0.32;
+        let (p, rot) = coaster_sample(u);
+        let base_pos = CASINO_LEVEL_ORIGIN + p;
+        let hue = (ri as f32 / 28.0) * 360.0;
+        let col = Color::hsl(hue, 1.0, 0.58);
+        let l = col.to_linear();
+        let rib_mat = materials.add(StandardMaterial {
+            base_color: col,
+            emissive: LinearRgba::new(l.red * 3.8, l.green * 3.8, l.blue * 3.8, 1.0),
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            CoasterStargateRib {
+                idx: ri,
+                base_pos,
+                rot,
+            },
+            Mesh3d(ring_mesh.clone()),
+            MeshMaterial3d(rib_mat),
+            Transform::from_translation(base_pos)
+                .with_rotation(rot * Quat::from_rotation_x(FRAC_PI_2))
+                .with_scale(Vec3::splat(3.6)),
+        ));
+    }
+
+    // Overhead flashing strobe PointLights illuminating the Stargate & Loop
+    for (li, sp) in [
+        Vec3::new(0.0, 14.5, -2.0),
+        Vec3::new(11.0, 14.0, -10.5),
+        Vec3::new(-11.0, 15.0, -9.5),
+        Vec3::new(0.0, 12.0, 12.5),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            CoasterStrobeLight(li),
+            PointLight {
+                color: Color::srgb(0.2, 0.85, 1.0),
+                intensity: 180_000.0,
+                range: 32.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(CASINO_LEVEL_ORIGIN + sp),
+        ));
+    }
+
+    // 4-car neon coaster train
+    for ci in 0..4_usize {
+        let (p, rot) = coaster_sample(0.0);
+        commands
+            .spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                CoasterTrainCar(ci),
+                Transform::from_translation(CASINO_LEVEL_ORIGIN + p).with_rotation(rot),
+                Visibility::default(),
+            ))
+            .with_children(|car| {
+                car.spawn((
+                    Mesh3d(box_mesh.clone()),
+                    MeshMaterial3d(if ci == 0 { coaster_car_mat.clone() } else { neon_pink.clone() }),
+                    Transform::from_xyz(0.0, 0.32, 0.0).with_scale(Vec3::new(1.05, 0.44, 1.48)),
+                ));
+                car.spawn((
+                    Mesh3d(box_mesh.clone()),
+                    MeshMaterial3d(neon_cyan.clone()),
+                    Transform::from_xyz(0.0, 0.58, -0.35).with_scale(Vec3::new(0.92, 0.24, 0.22)),
+                ));
+                car.spawn((
+                    Mesh3d(sphere_mesh.clone()),
+                    MeshMaterial3d(neon_gold.clone()),
+                    Transform::from_xyz(0.0, 0.45, 0.72).with_scale(Vec3::new(0.38, 0.16, 0.16)),
+                ));
+            });
+    }
+
+    // Floor interaction rings for all 4 arcade machines + Jazz Band + Stargate Roller Coaster
     for (kind, color) in [
         (ArcadeKind::CoinPusher, Color::srgb(1.0, 0.84, 0.18)),
         (ArcadeKind::ClawMachine, Color::srgb(1.0, 0.32, 0.80)),
         (ArcadeKind::Plinko, Color::srgb(0.22, 0.92, 1.0)),
         (ArcadeKind::Skeeball, Color::srgb(0.45, 1.0, 0.45)),
         (ArcadeKind::JazzBand, Color::srgb(1.0, 0.72, 0.16)),
+        (ArcadeKind::RollerCoaster, Color::srgb(0.45, 0.85, 1.0)),
     ] {
         let (p, yaw) = kind.pose();
         let l = color.to_linear();
@@ -1098,6 +1337,7 @@ fn update_arcade_proximity(
         ArcadeKind::Plinko => "Slide Puck [A/D] | Drop Plinko (5 TW) [SPACE]".to_string(),
         ArcadeKind::Skeeball => "Aim [A/D] | Launch Ball (5 TW / 3 Balls) [SPACE]".to_string(),
         ArcadeKind::JazzBand => String::new(),
+        ArcadeKind::RollerCoaster => "2001 STARGATE TRIP! Enjoy the loops & corkscrews! [ESC to Exit]".to_string(),
     };
     if let Ok(mut win) = window_q.get_single_mut() {
         win.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
@@ -1373,7 +1613,7 @@ fn handle_arcade_input(
                 }
             }
         }
-        ArcadeKind::JazzBand => {}
+        ArcadeKind::JazzBand | ArcadeKind::RollerCoaster => {}
     }
 }
 
@@ -1806,25 +2046,59 @@ fn update_arcade_camera(
     time: Res<Time<Real>>,
     stats: Res<PlayerStats>,
     arcade: Res<ArcadeState>,
-    mut player_q: Query<&mut Transform, With<Player>>,
+    mut player_q: Query<(&mut Transform, &mut Visibility), With<Player>>,
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>)>,
     mut orbit: ResMut<CameraOrbit>,
 ) {
     let Some(kind) = arcade.active else {
         if arcade.was_open {
             orbit.blend_request = true;
+            for (_, mut vis) in &mut player_q {
+                *vis = Visibility::Visible;
+            }
         }
         return;
     };
     if !stats.arcade_open {
+        for (_, mut vis) in &mut player_q {
+            *vis = Visibility::Visible;
+        }
         return;
     }
+
+    let dt = time.delta_secs().min(0.05);
+    if kind == ArcadeKind::RollerCoaster {
+        let (car_p, car_rot) = coaster_sample(arcade.coaster_u);
+        let (ahead_p, _) = coaster_sample((arcade.coaster_u + 0.035) % 1.0);
+        let world_car = CASINO_LEVEL_ORIGIN + car_p;
+        let world_ahead = CASINO_LEVEL_ORIGIN + ahead_p;
+        let cam_pos = world_car + car_rot * Vec3::new(0.0, 1.05, -0.35);
+        let up = (car_rot * Vec3::Y).normalize_or_zero();
+        for (mut p_tf, mut vis) in &mut player_q {
+            *vis = Visibility::Hidden;
+            p_tf.translation = CASINO_LEVEL_ORIGIN + Vec3::new(13.8, 0.0, 14.2);
+        }
+        let k = 1.0 - (-12.0 * dt).exp();
+        if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
+            c_tf.translation = c_tf.translation.lerp(cam_pos, k);
+            let goal = Transform::from_translation(cam_pos)
+                .looking_at(world_ahead + up * 0.4, up)
+                .rotation;
+            c_tf.rotation = c_tf.rotation.slerp(goal, k);
+            if let Projection::Perspective(ref mut p) = *proj {
+                p.fov += (0.98 - p.fov) * k;
+            }
+        }
+        return;
+    }
+
     let (mp, myaw) = kind.pose();
     let w = CASINO_LEVEL_ORIGIN + mp;
     let r = Quat::from_rotation_y(myaw);
 
     // Keep player visible standing cleanly beside the machine in third-person!
-    for mut p_tf in &mut player_q {
+    for (mut p_tf, mut vis) in &mut player_q {
+        *vis = Visibility::Visible;
         let p_off = match kind {
             ArcadeKind::Skeeball => Vec3::new(-0.95, 0.0, 2.85),
             _ => Vec3::new(-0.92, 0.0, 1.55),
@@ -1837,13 +2111,12 @@ fn update_arcade_camera(
         ArcadeKind::CoinPusher => (Vec3::new(0.85, 2.25, 2.75), Vec3::new(0.0, 1.48, 0.0)),
         ArcadeKind::ClawMachine => (Vec3::new(1.10, 2.38, 2.95), Vec3::new(0.0, 1.55, 0.0)),
         ArcadeKind::Plinko => (Vec3::new(0.95, 2.25, 3.35), Vec3::new(0.0, 1.68, 0.0)),
-        ArcadeKind::Skeeball | ArcadeKind::JazzBand => {
+        ArcadeKind::Skeeball | ArcadeKind::JazzBand | ArcadeKind::RollerCoaster => {
             (Vec3::new(1.15, 2.20, 4.30), Vec3::new(0.0, 1.35, -1.2))
         }
     };
     let pos = w + r * cam_off;
     let look = w + r * look_off;
-    let dt = time.delta_secs().min(0.05);
     let k = 1.0 - (-6.5 * dt).exp();
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
         c_tf.translation = c_tf.translation.lerp(pos, k);
@@ -1874,6 +2147,7 @@ fn refresh_arcade_hud(
             ArcadeKind::CoinPusher => "AIM: A/D".to_string(),
             ArcadeKind::ClawMachine => "MOVE: WASD".to_string(),
             ArcadeKind::Plinko => "AIM: A/D".to_string(),
+            ArcadeKind::RollerCoaster => "STARGATE TRIP: ESC TO EXIT".to_string(),
             ArcadeKind::Skeeball | ArcadeKind::JazzBand => {
                 let pct = ((0.5 + 0.5 * arcade.skee_power_phase.sin()) * 100.0).round() as u32;
                 format!("AIM: A/D  |  PWR: {}%", pct)
@@ -1888,5 +2162,66 @@ fn refresh_arcade_hud(
                 Display::None
             };
         }
+    }
+}
+
+fn step_coaster_and_stargate(
+    time: Res<Time<Real>>,
+    mut arcade: ResMut<ArcadeState>,
+    mut car_q: Query<(&CoasterTrainCar, &mut Transform)>,
+    mut rib_q: Query<
+        (&CoasterStargateRib, &mut Transform, &MeshMaterial3d<StandardMaterial>),
+        Without<CoasterTrainCar>,
+    >,
+    mut strobe_q: Query<(&CoasterStrobeLight, &mut PointLight)>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+
+    // Dynamic speed: slower on climb, blazing fast through the vertical loop & 2001 Stargate corkscrew!
+    let (cur_p, _) = coaster_sample(arcade.coaster_u);
+    let speed = if cur_p.y > 12.5 {
+        0.095
+    } else if arcade.coaster_u > 0.45 && arcade.coaster_u < 0.80 {
+        0.115
+    } else {
+        0.082
+    };
+    arcade.coaster_u = (arcade.coaster_u + dt * speed) % 1.0;
+
+    for (car, mut tf) in &mut car_q {
+        let u = (arcade.coaster_u - car.0 as f32 * 0.015).rem_euclid(1.0);
+        let (p, rot) = coaster_sample(u);
+        tf.translation = CASINO_LEVEL_ORIGIN + p;
+        tf.rotation = rot;
+    }
+
+    // 2001: A Space Odyssey Slit-Scan hyper-spectral dimensional tunnel pulsing & color-cycling
+    for (rib, mut tf, mat_h) in &mut rib_q {
+        let wave = (t * 6.5 - rib.idx as f32 * 0.45).sin();
+        let spin = t * 1.4 + rib.idx as f32 * 0.25;
+        let pulse = 3.2 + 0.9 * wave;
+        tf.translation = rib.base_pos;
+        tf.rotation = rib.rot * Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_y(spin);
+        tf.scale = Vec3::new(pulse, 1.0, pulse);
+
+        if let Some(mat) = materials.get_mut(&mat_h.0) {
+            let hue = ((t * 190.0 + rib.idx as f32 * 24.0) % 360.0 + 360.0) % 360.0;
+            let col = Color::hsl(hue, 1.0, 0.56);
+            let l = col.to_linear();
+            let boost = 3.2 + 2.4 * ((t * 11.0 + rib.idx as f32 * 0.7).sin() * 0.5 + 0.5);
+            mat.base_color = col;
+            mat.emissive = LinearRgba::new(l.red * boost, l.green * boost, l.blue * boost, 1.0);
+        }
+    }
+
+    // Rapid strobe & rave colour-cycling PointLights overhead
+    for (strobe, mut light) in &mut strobe_q {
+        let ph = t * 14.0 + strobe.0 as f32 * 1.57;
+        let flash = (ph.sin() * 0.5 + 0.5).powi(3);
+        let hue = ((t * 240.0 + strobe.0 as f32 * 90.0) % 360.0 + 360.0) % 360.0;
+        light.color = Color::hsl(hue, 1.0, 0.60);
+        light.intensity = 40_000.0 + 320_000.0 * flash;
     }
 }
