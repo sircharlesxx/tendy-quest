@@ -1180,8 +1180,10 @@ fn enter_casino_play(
         ..default()
     });
     let ceiling_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.08, 0.03, 0.10),
-        perceptual_roughness: 0.65,
+        base_color: Color::srgba(0.05, 0.03, 0.12, 0.22),
+        alpha_mode: AlphaMode::Blend,
+        metallic: 0.85,
+        perceptual_roughness: 0.10,
         ..default()
     });
     let gold_trim_mat = materials.add(StandardMaterial {

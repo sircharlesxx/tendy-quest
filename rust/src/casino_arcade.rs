@@ -300,30 +300,45 @@ struct CoasterStargateRib {
 #[derive(Component)]
 struct CoasterStrobeLight(usize);
 
-/// Closed 18-waypoint Catmull-Rom coaster spline with a Giant 360° Vertical Loop,
-/// 720° Double Corkscrew Barrel Roll, and 2001 Stargate Dive overhead!
-const COASTER_WAYPOINTS: [(Vec3, f32); 18] = [
-    (Vec3::new(14.0, 7.2, 11.0), 0.15),
-    (Vec3::new(14.5, 11.5, 2.0), 0.25),
-    (Vec3::new(13.5, 16.0, -8.0), 0.35),
-    (Vec3::new(5.0, 14.5, -13.5), 0.20),
-    // Giant Vertical 360° Loop over Center Casino!
-    (Vec3::new(-2.0, 8.2, -7.0), 0.0),
-    (Vec3::new(-2.0, 12.2, -2.5), 0.0),
-    (Vec3::new(-2.0, 16.2, -7.0), 0.0),
-    (Vec3::new(-2.0, 12.2, -11.5), 0.0),
-    (Vec3::new(-2.0, 8.2, -7.0), 0.0),
-    // 2001 Stargate Tunnel + 720° Double Corkscrew Barrel Roll!
-    (Vec3::new(-9.5, 10.5, -2.0), std::f32::consts::PI * 0.6),
-    (Vec3::new(-13.5, 13.5, 4.5), std::f32::consts::PI * 1.4),
-    (Vec3::new(-5.0, 15.2, 9.5), std::f32::consts::PI * 2.2),
-    (Vec3::new(4.5, 13.8, 8.5), std::f32::consts::PI * 3.1),
-    (Vec3::new(12.5, 10.8, 3.0), std::f32::consts::PI * 4.0),
-    // High-speed swoop & dive back to station
-    (Vec3::new(11.0, 8.0, 12.5), 0.45),
-    (Vec3::new(0.0, 9.8, 15.0), -0.35),
-    (Vec3::new(6.5, 7.5, 14.5), -0.15),
-    (Vec3::new(12.0, 7.2, 13.0), 0.05),
+#[derive(Component)]
+struct CoasterTrippyOrb {
+    base: Vec3,
+    phase: f32,
+    radius: f32,
+}
+
+/// Closed 22-waypoint Catmull-Rom coaster spline bursting out of the casino skylight
+/// over nighttime Cedar Rapids (Downtown towers, Empire Citadel, Cedar River bridges),
+/// with a Giant 360° Vertical Loop, 720° Double Corkscrew Barrel Roll, and 2001 Stargate Tunnel!
+const COASTER_WAYPOINTS: [(Vec3, f32); 22] = [
+    // Launch inside top of Casino -> burst up through the skylight!
+    (Vec3::new(12.0, 9.5, 11.0), 0.10),
+    (Vec3::new(2.0, 12.0, 2.0), 0.25),
+    (Vec3::new(-10.0, 22.0, -18.0), 0.35),
+    // Swoop past Empire Citadel Tower & Downtown Cedar Rapids
+    (Vec3::new(16.0, 34.0, -48.0), -0.30),
+    (Vec3::new(0.0, 26.0, -82.0), 0.45),
+    (Vec3::new(-44.0, 22.0, -76.0), 0.35),
+    // Dive low over the Cedar River, Mays Island & 1st/2nd/3rd Ave Bridges!
+    (Vec3::new(-80.0, 11.0, -34.0), -0.25),
+    (Vec3::new(-80.0, 10.5, 0.0), 0.15),
+    (Vec3::new(-76.0, 15.0, 36.0), 0.30),
+    // Giant Vertical 360° Loop over South Downtown Cedar Rapids!
+    (Vec3::new(-32.0, 18.0, 58.0), 0.0),
+    (Vec3::new(-32.0, 35.0, 44.0), 0.0),
+    (Vec3::new(-32.0, 52.0, 58.0), 0.0),
+    (Vec3::new(-32.0, 35.0, 72.0), 0.0),
+    (Vec3::new(-32.0, 18.0, 58.0), 0.0),
+    // 2001 Stargate Tunnel + 720° Double Corkscrew Barrel Roll high over the skyline!
+    (Vec3::new(12.0, 28.0, 68.0), std::f32::consts::PI * 0.7),
+    (Vec3::new(56.0, 38.0, 44.0), std::f32::consts::PI * 1.5),
+    (Vec3::new(68.0, 34.0, -6.0), std::f32::consts::PI * 2.4),
+    (Vec3::new(46.0, 26.0, -46.0), std::f32::consts::PI * 3.2),
+    (Vec3::new(26.0, 20.0, -24.0), std::f32::consts::PI * 4.0),
+    // High-speed dive back into the Casino skylight
+    (Vec3::new(22.0, 15.0, 4.0), -0.35),
+    (Vec3::new(17.0, 11.2, 13.5), -0.15),
+    (Vec3::new(12.0, 9.5, 11.0), 0.10),
 ];
 
 fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
@@ -335,6 +350,7 @@ fn catmull_rom(p0: Vec3, p1: Vec3, p2: Vec3, p3: Vec3, t: f32) -> Vec3 {
         + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
 }
 
+/// Returns `(local_pos_relative_to_casino_origin, rotation)` along the closed coaster spline.
 fn coaster_sample(u: f32) -> (Vec3, Quat) {
     let n = COASTER_WAYPOINTS.len();
     let u = u.rem_euclid(1.0);
@@ -347,24 +363,23 @@ fn coaster_sample(u: f32) -> (Vec3, Quat) {
     let (p2, r2) = COASTER_WAYPOINTS[(seg + 1) % n];
     let (p3, _) = COASTER_WAYPOINTS[(seg + 2) % n];
 
-    let pos = CASINO_LEVEL_ORIGIN + catmull_rom(p0, p1, p2, p3, t);
-    let dt = 0.006;
+    let pos = catmull_rom(p0, p1, p2, p3, t);
+    let dt = 0.005;
     let u2 = (u + dt).rem_euclid(1.0);
     let s2 = u2 * n as f32;
     let seg2 = (s2.floor() as usize) % n;
     let t2 = s2 - s2.floor();
-    let next_pos = CASINO_LEVEL_ORIGIN
-        + catmull_rom(
-            COASTER_WAYPOINTS[(seg2 + n - 1) % n].0,
-            COASTER_WAYPOINTS[seg2].0,
-            COASTER_WAYPOINTS[(seg2 + 1) % n].0,
-            COASTER_WAYPOINTS[(seg2 + 2) % n].0,
-            t2,
-        );
+    let next_pos = catmull_rom(
+        COASTER_WAYPOINTS[(seg2 + n - 1) % n].0,
+        COASTER_WAYPOINTS[seg2].0,
+        COASTER_WAYPOINTS[(seg2 + 1) % n].0,
+        COASTER_WAYPOINTS[(seg2 + 2) % n].0,
+        t2,
+    );
     let fwd = (next_pos - pos).normalize_or_zero();
     let bank = r1 + (r2 - r1) * t;
-    // Handle vertical loop upside-down orientation cleanly near waypoints 5..7
-    let base_up = if (4..=8).contains(&seg) && pos.y > 12.8 {
+    // Handle vertical loop upside-down orientation cleanly near waypoints 9..13
+    let base_up = if (9..=13).contains(&seg) && pos.y > 34.0 {
         -Vec3::Y
     } else {
         Vec3::Y
@@ -1081,14 +1096,14 @@ fn spawn_casino_arcade_machines(
         ..default()
     });
 
-    const TRACK_SEGS: usize = 144;
+    const TRACK_SEGS: usize = 240;
     for i in 0..TRACK_SEGS {
         let u0 = i as f32 / TRACK_SEGS as f32;
         let u1 = (i + 1) as f32 / TRACK_SEGS as f32;
         let (p0, r0) = coaster_sample(u0);
         let (p1, _) = coaster_sample(u1);
         let mid = CASINO_LEVEL_ORIGIN + (p0 + p1) * 0.5;
-        let seg_len = (p1 - p0).length().max(0.15) + 0.06;
+        let seg_len = (p1 - p0).length().max(0.15) + 0.08;
         // Twin glowing neon rails
         for side in [-0.42_f32, 0.42] {
             commands.spawn((
@@ -1098,7 +1113,7 @@ fn spawn_casino_arcade_machines(
                 MeshMaterial3d(coaster_rail_mat.clone()),
                 Transform::from_translation(mid + r0 * Vec3::new(side, 0.0, 0.0))
                     .with_rotation(r0)
-                    .with_scale(Vec3::new(0.09, 0.09, seg_len)),
+                    .with_scale(Vec3::new(0.10, 0.10, seg_len)),
             ));
         }
         // Cross-tie spine & glowing neon tie every 2nd segment
@@ -1110,22 +1125,22 @@ fn spawn_casino_arcade_machines(
                 MeshMaterial3d(coaster_tie_mat.clone()),
                 Transform::from_translation(mid + r0 * Vec3::new(0.0, -0.14, 0.0))
                     .with_rotation(r0)
-                    .with_scale(Vec3::new(0.96, 0.08, 0.14)),
+                    .with_scale(Vec3::new(0.98, 0.08, 0.16)),
             ));
         }
     }
 
-    // 2001: A Space Odyssey Stargate Slit-Scan Dimensional Tunnel along the high corkscrew (u = 0.46..0.78)
-    for ri in 0..28_usize {
-        let u = 0.46 + (ri as f32 / 27.0) * 0.32;
+    // 2001: A Space Odyssey Stargate Slit-Scan Dimensional Tunnel along the high corkscrew (u = 0.62..0.88)
+    for ri in 0..36_usize {
+        let u = 0.62 + (ri as f32 / 35.0) * 0.26;
         let (p, rot) = coaster_sample(u);
         let base_pos = CASINO_LEVEL_ORIGIN + p;
-        let hue = (ri as f32 / 28.0) * 360.0;
+        let hue = (ri as f32 / 36.0) * 360.0;
         let col = Color::hsl(hue, 1.0, 0.58);
         let l = col.to_linear();
         let rib_mat = materials.add(StandardMaterial {
             base_color: col,
-            emissive: LinearRgba::new(l.red * 3.8, l.green * 3.8, l.blue * 3.8, 1.0),
+            emissive: LinearRgba::new(l.red * 4.2, l.green * 4.2, l.blue * 4.2, 1.0),
             unlit: true,
             ..default()
         });
@@ -1141,16 +1156,16 @@ fn spawn_casino_arcade_machines(
             MeshMaterial3d(rib_mat),
             Transform::from_translation(base_pos)
                 .with_rotation(rot * Quat::from_rotation_x(FRAC_PI_2))
-                .with_scale(Vec3::splat(3.6)),
+                .with_scale(Vec3::splat(4.8)),
         ));
     }
 
-    // Overhead flashing strobe PointLights illuminating the Stargate & Loop
+    // Overhead & Skyline flashing strobe PointLights illuminating Cedar Rapids at night
     for (li, sp) in [
-        Vec3::new(0.0, 14.5, -2.0),
-        Vec3::new(11.0, 14.0, -10.5),
-        Vec3::new(-11.0, 15.0, -9.5),
-        Vec3::new(0.0, 12.0, 12.5),
+        Vec3::new(0.0, 28.0, -40.0),
+        Vec3::new(-75.0, 26.0, 0.0),
+        Vec3::new(52.0, 34.0, 24.0),
+        Vec3::new(-28.0, 44.0, 56.0),
     ]
     .into_iter()
     .enumerate()
@@ -1161,12 +1176,229 @@ fn spawn_casino_arcade_machines(
             CoasterStrobeLight(li),
             PointLight {
                 color: Color::srgb(0.2, 0.85, 1.0),
-                intensity: 180_000.0,
-                range: 32.0,
+                intensity: 450_000.0,
+                range: 110.0,
                 shadows_enabled: false,
                 ..default()
             },
             Transform::from_translation(CASINO_LEVEL_ORIGIN + sp),
+        ));
+    }
+
+    // Nighttime Trippy Cedar Rapids Skyline surrounding the Casino (at y = -2.2 so it sits cleanly below casino floor)
+    let cr_ground_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.025, 0.02, 0.06),
+        perceptual_roughness: 0.78,
+        ..default()
+    });
+    let cr_river_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.04, 0.12, 0.28),
+        emissive: LinearRgba::new(0.03, 0.16, 0.42, 1.0),
+        metallic: 0.92,
+        perceptual_roughness: 0.08,
+        ..default()
+    });
+    let cr_bldg_dark = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.07, 0.08, 0.14),
+        metallic: 0.45,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let cr_bldg_limestone = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.14, 0.12, 0.20),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let cr_violet_neon = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.74, 0.24, 1.0),
+        emissive: LinearRgba::new(1.8, 0.4, 2.8, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let cr_origin = CASINO_LEVEL_ORIGIN + Vec3::new(0.0, -2.2, 0.0);
+
+    // Midnight ground plane + 4x4 glowing Cedar Rapids neon avenue grid
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(box_mesh.clone()),
+        MeshMaterial3d(cr_ground_mat),
+        Transform::from_translation(cr_origin + Vec3::new(0.0, -0.5, 0.0)).with_scale(Vec3::new(280.0, 1.0, 280.0)),
+    ));
+    for road in [-69.0_f32, -23.0, 23.0, 69.0] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(box_mesh.clone()),
+            MeshMaterial3d(neon_cyan.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(road, 0.05, 0.0)).with_scale(Vec3::new(0.55, 0.06, 260.0)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(box_mesh.clone()),
+            MeshMaterial3d(neon_pink.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(0.0, 0.05, road)).with_scale(Vec3::new(260.0, 0.06, 0.55)),
+        ));
+    }
+
+    // Cedar River (West Downtown, x = -84) + Mays Island Courthouse + 1st/2nd/3rd Ave Neon Bridges
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(box_mesh.clone()),
+        MeshMaterial3d(cr_river_mat),
+        Transform::from_translation(cr_origin + Vec3::new(-84.0, 0.08, 0.0)).with_scale(Vec3::new(28.0, 0.08, 270.0)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(box_mesh.clone()),
+        MeshMaterial3d(cr_bldg_limestone.clone()),
+        Transform::from_translation(cr_origin + Vec3::new(-84.0, 5.5, 0.0)).with_scale(Vec3::new(11.0, 11.0, 16.0)),
+    ));
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(sphere_mesh.clone()),
+        MeshMaterial3d(neon_gold.clone()),
+        Transform::from_translation(cr_origin + Vec3::new(-84.0, 12.2, 0.0)).with_scale(Vec3::new(4.2, 3.6, 4.2)),
+    ));
+    for bz in [-38.0_f32, 0.0, 38.0] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(box_mesh.clone()),
+            MeshMaterial3d(cr_bldg_dark.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(-84.0, 1.4, bz)).with_scale(Vec3::new(34.0, 0.6, 6.5)),
+        ));
+        for side in [-3.1_f32, 3.1] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(neon_cyan.clone()),
+                Transform::from_translation(cr_origin + Vec3::new(-84.0, 2.2, bz + side)).with_scale(Vec3::new(34.0, 0.25, 0.25)),
+            ));
+        }
+    }
+
+    // Downtown Cedar Rapids Skyscrapers (outside the 46x46 casino box) with lit nighttime window bands & rooftop beacons
+    let towers: &[(f32, f32, f32, f32, f32)] = &[
+        (-44.0, -44.0, 16.0, 36.0, 16.0),
+        (44.0, -44.0, 18.0, 44.0, 18.0),
+        (46.0, 44.0, 16.0, 38.0, 16.0),
+        (-46.0, 44.0, 18.0, 34.0, 18.0),
+        (-12.0, -46.0, 15.0, 30.0, 15.0),
+        (16.0, -46.0, 14.0, 40.0, 14.0),
+        (48.0, -10.0, 18.0, 32.0, 20.0),
+        (48.0, 18.0, 15.0, 46.0, 15.0),
+        (-48.0, -14.0, 14.0, 28.0, 16.0),
+        (-48.0, 16.0, 16.0, 42.0, 16.0),
+        (-14.0, 48.0, 16.0, 32.0, 15.0),
+        (18.0, 48.0, 15.0, 48.0, 15.0),
+        (82.0, -42.0, 18.0, 40.0, 18.0),
+        (82.0, 0.0, 20.0, 52.0, 20.0),
+        (82.0, 44.0, 18.0, 36.0, 18.0),
+        (44.0, 84.0, 18.0, 42.0, 18.0),
+        (0.0, 86.0, 20.0, 34.0, 18.0),
+        (-44.0, 84.0, 18.0, 38.0, 18.0),
+        (46.0, -84.0, 18.0, 44.0, 18.0),
+        (-112.0, -30.0, 18.0, 30.0, 18.0),
+        (-112.0, 26.0, 18.0, 38.0, 18.0),
+    ];
+    for (ti, &(bx, bz, bw, bh, bd)) in towers.iter().enumerate() {
+        let body_mat = if ti % 2 == 0 { cr_bldg_dark.clone() } else { cr_bldg_limestone.clone() };
+        let win_mat = match ti % 4 {
+            0 => neon_gold.clone(),
+            1 => neon_cyan.clone(),
+            2 => neon_pink.clone(),
+            _ => cr_violet_neon.clone(),
+        };
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(box_mesh.clone()),
+            MeshMaterial3d(body_mat),
+            Transform::from_translation(cr_origin + Vec3::new(bx, bh * 0.5, bz)).with_scale(Vec3::new(bw, bh, bd)),
+        ));
+        // Glowing nighttime window bands & rooftop neon crown
+        for wy in [bh * 0.28, bh * 0.52, bh * 0.76, bh - 0.8] {
+            commands.spawn((
+                LevelEntity,
+                CasinoLevelEntity,
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(win_mat.clone()),
+                Transform::from_translation(cr_origin + Vec3::new(bx, wy, bz)).with_scale(Vec3::new(bw + 0.35, 0.55, bd + 0.35)),
+            ));
+        }
+    }
+
+    // Iconic Tiered Empire Citadel Tower (0, -82) & Quaker Oats Twin Silos (-46, -74)
+    for (ty, tw, th) in [(16.0_f32, 20.0_f32, 32.0_f32), (39.0, 14.0, 16.0), (52.0, 8.0, 12.0)] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(box_mesh.clone()),
+            MeshMaterial3d(cr_bldg_dark.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(0.0, ty, -82.0)).with_scale(Vec3::new(tw, th, tw)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(box_mesh.clone()),
+            MeshMaterial3d(neon_gold.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(0.0, ty + th * 0.5 - 0.5, -82.0)).with_scale(Vec3::new(tw + 0.5, 0.6, tw + 0.5)),
+        ));
+    }
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Mesh3d(cyl_mesh.clone()),
+        MeshMaterial3d(neon_pink.clone()),
+        Transform::from_translation(cr_origin + Vec3::new(0.0, 65.0, -82.0)).with_scale(Vec3::new(0.45, 16.0, 0.45)),
+    ));
+    for sx in [-51.0_f32, -41.0] {
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(cyl_mesh.clone()),
+            MeshMaterial3d(cr_bldg_limestone.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(sx, 18.0, -74.0)).with_scale(Vec3::new(4.6, 36.0, 4.6)),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Mesh3d(cyl_mesh.clone()),
+            MeshMaterial3d(neon_cyan.clone()),
+            Transform::from_translation(cr_origin + Vec3::new(sx, 34.5, -74.0)).with_scale(Vec3::new(4.9, 1.0, 4.9)),
+        ));
+    }
+
+    // 72 Trippy Nighttime Sky Stars & Floating Psychedelic Orbs
+    for si in 0..72_usize {
+        let a = si as f32 * 2.39996;
+        let dist = 38.0 + (si % 9) as f32 * 13.5;
+        let base = CASINO_LEVEL_ORIGIN + Vec3::new(a.cos() * dist, 28.0 + (si % 7) as f32 * 9.5, a.sin() * dist);
+        let col = Color::hsl((si as f32 * 37.0) % 360.0, 1.0, 0.62);
+        let l = col.to_linear();
+        let orb_mat = materials.add(StandardMaterial {
+            base_color: col,
+            emissive: LinearRgba::new(l.red * 3.5, l.green * 3.5, l.blue * 3.5, 1.0),
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            CoasterTrippyOrb {
+                base,
+                phase: si as f32 * 0.45,
+                radius: 0.75 + (si % 4) as f32 * 0.55,
+            },
+            Mesh3d(sphere_mesh.clone()),
+            MeshMaterial3d(orb_mat),
+            Transform::from_translation(base).with_scale(Vec3::splat(1.1)),
         ));
     }
 
@@ -2069,24 +2301,25 @@ fn update_arcade_camera(
     let dt = time.delta_secs().min(0.05);
     if kind == ArcadeKind::RollerCoaster {
         let (car_p, car_rot) = coaster_sample(arcade.coaster_u);
-        let (ahead_p, _) = coaster_sample((arcade.coaster_u + 0.035) % 1.0);
+        let (ahead_p, _) = coaster_sample((arcade.coaster_u + 0.028) % 1.0);
         let world_car = CASINO_LEVEL_ORIGIN + car_p;
         let world_ahead = CASINO_LEVEL_ORIGIN + ahead_p;
-        let cam_pos = world_car + car_rot * Vec3::new(0.0, 1.05, -0.35);
+        let cam_pos = world_car + car_rot * Vec3::new(0.0, 1.15, -0.35);
         let up = (car_rot * Vec3::Y).normalize_or_zero();
         for (mut p_tf, mut vis) in &mut player_q {
             *vis = Visibility::Hidden;
             p_tf.translation = CASINO_LEVEL_ORIGIN + Vec3::new(13.8, 0.0, 14.2);
         }
         let k = 1.0 - (-12.0 * dt).exp();
+        let dyn_fov = 0.98 + 0.14 * (time.elapsed_secs() * 2.4).sin().abs();
         if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
             c_tf.translation = c_tf.translation.lerp(cam_pos, k);
             let goal = Transform::from_translation(cam_pos)
-                .looking_at(world_ahead + up * 0.4, up)
+                .looking_at(world_ahead + up * 0.35, up)
                 .rotation;
             c_tf.rotation = c_tf.rotation.slerp(goal, k);
             if let Projection::Perspective(ref mut p) = *proj {
-                p.fov += (0.98 - p.fov) * k;
+                p.fov += (dyn_fov - p.fov) * k;
             }
         }
         return;
@@ -2168,10 +2401,16 @@ fn refresh_arcade_hud(
 fn step_coaster_and_stargate(
     time: Res<Time<Real>>,
     mut arcade: ResMut<ArcadeState>,
+    mut clear: ResMut<ClearColor>,
+    mut ambient: ResMut<AmbientLight>,
     mut car_q: Query<(&CoasterTrainCar, &mut Transform)>,
     mut rib_q: Query<
         (&CoasterStargateRib, &mut Transform, &MeshMaterial3d<StandardMaterial>),
         Without<CoasterTrainCar>,
+    >,
+    mut orb_q: Query<
+        (&CoasterTrippyOrb, &mut Transform, &MeshMaterial3d<StandardMaterial>),
+        (Without<CoasterTrainCar>, Without<CoasterStargateRib>),
     >,
     mut strobe_q: Query<(&CoasterStrobeLight, &mut PointLight)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -2179,19 +2418,34 @@ fn step_coaster_and_stargate(
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
 
+    // Trippy nighttime sky & ambient illumination while riding over Cedar Rapids
+    if arcade.active == Some(ArcadeKind::RollerCoaster) {
+        clear.0 = Color::srgb(
+            0.03 + 0.04 * (t * 0.9).sin().abs(),
+            0.012 + 0.02 * (t * 1.3).cos().abs(),
+            0.10 + 0.08 * (t * 0.7).sin().abs(),
+        );
+        ambient.color = Color::srgb(0.55, 0.50, 0.95);
+        ambient.brightness = 640.0;
+    } else {
+        clear.0 = Color::srgb(0.015, 0.008, 0.028);
+        ambient.color = Color::srgb(0.45, 0.34, 0.72);
+        ambient.brightness = 220.0;
+    }
+
     // Dynamic speed: slower on climb, blazing fast through the vertical loop & 2001 Stargate corkscrew!
     let (cur_p, _) = coaster_sample(arcade.coaster_u);
-    let speed = if cur_p.y > 12.5 {
-        0.095
-    } else if arcade.coaster_u > 0.45 && arcade.coaster_u < 0.80 {
-        0.115
+    let speed = if cur_p.y > 32.0 {
+        0.068
+    } else if arcade.coaster_u > 0.60 && arcade.coaster_u < 0.90 {
+        0.075
     } else {
-        0.082
+        0.052
     };
     arcade.coaster_u = (arcade.coaster_u + dt * speed) % 1.0;
 
     for (car, mut tf) in &mut car_q {
-        let u = (arcade.coaster_u - car.0 as f32 * 0.015).rem_euclid(1.0);
+        let u = (arcade.coaster_u - car.0 as f32 * 0.008).rem_euclid(1.0);
         let (p, rot) = coaster_sample(u);
         tf.translation = CASINO_LEVEL_ORIGIN + p;
         tf.rotation = rot;
@@ -2201,7 +2455,7 @@ fn step_coaster_and_stargate(
     for (rib, mut tf, mat_h) in &mut rib_q {
         let wave = (t * 6.5 - rib.idx as f32 * 0.45).sin();
         let spin = t * 1.4 + rib.idx as f32 * 0.25;
-        let pulse = 3.2 + 0.9 * wave;
+        let pulse = 4.4 + 1.1 * wave;
         tf.translation = rib.base_pos;
         tf.rotation = rib.rot * Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_y(spin);
         tf.scale = Vec3::new(pulse, 1.0, pulse);
@@ -2210,18 +2464,37 @@ fn step_coaster_and_stargate(
             let hue = ((t * 190.0 + rib.idx as f32 * 24.0) % 360.0 + 360.0) % 360.0;
             let col = Color::hsl(hue, 1.0, 0.56);
             let l = col.to_linear();
-            let boost = 3.2 + 2.4 * ((t * 11.0 + rib.idx as f32 * 0.7).sin() * 0.5 + 0.5);
+            let boost = 3.6 + 2.6 * ((t * 11.0 + rib.idx as f32 * 0.7).sin() * 0.5 + 0.5);
             mat.base_color = col;
             mat.emissive = LinearRgba::new(l.red * boost, l.green * boost, l.blue * boost, 1.0);
         }
     }
 
-    // Rapid strobe & rave colour-cycling PointLights overhead
+    // Trippy nighttime sky orbs & stars pulsing and color-cycling over Cedar Rapids
+    for (orb, mut tf, mat_h) in &mut orb_q {
+        tf.translation = orb.base
+            + Vec3::new(
+                (t * 0.9 + orb.phase).sin() * 3.5,
+                (t * 1.4 + orb.phase * 1.3).cos() * 2.5,
+                (t * 0.8 + orb.phase * 0.7).cos() * 3.5,
+            );
+        let sc = orb.radius * (0.75 + 0.45 * (t * 3.8 + orb.phase).sin().abs());
+        tf.scale = Vec3::splat(sc);
+        if let Some(mat) = materials.get_mut(&mat_h.0) {
+            let hue = ((t * 120.0 + orb.phase * 55.0) % 360.0 + 360.0) % 360.0;
+            let col = Color::hsl(hue, 1.0, 0.60);
+            let l = col.to_linear();
+            mat.base_color = col;
+            mat.emissive = LinearRgba::new(l.red * 3.5, l.green * 3.5, l.blue * 3.5, 1.0);
+        }
+    }
+
+    // Rapid strobe & rave colour-cycling PointLights over Cedar Rapids
     for (strobe, mut light) in &mut strobe_q {
         let ph = t * 14.0 + strobe.0 as f32 * 1.57;
         let flash = (ph.sin() * 0.5 + 0.5).powi(3);
         let hue = ((t * 240.0 + strobe.0 as f32 * 90.0) % 360.0 + 360.0) % 360.0;
         light.color = Color::hsl(hue, 1.0, 0.60);
-        light.intensity = 40_000.0 + 320_000.0 * flash;
+        light.intensity = 120_000.0 + 750_000.0 * flash;
     }
 }
