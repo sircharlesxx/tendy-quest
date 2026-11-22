@@ -613,7 +613,7 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if stats.casino_open || stats.bartender_open || stats.char_select_open {
+    if stats.casino_open || stats.arcade_open || stats.bartender_open || stats.char_select_open {
         return;
     }
     if let Ok(mut window) = window_q.get_single_mut() {
@@ -837,6 +837,7 @@ pub fn player_movement(
         || stats.riding_wheel
         || stats.phone_open
         || stats.casino_open
+        || stats.arcade_open
         || stats.bartender_open
         || stats.char_select_open
     {
@@ -1570,7 +1571,7 @@ pub fn update_camera(
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
     // When seated at a Tendy Palace Casino game station, casino.rs drives the live 3D station cam.
-    if stats.casino_open {
+    if stats.casino_open || stats.arcade_open {
         return;
     }
     // The camera frames the drawn body (smaller than the gameplay scale at human size in the

@@ -113,6 +113,8 @@ pub struct PlayerStats {
     pub tendy_wendies: u32,
     /// True while seated inside a Tendy Palace Casino game table or slot cabinet (`casino.rs`).
     pub casino_open: bool,
+    /// True while playing one of the 3D physics arcade machines (`casino_arcade.rs`).
+    pub arcade_open: bool,
     /// One-frame grace flag set when closing the casino/bartender modal so Esc doesn't also open Pause.
     pub casino_esc_grace: bool,
     /// True while inside the standalone Level 3 Tendy Palace Casino (`GameState::CasinoPlay`).
@@ -224,6 +226,7 @@ impl Default for PlayerStats {
             tendy_credits: 0,
             tendy_wendies: 100,
             casino_open: false,
+            arcade_open: false,
             casino_esc_grace: false,
             in_casino_level: false,
             casino_return_city: false,

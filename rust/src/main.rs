@@ -2,6 +2,7 @@ mod audio;
 mod beer_fx;
 mod boss;
 mod casino;
+mod casino_arcade;
 mod chillary;
 mod city;
 mod controls;
@@ -117,6 +118,8 @@ fn main() {
         .add_plugins(ferris::FerrisPlugin)
         // Tendy Palace Casino: Level 3 Blackjack & Buffalo / Lucky Ladies slots in Tendy Wendies (casino.rs).
         .add_plugins(casino::CasinoPlugin)
+        // The Coin Game-style 3D physics arcade machines: Coin Pusher, Claw Machine, Plinko, Skeeball.
+        .add_plugins(casino_arcade::CasinoArcadePlugin)
         // Pub 217 Maria bartender, "ORDER 10 BEERS" prompt & Women's Bathroom Portal cutscene (pub_portal.rs).
         .add_plugins(pub_portal::PubPortalPlugin)
         // Distributed Free Mode P2P multiplayer (WebRTC mesh via public WebTorrent trackers, inert outside Free Mode; see net.rs).

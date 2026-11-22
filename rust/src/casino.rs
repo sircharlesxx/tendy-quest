@@ -3004,7 +3004,7 @@ fn update_casino_stations(
     let Some(art) = art else {
         return;
     };
-    if !stats.in_casino_level || stats.casino_open || help.open {
+    if !stats.in_casino_level || stats.casino_open || stats.arcade_open || help.open {
         for e in &prompt_q {
             commands.entity(e).despawn_recursive();
         }
@@ -4918,7 +4918,7 @@ fn update_casino_station_camera(
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>)>,
 ) {
     if !stats.casino_open {
-        if sync.seated {
+        if sync.seated && !stats.arcade_open {
             sync.seated = false;
             for (mut v, _) in &mut player_q {
                 *v = Visibility::Visible;

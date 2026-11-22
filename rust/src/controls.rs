@@ -243,6 +243,7 @@ fn update_control_strip(
         && fade.phase == FadePhase::Idle
         && !stats.phone_open
         && !stats.casino_open
+        && !stats.arcade_open
         && !stats.bartender_open
         && !stats.char_select_open
         && !crate::audio::skip_touch_ui();
@@ -535,7 +536,7 @@ fn update_pause_menu(
         // Only open over settled gameplay: not during a fade-in (a pointer-lock loss or the debug
         // flag waits for it to finish instead of being dropped).
         // (`SceneTransition` owns `SceneFade`; `input_unlocked(0.0)` is "fade phase is Idle".)
-        if !next_state.input_unlocked(0.0) || stats.casino_open || stats.bartender_open || stats.char_select_open || stats.casino_esc_grace {
+        if !next_state.input_unlocked(0.0) || stats.casino_open || stats.arcade_open || stats.bartender_open || stats.char_select_open || stats.casino_esc_grace {
             stats.casino_esc_grace = false;
             let _ = crate::audio::take_pointer_lock_lost();
             return;
