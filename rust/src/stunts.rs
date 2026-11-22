@@ -1120,6 +1120,8 @@ pub fn update_scooter_stunts(
                     stats.score += pts;
                     stats.dash_energy = (stats.dash_energy + 15.0).min(100.0);
                     stats.tendy_credits += 1 + flips;
+                    let tw = (1 + flips * 3 + if car_hop { 2 } else { 0 } + (st.combo / 3)).min(15);
+                    stats.add_tendy_wendies(tw);
                     play_sfx(if flips > 0 { "powerup" } else { "tendy" });
                     let flip_txt = if flips > 0 {
                         format!("{}x BACKFLIP! ", flips)
@@ -1129,8 +1131,8 @@ pub fn update_scooter_stunts(
                         String::new()
                     };
                     stats.hint_text = format!(
-                        "{}AIR {:.1}s  +{}  COMBO x{}",
-                        flip_txt, sc.air_t, pts, st.combo
+                        "{}AIR {:.1}s  +{}  +{} TW  COMBO x{}",
+                        flip_txt, sc.air_t, pts, tw, st.combo
                     );
                 } else {
                     st.combo = 0;
@@ -1196,12 +1198,15 @@ pub fn update_scooter_stunts(
             let pts = 250 * st.combo * if high { 2 } else { 1 };
             stats.score += pts;
             stats.tendy_credits += if high { 2 } else { 1 };
+            let ring_tw = if high { 3 } else { 1 };
+            stats.add_tendy_wendies(ring_tw);
             stats.dash_energy = (stats.dash_energy + 25.0).min(100.0);
             play_sfx("powerup");
             stats.hint_text = format!(
-                "{} +{}  COMBO x{}",
+                "{} +{}  +{} TW  COMBO x{}",
                 if high { "AIR RING!" } else { "BOOST RING!" },
                 pts,
+                ring_tw,
                 st.combo
             );
             if st.rings_since_heart >= 5 {
@@ -1219,11 +1224,12 @@ pub fn update_scooter_stunts(
                 st.circuits_done += 1;
                 stats.score += 2000;
                 stats.tendy_credits += 4;
+                stats.add_tendy_wendies(15);
                 stats.hearts = (stats.hearts + 1).min(stats.max_hearts);
                 stats.dash_energy = 100.0;
                 play_sfx("win");
                 stats.hint_text = format!(
-                    "JUMP NAILED: {}!  +2000  +1 HEART!  ({} done)",
+                    "JUMP NAILED: {}!  +2000  +15 TW  +1 HEART!  ({} done)",
                     CIRCUIT_NAMES[c], st.circuits_done
                 );
             }

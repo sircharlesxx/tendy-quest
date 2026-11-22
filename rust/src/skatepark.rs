@@ -2810,10 +2810,12 @@ impl ParkRide {
         let pts = base * cx.st.combo.max(1);
         cx.stats.score += pts;
         cx.stats.tendy_credits += 1;
+        let tw = ((base / 500).max(1) + cx.st.combo / 2).min(12);
+        cx.stats.add_tendy_wendies(tw);
         cx.stats.dash_energy = (cx.stats.dash_energy + 12.0).min(100.0);
         self.line_pts += pts;
         self.best_line = self.best_line.max(self.line_pts);
-        cx.stats.hint_text = format!("{}  +{}  COMBO x{}", name, pts, cx.st.combo);
+        cx.stats.hint_text = format!("{}  +{}  +{} TW  COMBO x{}", name, pts, tw, cx.st.combo);
         cx.stats.hint_bump = cx.stats.hint_bump.wrapping_add(1);
         self.cheer = 1.4;
         play_sfx(if base >= 1500 { "powerup" } else { "tendy" });
