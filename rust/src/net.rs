@@ -67,6 +67,7 @@ pub const EVENT_MOM_DAMAGE: u32 = 4;
 pub const EVENT_CREW_UNLOCK: u32 = 5;
 pub const EVENT_CASINO_WARP_ALL: u32 = 6;
 pub const EVENT_LEXIE_BATTLE: u32 = 7;
+pub const EVENT_LEXIE_MOVE: u32 = 8;
 
 pub const CHAR_STAN: u8 = 0;
 pub const CHAR_NATE: u8 = 1;
@@ -77,6 +78,7 @@ pub const CHAR_DEREK: u8 = 4;
 #[derive(Resource, Default)]
 pub struct NetCoopEvents {
     pub mom_damage: f32,
+    pub lexie_moves: Vec<(usize, bool)>,
 }
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
@@ -146,6 +148,12 @@ impl Plugin for NetPlugin {
                 // After the follow camera so labels track this frame's view.
                 .after(CameraSet::Follow)
                 .run_if(mp_playable)
+                .run_if(net_enabled),
+        )
+        .add_systems(
+            Update,
+            receive_remote_states
+                .run_if(in_state(GameState::LexieBattle))
                 .run_if(net_enabled),
         );
     }
@@ -252,6 +260,24 @@ pub struct NetState {
     event_timer: f32,
     assets: Option<NetAssets>,
     now_ms: f64,
+}
+
+impl NetState {
+    pub fn is_coop_active(&self) -> bool {
+        self.online_active && self.peers > 0
+    }
+
+    pub fn local_char_id(&self) -> u8 {
+        self.local_char
+    }
+
+    pub fn is_room_anchor(&self) -> bool {
+        self.is_anchor
+    }
+
+    pub fn remote_char_ids(&self) -> Vec<u8> {
+        self.remotes.iter().map(|r| r.char_id).collect()
+    }
 }
 
 /// Remote avatar root; `slot` picks overflow tint for >4-player local tab tests.
@@ -967,6 +993,16 @@ fn receive_remote_states(
                             next_state.set(GameState::LexieBattle);
                         }
                         format!("{} STARTED LEXIE SHOWDOWN!", label)
+                    }
+                    EVENT_LEXIE_MOVE => {
+                        let actor = ((value >> 8) & 7) as usize;
+                        let is_heavy = (value & 1) != 0;
+                        coop.lexie_moves.push((actor, is_heavy));
+                        format!(
+                            "{} CHOSE {}!",
+                            label,
+                            if is_heavy { "HEAVY" } else { "LIGHT" }
+                        )
                     }
                     _ => continue,
                 };

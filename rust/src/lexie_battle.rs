@@ -141,12 +141,25 @@ pub struct RpgBattleState {
     lexie_hp: f32,
     lexie_max_hp: f32,
     lexie_stunned: u8,
+    lexie_stun_immune: u8,
     lexie_hit_flash: f32,
     lexie_attack_kind: u8,
     lexie_target: usize,
     turn_round: u32,
+    waiting_for_remote: bool,
     banner_msg: String,
     party: [PartyMember; 5],
+}
+
+fn net_char_to_rpg_actor(char_id: u8) -> usize {
+    match char_id {
+        0 => 0, // STAN
+        1 => 2, // NATE
+        2 => 1, // GLENN
+        3 => 4, // TJ
+        4 => 3, // DEREK
+        _ => 0,
+    }
 }
 
 impl Default for RpgBattleState {
@@ -160,13 +173,15 @@ impl Default for RpgBattleState {
             is_heavy: false,
             hit_applied: false,
             vfx_stage: 0,
-            lexie_hp: 950.0,
-            lexie_max_hp: 950.0,
+            lexie_hp: 1550.0,
+            lexie_max_hp: 1550.0,
             lexie_stunned: 0,
+            lexie_stun_immune: 0,
             lexie_hit_flash: 0.0,
             lexie_attack_kind: 0,
             lexie_target: 0,
             turn_round: 1,
+            waiting_for_remote: false,
             banner_msg: "ALL 5 HEROES VS LEXIE! PICK YOUR MOVE!".to_string(),
             party: [
                 PartyMember {
@@ -1017,6 +1032,8 @@ pub fn update_lexie_battle(
     mut stats: ResMut<PlayerStats>,
     mut battle: ResMut<RpgBattleState>,
     mut next_state: crate::transition::SceneTransition,
+    net: Option<Res<crate::net::NetState>>,
+    mut coop: Option<ResMut<crate::net::NetCoopEvents>>,
     mut btn_q: Query<(&RpgCmdBtn, &Interaction, &mut BackgroundColor, &mut BorderColor)>,
 ) {
     let dt = time.delta_secs().min(0.15);
@@ -1047,53 +1064,97 @@ pub fn update_lexie_battle(
             }
         }
         RpgPhase::PlayerSelect => {
-            let mut chosen: Option<bool> = None;
-
-            if keys.just_pressed(KeyCode::Digit1) {
-                chosen = Some(false);
-            } else if keys.just_pressed(KeyCode::Digit2) {
-                chosen = Some(true);
-            } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
-                battle.selected_btn = 0;
-            } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
-                battle.selected_btn = 1;
-            } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-                chosen = Some(battle.selected_btn == 1);
+            let coop_active = net.as_ref().is_some_and(|n| n.is_coop_active());
+            let local_actor = net
+                .as_ref()
+                .map(|n| net_char_to_rpg_actor(n.local_char_id()))
+                .unwrap_or(0);
+            let is_anchor = net.as_ref().is_some_and(|n| n.is_room_anchor());
+            let mut remote_actors = [false; 5];
+            if let Some(ref n) = net {
+                for cid in n.remote_char_ids() {
+                    let ra = net_char_to_rpg_actor(cid);
+                    if ra != local_actor {
+                        remote_actors[ra] = true;
+                    }
+                }
             }
+            let is_remote_turn = coop_active && remote_actors[battle.actor];
+            let wait_for_anchor_ai = coop_active && !is_remote_turn && battle.actor != local_actor && !is_anchor;
+            battle.waiting_for_remote = is_remote_turn || wait_for_anchor_ai;
 
-            for gp in &gamepads {
-                if gp.just_pressed(GamepadButton::DPadLeft) {
+            let mut chosen: Option<bool> = None;
+            if battle.waiting_for_remote {
+                if let Some(ref mut ce) = coop {
+                    if let Some(pos) = ce.lexie_moves.iter().position(|&(a, _)| a == battle.actor) {
+                        let (_, is_heavy) = ce.lexie_moves.remove(pos);
+                        chosen = Some(is_heavy);
+                    }
+                }
+                let timeout = if is_remote_turn { 25.0 } else { 6.0 };
+                if chosen.is_none() && battle.phase_timer >= timeout {
+                    chosen = Some(false);
+                }
+            } else {
+                if let Some(ref mut ce) = coop {
+                    ce.lexie_moves.retain(|&(a, _)| a != battle.actor);
+                }
+                if keys.just_pressed(KeyCode::Digit1) {
+                    chosen = Some(false);
+                } else if keys.just_pressed(KeyCode::Digit2) {
+                    chosen = Some(true);
+                } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
                     battle.selected_btn = 0;
-                } else if gp.just_pressed(GamepadButton::DPadRight) {
+                } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
                     battle.selected_btn = 1;
-                } else if gp.just_pressed(GamepadButton::South) {
+                } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
                     chosen = Some(battle.selected_btn == 1);
                 }
-            }
 
-            for (btn, inter, mut bg, mut border) in &mut btn_q {
-                let hovered = *inter == Interaction::Hovered;
-                let pressed = *inter == Interaction::Pressed;
-                if hovered {
-                    battle.selected_btn = btn.0;
+                for gp in &gamepads {
+                    if gp.just_pressed(GamepadButton::DPadLeft) {
+                        battle.selected_btn = 0;
+                    } else if gp.just_pressed(GamepadButton::DPadRight) {
+                        battle.selected_btn = 1;
+                    } else if gp.just_pressed(GamepadButton::South) {
+                        chosen = Some(battle.selected_btn == 1);
+                    }
                 }
-                if pressed {
-                    chosen = Some(btn.0 == 1);
+
+                for (btn, inter, mut bg, mut border) in &mut btn_q {
+                    let hovered = *inter == Interaction::Hovered;
+                    let pressed = *inter == Interaction::Pressed;
+                    if hovered {
+                        battle.selected_btn = btn.0;
+                    }
+                    if pressed {
+                        chosen = Some(btn.0 == 1);
+                    }
+                    let sel = battle.selected_btn == btn.0;
+                    *bg = BackgroundColor(if sel {
+                        Color::srgb(0.16, 0.30, 0.56)
+                    } else {
+                        Color::srgb(0.08, 0.14, 0.26)
+                    });
+                    *border = BorderColor(if sel {
+                        Color::srgb(1.0, 0.88, 0.25)
+                    } else {
+                        Color::srgb(0.32, 0.65, 0.90)
+                    });
                 }
-                let sel = battle.selected_btn == btn.0;
-                *bg = BackgroundColor(if sel {
-                    Color::srgb(0.16, 0.30, 0.56)
-                } else {
-                    Color::srgb(0.08, 0.14, 0.26)
-                });
-                *border = BorderColor(if sel {
-                    Color::srgb(1.0, 0.88, 0.25)
-                } else {
-                    Color::srgb(0.32, 0.65, 0.90)
-                });
+
+                if let Some(is_heavy) = chosen {
+                    if coop_active {
+                        crate::audio::net_event(
+                            crate::net::EVENT_LEXIE_MOVE,
+                            ((battle.actor as u32) << 8) | (is_heavy as u32),
+                        );
+                    }
+                }
             }
 
             if let Some(is_heavy) = chosen {
+                battle.waiting_for_remote = false;
                 begin_hero_action(&mut battle, is_heavy);
             }
         }
@@ -1152,6 +1213,7 @@ pub fn update_lexie_battle(
                 apply_lexie_damage(&mut commands, &mut battle);
             }
             if battle.phase_timer >= battle.phase_duration {
+                battle.lexie_stun_immune = battle.lexie_stun_immune.saturating_sub(1);
                 if battle.party.iter().all(|m| m.hp <= 0) {
                     battle.phase = RpgPhase::DefeatDelay;
                     battle.phase_timer = 0.0;
@@ -1835,14 +1897,25 @@ fn damage_lexie(
         24.0,
     );
     if apply_stun {
-        battle.lexie_stunned = 1;
-        spawn_floating_popup(
-            commands,
-            "STUNNED!",
-            Color::srgb(0.92, 0.50, 1.0),
-            45.0,
-            18.0,
-        );
+        if battle.lexie_stunned == 0 && battle.lexie_stun_immune == 0 {
+            battle.lexie_stunned = 1;
+            battle.lexie_stun_immune = 1;
+            spawn_floating_popup(
+                commands,
+                "STUNNED!",
+                Color::srgb(0.92, 0.50, 1.0),
+                45.0,
+                18.0,
+            );
+        } else {
+            spawn_floating_popup(
+                commands,
+                "STUN RESISTED!",
+                Color::srgb(0.85, 0.65, 0.95),
+                45.0,
+                18.0,
+            );
+        }
     }
 }
 
@@ -1909,9 +1982,14 @@ fn spawn_lexie_attack_vfx(
 
 fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
     play_sfx("hit");
+    let enrage: f32 = if battle.lexie_hp < battle.lexie_max_hp * 0.5 {
+        1.25
+    } else {
+        1.0
+    };
     match battle.lexie_attack_kind {
         0 => {
-            let dmg = 34;
+            let dmg = (52.0 * enrage).round() as i32;
             let t = battle.lexie_target;
             battle.party[t].hp = (battle.party[t].hp - dmg).max(0);
             battle.party[t].hit_flash = 0.6;
@@ -1920,7 +1998,7 @@ fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
             spawn_floating_popup(commands, format!("-{}", dmg), Color::srgb(1.0, 0.32, 0.32), sx, sy);
         }
         1 => {
-            let dmg = 22;
+            let dmg = (34.0 * enrage).round() as i32;
             for i in 0..5 {
                 if battle.party[i].hp > 0 {
                     battle.party[i].hp = (battle.party[i].hp - dmg).max(0);
@@ -1938,7 +2016,7 @@ fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
             }
         }
         _ => {
-            let dmg = 44;
+            let dmg = (68.0 * enrage).round() as i32;
             let t = battle.lexie_target;
             battle.party[t].hp = (battle.party[t].hp - dmg).max(0);
             battle.party[t].hit_flash = 0.75;
@@ -2326,6 +2404,10 @@ pub fn update_lexie_battle_ui(
     if let Ok(mut txt) = txt_qs.p0().get_single_mut() {
         let stun_tag = if battle.lexie_stunned > 0 {
             "  [STUNNED!]"
+        } else if battle.lexie_hp < battle.lexie_max_hp * 0.5 {
+            "  [ENRAGED!]"
+        } else if battle.lexie_stun_immune > 0 {
+            "  [STUN IMMUNE]"
         } else {
             ""
         };
@@ -2380,7 +2462,11 @@ pub fn update_lexie_battle_ui(
     if battle.phase == RpgPhase::PlayerSelect {
         let m = &battle.party[battle.actor];
         if let Ok(mut hdr) = txt_qs.p4().get_single_mut() {
-            hdr.0 = format!("{}'S TURN - PRESS [1 / 2] OR CLICK", m.name);
+            hdr.0 = if battle.waiting_for_remote {
+                format!("WAITING FOR {} (SQUAD PLAYER)...", m.name)
+            } else {
+                format!("{}'S TURN - PRESS [1 / 2] OR CLICK", m.name)
+            };
         }
         for (bt, mut txt) in &mut txt_qs.p5() {
             txt.0 = if bt.0 == 0 {
