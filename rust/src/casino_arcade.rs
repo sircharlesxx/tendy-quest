@@ -32,6 +32,7 @@ impl Plugin for CasinoArcadePlugin {
                     step_claw_machine.run_if(sim_running),
                     step_plinko_physics.run_if(sim_running),
                     step_skeeball_physics.run_if(sim_running),
+                    animate_jazz_band.run_if(sim_running),
                     update_arcade_camera.run_if(sim_running),
                     refresh_arcade_hud,
                 )
@@ -51,6 +52,7 @@ pub enum ArcadeKind {
     ClawMachine,
     Plinko,
     Skeeball,
+    JazzBand,
 }
 
 impl ArcadeKind {
@@ -60,6 +62,7 @@ impl ArcadeKind {
             Self::ClawMachine => "TENDY CLAW MACHINE (5 TW) [F/E]",
             Self::Plinko => "PLINKO TOWER (5 TW) [F/E]",
             Self::Skeeball => "SKEEBALL ALLEY (5 TW / 3 BALLS) [F/E]",
+            Self::JazzBand => "TIP JAZZ BAND (5 TW) - TRUMPET SOLO! [F/E]",
         }
     }
 
@@ -69,12 +72,14 @@ impl ArcadeKind {
             Self::ClawMachine => (Vec3::new(9.2, 0.0, 5.5), -FRAC_PI_2),
             Self::Plinko => (Vec3::new(-9.2, 0.0, 11.2), FRAC_PI_2),
             Self::Skeeball => (Vec3::new(9.2, 0.0, 11.2), -FRAC_PI_2),
+            Self::JazzBand => (Vec3::new(-14.6, 0.0, -14.8), 0.72),
         }
     }
 
     fn ring_offset(self) -> Vec3 {
         match self {
             Self::Skeeball => Vec3::new(0.0, 0.16, 3.6),
+            Self::JazzBand => Vec3::new(0.0, 0.16, 2.7),
             _ => Vec3::new(0.0, 0.16, 2.1),
         }
     }
@@ -114,6 +119,8 @@ struct ArcadeState {
     skee_power_phase: f32,
     skee_balls_left: u8,
     skee_cooldown: f32,
+    // Jazz Band
+    jazz_solo_timer: f32,
 }
 
 impl Default for ArcadeState {
@@ -137,6 +144,7 @@ impl Default for ArcadeState {
             skee_power_phase: 0.0,
             skee_balls_left: 0,
             skee_cooldown: 0.0,
+            jazz_solo_timer: 0.0,
         }
     }
 }
@@ -248,6 +256,27 @@ struct SkeeballBall {
     local: Vec3, // x (-0.55..0.55), y (0.55..2.5), z (2.8..-2.2)
     vel: Vec3,
     scored: bool,
+}
+
+#[derive(Component)]
+struct JazzMusician {
+    role: u8, // 0 = Trumpet, 1 = Bassist, 2 = Drummer
+    base_pos: Vec3,
+}
+
+#[derive(Component)]
+struct JazzTrumpetPivot;
+
+#[derive(Component)]
+struct JazzDrumArm(bool);
+
+#[derive(Component)]
+struct JazzBassArm;
+
+#[derive(Component)]
+struct JazzNoteOrb {
+    base: Vec3,
+    phase: f32,
 }
 
 #[derive(Resource)]
@@ -688,12 +717,186 @@ fn spawn_casino_arcade_machines(
             ));
         });
 
-    // Floor interaction rings for all 4 arcade machines
+    // ---- 5. CORNER JAZZ BAND STAGE (North-West Corner, source of the Casino's smooth jazz!) ----
+    let (jz_pos, jz_yaw) = ArcadeKind::JazzBand.pose();
+    let jz_world = CASINO_LEVEL_ORIGIN + jz_pos;
+    let tux_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.06, 0.06, 0.09),
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let skin_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.76, 0.56, 0.42),
+        perceptual_roughness: 0.60,
+        ..default()
+    });
+    let bass_wood = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.46, 0.20, 0.08),
+        perceptual_roughness: 0.28,
+        ..default()
+    });
+    commands.spawn((
+        LevelEntity,
+        CasinoLevelEntity,
+        Transform::from_translation(jz_world + Vec3::Y * 0.22),
+        PlatformBox {
+            half_extents: Vec3::new(1.9, 0.22, 1.4),
+        },
+    ));
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            Transform::from_translation(jz_world).with_rotation(Quat::from_rotation_y(jz_yaw)),
+            Visibility::default(),
+        ))
+        .with_children(|jz| {
+            // Raised walnut stage + gold rim + warm jazz spotlight + backdrop sign
+            jz.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(wood_mat.clone()),
+                Transform::from_xyz(0.0, 0.16, 0.0).with_scale(Vec3::new(3.8, 0.32, 2.8)),
+            ));
+            jz.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(trim_gold.clone()),
+                Transform::from_xyz(0.0, 0.33, 0.0).with_scale(Vec3::new(3.9, 0.04, 2.9)),
+            ));
+            jz.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(cab_red.clone()),
+                Transform::from_xyz(0.0, 1.55, -1.25).with_scale(Vec3::new(3.6, 2.2, 0.12)),
+            ));
+            jz.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(neon_gold.clone()),
+                Transform::from_xyz(0.0, 2.52, -1.16).with_scale(Vec3::new(2.2, 0.26, 0.08)),
+            ));
+            jz.spawn((
+                PointLight {
+                    color: Color::srgb(1.0, 0.78, 0.35),
+                    intensity: 420_000.0,
+                    range: 14.0,
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 3.3, 0.6),
+            ));
+
+            // Glowing golden Tip Jar in front of the stage
+            jz.spawn((
+                Mesh3d(cyl_mesh.clone()),
+                MeshMaterial3d(glass_mat.clone()),
+                Transform::from_xyz(0.0, 0.56, 1.15).with_scale(Vec3::new(0.22, 0.36, 0.22)),
+            ));
+            jz.spawn((
+                Mesh3d(cyl_mesh.clone()),
+                MeshMaterial3d(neon_gold.clone()),
+                Transform::from_xyz(0.0, 0.45, 1.15).with_scale(Vec3::new(0.18, 0.14, 0.18)),
+            ));
+
+            // Musician 0: Trumpet Player (front center)
+            let t_base = Vec3::new(0.0, 0.35, 0.35);
+            jz.spawn((
+                JazzMusician { role: 0, base_pos: t_base },
+                Transform::from_translation(t_base),
+                Visibility::default(),
+            ))
+            .with_children(|m| {
+                // Tuxedo legs, torso, white shirtfront, head, sunglasses, fedora
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.55, 0.0).with_scale(Vec3::new(0.46, 0.72, 0.28))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.18, 0.0).with_scale(Vec3::new(0.36, 0.36, 0.22))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_mat.clone()), Transform::from_xyz(0.0, 1.08, 0.0).with_scale(Vec3::splat(0.19))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.10, 0.16).with_scale(Vec3::new(0.26, 0.06, 0.08))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.26, 0.0).with_scale(Vec3::new(0.28, 0.04, 0.28))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.34, 0.0).with_scale(Vec3::new(0.18, 0.14, 0.18))));
+                // Brass Trumpet pivot
+                m.spawn((
+                    JazzTrumpetPivot,
+                    Transform::from_xyz(0.0, 1.00, 0.18),
+                    Visibility::default(),
+                ))
+                .with_children(|tp| {
+                    tp.spawn((
+                        Mesh3d(cyl_mesh.clone()),
+                        MeshMaterial3d(trim_gold.clone()),
+                        Transform::from_xyz(0.0, 0.0, 0.26)
+                            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+                            .with_scale(Vec3::new(0.03, 0.48, 0.03)),
+                    ));
+                    tp.spawn((
+                        Mesh3d(meshes.add(Cone::new(0.11, 0.20))),
+                        MeshMaterial3d(neon_gold.clone()),
+                        Transform::from_xyz(0.0, 0.0, 0.54)
+                            .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
+                    ));
+                });
+            });
+
+            // Musician 1: Upright Bassist (left)
+            let b_base = Vec3::new(-1.05, 0.35, -0.35);
+            jz.spawn((
+                JazzMusician { role: 1, base_pos: b_base },
+                Transform::from_translation(b_base),
+                Visibility::default(),
+            ))
+            .with_children(|m| {
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.55, 0.0).with_scale(Vec3::new(0.46, 0.72, 0.28))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_mat.clone()), Transform::from_xyz(0.0, 1.08, 0.0).with_scale(Vec3::splat(0.19))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 1.26, 0.0).with_scale(Vec3::new(0.28, 0.04, 0.28))));
+                // Tall wooden upright bass
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(bass_wood.clone()), Transform::from_xyz(0.22, 0.62, 0.28).with_scale(Vec3::new(0.28, 0.52, 0.16))));
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(wood_mat.clone()), Transform::from_xyz(0.22, 1.24, 0.28).with_scale(Vec3::new(0.06, 0.68, 0.06))));
+                m.spawn((
+                    JazzBassArm,
+                    Mesh3d(box_mesh.clone()),
+                    MeshMaterial3d(tux_mat.clone()),
+                    Transform::from_xyz(0.28, 0.78, 0.18).with_scale(Vec3::new(0.10, 0.32, 0.10)),
+                ));
+            });
+
+            // Musician 2: Jazz Drummer + Drum Kit (right)
+            let d_base = Vec3::new(1.05, 0.35, -0.45);
+            jz.spawn((
+                JazzMusician { role: 2, base_pos: d_base },
+                Transform::from_translation(d_base),
+                Visibility::default(),
+            ))
+            .with_children(|m| {
+                m.spawn((Mesh3d(box_mesh.clone()), MeshMaterial3d(tux_mat.clone()), Transform::from_xyz(0.0, 0.45, 0.0).with_scale(Vec3::new(0.46, 0.62, 0.28))));
+                m.spawn((Mesh3d(sphere_mesh.clone()), MeshMaterial3d(skin_mat.clone()), Transform::from_xyz(0.0, 0.94, 0.0).with_scale(Vec3::splat(0.18))));
+                for (side, is_l) in [(-0.26_f32, true), (0.26, false)] {
+                    m.spawn((
+                        JazzDrumArm(is_l),
+                        Mesh3d(box_mesh.clone()),
+                        MeshMaterial3d(tux_mat.clone()),
+                        Transform::from_xyz(side, 0.68, 0.22).with_scale(Vec3::new(0.09, 0.30, 0.09)),
+                    ));
+                }
+                // Bass drum, snare, and twin brass cymbals
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(cab_red.clone()), Transform::from_xyz(0.0, 0.30, 0.50).with_rotation(Quat::from_rotation_x(FRAC_PI_2)).with_scale(Vec3::new(0.32, 0.32, 0.32))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(-0.36, 0.85, 0.42).with_scale(Vec3::new(0.24, 0.02, 0.24))));
+                m.spawn((Mesh3d(cyl_mesh.clone()), MeshMaterial3d(trim_gold.clone()), Transform::from_xyz(0.36, 0.88, 0.42).with_scale(Vec3::new(0.26, 0.02, 0.26))));
+            });
+
+            // Floating glowing musical note orbs rising above the stage
+            for ni in 0..6_usize {
+                let np = Vec3::new(-1.1 + ni as f32 * 0.44, 1.9 + (ni % 2) as f32 * 0.35, 0.1);
+                jz.spawn((
+                    JazzNoteOrb { base: np, phase: ni as f32 * 1.1 },
+                    Mesh3d(sphere_mesh.clone()),
+                    MeshMaterial3d(if ni % 2 == 0 { neon_gold.clone() } else { neon_pink.clone() }),
+                    Transform::from_translation(np).with_scale(Vec3::splat(0.09)),
+                ));
+            }
+        });
+
+    // Floor interaction rings for all 4 arcade machines + Jazz Band tip jar
     for (kind, color) in [
         (ArcadeKind::CoinPusher, Color::srgb(1.0, 0.84, 0.18)),
         (ArcadeKind::ClawMachine, Color::srgb(1.0, 0.32, 0.80)),
         (ArcadeKind::Plinko, Color::srgb(0.22, 0.92, 1.0)),
         (ArcadeKind::Skeeball, Color::srgb(0.45, 1.0, 0.45)),
+        (ArcadeKind::JazzBand, Color::srgb(1.0, 0.72, 0.16)),
     ] {
         let (p, yaw) = kind.pose();
         let l = color.to_linear();
@@ -802,6 +1005,19 @@ fn update_arcade_proximity(
     for e in &prompt_q {
         commands.entity(e).despawn_recursive();
     }
+    if kind == ArcadeKind::JazzBand {
+        if stats.spend_tendy_wendies(5) {
+            arcade.jazz_solo_timer = 8.5;
+            play_sfx("jazz_solo");
+            stats.hint_text = "JAZZ SOLO! You tipped the band 5 TW - the trumpet player rips a brass solo!".to_string();
+        } else {
+            play_sfx("hit");
+            stats.hint_text = "Need 5 TW to tip the Jazz Band! (Cashier gives +25 TW below 25 TW)".to_string();
+        }
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        return;
+    }
+
     stats.arcade_open = true;
     arcade.active = Some(kind);
     arcade.status_msg = match kind {
@@ -809,6 +1025,7 @@ fn update_arcade_proximity(
         ArcadeKind::ClawMachine => "Move Claw [WASD] | Drop Claw (5 TW) [SPACE]".to_string(),
         ArcadeKind::Plinko => "Slide Puck [A/D] | Drop Plinko (5 TW) [SPACE]".to_string(),
         ArcadeKind::Skeeball => "Aim [A/D] | Launch Ball (5 TW / 3 Balls) [SPACE]".to_string(),
+        ArcadeKind::JazzBand => String::new(),
     };
     if let Ok(mut win) = window_q.get_single_mut() {
         win.cursor_options.grab_mode = bevy::window::CursorGrabMode::None;
@@ -1084,6 +1301,7 @@ fn handle_arcade_input(
                 }
             }
         }
+        ArcadeKind::JazzBand => {}
     }
 }
 
@@ -1448,6 +1666,70 @@ fn step_skeeball_physics(
     }
 }
 
+fn animate_jazz_band(
+    time: Res<Time<Real>>,
+    mut arcade: ResMut<ArcadeState>,
+    mut mus_q: Query<(&JazzMusician, &mut Transform)>,
+    mut trp_q: Query<&mut Transform, (With<JazzTrumpetPivot>, Without<JazzMusician>, Without<JazzDrumArm>, Without<JazzBassArm>, Without<JazzNoteOrb>)>,
+    mut drum_q: Query<(&JazzDrumArm, &mut Transform), (Without<JazzMusician>, Without<JazzTrumpetPivot>, Without<JazzBassArm>, Without<JazzNoteOrb>)>,
+    mut bass_q: Query<&mut Transform, (With<JazzBassArm>, Without<JazzMusician>, Without<JazzTrumpetPivot>, Without<JazzDrumArm>, Without<JazzNoteOrb>)>,
+    mut note_q: Query<(&JazzNoteOrb, &mut Transform), (Without<JazzMusician>, Without<JazzTrumpetPivot>, Without<JazzDrumArm>, Without<JazzBassArm>)>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    if arcade.jazz_solo_timer > 0.0 {
+        arcade.jazz_solo_timer = (arcade.jazz_solo_timer - dt).max(0.0);
+    }
+    let solo = arcade.jazz_solo_timer > 0.0;
+
+    for (m, mut tf) in &mut mus_q {
+        let sway = match m.role {
+            0 if solo => {
+                // Trumpet player steps forward and grooves hard during his solo!
+                tf.translation = m.base_pos + Vec3::new((t * 3.8).sin() * 0.14, (t * 7.6).sin().abs() * 0.08, 0.28);
+                (t * 3.8).sin() * 0.24
+            }
+            0 => {
+                tf.translation = m.base_pos + Vec3::new(0.0, (t * 3.6).sin().abs() * 0.03, 0.0);
+                (t * 1.9).sin() * 0.10
+            }
+            1 => {
+                tf.translation = m.base_pos + Vec3::new(0.0, (t * 3.8).sin().abs() * 0.03, 0.0);
+                (t * 1.9 + 0.8).sin() * 0.12
+            }
+            _ => {
+                tf.translation = m.base_pos + Vec3::new(0.0, (t * 7.6).sin().abs() * 0.025, 0.0);
+                (t * 3.8).sin() * 0.08
+            }
+        };
+        tf.rotation = Quat::from_rotation_y(sway);
+    }
+
+    for mut tf in &mut trp_q {
+        let tilt = if solo {
+            -0.38 - (t * 5.2).sin().abs() * 0.28
+        } else {
+            -0.06 + (t * 2.2).sin() * 0.08
+        };
+        tf.rotation = Quat::from_rotation_x(tilt) * Quat::from_rotation_z(if solo { (t * 4.4).cos() * 0.16 } else { 0.0 });
+    }
+    for (da, mut tf) in &mut drum_q {
+        let ph = if da.0 { 0.0 } else { PI };
+        let spd = if solo { 14.0 } else { 9.5 };
+        tf.rotation = Quat::from_rotation_x(-0.35 + (t * spd + ph).sin() * 0.42);
+    }
+    for mut tf in &mut bass_q {
+        tf.rotation = Quat::from_rotation_z((t * 5.4).sin() * 0.28);
+    }
+    for (no, mut tf) in &mut note_q {
+        let spd = if solo { 2.4 } else { 0.9 };
+        let cycle = (t * spd + no.phase) % 1.6;
+        tf.translation = no.base + Vec3::new((t * 3.0 + no.phase).sin() * 0.14, cycle * 0.85, 0.0);
+        let sc = if solo { 0.13 } else { 0.08 };
+        tf.scale = Vec3::splat(sc * (1.0 - (cycle / 1.6) * 0.5));
+    }
+}
+
 fn update_arcade_camera(
     time: Res<Time<Real>>,
     stats: Res<PlayerStats>,
@@ -1483,7 +1765,9 @@ fn update_arcade_camera(
         ArcadeKind::CoinPusher => (Vec3::new(0.85, 2.25, 2.75), Vec3::new(0.0, 1.48, 0.0)),
         ArcadeKind::ClawMachine => (Vec3::new(1.10, 2.38, 2.95), Vec3::new(0.0, 1.55, 0.0)),
         ArcadeKind::Plinko => (Vec3::new(0.95, 2.25, 3.35), Vec3::new(0.0, 1.68, 0.0)),
-        ArcadeKind::Skeeball => (Vec3::new(1.15, 2.20, 4.30), Vec3::new(0.0, 1.35, -1.2)),
+        ArcadeKind::Skeeball | ArcadeKind::JazzBand => {
+            (Vec3::new(1.15, 2.20, 4.30), Vec3::new(0.0, 1.35, -1.2))
+        }
     };
     let pos = w + r * cam_off;
     let look = w + r * look_off;
@@ -1518,7 +1802,7 @@ fn refresh_arcade_hud(
             ArcadeKind::CoinPusher => "AIM: A/D".to_string(),
             ArcadeKind::ClawMachine => "MOVE: WASD".to_string(),
             ArcadeKind::Plinko => "AIM: A/D".to_string(),
-            ArcadeKind::Skeeball => {
+            ArcadeKind::Skeeball | ArcadeKind::JazzBand => {
                 let pct = ((0.5 + 0.5 * arcade.skee_power_phase.sin()) * 100.0).round() as u32;
                 format!("AIM: A/D  |  PWR: {}%", pct)
             }

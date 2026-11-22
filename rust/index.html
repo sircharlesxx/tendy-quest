@@ -906,6 +906,80 @@
           });
           return true;
         }
+        if (name === "jazz_solo") {
+          const ac = ensureCtx();
+          if (!ac || !masterGain) return true;
+          const now = ac.currentTime;
+          // Swinging Bb/F blues-bebop muted trumpet solo (~8.2s)
+          const phrase = [
+            // [offset_s, dur_s, freq_hz, slide_from_ratio]
+            [0.00, 0.28, 349.23, 0.94], // F4
+            [0.32, 0.22, 415.30, 1.00], // Ab4
+            [0.58, 0.36, 466.16, 0.96], // Bb4
+            [1.02, 0.18, 523.25, 1.00], // C5
+            [1.24, 0.22, 554.37, 1.00], // Db5 (blue note)
+            [1.50, 0.55, 523.25, 1.04], // C5
+            [2.20, 0.24, 466.16, 1.00], // Bb4
+            [2.48, 0.22, 415.30, 1.00], // Ab4
+            [2.76, 0.44, 349.23, 0.95], // F4
+            [3.36, 0.20, 523.25, 0.94], // C5
+            [3.60, 0.22, 587.33, 1.00], // D5
+            [3.88, 0.48, 698.46, 0.93], // F5
+            [4.46, 0.22, 622.25, 1.00], // Eb5
+            [4.74, 0.26, 554.37, 1.00], // Db5
+            [5.06, 0.36, 523.25, 1.00], // C5
+            [5.54, 0.22, 466.16, 1.00], // Bb4
+            [5.82, 0.24, 523.25, 1.00], // C5
+            [6.12, 0.32, 698.46, 0.92], // F5
+            [6.52, 0.34, 830.61, 0.95], // Ab5
+            [6.94, 1.15, 932.33, 0.96], // Bb5 high brass finale
+          ];
+          const brassBus = ac.createBiquadFilter();
+          brassBus.type = "bandpass";
+          brassBus.frequency.setValueAtTime(1450, now);
+          brassBus.Q.setValueAtTime(1.6, now);
+          const busGain = ac.createGain();
+          busGain.gain.setValueAtTime(0.46, now);
+          brassBus.connect(busGain);
+          busGain.connect(masterGain);
+
+          phrase.forEach(([off, dur, f, slide]) => {
+            const t0 = now + off;
+            const o1 = ac.createOscillator();
+            const o2 = ac.createOscillator();
+            const vib = ac.createOscillator();
+            const vibGain = ac.createGain();
+            const ng = ac.createGain();
+
+            o1.type = "sawtooth";
+            o2.type = "triangle";
+            o1.frequency.setValueAtTime(f * slide, t0);
+            o1.frequency.exponentialRampToValueAtTime(f, t0 + 0.055);
+            o2.frequency.setValueAtTime(f * slide * 2.0, t0);
+            o2.frequency.exponentialRampToValueAtTime(f * 2.0, t0 + 0.055);
+
+            vib.frequency.setValueAtTime(5.6, t0);
+            vibGain.gain.setValueAtTime(f * 0.014, t0);
+            vib.connect(vibGain);
+            vibGain.connect(o1.frequency);
+
+            ng.gain.setValueAtTime(0.001, t0);
+            ng.gain.linearRampToValueAtTime(0.28, t0 + 0.035);
+            ng.gain.setValueAtTime(0.24, t0 + dur * 0.65);
+            ng.gain.exponentialRampToValueAtTime(0.0008, t0 + dur + 0.06);
+
+            o1.connect(ng);
+            o2.connect(ng);
+            ng.connect(brassBus);
+            o1.start(t0);
+            o2.start(t0);
+            vib.start(t0);
+            o1.stop(t0 + dur + 0.08);
+            o2.stop(t0 + dur + 0.08);
+            vib.stop(t0 + dur + 0.08);
+          });
+          return true;
+        }
         if (name === "slot_jackpot") {
           const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98];
           notes.forEach((f, idx) => {
