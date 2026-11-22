@@ -4420,8 +4420,12 @@
 
       // ---- Native P2P WebRTC Voice Chat (PC + Mobile Mic, zero renegotiation) ----
       const voice = {
+        rawStream: null,
+        rawTrack: null,
         stream: null,
         track: null,
+        audioCtx: null,
+        dspActive: false,
         micOn: false,
         deafened: false,
         busy: false,
@@ -4571,10 +4575,133 @@
             : "Tap Mic to talk with your squad (PC & mobile mics)";
         }
       }
+      async function createCleanVoiceTrack(rawStream) {
+        const rawTrack = rawStream.getAudioTracks()[0] || null;
+        if (!rawTrack) return { stream: rawStream, track: null, dspActive: false };
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return { stream: rawStream, track: rawTrack, dspActive: false };
+        try {
+          const ctx = new AC({ latencyHint: "interactive" });
+          if (ctx.state === "suspended") await ctx.resume();
+          const src = ctx.createMediaStreamSource(rawStream);
+
+          // 1. Sub-bass / rumble / 60Hz hum high-pass (100 Hz)
+          const hp = ctx.createBiquadFilter();
+          hp.type = "highpass";
+          hp.frequency.value = 100;
+          hp.Q.value = 0.707;
+
+          // 2. Upper hiss / keyboard clack low-pass (7.5 kHz)
+          const lp = ctx.createBiquadFilter();
+          lp.type = "lowpass";
+          lp.frequency.value = 7500;
+          lp.Q.value = 0.707;
+
+          // 3. Gentle speech presence boost (2.4 kHz, +3 dB)
+          const presence = ctx.createBiquadFilter();
+          presence.type = "peaking";
+          presence.frequency.value = 2400;
+          presence.Q.value = 1.0;
+          presence.gain.value = 3.0;
+
+          // 4. Soft vocal limiter / compressor
+          const comp = ctx.createDynamicsCompressor();
+          comp.threshold.value = -18;
+          comp.knee.value = 12;
+          comp.ratio.value = 4;
+          comp.attack.value = 0.005;
+          comp.release.value = 0.15;
+
+          const dest = ctx.createMediaStreamDestination();
+          src.connect(hp);
+          hp.connect(lp);
+          lp.connect(presence);
+
+          // 5. Adaptive Noise-Floor Gate + ZCR Voice Activity Detector (AudioWorklet)
+          let gateNode = null;
+          if (ctx.audioWorklet && typeof Blob === "function") {
+            const workletSrc = `
+              class TqVoiceGateProcessor extends AudioWorkletProcessor {
+                constructor() {
+                  super();
+                  this.noiseFloor = 0.004;
+                  this.gain = 0.02;
+                  this.holdSamples = 0;
+                  this.holdMax = Math.round(sampleRate * 0.22); // 220ms hangover
+                }
+                process(inputs, outputs) {
+                  const inp = inputs[0] && inputs[0][0];
+                  const out = outputs[0] && outputs[0][0];
+                  if (!inp || !out) return true;
+                  let sumSq = 0;
+                  let zc = 0;
+                  let prev = inp[0] || 0;
+                  for (let i = 0; i < inp.length; i++) {
+                    const s = inp[i];
+                    sumSq += s * s;
+                    if ((s >= 0 && prev < 0) || (s < 0 && prev >= 0)) zc++;
+                    prev = s;
+                  }
+                  const rms = Math.sqrt(sumSq / inp.length);
+                  const zcr = zc / inp.length; // high ZCR (>0.38) indicates broadband hiss/clicks
+                  const speechLike = zcr < 0.42;
+                  const thresh = Math.max(0.0085, this.noiseFloor * 2.6);
+
+                  if (rms > thresh && speechLike) {
+                    this.holdSamples = this.holdMax;
+                  } else if (this.holdSamples > 0) {
+                    this.holdSamples = Math.max(0, this.holdSamples - inp.length);
+                    if (rms > thresh * 0.65) this.holdSamples = Math.max(this.holdSamples, Math.round(this.holdMax * 0.5));
+                  } else {
+                    // Track ambient noise floor slowly upward, faster downward
+                    const alpha = rms < this.noiseFloor ? 0.08 : 0.015;
+                    this.noiseFloor = Math.min(0.04, this.noiseFloor * (1 - alpha) + rms * alpha);
+                  }
+
+                  const targetGain = this.holdSamples > 0 ? 1.0 : 0.02; // -34dB soft floor
+                  const coeff = targetGain > this.gain ? 0.32 : 0.045; // fast ~8ms attack, ~90ms release
+                  for (let i = 0; i < inp.length; i++) {
+                    this.gain += (targetGain - this.gain) * coeff;
+                    out[i] = inp[i] * this.gain;
+                  }
+                  return true;
+                }
+              }
+              registerProcessor("tq-voice-gate", TqVoiceGateProcessor);
+            `;
+            try {
+              const url = URL.createObjectURL(new Blob([workletSrc], { type: "application/javascript" }));
+              await ctx.audioWorklet.addModule(url);
+              URL.revokeObjectURL(url);
+              gateNode = new AudioWorkletNode(ctx, "tq-voice-gate", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+            } catch (_) {
+              gateNode = null;
+            }
+          }
+
+          if (gateNode) {
+            presence.connect(gateNode);
+            gateNode.connect(comp);
+          } else {
+            presence.connect(comp);
+          }
+          comp.connect(dest);
+          voice.audioCtx = ctx;
+          const cleanTrack = dest.stream.getAudioTracks()[0] || rawTrack;
+          return { stream: dest.stream, track: cleanTrack, dspActive: true };
+        } catch (_) {
+          return { stream: rawStream, track: rawTrack, dspActive: false };
+        }
+      }
+
       async function toggleMic() {
         if (voice.busy) return voice.micOn;
         if (voice.track && voice.track.readyState === "live") {
           voice.micOn = !voice.micOn;
+          if (voice.rawTrack) voice.rawTrack.enabled = voice.micOn;
+          if (voice.audioCtx && voice.micOn && voice.audioCtx.state === "suspended") {
+            try { await voice.audioCtx.resume(); } catch (_) {}
+          }
           voice.err = "";
           await syncVoiceToAllPcs();
           refreshVoiceUi();
@@ -4589,12 +4716,16 @@
         voice.err = "";
         refreshVoiceUi();
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          const rawStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
             video: false,
           });
-          voice.stream = stream;
-          voice.track = stream.getAudioTracks()[0] || null;
+          voice.rawStream = rawStream;
+          voice.rawTrack = rawStream.getAudioTracks()[0] || null;
+          const clean = await createCleanVoiceTrack(rawStream);
+          voice.stream = clean.stream;
+          voice.track = clean.track;
+          voice.dspActive = clean.dspActive;
           voice.micOn = !!voice.track;
           await syncVoiceToAllPcs();
           retryRemoteVoicePlayback();
@@ -5785,7 +5916,7 @@
         setScene,
         toggleMic,
         toggleDeafen,
-        voiceState() { return { micOn: voice.micOn, deafened: voice.deafened, remoteStreams: voice.audios.size, err: voice.err }; },
+        voiceState() { return { micOn: voice.micOn, deafened: voice.deafened, dspActive: voice.dspActive, remoteStreams: voice.audios.size, err: voice.err }; },
         lockChar,
         squadInfo,
         publish(state) {
