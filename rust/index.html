@@ -4418,6 +4418,202 @@
         };
       }
 
+      // ---- Native P2P WebRTC Voice Chat (PC + Mobile Mic, zero renegotiation) ----
+      const voice = {
+        stream: null,
+        track: null,
+        micOn: false,
+        deafened: false,
+        busy: false,
+        err: "",
+        pcs: new Set(),
+        audios: new Map(),
+        bin: null,
+        unlockWired: false,
+      };
+      function ensureVoiceBin() {
+        if (voice.bin || !document.body) return voice.bin;
+        const b = document.createElement("div");
+        b.id = "mp-voice-bin";
+        b.style.display = "none";
+        document.body.appendChild(b);
+        voice.bin = b;
+        return b;
+      }
+      function retryRemoteVoicePlayback() {
+        for (const a of voice.audios.values()) {
+          try {
+            a.muted = voice.deafened;
+            const p = a.play();
+            if (p && p.catch) p.catch(() => {});
+          } catch (_) {}
+        }
+      }
+      function wireVoiceGestureUnlock() {
+        if (voice.unlockWired) return;
+        voice.unlockWired = true;
+        for (const ev of ["pointerdown", "touchstart", "keydown"]) {
+          window.addEventListener(ev, retryRemoteVoicePlayback, { passive: true });
+        }
+      }
+      function dropVoicePc(pc) {
+        voice.pcs.delete(pc);
+        const a = voice.audios.get(pc);
+        if (a) {
+          try { a.pause(); a.srcObject = null; a.remove(); } catch (_) {}
+          voice.audios.delete(pc);
+        }
+      }
+      function attachVoiceHandlers(pc, isOfferer) {
+        if (!pc) return;
+        voice.pcs.add(pc);
+        if (isOfferer) {
+          try {
+            const tr = pc.addTransceiver("audio", { direction: "sendrecv" });
+            if (voice.micOn && voice.track && tr.sender) {
+              void tr.sender.replaceTrack(voice.track).catch(() => {});
+            }
+          } catch (_) {}
+        }
+        pc.ontrack = (ev) => {
+          if (!ev.track || ev.track.kind !== "audio") return;
+          wireVoiceGestureUnlock();
+          const bin = ensureVoiceBin();
+          let a = voice.audios.get(pc);
+          if (!a) {
+            a = document.createElement("audio");
+            a.autoplay = true;
+            a.playsInline = true;
+            if (bin) bin.appendChild(a);
+            voice.audios.set(pc, a);
+          }
+          a.muted = voice.deafened;
+          a.srcObject = (ev.streams && ev.streams[0]) || new MediaStream([ev.track]);
+          try {
+            const p = a.play();
+            if (p && p.catch) p.catch(() => {});
+          } catch (_) {}
+          refreshVoiceUi();
+        };
+        pc.addEventListener("connectionstatechange", () => {
+          if (pc.connectionState === "closed" || pc.connectionState === "failed") {
+            dropVoicePc(pc);
+            refreshVoiceUi();
+          }
+        });
+      }
+      async function ensureAnswererAudio(pc) {
+        if (!pc || typeof pc.getTransceivers !== "function") return;
+        for (const tr of pc.getTransceivers()) {
+          if (tr.receiver && tr.receiver.track && tr.receiver.track.kind === "audio") {
+            try { tr.direction = "sendrecv"; } catch (_) {}
+            if (voice.micOn && voice.track && tr.sender) {
+              try { await tr.sender.replaceTrack(voice.track); } catch (_) {}
+            }
+          }
+        }
+      }
+      async function syncVoiceToAllPcs() {
+        if (voice.track) voice.track.enabled = voice.micOn;
+        const target = voice.micOn && voice.track ? voice.track : null;
+        for (const pc of voice.pcs) {
+          if (pc.signalingState === "closed") continue;
+          try {
+            for (const tr of pc.getTransceivers()) {
+              const kind = (tr.receiver && tr.receiver.track && tr.receiver.track.kind) ||
+                (tr.sender && tr.sender.track && tr.sender.track.kind);
+              if (kind === "audio" && tr.sender) {
+                await tr.sender.replaceTrack(target);
+              }
+            }
+          } catch (_) {}
+        }
+      }
+      function refreshVoiceUi() {
+        if (ui.micBtn) {
+          if (voice.busy) {
+            ui.micBtn.textContent = "MIC: ...";
+            ui.micBtn.className = "";
+          } else if (voice.micOn) {
+            ui.micBtn.textContent = "MIC: ON";
+            ui.micBtn.className = "on";
+          } else if (voice.track) {
+            ui.micBtn.textContent = "MIC: MUTED";
+            ui.micBtn.className = "muted";
+          } else {
+            ui.micBtn.textContent = "MIC: OFF";
+            ui.micBtn.className = "";
+          }
+        }
+        if (ui.btnVoiceMic) {
+          ui.btnVoiceMic.textContent = voice.busy
+            ? "Requesting mic..."
+            : voice.micOn
+            ? "Mic: ON (Mute)"
+            : voice.track
+            ? "Mic: Muted (Unmute)"
+            : "Mic: Off (Join Voice)";
+          ui.btnVoiceMic.className = voice.micOn ? "on" : "";
+          ui.btnVoiceMic.disabled = voice.busy;
+        }
+        if (ui.btnVoiceDeafen) {
+          ui.btnVoiceDeafen.textContent = voice.deafened ? "Voice Audio: MUTED" : "Voice Audio: ON";
+          ui.btnVoiceDeafen.className = voice.deafened ? "" : "on";
+        }
+        if (ui.voiceStatus) {
+          const rx = voice.audios.size;
+          ui.voiceStatus.textContent = voice.err
+            ? voice.err
+            : voice.micOn
+            ? "Voice live (" + rx + " remote audio stream" + (rx === 1 ? "" : "s") + ")"
+            : rx > 0
+            ? "Listening (" + rx + " peer voice" + (rx === 1 ? "" : "s") + ") - tap Mic to talk"
+            : "Tap Mic to talk with your squad (PC & mobile mics)";
+        }
+      }
+      async function toggleMic() {
+        if (voice.busy) return voice.micOn;
+        if (voice.track && voice.track.readyState === "live") {
+          voice.micOn = !voice.micOn;
+          voice.err = "";
+          await syncVoiceToAllPcs();
+          refreshVoiceUi();
+          return voice.micOn;
+        }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          voice.err = "Microphone requires HTTPS and browser mediaDevices support.";
+          refreshVoiceUi();
+          return false;
+        }
+        voice.busy = true;
+        voice.err = "";
+        refreshVoiceUi();
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: false,
+          });
+          voice.stream = stream;
+          voice.track = stream.getAudioTracks()[0] || null;
+          voice.micOn = !!voice.track;
+          await syncVoiceToAllPcs();
+          retryRemoteVoicePlayback();
+        } catch (e) {
+          voice.micOn = false;
+          voice.err = "Mic blocked: " + (e && e.message ? e.message : "permission denied");
+        } finally {
+          voice.busy = false;
+          refreshVoiceUi();
+        }
+        return voice.micOn;
+      }
+      function toggleDeafen() {
+        voice.deafened = !voice.deafened;
+        retryRemoteVoicePlayback();
+        refreshVoiceUi();
+        return voice.deafened;
+      }
+
       // ---- Transport 2: WebRTC data channels, manual copy/paste signaling ----
       function rtcTransport(isHost) {
         const conns = [];
@@ -4436,12 +4632,13 @@
             return n;
           },
           close() {
-            for (const c of conns) { try { c.pc.close(); } catch (_) {} }
+            for (const c of conns) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
             conns.length = 0;
           },
           connCount() { return conns.filter((c) => c.open).length; },
           newConn() {
             const pc = new RTCPeerConnection({ iceServers: stunUrl ? [{ urls: stunUrl }] : [] });
+            attachVoiceHandlers(pc, isHost);
             const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
             const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
             const c = { pc, st, ev, open: false, bindsId: isHost, boundId: 0 };
@@ -4681,6 +4878,7 @@
                 crypto.getRandomValues(offerIdBytes);
                 const offerId = Array.from(offerIdBytes, (x) => x.toString(16).padStart(8, "0")).join("").slice(0, 20);
                 const pc = new RTCPeerConnection({ iceServers });
+                attachVoiceHandlers(pc, true);
                 const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
                 const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
                 const c = { pc, st, ev, open: false, bindsId: true, boundId: 0, offerId, createdAt: performance.now(), sdp: "" };
@@ -4821,6 +5019,7 @@
               conns.delete(msg.peer_id);
             }
             const pc = new RTCPeerConnection({ iceServers });
+            attachVoiceHandlers(pc, false);
             const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
             const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
             const c = { pc, st, ev, open: false, bindsId: true, boundId: 0, offerId: msg.offer_id, createdAt: performance.now() };
@@ -4828,6 +5027,7 @@
             conns.set(msg.peer_id, c);
             try {
               await pc.setRemoteDescription({ type: "offer", sdp: msg.offer.sdp });
+              await ensureAnswererAudio(pc);
               await pc.setLocalDescription(await pc.createAnswer());
               await iceGathered(pc, 2400);
               if (closed || !pc.localDescription || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
@@ -5188,6 +5388,7 @@
         setStatus("Making reply...");
         try {
           await c.pc.setRemoteDescription({ type: "offer", sdp });
+          await ensureAnswererAudio(c.pc);
           await c.pc.setLocalDescription(await c.pc.createAnswer());
           await iceGathered(c.pc, 5000);
           ui.answerOut.value = await encodeCode("a", c.pc.localDescription.sdp);
@@ -5319,8 +5520,13 @@
       function buildPanel() {
         const style = el("style", {});
         style.textContent = `
-          #mp-pill{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:41;font:600 12px system-ui,sans-serif;
+          #mp-top-bar{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:41;display:flex;gap:6px;align-items:center}
+          #mp-pill{font:600 12px system-ui,sans-serif;
             color:#e8f1ff;background:rgba(8,12,22,.9);border:1px solid #4ac8ff;border-radius:14px;padding:5px 12px;cursor:pointer;display:none}
+          #mp-mic-btn{font:700 12px system-ui,sans-serif;color:#e8f1ff;background:rgba(8,12,22,.9);
+            border:1px solid #4a6a99;border-radius:14px;padding:5px 11px;cursor:pointer}
+          #mp-mic-btn.on{background:rgba(20,90,48,.92);border-color:#52eb63;color:#c9ffd0}
+          #mp-mic-btn.muted{background:rgba(90,52,18,.92);border-color:#ffd23f;color:#ffeaa3}
           #mp-panel{position:fixed;top:40px;left:50%;transform:translateX(-50%);z-index:41;box-sizing:border-box;
             width:min(380px,calc(100vw - 32px));max-height:calc(100dvh - 56px);overflow:auto;padding:10px 12px;
             font:13px/1.35 system-ui,sans-serif;color:#e8f1ff;background:rgba(8,12,22,.95);border:1px solid #4ac8ff;border-radius:10px}
@@ -5362,6 +5568,8 @@
 
         ui.pillText = el("span", { text: "ONLINE" });
         ui.pill = el("button", { id: "mp-pill", type: "button", "aria-expanded": "false", "aria-controls": "mp-panel" }, [ui.pillText]);
+        ui.micBtn = el("button", { id: "mp-mic-btn", type: "button", text: "MIC: OFF", onclick: () => { void toggleMic(); } });
+        ui.topBar = el("div", { id: "mp-top-bar" }, [ui.pill, ui.micBtn]);
         ui.btnMesh = el("button", { id: "mp-use-mesh", type: "button", text: "Distributed P2P", onclick: () => { net.transportKind = "mesh"; joinMesh(net.room); refreshPanel(); } });
         ui.btnTabs = el("button", { id: "mp-use-tabs", type: "button", text: "Browser tabs", onclick: () => { net.transportKind = "tabs"; refreshPanel(); } });
         ui.btnRtc = el("button", { id: "mp-use-rtc", type: "button", text: "Invite code", onclick: () => { net.transportKind = "rtc"; refreshPanel(); } });
@@ -5407,8 +5615,13 @@
         ui.peers = el("div", { id: "mp-peers", class: "mp-row" });
         ui.btnLeave = el("button", { id: "mp-leave", type: "button", text: "Leave", onclick: leave });
         ui.btnChangeChar = el("button", { id: "mp-btn-change-char", type: "button", text: "Change character", onclick: () => openCharSelect("Pick an available character") });
+        ui.btnVoiceMic = el("button", { id: "mp-voice-mic", type: "button", text: "Mic: Off (Join Voice)", onclick: () => { void toggleMic(); } });
+        ui.btnVoiceDeafen = el("button", { id: "mp-voice-deafen", type: "button", class: "on", text: "Voice Audio: ON", onclick: toggleDeafen });
+        ui.voiceStatus = el("div", { id: "mp-voice-status", class: "mp-note", text: "Tap Mic to talk with your squad (PC & mobile mics)" });
         ui.panel = el("div", { id: "mp-panel", role: "dialog", "aria-label": "Free Mode Multiplayer" }, [
           el("h2", { text: "Free Mode Multiplayer" }),
+          el("div", { class: "mp-row" }, [ui.btnVoiceMic, ui.btnVoiceDeafen]),
+          ui.voiceStatus,
           el("div", { class: "mp-row" }, [ui.btnMesh, ui.btnTabs, ui.btnRtc]),
           ui.meshBox, ui.tabsBox, ui.rtcBox, ui.status, ui.peers,
           el("div", { class: "mp-row" }, [
@@ -5456,7 +5669,7 @@
           ]),
         ]);
         ui.pill.addEventListener("click", () => togglePanel(ui.panel.style.display === "none"));
-        for (const node of [ui.pill, ui.panel, ui.charBox]) {
+        for (const node of [ui.topBar, ui.panel, ui.charBox]) {
           for (const type of ["touchstart", "touchmove", "touchend", "touchcancel", "pointerdown", "mousedown", "wheel", "keydown", "keyup"]) {
             node.addEventListener(type, (e) => e.stopPropagation(), { passive: true });
           }
@@ -5471,6 +5684,7 @@
         });
         togglePanel(mpParam === "1" || mpParam === "rtc");
         refreshPanel();
+        refreshVoiceUi();
         refreshCharSelect();
       }
       function togglePanel(show) {
@@ -5569,6 +5783,9 @@
         setOnline,
         isOnline() { return true; },
         setScene,
+        toggleMic,
+        toggleDeafen,
+        voiceState() { return { micOn: voice.micOn, deafened: voice.deafened, remoteStreams: voice.audios.size, err: voice.err }; },
         lockChar,
         squadInfo,
         publish(state) {
