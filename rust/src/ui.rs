@@ -494,7 +494,7 @@ pub fn update_hurt_flash(
 /// The single "what do I do now" line for the HUD.
 fn objective_line(stats: &PlayerStats) -> String {
     if stats.in_club_level {
-        return "> VELVET DISCO CLUB: Candy, Luna, Star & Velvet Dances (TW) | South Portal -> Casino"
+        return "> VELVET DISCO CLUB: VIP Dances (TW) | Left: Men's Room (Wash Hands = Wish!) & Women's Room | South: Casino"
             .to_string();
     }
     if stats.in_casino_level {

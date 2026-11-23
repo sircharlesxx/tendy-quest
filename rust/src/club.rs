@@ -24,14 +24,15 @@ use crate::derek::{make_derek_materials, spawn_derek_rig};
 use crate::glenn::{make_glenn_materials, spawn_glenn_rig};
 use crate::nate::{make_nate_materials, spawn_nate_rig};
 use crate::player::Player;
+use crate::shapes as sh;
 use crate::state::{CameraOrbit, GameState, PlatformBox, PlayerStats};
 use crate::tj::spawn_tj_rig;
 use crate::transition::{SceneTransition, sim_running};
 use crate::ui::{HelpPause, HudOverlay, gameplay_running};
 
 pub const CLUB_LEVEL_ORIGIN: Vec3 = Vec3::new(0.0, 0.0, -2800.0);
-pub const CLUB_WALK_LIMIT: f32 = 18.0;
-pub const CLUB_SPAWN_POS: Vec3 = Vec3::new(0.0, 0.0, -2800.0 + 9.5);
+pub const CLUB_WALK_LIMIT: f32 = 29.0;
+pub const CLUB_SPAWN_POS: Vec3 = Vec3::new(0.0, 0.0, -2800.0 + 18.5);
 pub const CLUB_MIN_DANCE_COST: u32 = 25;
 
 pub struct ClubPlugin;
@@ -59,6 +60,7 @@ impl Plugin for ClubPlugin {
                 Update,
                 (
                     animate_club_disco_and_dancers,
+                    animate_club_bathrooms_and_sage,
                     update_club_stations.run_if(gameplay_running),
                     update_club_dance_and_broke_warp,
                     update_club_mirror_and_hair,
@@ -76,6 +78,10 @@ struct ClubArt {
     club_sign: Handle<Image>,
     return_sign: Handle<Image>,
     red_door_sign: Handle<Image>,
+    mens_sign: Handle<Image>,
+    womens_sign: Handle<Image>,
+    sink_sign: Handle<Image>,
+    bar_sign: Handle<Image>,
     proj_textures: [Handle<Image>; 5],
 }
 
@@ -98,6 +104,7 @@ fn paint_block_text(data: &mut [u8], w: u32, h: u32, text: &str, cy: i32, scale:
             'G' => [0b01111, 0b10000, 0b10111, 0b10001, 0b01110],
             'H' => [0b10001, 0b10001, 0b11111, 0b10001, 0b10001],
             'I' => [0b11111, 0b00100, 0b00100, 0b00100, 0b11111],
+            'K' => [0b10001, 0b10010, 0b11100, 0b10010, 0b10001],
             'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
             'M' => [0b10001, 0b11011, 0b10101, 0b10001, 0b10001],
             'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001],
@@ -109,7 +116,10 @@ fn paint_block_text(data: &mut [u8], w: u32, h: u32, text: &str, cy: i32, scale:
             'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
             'V' => [0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
             'W' => [0b10001, 0b10001, 0b10101, 0b11011, 0b10001],
+            'X' => [0b10001, 0b01010, 0b00100, 0b01010, 0b10001],
             'Y' => [0b10001, 0b01010, 0b00100, 0b00100, 0b00100],
+            '0' => [0b01110, 0b10011, 0b10101, 0b11001, 0b01110],
+            '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b01110],
             '4' => [0b10010, 0b10010, 0b11111, 0b00010, 0b00010],
             '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b11110],
             ' ' => [0, 0, 0, 0, 0],
@@ -401,6 +411,34 @@ fn setup_club_art(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         "VELVET CLUB",
         "ENTER HERE",
     ));
+    let mens_sign = images.add(make_banner_img(
+        [12, 54, 118],
+        [8, 22, 54],
+        [80, 240, 255, 255],
+        "MENS ROOM",
+        "WASH HANDS",
+    ));
+    let womens_sign = images.add(make_banner_img(
+        [145, 14, 108],
+        [45, 6, 72],
+        [255, 215, 70, 255],
+        "WOMENS ROOM",
+        "OFF LIMITS",
+    ));
+    let sink_sign = images.add(make_banner_img(
+        [16, 74, 62],
+        [8, 32, 34],
+        [255, 218, 95, 255],
+        "WASH HANDS",
+        "1000 TW WISH",
+    ));
+    let bar_sign = images.add(make_banner_img(
+        [52, 12, 82],
+        [18, 6, 36],
+        [255, 210, 85, 255],
+        "VIP BAR",
+        "VELVET CLUB",
+    ));
     let proj_textures = [
         images.add(make_wonka_proj_img(0)),
         images.add(make_wonka_proj_img(1)),
@@ -413,6 +451,10 @@ fn setup_club_art(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         club_sign,
         return_sign,
         red_door_sign,
+        mens_sign,
+        womens_sign,
+        sink_sign,
+        bar_sign,
         proj_textures,
     });
 }
@@ -1828,6 +1870,8 @@ enum ClubStationKind {
     WestVip,
     EastVip,
     ReturnCasino,
+    MensSink,
+    WomensDoor,
 }
 
 impl ClubStationKind {
@@ -1835,8 +1879,10 @@ impl ClubStationKind {
         match self {
             Self::MainStage => "MAIN STAGE DANCE - CANDY & LUNA (25 TW) [F/E]",
             Self::WestVip => "VIP STAGE DANCE - STAR (50 TW) [F/E]",
-            Self::EastVip => "DIAMOND VIP DANCE - VELVET (100 TW) [F/E]",
+            Self::EastVip => "DIAMOND VIP DANCE - VELVET & RUBY (100 TW) [F/E]",
             Self::ReturnCasino => "RETURN PORTAL TO TENDY PALACE CASINO [F/E]",
+            Self::MensSink => "WASH HANDS IN SINK (WISE ATTENDANT'S 1000 TW WISH!) [F/E]",
+            Self::WomensDoor => "PEEK AT WOMENS ROOM (OFF LIMITS!) [F/E]",
         }
     }
 
@@ -1845,16 +1891,18 @@ impl ClubStationKind {
             Self::MainStage => 25,
             Self::WestVip => 50,
             Self::EastVip => 100,
-            Self::ReturnCasino => 0,
+            Self::ReturnCasino | Self::MensSink | Self::WomensDoor => 0,
         }
     }
 
     fn stage_center(self) -> Vec3 {
         match self {
-            Self::MainStage => CLUB_LEVEL_ORIGIN + Vec3::new(0.0, 0.0, -2.5),
-            Self::WestVip => CLUB_LEVEL_ORIGIN + Vec3::new(-10.5, 0.0, -4.5),
-            Self::EastVip => CLUB_LEVEL_ORIGIN + Vec3::new(10.5, 0.0, -4.5),
-            Self::ReturnCasino => CLUB_LEVEL_ORIGIN + Vec3::new(-12.5, 0.0, 16.0),
+            Self::MainStage => CLUB_LEVEL_ORIGIN + Vec3::new(2.0, 0.0, -4.5),
+            Self::WestVip => CLUB_LEVEL_ORIGIN + Vec3::new(-9.5, 0.0, -4.5),
+            Self::EastVip => CLUB_LEVEL_ORIGIN + Vec3::new(16.5, 0.0, -4.5),
+            Self::ReturnCasino => CLUB_LEVEL_ORIGIN + Vec3::new(14.0, 0.0, 26.5),
+            Self::MensSink => CLUB_LEVEL_ORIGIN + Vec3::new(-22.2, 0.0, -26.0),
+            Self::WomensDoor => CLUB_LEVEL_ORIGIN + Vec3::new(-15.6, 0.0, 17.0),
         }
     }
 }
@@ -1864,6 +1912,9 @@ struct ClubState {
     active_stage: Option<ClubStationKind>,
     dance_timer: f32,
     broke_timer: f32,
+    wish_timer: f32,
+    wish_count: u32,
+    womens_peek_count: u32,
 }
 
 #[derive(Component)]
@@ -1886,6 +1937,9 @@ struct ClubPromptText;
 
 #[derive(Component)]
 struct ClubBrokeBanner;
+
+#[derive(Component)]
+struct ClubWishBanner;
 
 #[derive(Component)]
 struct ClubDiscoBall;
@@ -1949,6 +2003,44 @@ struct ClubVipCrew {
     phase: f32,
 }
 
+#[derive(Component)]
+struct ClubWiseAttendant {
+    base: Vec3,
+}
+
+#[derive(Component)]
+struct ClubWishOrb {
+    base: Vec3,
+    phase: f32,
+}
+
+#[derive(Component)]
+struct ClubSinkWater {
+    base: Vec3,
+    idx: usize,
+}
+
+#[derive(Component)]
+struct ClubWomensTrippyBeam {
+    idx: usize,
+    base_yaw: f32,
+}
+
+#[derive(Component)]
+struct ClubWomensTrippyOrb {
+    base: Vec3,
+    phase: f32,
+}
+
+#[derive(Component)]
+struct ClubWomensTrippyLight(usize);
+
+#[derive(Component)]
+struct ClubWomensDoorRattle {
+    base: Vec3,
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn spawn_club_dancer(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -1963,45 +2055,140 @@ fn spawn_club_dancer(
 ) {
     let sph_m = meshes.add(Sphere::new(0.5));
     let cyl_m = meshes.add(Cylinder::new(0.5, 1.0));
-    let box_m = meshes.add(Cuboid::from_size(Vec3::ONE));
-    let cone_m = meshes.add(Cone::new(0.5, 1.0));
+    let ring_m = meshes.add(Torus::new(0.14, 0.19));
 
     let skin = materials.add(StandardMaterial {
         base_color: skin_col,
-        perceptual_roughness: 0.42,
+        perceptual_roughness: 0.36,
+        clearcoat: 0.25,
         ..default()
     });
     let l = dress_col.to_linear();
     let dress = materials.add(StandardMaterial {
         base_color: dress_col,
         emissive: LinearRgba::new(l.red * 0.45, l.green * 0.45, l.blue * 0.45, 1.0),
-        metallic: 0.65,
-        perceptual_roughness: 0.16,
+        metallic: 0.72,
+        perceptual_roughness: 0.14,
         clearcoat: 1.0,
+        ..default()
+    });
+    let trim_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.88, 0.35),
+        emissive: LinearRgba::new(1.4, 1.1, 0.25, 1.0),
+        metallic: 0.96,
+        perceptual_roughness: 0.10,
         ..default()
     });
     let hair = materials.add(StandardMaterial {
         base_color: hair_col,
-        metallic: 0.25,
-        perceptual_roughness: 0.28,
+        metallic: 0.28,
+        perceptual_roughness: 0.26,
         ..default()
     });
     let boot = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.95, 0.96, 1.0),
-        metallic: 0.85,
-        perceptual_roughness: 0.14,
+        base_color: Color::srgb(0.96, 0.96, 1.0),
+        metallic: 0.88,
+        perceptual_roughness: 0.12,
+        clearcoat: 1.0,
         ..default()
     });
-    let eye = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.08, 0.10, 0.18),
-        emissive: LinearRgba::new(0.1, 0.5, 0.9, 1.0),
+    let boot_sole = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.08, 0.12),
+        metallic: 0.4,
+        perceptual_roughness: 0.35,
+        ..default()
+    });
+    let eye_white = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.2,
+        ..default()
+    });
+    let iris_col = Color::hsl(((l.red * 120.0 + l.blue * 220.0) % 360.0).abs(), 0.85, 0.48);
+    let iris = materials.add(StandardMaterial {
+        base_color: iris_col,
+        emissive: LinearRgba::new(0.08, 0.32, 0.55, 1.0),
+        ..default()
+    });
+    let pupil_dark = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.04, 0.04, 0.08),
+        perceptual_roughness: 0.1,
         ..default()
     });
     let lip = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.28, 0.55),
-        emissive: LinearRgba::new(0.6, 0.08, 0.25, 1.0),
+        base_color: Color::srgb(1.0, 0.20, 0.48),
+        emissive: LinearRgba::new(0.7, 0.08, 0.26, 1.0),
+        clearcoat: 1.0,
+        perceptual_roughness: 0.12,
         ..default()
     });
+    let blush = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.52, 0.62),
+        perceptual_roughness: 0.6,
+        ..default()
+    });
+
+    // Organic sculpted silhouettes built via `crate::shapes` and scaled up ~1.42x (~2.7m tall)
+    let thigh_m = sh::add(meshes, sh::limb_profile(0.46, &[0.095, 0.108, 0.088, 0.068], 1.02));
+    let calf_m = sh::add(meshes, sh::limb_profile(0.36, &[0.066, 0.072, 0.056, 0.044], 1.0));
+    let boot_shaft_m = sh::add(meshes, sh::limb_profile(0.38, &[0.068, 0.062, 0.050, 0.046], 1.02));
+    let boot_foot_m = sh::add(meshes, sh::shoe(0.105, 0.065, 0.22));
+    let sole_m = sh::add(meshes, sh::shoe_sole(0.11, 0.065, 0.225));
+
+    let torso_geo = sh::loft(
+        &[
+            sh::ring(0.84, 0.0, 0.0),
+            sh::ring(0.86, 0.185, 0.135),
+            sh::ring(0.94, 0.215, 0.155).dz(-0.01),
+            sh::ring(1.12, 0.122, 0.102),
+            sh::ring(1.25, 0.158, 0.122).dz(0.015),
+            sh::ring(1.37, 0.185, 0.148).dz(0.025),
+            sh::ring(1.48, 0.195, 0.115),
+            sh::ring(1.52, 0.058, 0.056),
+            sh::ring(1.54, 0.0, 0.0),
+        ],
+        3,
+        28,
+        0.92,
+    );
+    let torso_m = sh::add(meshes, torso_geo);
+
+    let skirt_m = sh::add(
+        meshes,
+        sh::loft(
+            &[
+                sh::ring(0.76, 0.34, 0.30),
+                sh::ring(0.84, 0.29, 0.25),
+                sh::ring(0.95, 0.23, 0.18),
+                sh::ring(1.05, 0.145, 0.125),
+                sh::ring(1.06, 0.0, 0.0),
+            ],
+            2,
+            28,
+            0.95,
+        ),
+    );
+    let corset_m = sh::add(
+        meshes,
+        sh::loft(
+            &[
+                sh::ring(1.18, 0.0, 0.0),
+                sh::ring(1.19, 0.135, 0.112),
+                sh::ring(1.34, 0.195, 0.155).dz(0.026),
+                sh::ring(1.42, 0.175, 0.132).dz(0.012),
+                sh::ring(1.43, 0.0, 0.0),
+            ],
+            2,
+            26,
+            0.94,
+        ),
+    );
+    let head_m = sh::add(meshes, sh::head(0.178, 0.13));
+    let hair_cap_m = sh::add(meshes, sh::hair_cap(0.182, 0.13, 0.38, -0.34, 0.09, 0.09));
+    let hair_lock_m = sh::add(meshes, sh::limb_profile(0.68, &[0.064, 0.056, 0.044, 0.020], 0.85));
+    let neck_m = sh::add(meshes, sh::limb(0.15, 0.052, 0.062));
+    let brow_m = sh::add(meshes, sh::arc_bar(0.088, &[0.008, 0.013, 0.008], 0.018, 0.012, 1.0));
+    let upper_arm_m = sh::add(meshes, sh::limb_profile(0.28, &[0.056, 0.052, 0.044, 0.038], 1.0));
+    let forearm_m = sh::add(meshes, sh::limb_profile(0.26, &[0.040, 0.038, 0.032, 0.026], 1.0));
 
     commands
         .spawn((
@@ -2011,72 +2198,166 @@ fn spawn_club_dancer(
                 phase,
                 stage,
             },
-            Transform::from_translation(world_pos).with_rotation(Quat::from_rotation_y(yaw)),
+            Transform::from_translation(world_pos)
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::splat(1.42)),
             Visibility::default(),
         ))
         .with_children(|g| {
-            // Sparkly go-go boots & slim legs
-            for sx in [-0.14_f32, 0.14] {
+            // Platform Stiletto Go-Go Boots & Sculpted Legs
+            for (li, &sx) in [-0.125_f32, 0.125_f32].iter().enumerate() {
+                let side = sx.signum();
                 g.spawn((
-                    Mesh3d(cyl_m.clone()),
-                    MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(sx, 0.62, 0.0).with_scale(Vec3::new(0.13, 0.72, 0.13)),
-                ));
-                g.spawn((
-                    Mesh3d(cyl_m.clone()),
+                    Mesh3d(boot_foot_m.clone()),
                     MeshMaterial3d(boot.clone()),
-                    Transform::from_xyz(sx, 0.20, 0.02).with_scale(Vec3::new(0.14, 0.40, 0.17)),
+                    Transform::from_xyz(sx, 0.045, 0.045),
                 ));
+                g.spawn((
+                    Mesh3d(sole_m.clone()),
+                    MeshMaterial3d(boot_sole.clone()),
+                    Transform::from_xyz(sx, 0.038, 0.045),
+                ));
+                // Chrome stiletto heel
+                g.spawn((
+                    Mesh3d(cyl_m.clone()),
+                    MeshMaterial3d(trim_gold.clone()),
+                    Transform::from_xyz(sx, 0.045, -0.048).with_scale(Vec3::new(0.018, 0.085, 0.018)),
+                ));
+                g.spawn((
+                    Mesh3d(boot_shaft_m.clone()),
+                    MeshMaterial3d(boot.clone()),
+                    Transform::from_xyz(sx, 0.22, 0.0),
+                ));
+                g.spawn((
+                    Mesh3d(ring_m.clone()),
+                    MeshMaterial3d(trim_gold.clone()),
+                    Transform::from_xyz(sx, 0.39, 0.0).with_scale(Vec3::splat(0.34)),
+                ));
+                g.spawn((
+                    Mesh3d(calf_m.clone()),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(sx, 0.48, 0.0),
+                ));
+                g.spawn((
+                    Mesh3d(thigh_m.clone()),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(sx * 0.94, 0.72, 0.0)
+                        .with_rotation(Quat::from_rotation_z(side * -0.05)),
+                ));
+                // Sparkling garter ring on right thigh
+                if li == 1 {
+                    g.spawn((
+                        Mesh3d(ring_m.clone()),
+                        MeshMaterial3d(trim_gold.clone()),
+                        Transform::from_xyz(sx * 0.94, 0.76, 0.0).with_scale(Vec3::splat(0.56)),
+                    ));
+                }
             }
-            // Flared glittery disco mini-skirt + waist + sparkly top
+
+            // Hourglass Sculpted Torso, Flared Metallic Mini-Skirt & Halter Corset
+            g.spawn((Mesh3d(torso_m), MeshMaterial3d(skin.clone())));
+            g.spawn((Mesh3d(skirt_m), MeshMaterial3d(dress.clone())));
             g.spawn((
-                Mesh3d(cone_m.clone()),
-                MeshMaterial3d(dress.clone()),
-                Transform::from_xyz(0.0, 0.96, 0.0).with_scale(Vec3::new(0.58, 0.36, 0.52)),
+                Mesh3d(ring_m.clone()),
+                MeshMaterial3d(trim_gold.clone()),
+                Transform::from_xyz(0.0, 1.04, 0.0).with_scale(Vec3::new(0.84, 0.30, 0.72)),
             ));
-            g.spawn((
-                Mesh3d(cyl_m.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.18, 0.0).with_scale(Vec3::new(0.24, 0.22, 0.20)),
-            ));
-            g.spawn((
-                Mesh3d(cyl_m.clone()),
-                MeshMaterial3d(dress.clone()),
-                Transform::from_xyz(0.0, 1.38, 0.02).with_scale(Vec3::new(0.36, 0.28, 0.26)),
-            ));
-            // Neck & cute stylized head + expressive eyes + lips
-            g.spawn((
-                Mesh3d(cyl_m.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.56, 0.0).with_scale(Vec3::new(0.10, 0.14, 0.10)),
-            ));
-            g.spawn((
-                Mesh3d(sph_m.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform::from_xyz(0.0, 1.76, 0.0).with_scale(Vec3::new(0.34, 0.36, 0.34)),
-            ));
-            for ex in [-0.065_f32, 0.065] {
+            g.spawn((Mesh3d(corset_m), MeshMaterial3d(dress.clone())));
+            for bx in [-0.082_f32, 0.082] {
                 g.spawn((
                     Mesh3d(sph_m.clone()),
-                    MeshMaterial3d(eye.clone()),
-                    Transform::from_xyz(ex, 1.78, 0.15).with_scale(Vec3::splat(0.055)),
+                    MeshMaterial3d(dress.clone()),
+                    Transform::from_xyz(bx, 1.35, 0.115).with_scale(Vec3::new(0.145, 0.135, 0.125)),
                 ));
             }
+            // Sparkly disco choker
             g.spawn((
-                Mesh3d(box_m.clone()),
-                MeshMaterial3d(lip.clone()),
-                Transform::from_xyz(0.0, 1.67, 0.155).with_scale(Vec3::new(0.09, 0.032, 0.035)),
+                Mesh3d(ring_m.clone()),
+                MeshMaterial3d(trim_gold.clone()),
+                Transform::from_xyz(0.0, 1.54, 0.0).with_scale(Vec3::splat(0.36)),
             ));
-            // Flowing ClubHairStrand hair physics + hair crown
+
+            // Neck, Expressive Detailed Face, Ears & Earrings
+            g.spawn((
+                Mesh3d(neck_m),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.55, 0.0),
+            ));
+            g.spawn((
+                Mesh3d(head_m),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.73, 0.01),
+            ));
+            for sx in [-1.0_f32, 1.0] {
+                g.spawn((
+                    Mesh3d(sh::add(meshes, sh::ear(0.048, sx))),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(sx * 0.165, 1.72, 0.0),
+                ));
+                g.spawn((
+                    Mesh3d(ring_m.clone()),
+                    MeshMaterial3d(trim_gold.clone()),
+                    Transform::from_xyz(sx * 0.178, 1.66, 0.01)
+                        .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+                        .with_scale(Vec3::splat(0.16)),
+                ));
+                // Layered eye (sclera, colored iris, pupil, specular glint) & lash/brow
+                let ex = sx * 0.062;
+                g.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(eye_white.clone()),
+                    Transform::from_xyz(ex, 1.755, 0.148).with_scale(Vec3::new(0.056, 0.046, 0.032)),
+                ));
+                g.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(iris.clone()),
+                    Transform::from_xyz(ex, 1.755, 0.161).with_scale(Vec3::new(0.036, 0.036, 0.018)),
+                ));
+                g.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(pupil_dark.clone()),
+                    Transform::from_xyz(ex, 1.755, 0.167).with_scale(Vec3::splat(0.020)),
+                ));
+                g.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(eye_white.clone()),
+                    Transform::from_xyz(ex + 0.008, 1.763, 0.172).with_scale(Vec3::splat(0.009)),
+                ));
+                g.spawn((
+                    Mesh3d(brow_m.clone()),
+                    MeshMaterial3d(pupil_dark.clone()),
+                    Transform::from_xyz(ex, 1.792, 0.155),
+                ));
+                g.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(blush.clone()),
+                    Transform::from_xyz(sx * 0.095, 1.70, 0.138).with_scale(Vec3::new(0.048, 0.028, 0.02)),
+                ));
+            }
+            // Delicate nose & fuller glossy lipstick lips
             g.spawn((
                 Mesh3d(sph_m.clone()),
-                MeshMaterial3d(hair.clone()),
-                Transform::from_xyz(0.0, 1.84, -0.02).with_scale(Vec3::new(0.38, 0.34, 0.38)),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.715, 0.182).with_scale(Vec3::new(0.032, 0.036, 0.038)),
             ));
-            for (hi, (hx, hz, rest_pitch, len)) in [
-                (-0.15_f32, -0.06_f32, 0.16_f32, 0.56_f32),
-                (0.15, -0.06, 0.16, 0.56),
-                (0.0, -0.15, 0.24, 0.62),
+            g.spawn((
+                Mesh3d(sph_m.clone()),
+                MeshMaterial3d(lip.clone()),
+                Transform::from_xyz(0.0, 1.66, 0.162).with_scale(Vec3::new(0.072, 0.028, 0.030)),
+            ));
+
+            // Full Hair Cap + 5 Long Wavy Spring-Physics Locks
+            g.spawn((
+                Mesh3d(hair_cap_m),
+                MeshMaterial3d(hair.clone()),
+                Transform::from_xyz(0.0, 1.73, 0.01),
+            ));
+            for (hi, (hx, hy, hz, rest_pitch)) in [
+                (-0.155_f32, 1.68_f32, -0.05_f32, 0.14_f32),
+                (0.155, 1.68, -0.05, 0.14),
+                (-0.085, 1.66, -0.14, 0.22),
+                (0.085, 1.66, -0.14, 0.22),
+                (0.0, 1.67, -0.16, 0.26),
             ]
             .into_iter()
             .enumerate()
@@ -2088,34 +2369,258 @@ fn spawn_club_dancer(
                         angle_z: 0.0,
                         vel_x: 0.0,
                         vel_z: 0.0,
-                        phase: phase + hi as f32 * 0.9,
+                        phase: phase + hi as f32 * 0.72,
                     },
-                    Mesh3d(cyl_m.clone()),
+                    Mesh3d(hair_lock_m.clone()),
                     MeshMaterial3d(hair.clone()),
-                    Transform::from_xyz(hx, 1.56, hz)
-                        .with_rotation(Quat::from_rotation_x(rest_pitch))
-                        .with_scale(Vec3::new(0.11, len, 0.10)),
+                    Transform::from_xyz(hx, hy, hz).with_rotation(Quat::from_rotation_x(rest_pitch)),
                 ));
             }
-            // Articulated dancing arms
-            for (idx, sx) in [-0.24_f32, 0.24].iter().enumerate() {
+
+            // Two-Segment Articulated Arms, Bangles & Expressive Hands
+            for (idx, sx) in [-0.215_f32, 0.215_f32].iter().enumerate() {
+                let side = sx.signum();
                 g.spawn((
                     ClubDancerArm {
                         is_left: idx == 0,
                         phase,
                     },
-                    Transform::from_xyz(*sx, 1.44, 0.0),
+                    Transform::from_xyz(*sx, 1.46, 0.0),
                     Visibility::Inherited,
                 ))
                 .with_children(|arm| {
                     arm.spawn((
-                        Mesh3d(cyl_m.clone()),
+                        Mesh3d(upper_arm_m.clone()),
                         MeshMaterial3d(skin.clone()),
-                        Transform::from_xyz(0.0, -0.22, 0.0).with_scale(Vec3::new(0.085, 0.46, 0.085)),
+                        Transform::from_xyz(0.0, -0.13, 0.0),
+                    ));
+                    arm.spawn((
+                        Mesh3d(forearm_m.clone()),
+                        MeshMaterial3d(skin.clone()),
+                        Transform::from_xyz(0.0, -0.35, 0.05)
+                            .with_rotation(Quat::from_rotation_x(-0.35)),
+                    ));
+                    arm.spawn((
+                        Mesh3d(ring_m.clone()),
+                        MeshMaterial3d(trim_gold.clone()),
+                        Transform::from_xyz(0.0, -0.42, 0.08).with_scale(Vec3::splat(0.24)),
+                    ));
+                    arm.spawn((
+                        Mesh3d(sh::add(meshes, sh::hand(0.062, side, false))),
+                        MeshMaterial3d(skin.clone()),
+                        Transform::from_xyz(0.0, -0.49, 0.10),
                     ));
                 });
             }
         });
+}
+
+/// Spawns the very kind, wise midget attendant by the Men's Room sink who grants 1,000 TW wishes
+/// whenever you wash your hands!
+#[allow(clippy::too_many_lines)]
+fn spawn_wise_attendant(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    world_pos: Vec3,
+    yaw: f32,
+) {
+    let sph_m = meshes.add(Sphere::new(0.5));
+    let box_m = meshes.add(Cuboid::from_size(Vec3::ONE));
+
+    let skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.74, 0.62),
+        perceptual_roughness: 0.45,
+        ..default()
+    });
+    let vest = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.52, 0.08, 0.24),
+        perceptual_roughness: 0.55,
+        clearcoat: 0.4,
+        ..default()
+    });
+    let shirt_white = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.96, 0.96, 0.98),
+        perceptual_roughness: 0.45,
+        ..default()
+    });
+    let gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.84, 0.24),
+        emissive: LinearRgba::new(0.85, 0.62, 0.12, 1.0),
+        metallic: 0.94,
+        perceptual_roughness: 0.12,
+        ..default()
+    });
+    let beard_white = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.94, 0.95, 0.98),
+        perceptual_roughness: 0.65,
+        ..default()
+    });
+    let eye_dark = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.12, 0.22),
+        emissive: LinearRgba::new(0.25, 0.75, 1.0, 1.0),
+        ..default()
+    });
+    let trousers = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.10, 0.16),
+        perceptual_roughness: 0.65,
+        ..default()
+    });
+
+    let leg_m = sh::add(meshes, sh::limb_profile(0.40, &[0.095, 0.088, 0.072, 0.062], 1.0));
+    let shoe_m = sh::add(meshes, sh::shoe(0.14, 0.08, 0.22));
+    let sole_m = sh::add(meshes, sh::shoe_sole(0.14, 0.08, 0.22));
+    let torso_m = sh::add(
+        meshes,
+        sh::torso(&sh::Torso {
+            height: 0.44,
+            hip: Vec2::new(0.21, 0.16),
+            waist: Vec2::new(0.22, 0.17),
+            chest: Vec2::new(0.23, 0.18),
+            shoulder: Vec2::new(0.24, 0.15),
+            neck: 0.08,
+            sq: 0.85,
+            chest_fwd: 0.03,
+        }),
+    );
+    let head_m = sh::add(meshes, sh::head(0.20, 0.08));
+    let beard_m = sh::add(meshes, sh::beard(0.205, 0.08, 0.16, 0.28, 0.06));
+    let hair_m = sh::add(meshes, sh::hair_cap(0.205, 0.08, 0.36, -0.35, 0.08, 0.06));
+    let brow_m = sh::add(meshes, sh::arc_bar(0.095, &[0.012, 0.018, 0.012], 0.016, 0.012, 1.0));
+    let glass_m = sh::add(meshes, sh::frame_ring(0.092, 0.082, 0.010, 0.95));
+    let arm_m = sh::add(meshes, sh::limb_profile(0.32, &[0.065, 0.060, 0.052, 0.044], 1.0));
+
+    // Plush gold-trimmed mat beneath him & soft collider so player walks beside him cleanly
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(vest.clone()),
+        Transform::from_translation(world_pos + Vec3::new(0.0, 0.03, 0.0)).with_scale(Vec3::new(1.15, 0.06, 1.15)),
+    ));
+    commands
+        .spawn((
+            ClubLevelEntity,
+            ClubWiseAttendant { base: world_pos },
+            Transform::from_translation(world_pos).with_rotation(Quat::from_rotation_y(yaw)),
+            Visibility::default(),
+            PlatformBox {
+                half_extents: Vec3::new(0.42, 0.65, 0.42),
+            },
+        ))
+        .with_children(|sage| {
+            for sx in [-0.11_f32, 0.11] {
+                sage.spawn((
+                    Mesh3d(leg_m.clone()),
+                    MeshMaterial3d(trousers.clone()),
+                    Transform::from_xyz(sx, 0.24, 0.0),
+                ));
+                sage.spawn((
+                    Mesh3d(shoe_m.clone()),
+                    MeshMaterial3d(gold.clone()),
+                    Transform::from_xyz(sx, 0.045, 0.04),
+                ));
+                sage.spawn((
+                    Mesh3d(sole_m.clone()),
+                    MeshMaterial3d(trousers.clone()),
+                    Transform::from_xyz(sx, 0.04, 0.04),
+                ));
+            }
+            sage.spawn((
+                Mesh3d(torso_m),
+                MeshMaterial3d(vest.clone()),
+                Transform::from_xyz(0.0, 0.62, 0.0),
+            ));
+            // Crisp white bow tie & gold vest buttons
+            sage.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(gold.clone()),
+                Transform::from_xyz(0.0, 0.80, 0.18).with_scale(Vec3::new(0.14, 0.06, 0.05)),
+            ));
+            // Arms + crisp white attendant hand towel over left forearm
+            sage.spawn((
+                Mesh3d(arm_m.clone()),
+                MeshMaterial3d(vest.clone()),
+                Transform::from_xyz(-0.26, 0.64, 0.05).with_rotation(Quat::from_rotation_z(0.22)),
+            ));
+            sage.spawn((
+                Mesh3d(arm_m),
+                MeshMaterial3d(vest.clone()),
+                Transform::from_xyz(0.26, 0.66, 0.12)
+                    .with_rotation(Quat::from_rotation_x(-0.65) * Quat::from_rotation_z(-0.18)),
+            ));
+            sage.spawn((
+                Mesh3d(sh::add(meshes, sh::hand(0.075, -1.0, false))),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(-0.29, 0.48, 0.06),
+            ));
+            sage.spawn((
+                Mesh3d(sh::add(meshes, sh::hand(0.075, 1.0, false))),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.28, 0.54, 0.26),
+            ));
+            sage.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(shirt_white),
+                Transform::from_xyz(-0.27, 0.56, 0.12).with_scale(Vec3::new(0.09, 0.24, 0.15)),
+            ));
+            // Kind Head, Flowing White Wise Beard, Gold Spectacles & Bushy White Brows
+            sage.spawn((
+                Mesh3d(head_m),
+                MeshMaterial3d(skin.clone()),
+                Transform::from_xyz(0.0, 1.02, 0.0),
+            ));
+            sage.spawn((
+                Mesh3d(hair_m),
+                MeshMaterial3d(beard_white.clone()),
+                Transform::from_xyz(0.0, 1.02, 0.0),
+            ));
+            sage.spawn((
+                Mesh3d(beard_m),
+                MeshMaterial3d(beard_white.clone()),
+                Transform::from_xyz(0.0, 1.02, 0.0),
+            ));
+            for sx in [-1.0_f32, 1.0] {
+                sage.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(eye_dark.clone()),
+                    Transform::from_xyz(sx * 0.072, 1.045, 0.178).with_scale(Vec3::splat(0.045)),
+                ));
+                sage.spawn((
+                    Mesh3d(brow_m.clone()),
+                    MeshMaterial3d(beard_white.clone()),
+                    Transform::from_xyz(sx * 0.072, 1.095, 0.182),
+                ));
+                sage.spawn((
+                    Mesh3d(glass_m.clone()),
+                    MeshMaterial3d(gold.clone()),
+                    Transform::from_xyz(sx * 0.072, 1.045, 0.195),
+                ));
+            }
+            sage.spawn((
+                Mesh3d(sph_m),
+                MeshMaterial3d(skin),
+                Transform::from_xyz(0.0, 1.00, 0.205).with_scale(Vec3::splat(0.055)),
+            ));
+        });
+
+    // Floating Golden Wish Orb hovering gently above his offered hand!
+    let orb_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.35, 1.0, 0.82),
+        emissive: LinearRgba::new(0.45, 2.8, 1.9, 1.0),
+        unlit: true,
+        ..default()
+    });
+    let orb_base = world_pos + Vec3::new(-0.22, 0.92, 0.22);
+    commands.spawn((
+        ClubLevelEntity,
+        ClubWishOrb {
+            base: orb_base,
+            phase: 0.4,
+        },
+        Mesh3d(meshes.add(Sphere::new(0.13))),
+        MeshMaterial3d(orb_mat),
+        Transform::from_translation(orb_base),
+    ));
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -2155,7 +2660,7 @@ fn enter_club_play(
     stats.riding_wheel = false;
     stats.phone_open = false;
     *club = ClubState::default();
-    stats.hint_text = "WELCOME TO THE VELVET DISCO CLUB! Spend Tendy Wendies for VIP dances with Candy, Luna, Star & Velvet!".to_string();
+    stats.hint_text = "WELCOME TO THE VELVET DISCO CLUB! Dances (TW), Men's Room Wish Sink (Front-Left), Women's Room (Left)!".to_string();
     stats.hint_bump = stats.hint_bump.wrapping_add(1);
 
     for (mut node, mut vis) in &mut hud_q {
@@ -2166,7 +2671,7 @@ fn enter_club_play(
     commands.insert_resource(ClearColor(Color::srgb(0.02, 0.005, 0.05)));
     commands.insert_resource(AmbientLight {
         color: Color::srgb(0.62, 0.36, 0.88),
-        brightness: 320.0,
+        brightness: 350.0,
     });
 
     if let Ok((_, mut p_tf, mut player, mut vis)) = player_q.get_single_mut() {
@@ -2181,8 +2686,8 @@ fn enter_club_play(
 
     orbit.yaw = 0.0;
     orbit.pitch = 0.30;
-    orbit.distance = 8.2;
-    orbit.current_dist = 8.2;
+    orbit.distance = 8.6;
+    orbit.current_dist = 8.6;
     orbit.follow_pos = CLUB_SPAWN_POS;
     orbit.last_player_pos = CLUB_SPAWN_POS;
     orbit.snap_follow = true;
@@ -2195,15 +2700,15 @@ fn enter_club_play(
     };
 
     if let Ok((ce, mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        c_tf.translation = CLUB_SPAWN_POS + Vec3::new(0.0, 4.0, 7.8);
-        c_tf.look_at(CLUB_SPAWN_POS + Vec3::new(0.0, 2.0, -5.0), Vec3::Y);
+        c_tf.translation = CLUB_SPAWN_POS + Vec3::new(0.0, 4.2, 8.2);
+        c_tf.look_at(CLUB_SPAWN_POS + Vec3::new(0.0, 2.2, -8.0), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
             p.fov = std::f32::consts::FRAC_PI_4;
         }
         commands.entity(ce).insert(EnvironmentMapLight {
             diffuse_map: art.env_cubemap.clone(),
             specular_map: art.env_cubemap.clone(),
-            intensity: 1100.0,
+            intensity: 1150.0,
             rotation: Quat::IDENTITY,
         });
     }
@@ -2270,32 +2775,93 @@ fn enter_club_play(
         perceptual_roughness: 0.75,
         ..default()
     });
+    let bath_wall_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.10, 0.22, 0.34),
+        metallic: 0.35,
+        perceptual_roughness: 0.25,
+        clearcoat: 0.7,
+        ..default()
+    });
+    let tile_light_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.82, 0.94, 0.98),
+        perceptual_roughness: 0.18,
+        clearcoat: 0.8,
+        ..default()
+    });
+    let tile_teal_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.14, 0.62, 0.68),
+        perceptual_roughness: 0.18,
+        clearcoat: 0.8,
+        ..default()
+    });
+    let marble_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.92, 0.96),
+        metallic: 0.20,
+        perceptual_roughness: 0.12,
+        clearcoat: 1.0,
+        ..default()
+    });
+    let mirror_glass_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.92, 1.0),
+        emissive: LinearRgba::new(0.32, 0.55, 0.75, 1.0),
+        metallic: 1.0,
+        perceptual_roughness: 0.02,
+        clearcoat: 1.0,
+        ..default()
+    });
+    let water_aqua_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.28, 0.94, 1.0, 0.85),
+        emissive: LinearRgba::new(0.4, 2.2, 2.6, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    let stall_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.22, 0.38, 0.52),
+        metallic: 0.55,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+    let rope_velvet_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.08, 0.32),
+        emissive: LinearRgba::new(0.6, 0.04, 0.22, 1.0),
+        perceptual_roughness: 0.5,
+        ..default()
+    });
+    let womens_door_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.10, 0.85),
+        emissive: LinearRgba::new(1.4, 0.18, 1.6, 1.0),
+        metallic: 0.8,
+        perceptual_roughness: 0.15,
+        clearcoat: 1.0,
+        ..default()
+    });
 
-    // Shiny Obsidian-Chrome Mirror Floor (y = 0) over Inverted Reflection Void (y = -3.6)
+    // Shiny Obsidian-Chrome Mirror Floor (60m x 60m) over Inverted Reflection Void
     commands.spawn((
         ClubLevelEntity,
         Mesh3d(box_m.clone()),
         MeshMaterial3d(void_mat),
-        Transform::from_translation(orig + Vec3::new(0.0, -3.6, 0.0)).with_scale(Vec3::new(42.0, 0.2, 42.0)),
+        Transform::from_translation(orig + Vec3::new(0.0, -4.2, 0.0)).with_scale(Vec3::new(66.0, 0.2, 66.0)),
     ));
     commands.spawn((
         ClubLevelEntity,
         Mesh3d(box_m.clone()),
         MeshMaterial3d(mirror_floor_mat),
-        Transform::from_translation(orig + Vec3::new(0.0, -0.05, 0.0)).with_scale(Vec3::new(38.0, 0.10, 38.0)),
+        Transform::from_translation(orig + Vec3::new(0.0, -0.05, 0.0)).with_scale(Vec3::new(60.0, 0.10, 60.0)),
         PlatformBox {
-            half_extents: Vec3::new(19.0, 0.05, 19.0),
+            half_extents: Vec3::new(30.0, 0.05, 30.0),
         },
     ));
 
-    // Inverted reflection poles, stages & player reflection below the mirror floor
+    // Inverted reflection poles & player reflection below the mirror floor
     for st in [ClubStationKind::MainStage, ClubStationKind::WestVip, ClubStationKind::EastVip] {
         let sc = st.stage_center();
         commands.spawn((
             ClubLevelEntity,
             Mesh3d(cyl_m.clone()),
             MeshMaterial3d(neon_pink.clone()),
-            Transform::from_translation(sc + Vec3::new(0.0, -2.1, 0.0)).with_scale(Vec3::new(0.12, 4.2, 0.12)),
+            Transform::from_translation(sc + Vec3::new(0.0, -2.4, 0.0)).with_scale(Vec3::new(0.14, 4.8, 0.14)),
         ));
     }
     commands.spawn((
@@ -2306,13 +2872,13 @@ fn enter_club_play(
         Transform::from_translation(CLUB_SPAWN_POS + Vec3::new(0.0, -1.6, 0.0)).with_scale(Vec3::new(0.55, 2.2, 0.55)),
     ));
 
-    // 6x6 Pulsing Rainbow Disco Dance-Floor Tiles around center stage
-    for gx in 0..6_usize {
-        for gz in 0..6_usize {
-            let idx = gx * 6 + gz;
-            let px = (gx as f32 - 2.5) * 2.1;
-            let pz = (gz as f32 - 2.5) * 2.1 - 2.5;
-            let col = Color::hsl((idx as f32 * 24.0) % 360.0, 1.0, 0.52);
+    // 8x8 Pulsing Rainbow Disco Dance-Floor Tiles around Main Stage (2.0, -4.5)
+    for gx in 0..8_usize {
+        for gz in 0..8_usize {
+            let idx = gx * 8 + gz;
+            let px = (gx as f32 - 3.5) * 2.15 + 2.0;
+            let pz = (gz as f32 - 3.5) * 2.15 - 4.5;
+            let col = Color::hsl((idx as f32 * 20.0) % 360.0, 1.0, 0.52);
             let l = col.to_linear();
             let tmat = materials.add(StandardMaterial {
                 base_color: col,
@@ -2326,18 +2892,18 @@ fn enter_club_play(
                 ClubFloorTile { idx },
                 Mesh3d(box_m.clone()),
                 MeshMaterial3d(tmat),
-                Transform::from_translation(orig + Vec3::new(px, 0.015, pz)).with_scale(Vec3::new(1.85, 0.03, 1.85)),
+                Transform::from_translation(orig + Vec3::new(px, 0.015, pz)).with_scale(Vec3::new(1.92, 0.03, 1.92)),
             ));
         }
     }
 
-    // Perimeter Shiny Club Walls & Colliders (38m x 38m x 12m)
+    // Expanded Perimeter Shiny Club Walls & Ceiling Colliders (60m x 60m x 15m)
     for (wx, wy, wz, sx, sy, sz) in [
-        (0.0_f32, 6.0_f32, -19.2_f32, 40.0_f32, 12.0_f32, 0.8_f32),
-        (0.0, 6.0, 19.2, 40.0, 12.0, 0.8),
-        (-19.2, 6.0, 0.0, 0.8, 12.0, 40.0),
-        (19.2, 6.0, 0.0, 0.8, 12.0, 40.0),
-        (0.0, 12.2, 0.0, 40.0, 0.6, 40.0),
+        (0.0_f32, 7.5_f32, -30.2_f32, 62.0_f32, 15.0_f32, 0.8_f32),
+        (0.0, 7.5, 30.2, 62.0, 15.0, 0.8),
+        (-30.2, 7.5, 0.0, 0.8, 15.0, 62.0),
+        (30.2, 7.5, 0.0, 0.8, 15.0, 62.0),
+        (0.0, 15.3, 0.0, 62.0, 0.6, 62.0),
     ] {
         commands.spawn((
             ClubLevelEntity,
@@ -2350,69 +2916,69 @@ fn enter_club_play(
         ));
     }
 
-    // 8 Chrome Mirror Columns & 4 Glowing Overhead Neon Arches
-    for x in [-16.0_f32, -8.5, 8.5, 16.0] {
-        for z in [-16.0_f32, 16.0] {
+    // 10 Chrome Mirror Columns & 5 Glowing Overhead Neon Arches
+    for x in [-16.0_f32, -6.5, 2.0, 12.0, 26.0] {
+        for z in [-26.5_f32, 26.5] {
             commands.spawn((
                 ClubLevelEntity,
                 Mesh3d(cyl_m.clone()),
                 MeshMaterial3d(chrome_mat.clone()),
-                Transform::from_translation(orig + Vec3::new(x, 6.0, z)).with_scale(Vec3::new(0.85, 12.0, 0.85)),
+                Transform::from_translation(orig + Vec3::new(x, 7.5, z)).with_scale(Vec3::new(1.05, 15.0, 1.05)),
             ));
         }
     }
-    for (ai, az) in [-12.0_f32, -5.0, 3.0, 10.0].into_iter().enumerate() {
+    for (ai, az) in [-20.0_f32, -11.0, -2.0, 7.0, 16.0].into_iter().enumerate() {
         commands.spawn((
             ClubLevelEntity,
             Mesh3d(ring_m.clone()),
             MeshMaterial3d(if ai % 2 == 0 { neon_pink.clone() } else { neon_cyan.clone() }),
-            Transform::from_translation(orig + Vec3::new(0.0, 1.2, az))
+            Transform::from_translation(orig + Vec3::new(2.0, 1.5, az))
                 .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
-                .with_scale(Vec3::new(9.2, 1.0, 7.2)),
+                .with_scale(Vec3::new(13.5, 1.0, 9.5)),
         ));
     }
 
-    // Velvet Club Marquee & North Backstage Wall Glow
+    // Velvet Club North Backstage Marquee
     commands.spawn((
         ClubLevelEntity,
         Mesh3d(box_m.clone()),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(art.club_sign.clone()),
-            emissive: LinearRgba::new(1.2, 1.2, 1.2, 1.0),
+            emissive: LinearRgba::new(1.25, 1.25, 1.25, 1.0),
             emissive_texture: Some(art.club_sign.clone()),
             unlit: true,
             ..default()
         })),
-        Transform::from_translation(orig + Vec3::new(0.0, 4.5, -18.5)).with_scale(Vec3::new(9.8, 3.2, 0.25)),
+        Transform::from_translation(orig + Vec3::new(2.0, 6.2, -29.3)).with_scale(Vec3::new(14.5, 4.6, 0.25)),
     ));
 
-    // Giant Spinning Faceted Mirror Disco Ball (`y = 6.2`) + Chrome Rod + 56 Reflective Facets
+    // Giant Spinning Faceted Mirror Disco Ball (scale 3.8, y = 9.2) + Chrome Rod + 72 Reflective Facets
     commands.spawn((
         ClubLevelEntity,
         Mesh3d(cyl_m.clone()),
         MeshMaterial3d(chrome_mat.clone()),
-        Transform::from_translation(orig + Vec3::new(0.0, 9.2, -2.5)).with_scale(Vec3::new(0.16, 6.0, 0.16)),
+        Transform::from_translation(orig + Vec3::new(2.0, 12.1, -4.5)).with_scale(Vec3::new(0.20, 6.0, 0.20)),
     ));
     commands
         .spawn((
             ClubLevelEntity,
             ClubDiscoBall,
-            Transform::from_translation(orig + Vec3::new(0.0, 6.2, -2.5)),
+            Transform::from_translation(orig + Vec3::new(2.0, 9.2, -4.5)),
             Visibility::default(),
         ))
         .with_children(|ball| {
             ball.spawn((
                 Mesh3d(sph_m.clone()),
                 MeshMaterial3d(chrome_mat.clone()),
-                Transform::from_scale(Vec3::splat(2.7)),
+                Transform::from_scale(Vec3::splat(3.8)),
             ));
-            for ring_idx in 0..7_usize {
-                let lat = ((ring_idx as f32 + 0.5) / 7.0 - 0.5) * PI * 0.82;
-                let r_ring = lat.cos() * 1.37;
-                let y = lat.sin() * 1.37;
-                for seg in 0..8_usize {
-                    let phi = (seg as f32 / 8.0) * TAU + ring_idx as f32 * 0.4;
+            for ring_idx in 0..8_usize {
+                let lat = ((ring_idx as f32 + 0.5) / 8.0 - 0.5) * PI * 0.84;
+                let r_ring = lat.cos() * 1.92;
+                let y = lat.sin() * 1.92;
+                for seg in 0..9_usize {
+                    let phi = (seg as f32 / 9.0) * TAU + ring_idx as f32 * 0.4;
                     let fx = phi.cos() * r_ring;
                     let fz = phi.sin() * r_ring;
                     let facet_mat = if (ring_idx + seg) % 3 == 0 {
@@ -2429,16 +2995,16 @@ fn enter_club_play(
                         MeshMaterial3d(facet_mat),
                         Transform::from_translation(Vec3::new(fx, y, fz))
                             .with_rotation(rot)
-                            .with_scale(Vec3::new(0.38, 0.34, 0.09)),
+                            .with_scale(Vec3::new(0.46, 0.42, 0.11)),
                     ));
                 }
             }
         });
 
-    // 8 Sweeping Translucent Disco Laser Cones from Disco Ball
-    for li in 0..8_usize {
-        let base_yaw = (li as f32 / 8.0) * TAU;
-        let col = Color::hsl((li as f32 * 45.0) % 360.0, 1.0, 0.62);
+    // 10 Sweeping Translucent Disco Laser Cones from Disco Ball
+    for li in 0..10_usize {
+        let base_yaw = (li as f32 / 10.0) * TAU;
+        let col = Color::hsl((li as f32 * 36.0) % 360.0, 1.0, 0.62);
         let l = col.to_linear();
         let beam_mat = materials.add(StandardMaterial {
             base_color: col.with_alpha(0.18),
@@ -2452,14 +3018,14 @@ fn enter_club_play(
             ClubLaserBeam { idx: li, base_yaw },
             Mesh3d(cone_m.clone()),
             MeshMaterial3d(beam_mat),
-            Transform::from_translation(orig + Vec3::new(0.0, 3.4, -2.5))
-                .with_scale(Vec3::new(2.2, 7.2, 2.2)),
+            Transform::from_translation(orig + Vec3::new(2.0, 5.2, -4.5))
+                .with_scale(Vec3::new(2.8, 10.2, 2.8)),
         ));
     }
 
-    // 24 Orbiting Glowing Disco Light Spots across floor & walls
-    for di in 0..24_usize {
-        let col = Color::hsl((di as f32 * 15.0) % 360.0, 1.0, 0.60);
+    // 30 Orbiting Glowing Disco Light Spots across the 60m Mirror Floor
+    for di in 0..30_usize {
+        let col = Color::hsl((di as f32 * 12.0) % 360.0, 1.0, 0.60);
         let l = col.to_linear();
         let mat = materials.add(StandardMaterial {
             base_color: col,
@@ -2471,21 +3037,23 @@ fn enter_club_play(
             ClubLevelEntity,
             ClubDiscoSpot {
                 idx: di,
-                radius: 4.5 + (di % 4) as f32 * 3.4,
-                speed: 0.75 + (di % 3) as f32 * 0.35,
+                radius: 5.5 + (di % 5) as f32 * 3.8,
+                speed: 0.70 + (di % 3) as f32 * 0.35,
             },
             Mesh3d(sph_m.clone()),
             MeshMaterial3d(mat),
-            Transform::from_translation(orig + Vec3::new(0.0, 0.08, -2.5)).with_scale(Vec3::new(0.55, 0.06, 0.55)),
+            Transform::from_translation(orig + Vec3::new(2.0, 0.08, -4.5)).with_scale(Vec3::new(0.68, 0.06, 0.68)),
         ));
     }
 
-    // 4 Dynamic Color-Cycling Club Strobe PointLights
+    // 6 Dynamic Color-Cycling Club Strobe PointLights spanning the 60m x 60m room
     for (li, pos) in [
-        Vec3::new(0.0, 10.2, -2.5),
-        Vec3::new(-10.5, 7.5, -4.5),
-        Vec3::new(10.5, 7.5, -4.5),
-        Vec3::new(0.0, 7.5, 10.0),
+        Vec3::new(2.0, 12.2, -4.5),
+        Vec3::new(-9.5, 9.0, -4.5),
+        Vec3::new(16.5, 9.0, -4.5),
+        Vec3::new(2.0, 9.0, 18.0),
+        Vec3::new(22.0, 9.0, 10.0),
+        Vec3::new(-6.0, 9.0, -22.0),
     ]
     .into_iter()
     .enumerate()
@@ -2494,9 +3062,9 @@ fn enter_club_play(
             ClubLevelEntity,
             ClubDiscoLight(li),
             PointLight {
-                color: Color::hsl(li as f32 * 90.0, 1.0, 0.6),
-                intensity: 620_000.0,
-                range: 34.0,
+                color: Color::hsl(li as f32 * 60.0, 1.0, 0.6),
+                intensity: 760_000.0,
+                range: 46.0,
                 shadows_enabled: false,
                 ..default()
             },
@@ -2504,31 +3072,31 @@ fn enter_club_play(
         ));
     }
 
-    // Main Center Stage + West & East VIP Stages with Chrome Dance Poles & 4 Cute Stylized Girls!
+    // Expanded Main Center Stage + West VIP + East Diamond VIP Stages with Chrome Poles & Larger Detailed Dancers!
     for (st, rad) in [
-        (ClubStationKind::MainStage, 3.6_f32),
-        (ClubStationKind::WestVip, 2.2_f32),
-        (ClubStationKind::EastVip, 2.2_f32),
+        (ClubStationKind::MainStage, 5.2_f32),
+        (ClubStationKind::WestVip, 3.2_f32),
+        (ClubStationKind::EastVip, 3.8_f32),
     ] {
         let sc = st.stage_center();
         commands.spawn((
             ClubLevelEntity,
             Mesh3d(cyl_m.clone()),
             MeshMaterial3d(chrome_mat.clone()),
-            Transform::from_translation(sc + Vec3::new(0.0, 0.25, 0.0)).with_scale(Vec3::new(rad * 2.0, 0.5, rad * 2.0)),
+            Transform::from_translation(sc + Vec3::new(0.0, 0.30, 0.0)).with_scale(Vec3::new(rad * 2.0, 0.6, rad * 2.0)),
         ));
         commands.spawn((
             ClubLevelEntity,
             Mesh3d(ring_m.clone()),
             MeshMaterial3d(neon_gold.clone()),
-            Transform::from_translation(sc + Vec3::new(0.0, 0.50, 0.0))
+            Transform::from_translation(sc + Vec3::new(0.0, 0.60, 0.0))
                 .with_scale(Vec3::splat(rad * 0.72)),
         ));
         commands.spawn((
             ClubLevelEntity,
             Mesh3d(cyl_m.clone()),
             MeshMaterial3d(chrome_mat.clone()),
-            Transform::from_translation(sc + Vec3::new(0.0, 4.4, 0.0)).with_scale(Vec3::new(0.11, 8.2, 0.11)),
+            Transform::from_translation(sc + Vec3::new(0.0, 5.4, 0.0)).with_scale(Vec3::new(0.14, 10.0, 0.14)),
         ));
     }
 
@@ -2537,24 +3105,24 @@ fn enter_club_play(
         &mut commands,
         &mut meshes,
         &mut materials,
-        ClubStationKind::MainStage.stage_center() + Vec3::new(-1.25, 0.50, 0.2),
-        0.2,
+        ClubStationKind::MainStage.stage_center() + Vec3::new(-1.85, 0.60, 0.45),
+        0.22,
         0.0,
         ClubStationKind::MainStage,
-        Color::srgb(1.0, 0.25, 0.72),
-        Color::srgb(1.0, 0.86, 0.42),
+        Color::srgb(1.0, 0.22, 0.74),
+        Color::srgb(1.0, 0.88, 0.44),
         Color::srgb(0.95, 0.76, 0.64),
     );
     spawn_club_dancer(
         &mut commands,
         &mut meshes,
         &mut materials,
-        ClubStationKind::MainStage.stage_center() + Vec3::new(1.25, 0.50, 0.2),
-        -0.2,
+        ClubStationKind::MainStage.stage_center() + Vec3::new(1.85, 0.60, 0.45),
+        -0.22,
         2.1,
         ClubStationKind::MainStage,
-        Color::srgb(0.22, 0.94, 1.0),
-        Color::srgb(0.76, 0.54, 1.0),
+        Color::srgb(0.18, 0.94, 1.0),
+        Color::srgb(0.76, 0.52, 1.0),
         Color::srgb(0.84, 0.62, 0.50),
     );
     // West VIP Stage: Star
@@ -2562,38 +3130,89 @@ fn enter_club_play(
         &mut commands,
         &mut meshes,
         &mut materials,
-        ClubStationKind::WestVip.stage_center() + Vec3::new(0.0, 0.50, 0.75),
+        ClubStationKind::WestVip.stage_center() + Vec3::new(0.0, 0.60, 1.05),
         0.35,
         1.1,
         ClubStationKind::WestVip,
-        Color::srgb(0.96, 0.18, 0.88),
-        Color::srgb(1.0, 0.44, 0.72),
+        Color::srgb(0.98, 0.18, 0.86),
+        Color::srgb(1.0, 0.46, 0.72),
         Color::srgb(0.96, 0.78, 0.68),
     );
-    // East VIP Stage: Velvet
+    // East Diamond VIP Stage: Velvet & Ruby
     spawn_club_dancer(
         &mut commands,
         &mut meshes,
         &mut materials,
-        ClubStationKind::EastVip.stage_center() + Vec3::new(0.0, 0.50, 0.75),
-        -0.35,
+        ClubStationKind::EastVip.stage_center() + Vec3::new(-1.25, 0.60, 0.95),
+        0.18,
         3.4,
         ClubStationKind::EastVip,
-        Color::srgb(0.56, 0.28, 1.0),
-        Color::srgb(0.18, 0.42, 0.92),
+        Color::srgb(0.54, 0.24, 1.0),
+        Color::srgb(0.18, 0.45, 0.94),
         Color::srgb(0.68, 0.46, 0.36),
     );
+    spawn_club_dancer(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        ClubStationKind::EastVip.stage_center() + Vec3::new(1.25, 0.60, 0.95),
+        -0.24,
+        4.7,
+        ClubStationKind::EastVip,
+        Color::srgb(0.98, 0.14, 0.30),
+        Color::srgb(0.92, 0.32, 0.14),
+        Color::srgb(0.94, 0.74, 0.62),
+    );
+
+    // East VIP Bar & Neon Shelf Backdrop
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(velvet_couch.clone()),
+        Transform::from_translation(orig + Vec3::new(26.2, 0.65, -16.5)).with_scale(Vec3::new(1.6, 1.3, 10.5)),
+        PlatformBox {
+            half_extents: Vec3::new(0.8, 0.65, 5.25),
+        },
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(marble_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(26.2, 1.38, -16.5)).with_scale(Vec3::new(2.0, 0.18, 10.8)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(art.bar_sign.clone()),
+            emissive: LinearRgba::new(1.2, 1.2, 1.2, 1.0),
+            emissive_texture: Some(art.bar_sign.clone()),
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_translation(orig + Vec3::new(29.2, 5.2, -16.5))
+            .with_rotation(Quat::from_rotation_y(-FRAC_PI_2))
+            .with_scale(Vec3::new(6.8, 2.4, 0.2)),
+    ));
 
     // VIP Velvet Lounge Booths + Your Boys (TJ, Glenn, Nate, Derek) hyping up the club!
-    for (lx, lyaw, ci) in [(-14.2_f32, FRAC_PI_2, 0), (-14.2, FRAC_PI_2, 1), (14.2, -FRAC_PI_2, 2), (14.2, -FRAC_PI_2, 3)] {
-        let lz = if ci % 2 == 0 { 4.2 } else { 8.4 };
+    for (px, pz, pyaw, ci) in [
+        (-8.5_f32, 15.0_f32, FRAC_PI_2, 0),
+        (-8.5, 22.0, FRAC_PI_2, 1),
+        (24.5, 7.0, -FRAC_PI_2, 2),
+        (24.5, 14.0, -FRAC_PI_2, 3),
+    ] {
         commands.spawn((
             ClubLevelEntity,
             Mesh3d(box_m.clone()),
             MeshMaterial3d(velvet_couch.clone()),
-            Transform::from_translation(orig + Vec3::new(lx, 0.45, lz)).with_scale(Vec3::new(1.8, 0.9, 3.2)),
+            Transform::from_translation(orig + Vec3::new(px, 0.45, pz)).with_scale(Vec3::new(1.9, 0.9, 3.6)),
+            PlatformBox {
+                half_extents: Vec3::new(0.95, 0.45, 1.8),
+            },
         ));
-        let p = orig + Vec3::new(lx + if lx < 0.0 { 1.4 } else { -1.4 }, 0.0, lz);
+        let p = orig + Vec3::new(px + if px < 0.0 { 1.6 } else { -1.6 }, 0.0, pz);
         commands
             .spawn((
                 ClubLevelEntity,
@@ -2601,7 +3220,7 @@ fn enter_club_play(
                     base: p,
                     phase: ci as f32 * 1.4,
                 },
-                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(lyaw)),
+                Transform::from_translation(p).with_rotation(Quat::from_rotation_y(pyaw)),
                 Visibility::default(),
             ))
             .with_children(|r| match ci {
@@ -2621,7 +3240,439 @@ fn enter_club_play(
             });
     }
 
-    // South-West Return Portal back to Tendy Palace Casino
+    // =============================================================================================
+    // FRONT-LEFT CORNER: Walk-In MEN'S ROOM (x in [-29.6, -18.0], z in [-29.6, -15.0])
+    // Wide front-facing (+Z) archway opening + Wise Midget Attendant & 1,000 TW Wish Sink!
+    // =============================================================================================
+    // East wall separating Men's Room from club floor
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(bath_wall_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-18.0, 4.0, -22.3)).with_scale(Vec3::new(0.6, 8.0, 14.8)),
+        PlatformBox {
+            half_extents: Vec3::new(0.3, 4.0, 7.4),
+        },
+    ));
+    // South wall jambs flanking wide 5.0m walk-in archway centered on sink/attendant (x in [-25.1, -20.1])
+    for (jx, jw) in [(-27.4_f32, 4.6_f32), (-19.05, 2.1)] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(bath_wall_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(jx, 4.0, -15.0)).with_scale(Vec3::new(jw, 8.0, 0.6)),
+            PlatformBox {
+                half_extents: Vec3::new(jw * 0.5, 4.0, 0.3),
+            },
+        ));
+    }
+    // Archway header lintel (high clearance y >= 4.8 so player & camera pass smoothly) + glowing trim
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(bath_wall_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.6, 6.4, -15.0)).with_scale(Vec3::new(5.4, 3.2, 0.62)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(neon_cyan.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.6, 4.78, -14.95)).with_scale(Vec3::new(5.3, 0.14, 0.68)),
+    ));
+    let mens_sign_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(art.mens_sign.clone()),
+        emissive: LinearRgba::new(1.2, 1.2, 1.2, 1.0),
+        emissive_texture: Some(art.mens_sign.clone()),
+        unlit: true,
+        ..default()
+    });
+    // Men's Room South (+Z) Archway Sign & East (+X) Side Wall Sign
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(mens_sign_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.6, 6.3, -14.6)).with_scale(Vec3::new(4.6, 1.5, 0.14)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(mens_sign_mat),
+        Transform::from_translation(orig + Vec3::new(-17.6, 4.8, -22.3))
+            .with_rotation(Quat::from_rotation_y(FRAC_PI_2))
+            .with_scale(Vec3::new(4.8, 1.6, 0.14)),
+    ));
+    // Checkered Bathroom Tile Floor inside Men's Room
+    for tx in 0..6_usize {
+        for tz in 0..7_usize {
+            let cx = -28.8 + tx as f32 * 1.95;
+            let cz = -28.6 + tz as f32 * 2.05;
+            commands.spawn((
+                ClubLevelEntity,
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(if (tx + tz) % 2 == 0 {
+                    tile_light_mat.clone()
+                } else {
+                    tile_teal_mat.clone()
+                }),
+                Transform::from_translation(orig + Vec3::new(cx, 0.025, cz)).with_scale(Vec3::new(1.90, 0.04, 2.00)),
+            ));
+        }
+    }
+    // Warm Bright Vanity & Attendant PointLights + Front-Fill Stage Key Light
+    for (lcol, lpos, lint, lran) in [
+        (Color::srgb(0.95, 0.96, 1.0), Vec3::new(-22.6, 6.2, -22.5), 620_000.0, 24.0),
+        (Color::srgb(1.0, 0.90, 0.68), Vec3::new(-21.0, 3.8, -26.2), 480_000.0, 16.0),
+        (Color::srgb(1.0, 0.85, 0.98), Vec3::new(2.0, 5.2, 2.5), 540_000.0, 28.0),
+    ] {
+        commands.spawn((
+            ClubLevelEntity,
+            PointLight {
+                color: lcol,
+                intensity: lint,
+                range: lran,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(orig + lpos),
+        ));
+    }
+    // Stalls & Toilets tucked along far West wall + Urinals
+    for sz in [-28.2_f32, -24.6, -21.0] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(stall_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(-28.6, 1.4, sz)).with_scale(Vec3::new(2.2, 2.8, 0.14)),
+            PlatformBox {
+                half_extents: Vec3::new(1.1, 1.4, 0.07),
+            },
+        ));
+    }
+    for tz in [-26.4_f32, -22.8] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(cyl_m.clone()),
+            MeshMaterial3d(marble_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(-28.7, 0.42, tz)).with_scale(Vec3::new(0.65, 0.72, 0.78)),
+        ));
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(marble_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(-29.2, 0.85, tz)).with_scale(Vec3::new(0.32, 0.75, 0.65)),
+        ));
+    }
+    for uz in [-18.8_f32, -16.8] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(marble_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(-29.25, 1.05, uz)).with_scale(Vec3::new(0.45, 0.95, 0.62)),
+        ));
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(sph_m.clone()),
+            MeshMaterial3d(water_aqua_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(-29.02, 0.88, uz)).with_scale(Vec3::new(0.18, 0.35, 0.35)),
+        ));
+    }
+
+    // Marble Vanity Sink, Faucet, Soap, Towels & Illuminated Mirror on North Men's Room Wall
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(marble_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.2, 0.55, -28.6)).with_scale(Vec3::new(3.6, 1.10, 1.4)),
+        PlatformBox {
+            half_extents: Vec3::new(1.8, 0.55, 0.7),
+        },
+    ));
+    // Porcelain Sink Basin & Aqua Glow Water
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(cyl_m.clone()),
+        MeshMaterial3d(chrome_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.2, 1.12, -28.45)).with_scale(Vec3::new(1.25, 0.14, 0.95)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(cyl_m.clone()),
+        MeshMaterial3d(water_aqua_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.2, 1.18, -28.45)).with_scale(Vec3::new(1.05, 0.06, 0.78)),
+    ));
+    // Chrome Faucet Neck, Head & Knobs
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(cyl_m.clone()),
+        MeshMaterial3d(chrome_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.2, 1.42, -28.92)).with_scale(Vec3::new(0.10, 0.55, 0.10)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(chrome_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.2, 1.66, -28.66)).with_scale(Vec3::new(0.12, 0.10, 0.52)),
+    ));
+    for kx in [-22.48_f32, -21.92] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(cyl_m.clone()),
+            MeshMaterial3d(neon_gold.clone()),
+            Transform::from_translation(orig + Vec3::new(kx, 1.18, -28.92)).with_scale(Vec3::new(0.12, 0.14, 0.12)),
+        ));
+    }
+    // Soap Dispenser & Neat White Towel Stack
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(cyl_m.clone()),
+        MeshMaterial3d(neon_cyan.clone()),
+        Transform::from_translation(orig + Vec3::new(-23.35, 1.28, -28.5)).with_scale(Vec3::new(0.18, 0.34, 0.18)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(tile_light_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-20.95, 1.22, -28.5)).with_scale(Vec3::new(0.55, 0.24, 0.45)),
+    ));
+    // Illuminated Mirror & "WASH HANDS / 1000 TW WISH" Sign above it
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(neon_gold.clone()),
+        Transform::from_translation(orig + Vec3::new(-22.2, 2.75, -29.48)).with_scale(Vec3::new(3.45, 2.05, 0.10)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(mirror_glass_mat),
+        Transform::from_translation(orig + Vec3::new(-22.2, 2.75, -29.40)).with_scale(Vec3::new(3.15, 1.78, 0.08)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(art.sink_sign.clone()),
+            emissive: LinearRgba::new(1.2, 1.2, 1.2, 1.0),
+            emissive_texture: Some(art.sink_sign.clone()),
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_translation(orig + Vec3::new(-22.2, 4.55, -29.42)).with_scale(Vec3::new(3.8, 1.35, 0.12)),
+    ));
+    // Sink Water Spray Drops (animated when washing hands!)
+    let faucet_base = orig + Vec3::new(-22.2, 1.56, -28.44);
+    for wi in 0..8_usize {
+        commands.spawn((
+            ClubLevelEntity,
+            ClubSinkWater {
+                base: faucet_base,
+                idx: wi,
+            },
+            Mesh3d(sph_m.clone()),
+            MeshMaterial3d(water_aqua_mat.clone()),
+            Transform::from_translation(faucet_base).with_scale(Vec3::splat(0.11)),
+            Visibility::Hidden,
+        ));
+    }
+
+    // Very Kind, Wise Midget Attendant right beside the sink!
+    spawn_wise_attendant(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        orig + Vec3::new(-20.0, 0.0, -27.2),
+        -0.78,
+    );
+
+    // =============================================================================================
+    // REAR-LEFT CORNER: Strictly Off-Limits WOMENS ROOM (x in [-29.8, -17.5], z in [10.0, 24.0])
+    // Facing right (+X) into the club with trippy strobing rainbows, beams, haze orbs & velvet ropes!
+    // =============================================================================================
+    for (wx, wz, sx, sz) in [
+        (-23.8_f32, 10.0_f32, 12.2_f32, 0.6_f32),
+        (-23.8, 24.0, 12.2, 0.6),
+    ] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(wall_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(wx, 4.0, wz)).with_scale(Vec3::new(sx, 8.0, sz)),
+            PlatformBox {
+                half_extents: Vec3::new(sx * 0.5, 4.0, sz * 0.5),
+            },
+        ));
+    }
+    // Flanking East facade pillars leaving center double-doorway crack z in [14.6, 19.4]
+    for (pz, pw) in [(12.3_f32, 4.6_f32), (21.7, 4.6)] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(wall_mat.clone()),
+            Transform::from_translation(orig + Vec3::new(-18.0, 4.0, pz)).with_scale(Vec3::new(0.6, 8.0, pw)),
+        ));
+    }
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(wall_mat.clone()),
+        Transform::from_translation(orig + Vec3::new(-18.0, 6.2, 17.0)).with_scale(Vec3::new(0.6, 3.6, 5.2)),
+    ));
+    // Solid Invisible Off-Limits Barrier right along velvet rope / threshold so player CANNOT enter!
+    commands.spawn((
+        ClubLevelEntity,
+        Transform::from_translation(orig + Vec3::new(-17.5, 4.0, 17.0)),
+        Visibility::Hidden,
+        PlatformBox {
+            half_extents: Vec3::new(0.75, 4.0, 7.2),
+        },
+    ));
+    // Rattling Ajar Glowing Psychedelic Double-Doors + Inner Rainbow Vortex Wall
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(neon_pink.clone()),
+        Transform::from_translation(orig + Vec3::new(-19.5, 2.5, 17.0)).with_scale(Vec3::new(0.3, 5.0, 5.4)),
+    ));
+    for (dz, yaw) in [(15.75_f32, -0.35_f32), (18.25, 0.35)] {
+        let door_pos = orig + Vec3::new(-18.0, 2.2, dz);
+        commands.spawn((
+            ClubLevelEntity,
+            ClubWomensDoorRattle { base: door_pos },
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(womens_door_mat.clone()),
+            Transform::from_translation(door_pos)
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(Vec3::new(0.18, 4.4, 2.15)),
+        ));
+    }
+    // Crossed Hazard Laser Bars & Plush Velvet VIP Rope Stanchions across entrance
+    for pitch in [-0.35_f32, 0.35] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(neon_pink.clone()),
+            Transform::from_translation(orig + Vec3::new(-17.15, 2.1, 17.0))
+                .with_rotation(Quat::from_rotation_x(pitch))
+                .with_scale(Vec3::new(0.09, 0.09, 5.2)),
+        ));
+    }
+    for sz in [14.6_f32, 19.4] {
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(cyl_m.clone()),
+            MeshMaterial3d(neon_gold.clone()),
+            Transform::from_translation(orig + Vec3::new(-16.8, 0.65, sz)).with_scale(Vec3::new(0.18, 1.3, 0.18)),
+        ));
+        commands.spawn((
+            ClubLevelEntity,
+            Mesh3d(sph_m.clone()),
+            MeshMaterial3d(neon_gold.clone()),
+            Transform::from_translation(orig + Vec3::new(-16.8, 1.35, sz)).with_scale(Vec3::splat(0.28)),
+        ));
+    }
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(cyl_m.clone()),
+        MeshMaterial3d(rope_velvet_mat),
+        Transform::from_translation(orig + Vec3::new(-16.8, 1.05, 17.0))
+            .with_rotation(Quat::from_rotation_x(FRAC_PI_2))
+            .with_scale(Vec3::new(0.12, 4.8, 0.12)),
+    ));
+    // Glowing prismatic threshold strip & neon archway frame outside the Off-Limits Women's Room!
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(neon_cyan.clone()),
+        Transform::from_translation(orig + Vec3::new(-17.45, 0.04, 17.0)).with_scale(Vec3::new(1.4, 0.05, 5.4)),
+    ));
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(ring_m.clone()),
+        MeshMaterial3d(neon_pink.clone()),
+        Transform::from_translation(orig + Vec3::new(-17.7, 2.4, 17.0))
+            .with_rotation(Quat::from_rotation_z(FRAC_PI_2))
+            .with_scale(Vec3::new(2.2, 1.0, 2.0)),
+    ));
+    // "WOMENS ROOM / OFF LIMITS" Neon Sign facing +X into the club!
+    commands.spawn((
+        ClubLevelEntity,
+        Mesh3d(box_m.clone()),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(art.womens_sign.clone()),
+            emissive: LinearRgba::new(1.3, 1.3, 1.3, 1.0),
+            emissive_texture: Some(art.womens_sign.clone()),
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_translation(orig + Vec3::new(-17.55, 5.6, 17.0))
+            .with_rotation(Quat::from_rotation_y(FRAC_PI_2))
+            .with_scale(Vec3::new(5.4, 1.85, 0.14)),
+    ));
+    // Trippy Blazing Exterior Rainbow Cones, Cosmic Mist Orbs & Strobing Lights blasting from Women's Room!
+    for ci in 0..6_usize {
+        let base_yaw = -0.5 + ci as f32 * 0.2;
+        let col = Color::hsl((ci as f32 * 58.0) % 360.0, 1.0, 0.62);
+        let l = col.to_linear();
+        let bmat = materials.add(StandardMaterial {
+            base_color: col.with_alpha(0.26),
+            emissive: LinearRgba::new(l.red * 3.0, l.green * 3.0, l.blue * 3.0, 1.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            ClubLevelEntity,
+            ClubWomensTrippyBeam { idx: ci, base_yaw },
+            Mesh3d(cone_m.clone()),
+            MeshMaterial3d(bmat),
+            Transform::from_translation(orig + Vec3::new(-15.5, 2.2, 17.0)).with_scale(Vec3::new(2.2, 7.0, 2.2)),
+        ));
+    }
+    for oi in 0..16_usize {
+        let base = orig
+            + Vec3::new(
+                -17.6 + (oi % 4) as f32 * 0.85,
+                0.7 + (oi % 5) as f32 * 0.65,
+                14.5 + (oi as f32 / 15.0) * 5.0,
+            );
+        let col = Color::hsl((oi as f32 * 24.0) % 360.0, 1.0, 0.64);
+        let l = col.to_linear();
+        let omat = materials.add(StandardMaterial {
+            base_color: col,
+            emissive: LinearRgba::new(l.red * 3.4, l.green * 3.4, l.blue * 3.4, 1.0),
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            ClubLevelEntity,
+            ClubWomensTrippyOrb {
+                base,
+                phase: oi as f32 * 0.55,
+            },
+            Mesh3d(sph_m.clone()),
+            MeshMaterial3d(omat),
+            Transform::from_translation(base).with_scale(Vec3::splat(0.28)),
+        ));
+    }
+    for (li, lx) in [-17.2_f32, -19.2].into_iter().enumerate() {
+        commands.spawn((
+            ClubLevelEntity,
+            ClubWomensTrippyLight(li),
+            PointLight {
+                color: Color::hsl(li as f32 * 180.0, 1.0, 0.6),
+                intensity: 880_000.0,
+                range: 26.0,
+                shadows_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(orig + Vec3::new(lx, 3.0, 17.0)),
+        ));
+    }
+
+    // South-East Return Portal back to Tendy Palace Casino
     let ret_pos = ClubStationKind::ReturnCasino.stage_center();
     commands.spawn((
         ClubLevelEntity,
@@ -2633,7 +3684,7 @@ fn enter_club_play(
     ));
     commands.spawn((
         ClubLevelEntity,
-        Mesh3d(box_m.clone()),
+        Mesh3d(box_m),
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::WHITE,
             base_color_texture: Some(art.return_sign.clone()),
@@ -2642,15 +3693,19 @@ fn enter_club_play(
             unlit: true,
             ..default()
         })),
-        Transform::from_translation(ret_pos + Vec3::new(0.0, 4.4, 0.4)).with_scale(Vec3::new(3.6, 1.4, 0.16)),
+        Transform::from_translation(ret_pos + Vec3::new(0.0, 4.4, 0.4))
+            .with_rotation(Quat::from_rotation_y(PI))
+            .with_scale(Vec3::new(3.6, 1.4, 0.16)),
     ));
 
-    // Glowing Floor Interaction Rings for Main Stage, West VIP, East VIP & Return Portal
+    // Glowing Floor Interaction Rings for Stages, Men's Room Sink, Women's Room Peek & Return Portal
     for (kind, ring_pos, color) in [
-        (ClubStationKind::MainStage, CLUB_LEVEL_ORIGIN + Vec3::new(0.0, 0.16, 3.8), Color::srgb(1.0, 0.35, 0.85)),
-        (ClubStationKind::WestVip, CLUB_LEVEL_ORIGIN + Vec3::new(-10.5, 0.16, 0.2), Color::srgb(1.0, 0.78, 0.22)),
-        (ClubStationKind::EastVip, CLUB_LEVEL_ORIGIN + Vec3::new(10.5, 0.16, 0.2), Color::srgb(0.28, 0.94, 1.0)),
+        (ClubStationKind::MainStage, CLUB_LEVEL_ORIGIN + Vec3::new(2.0, 0.16, 2.2), Color::srgb(1.0, 0.35, 0.85)),
+        (ClubStationKind::WestVip, CLUB_LEVEL_ORIGIN + Vec3::new(-9.5, 0.16, 0.2), Color::srgb(1.0, 0.78, 0.22)),
+        (ClubStationKind::EastVip, CLUB_LEVEL_ORIGIN + Vec3::new(16.5, 0.16, 0.8), Color::srgb(0.28, 0.94, 1.0)),
         (ClubStationKind::ReturnCasino, ret_pos + Vec3::new(0.0, 0.16, -2.0), Color::srgb(0.45, 0.85, 1.0)),
+        (ClubStationKind::MensSink, CLUB_LEVEL_ORIGIN + Vec3::new(-22.2, 0.16, -26.0), Color::srgb(0.28, 1.0, 0.82)),
+        (ClubStationKind::WomensDoor, CLUB_LEVEL_ORIGIN + Vec3::new(-15.6, 0.16, 17.0), Color::srgb(1.0, 0.24, 0.92)),
     ] {
         let l = color.to_linear();
         let mat = materials.add(StandardMaterial {
@@ -2733,6 +3788,69 @@ fn trigger_broke_teleport(commands: &mut Commands, club: &mut ClubState, existin
         });
 }
 
+fn trigger_wish_celebration(
+    commands: &mut Commands,
+    club: &mut ClubState,
+    wish_num: u32,
+    new_tw: u32,
+    existing_q: &Query<Entity, With<ClubWishBanner>>,
+) {
+    club.wish_timer = 3.8;
+    for e in existing_q {
+        commands.entity(e).despawn_recursive();
+    }
+    commands
+        .spawn((
+            ClubLevelEntity,
+            ClubWishBanner,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(82.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            GlobalZIndex(24),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    max_width: Val::Px(560.0),
+                    padding: UiRect::axes(Val::Px(24.0), Val::Px(14.0)),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(6.0),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.06, 0.16, 0.20, 0.94)),
+                BorderColor(Color::srgb(0.32, 1.0, 0.82)),
+                BorderRadius::all(Val::Px(12.0)),
+            ))
+            .with_children(|card| {
+                card.spawn((
+                    Text::new(format!("WISH #{} GRANTED: +1,000 TENDY WENDIES!", wish_num)),
+                    TextFont {
+                        font_size: 20.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(1.0, 0.86, 0.25)),
+                ));
+                card.spawn((
+                    Text::new(format!(
+                        "Wise Attendant: \"Clean hands, pure heart, prosperous wallet! Balance: {} TW\"",
+                        new_tw
+                    )),
+                    TextFont {
+                        font_size: 14.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn animate_club_disco_and_dancers(
     time: Res<Time<Real>>,
@@ -2757,7 +3875,7 @@ fn animate_club_disco_and_dancers(
     for (sp, mut tf) in &mut spot_q {
         let a = t * sp.speed * dancing_boost + sp.idx as f32 * 0.52;
         tf.translation = CLUB_LEVEL_ORIGIN
-            + Vec3::new(a.cos() * sp.radius, 0.05, -2.5 + a.sin() * sp.radius);
+            + Vec3::new(2.0 + a.cos() * sp.radius, 0.05, -4.5 + a.sin() * sp.radius);
     }
 
     for (bm, mut tf) in &mut beam_q {
@@ -2779,16 +3897,16 @@ fn animate_club_disco_and_dancers(
     }
 
     for (dl, mut light) in &mut light_q {
-        let hue = ((t * 130.0 + dl.0 as f32 * 90.0) % 360.0 + 360.0) % 360.0;
+        let hue = ((t * 130.0 + dl.0 as f32 * 60.0) % 360.0 + 360.0) % 360.0;
         light.color = Color::hsl(hue, 1.0, 0.58);
-        light.intensity = 420_000.0 + 380_000.0 * (t * 8.0 + dl.0 as f32 * 1.4).sin().abs();
+        light.intensity = 460_000.0 + 420_000.0 * (t * 8.0 + dl.0 as f32 * 1.4).sin().abs();
     }
 
     for (d, mut tf) in &mut dancer_q {
         let spd = if club.active_stage == Some(d.stage) { 5.4 } else { 3.2 };
         let groove = t * spd + d.phase;
         tf.translation = d.base
-            + Vec3::new(groove.sin() * 0.35, (groove * 2.0).sin().abs() * 0.14, (groove * 0.5).cos() * 0.22);
+            + Vec3::new(groove.sin() * 0.42, (groove * 2.0).sin().abs() * 0.16, (groove * 0.5).cos() * 0.26);
         tf.rotation = Quat::from_rotation_y((groove * 0.6).sin() * 0.65)
             * Quat::from_rotation_z((groove * 1.2).cos() * 0.08);
     }
@@ -2806,6 +3924,104 @@ fn animate_club_disco_and_dancers(
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn animate_club_bathrooms_and_sage(
+    time: Res<Time<Real>>,
+    club: Res<ClubState>,
+    mut sage_q: Query<(&ClubWiseAttendant, &mut Transform)>,
+    mut orb_q: Query<(&ClubWishOrb, &mut Transform), Without<ClubWiseAttendant>>,
+    mut water_q: Query<
+        (&ClubSinkWater, &mut Transform, &mut Visibility),
+        (Without<ClubWiseAttendant>, Without<ClubWishOrb>),
+    >,
+    mut w_beam_q: Query<
+        (&ClubWomensTrippyBeam, &mut Transform),
+        (Without<ClubWiseAttendant>, Without<ClubWishOrb>, Without<ClubSinkWater>),
+    >,
+    mut w_orb_q: Query<
+        (&ClubWomensTrippyOrb, &mut Transform),
+        (
+            Without<ClubWiseAttendant>,
+            Without<ClubWishOrb>,
+            Without<ClubSinkWater>,
+            Without<ClubWomensTrippyBeam>,
+        ),
+    >,
+    mut w_door_q: Query<
+        (&ClubWomensDoorRattle, &mut Transform),
+        (
+            Without<ClubWiseAttendant>,
+            Without<ClubWishOrb>,
+            Without<ClubSinkWater>,
+            Without<ClubWomensTrippyBeam>,
+            Without<ClubWomensTrippyOrb>,
+        ),
+    >,
+    mut w_light_q: Query<(&ClubWomensTrippyLight, &mut PointLight)>,
+) {
+    let t = time.elapsed_secs();
+
+    // Kind Wise Attendant gentle bow & joyful bob when granting a wish
+    let wish_boost = if club.wish_timer > 0.0 { 1.0 } else { 0.0 };
+    for (sage, mut tf) in &mut sage_q {
+        let bob = (t * (2.4 + wish_boost * 6.0)).sin().abs() * (0.04 + wish_boost * 0.09);
+        tf.translation = sage.base + Vec3::new(0.0, bob, 0.0);
+        tf.rotation = Quat::from_rotation_y(-0.92 + (t * 1.4).sin() * 0.14);
+    }
+
+    for (orb, mut tf) in &mut orb_q {
+        let spin_rad = if club.wish_timer > 0.0 { 0.26 } else { 0.08 };
+        tf.translation = orb.base
+            + Vec3::new(
+                (t * 3.0 + orb.phase).cos() * spin_rad,
+                (t * 3.6 + orb.phase).sin() * 0.14 + wish_boost * 0.22,
+                (t * 3.0 + orb.phase).sin() * spin_rad,
+            );
+        tf.scale = Vec3::splat(1.0 + wish_boost * 0.55 * (t * 8.0).sin().abs());
+    }
+
+    // Men's Room faucet splash animation while `wish_timer > 0`
+    let washing = club.wish_timer > 0.0;
+    for (w, mut tf, mut vis) in &mut water_q {
+        *vis = if washing { Visibility::Visible } else { Visibility::Hidden };
+        if washing {
+            let phase = (t * 4.8 + w.idx as f32 * 0.22) % 1.0;
+            let splash = if phase > 0.72 { (phase - 0.72) * 0.85 } else { 0.0 };
+            let ang = w.idx as f32 * 1.3;
+            tf.translation = w.base + Vec3::new(ang.cos() * splash, -phase * 0.44, ang.sin() * splash);
+        }
+    }
+
+    // Off-Limits Women's Room: rattling doors, blinding trippy strobe cones & swirling haze orbs
+    for (dr, mut tf) in &mut w_door_q {
+        let jitter = (t * 19.0).sin() * 0.045;
+        tf.translation = dr.base + Vec3::new(jitter.abs() * 0.4, 0.0, 0.0);
+        tf.scale.x = 0.18 + jitter.abs() * 0.3;
+    }
+
+    for (wb, mut tf) in &mut w_beam_q {
+        let swing = (t * 3.2 + wb.idx as f32 * 0.9).sin() * 0.42;
+        tf.rotation = Quat::from_rotation_z(0.95 + (t * 2.4 + wb.idx as f32).cos() * 0.18)
+            * Quat::from_rotation_x(wb.base_yaw + swing);
+    }
+
+    for (wo, mut tf) in &mut w_orb_q {
+        tf.translation = wo.base
+            + Vec3::new(
+                (t * 2.6 + wo.phase).sin().abs() * 1.6,
+                (t * 3.1 + wo.phase).sin() * 0.7,
+                (t * 2.2 + wo.phase).cos() * 0.65,
+            );
+        tf.scale = Vec3::splat(0.22 + 0.16 * (t * 6.0 + wo.phase).sin().abs());
+    }
+
+    for (wl, mut light) in &mut w_light_q {
+        let hue = ((t * 260.0 + wl.0 as f32 * 180.0) % 360.0 + 360.0) % 360.0;
+        light.color = Color::hsl(hue, 1.0, 0.58);
+        light.intensity = 450_000.0 + 620_000.0 * (t * 14.0 + wl.0 as f32 * 1.7).sin().abs();
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_club_stations(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -2819,6 +4035,7 @@ fn update_club_stations(
     btn_q: Query<&Interaction, (Changed<Interaction>, With<ClubPromptButton>)>,
     mut text_q: Query<&mut Text, With<ClubPromptText>>,
     broke_q: Query<Entity, With<ClubBrokeBanner>>,
+    wish_q: Query<Entity, With<ClubWishBanner>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -2836,7 +4053,7 @@ fn update_club_stations(
     let mut best: Option<(f32, ClubStationKind)> = None;
     for ring in &ring_q {
         let d = Vec2::new(p_tf.translation.x - ring.base_pos.x, p_tf.translation.z - ring.base_pos.z).length();
-        if d < 3.4 && best.is_none_or(|(bd, _)| d < bd) {
+        if d < 3.6 && best.is_none_or(|(bd, _)| d < bd) {
             best = Some((d, ring.kind));
         }
     }
@@ -2910,6 +4127,43 @@ fn update_club_stations(
         return;
     }
 
+    if kind == ClubStationKind::MensSink {
+        club.wish_count = club.wish_count.saturating_add(1);
+        stats.add_tendy_wendies(1000);
+        play_sfx("sink_wish");
+        play_sfx("powerup");
+        let blessing = match (club.wish_count - 1) % 4 {
+            0 => "Warm water washes away all sorrow. May a thousand Tendy Wendies bless your journey, traveler.",
+            1 => "Clean hands, clear mind, overflowing pockets. Take another thousand Tendy Wendies with my blessing.",
+            2 => "True wealth blooms from kindness and proper hygiene. Here are a thousand more Tendy Wendies, friend.",
+            _ => "Whenever darkness falls outside, return to the basin of wisdom. A thousand Tendy Wendies are yours.",
+        };
+        speak_voice(blessing, "wise_midget");
+        stats.hint_text = format!(
+            "WASHED HANDS! Wise Attendant granted +1,000 TW! (Total: {} TW)",
+            stats.tendy_wendies
+        );
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        let wish_num = club.wish_count;
+        trigger_wish_celebration(&mut commands, &mut club, wish_num, stats.tendy_wendies, &wish_q);
+        return;
+    }
+
+    if kind == ClubStationKind::WomensDoor {
+        club.womens_peek_count = club.womens_peek_count.saturating_add(1);
+        play_sfx("portal_suck");
+        stats.shake_request = stats.shake_request.max(0.28);
+        let line = match (club.womens_peek_count - 1) % 3 {
+            0 => "Whoa... there are laser flamingos and a interdimensional whirlpool in there! Definitely off limits, boys!",
+            1 => "Good grief, what is going on inside the women's room?! Keep behind the velvet rope!",
+            _ => "Yeah, even I'm not stepping past those lasers. Men's room sink is way safer, boys.",
+        };
+        speak_voice(line, "stan");
+        stats.hint_text = "WOMEN'S ROOM: STRICTLY OFF LIMITS! Crazy strobe lasers pouring out from inside!".to_string();
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        return;
+    }
+
     let cost = kind.cost();
     if stats.spend_tendy_wendies(cost) {
         stats.club_dance_open = true;
@@ -2921,12 +4175,12 @@ fn update_club_stations(
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
 
         // Spawn rainbow heart/sparkle shower over the stage
-        let sph_m = meshes.add(Sphere::new(0.24));
-        for hi in 0..14_usize {
-            let a = (hi as f32 / 14.0) * TAU;
-            let base = kind.stage_center() + Vec3::new(a.cos() * 1.8, 1.2 + (hi % 3) as f32 * 0.4, a.sin() * 1.8);
+        let sph_m = meshes.add(Sphere::new(0.26));
+        for hi in 0..16_usize {
+            let a = (hi as f32 / 16.0) * TAU;
+            let base = kind.stage_center() + Vec3::new(a.cos() * 2.2, 1.5 + (hi % 3) as f32 * 0.45, a.sin() * 2.2);
             let mat = materials.add(StandardMaterial {
-                base_color: Color::hsl((hi as f32 * 28.0) % 360.0, 1.0, 0.62),
+                base_color: Color::hsl((hi as f32 * 24.0) % 360.0, 1.0, 0.62),
                 emissive: LinearRgba::new(2.4, 0.7, 2.2, 1.0),
                 unlit: true,
                 ..default()
@@ -2947,8 +4201,8 @@ fn update_club_stations(
     } else {
         play_sfx("hit");
         stats.hint_text = format!(
-            "Need {} TW for that dance! Try Main Stage (25 TW) - you have {} TW",
-            cost, stats.tendy_wendies
+            "Need {} TW for that dance! Try Main Stage (25 TW) or wash hands in Men's Room for 1,000 TW!",
+            cost
         );
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
     }
@@ -2967,9 +4221,19 @@ fn update_club_dance_and_broke_warp(
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>)>,
     mut heart_q: Query<(Entity, &ClubHeartOrb, &mut Transform), (Without<Player>, Without<Camera3d>)>,
     broke_q: Query<Entity, With<ClubBrokeBanner>>,
+    wish_q: Query<Entity, With<ClubWishBanner>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
+
+    if club.wish_timer > 0.0 {
+        club.wish_timer = (club.wish_timer - dt).max(0.0);
+        if club.wish_timer <= 0.0 {
+            for e in &wish_q {
+                commands.entity(e).despawn_recursive();
+            }
+        }
+    }
 
     if club.broke_timer > 0.0 {
         club.broke_timer = (club.broke_timer - dt).max(0.0);
@@ -2987,26 +4251,26 @@ fn update_club_dance_and_broke_warp(
         if let Some(stage) = club.active_stage {
             let center = stage.stage_center();
             if let Ok(mut p_tf) = player_q.get_single_mut() {
-                p_tf.translation = center + Vec3::new(0.0, 0.50, 2.2);
+                p_tf.translation = center + Vec3::new(0.0, 0.60, 2.8);
                 p_tf.rotation = Quat::IDENTITY;
             }
             if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
                 let ang = t * 0.85;
-                let pos = center + Vec3::new(ang.sin() * 5.2, 2.8, ang.cos() * 5.2);
-                let look = center + Vec3::new(0.0, 1.75, 0.0);
+                let pos = center + Vec3::new(ang.sin() * 6.4, 3.4, ang.cos() * 6.4);
+                let look = center + Vec3::new(0.0, 2.35, 0.0);
                 let k = 1.0 - (-5.5 * dt).exp();
                 c_tf.translation = c_tf.translation.lerp(pos, k);
                 let goal = Transform::from_translation(c_tf.translation).looking_at(look, Vec3::Y).rotation;
                 c_tf.rotation = c_tf.rotation.slerp(goal, k);
                 if let Projection::Perspective(ref mut p) = *proj {
-                    p.fov += (0.80 - p.fov) * k;
+                    p.fov += (0.82 - p.fov) * k;
                 }
             }
         }
         for (_, h, mut tf) in &mut heart_q {
             let cyc = (t * 1.4 + h.phase) % 2.5;
-            tf.translation = h.base + Vec3::new((t * 3.0 + h.phase).sin() * 0.4, cyc * 1.1, 0.0);
-            tf.scale = Vec3::splat(0.75 * (1.0 - cyc / 2.6));
+            tf.translation = h.base + Vec3::new((t * 3.0 + h.phase).sin() * 0.45, cyc * 1.25, 0.0);
+            tf.scale = Vec3::splat(0.85 * (1.0 - cyc / 2.6));
         }
 
         if club.dance_timer <= 0.0 {

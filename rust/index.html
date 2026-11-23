@@ -623,6 +623,13 @@
           mkNoise(0.09, 0.26, 950);
           return true;
         }
+        if (name === "sink_wish") {
+          mkNoise(0.45, 0.16, 1800);
+          mkOsc("sine", 523, 1046, 0.35, 0.22);
+          mkOsc("triangle", 659, 1318, 0.42, 0.18);
+          mkOsc("sine", 784, 1568, 0.50, 0.18);
+          return true;
+        }
         if (name === "sleep_snore") {
           mkOsc("triangle", 110, 78, 0.45, 0.18);
           return true;
@@ -2326,6 +2333,8 @@
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
           // Voice profile for Maria, the Pub 217 bartender.
           bartender: { pitch: 1.16, rate: 0.96, volume: 1.0, g: "f" },
+          // Voice profile for the kind, wise Men's Room attendant.
+          wise_midget: { pitch: 1.24, rate: 0.90, volume: 1.0, g: "m" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
         _VOICE_MOODS: {
@@ -2340,7 +2349,7 @@
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
-        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender"],
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender", "wise_midget"],
         _voiceCast: null,
         _voiceCastKey: "",
         _voiceCastLocked: false,

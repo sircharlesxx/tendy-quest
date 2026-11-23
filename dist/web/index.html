@@ -623,6 +623,13 @@
           mkNoise(0.09, 0.26, 950);
           return true;
         }
+        if (name === "sink_wish") {
+          mkNoise(0.45, 0.16, 1800);
+          mkOsc("sine", 523, 1046, 0.35, 0.22);
+          mkOsc("triangle", 659, 1318, 0.42, 0.18);
+          mkOsc("sine", 784, 1568, 0.50, 0.18);
+          return true;
+        }
         if (name === "sleep_snore") {
           mkOsc("triangle", 110, 78, 0.45, 0.18);
           return true;
@@ -2326,6 +2333,8 @@
           chillary: { pitch: 1.06, rate: 0.90, volume: 0.98, g: "f" },
           // Voice profile for Maria, the Pub 217 bartender.
           bartender: { pitch: 1.16, rate: 0.96, volume: 1.0, g: "f" },
+          // Voice profile for the kind, wise Men's Room attendant.
+          wise_midget: { pitch: 1.24, rate: 0.90, volume: 1.0, g: "m" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
         _VOICE_MOODS: {
@@ -2340,7 +2349,7 @@
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
-        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender"],
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender", "wise_midget"],
         _voiceCast: null,
         _voiceCastKey: "",
         _voiceCastLocked: false,
@@ -3208,7 +3217,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-103a8e0d60ecb629.js" crossorigin="anonymous" integrity="sha384-7XgPPXUyLHPsc+NntDdCWHfKlnHkJQ6h46PFRingMd9Ok8gqM7WE9iZRukMzW6lI"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-103a8e0d60ecb629_bg.wasm" crossorigin="anonymous" integrity="sha384-Tc7YQBBKBUNVtUNqErzHz7txGa+OzZ5yQFOnzjULB7pMhFrbikuSflfZRQuuyMiJ" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-49432802eaa896de.js" crossorigin="anonymous" integrity="sha384-2zMDNaTz0KRKQtMd5RbKHgBfGvZfU0K5J7kG1TlERfr7t+OS25ms0iryX+pXzToF"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-49432802eaa896de_bg.wasm" crossorigin="anonymous" integrity="sha384-SG0Ol7qptvVGFhVXK8vN4AF0Mn2kIekHgT4mXxvrmp/cYtqN44pQ150D8cvVGIT1" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -6765,8 +6774,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-103a8e0d60ecb629.js';
-const wasm = await init({ module_or_path: './tendy-quest-103a8e0d60ecb629_bg.wasm' });
+import init, * as bindings from './tendy-quest-49432802eaa896de.js';
+const wasm = await init({ module_or_path: './tendy-quest-49432802eaa896de_bg.wasm' });
 
 
 window.wasmBindings = bindings;

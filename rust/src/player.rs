@@ -1738,8 +1738,8 @@ pub fn update_camera(
     } else if stats.in_club_level {
         let c = crate::club::CLUB_LEVEL_ORIGIN;
         (
-            Vec3::new(c.x - 18.2, 0.55, c.z - 18.2),
-            Vec3::new(c.x + 18.2, 11.2, c.z + 18.2),
+            Vec3::new(c.x - 29.2, 0.55, c.z - 29.2),
+            Vec3::new(c.x + 29.2, 14.2, c.z + 29.2),
         )
     } else if stats.in_city {
         (
