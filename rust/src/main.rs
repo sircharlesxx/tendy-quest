@@ -3,6 +3,7 @@ mod beer_fx;
 mod boss;
 mod casino;
 mod casino_arcade;
+mod club;
 mod chillary;
 mod city;
 mod controls;
@@ -120,6 +121,7 @@ fn main() {
         .add_plugins(casino::CasinoPlugin)
         // The Coin Game-style 3D physics arcade machines: Coin Pusher, Claw Machine, Plinko, Skeeball.
         .add_plugins(casino_arcade::CasinoArcadePlugin)
+        .add_plugins(club::ClubPlugin)
         // Pub 217 Maria bartender, "ORDER 10 BEERS" prompt & Women's Bathroom Portal cutscene (pub_portal.rs).
         .add_plugins(pub_portal::PubPortalPlugin)
         // Distributed Free Mode P2P multiplayer (WebRTC mesh via public WebTorrent trackers, inert outside Free Mode; see net.rs).
@@ -431,6 +433,21 @@ fn main() {
                 update_camera.in_set(CameraSet::Follow),
             )
                 .run_if(in_state(GameState::CasinoPlay))
+                .run_if(gameplay_running),
+        )
+        .add_systems(
+            OnExit(GameState::ClubPlay),
+            (close_help_overlay, reset_hit_reaction, unlock_cursor),
+        )
+        .add_systems(
+            Update,
+            (
+                camera_mouse_look.in_set(CameraSet::Look),
+                player_movement.in_set(CameraSet::Motion),
+                animate_player_limbs,
+                update_camera.in_set(CameraSet::Follow),
+            )
+                .run_if(in_state(GameState::ClubPlay))
                 .run_if(gameplay_running),
         )
         .add_systems(

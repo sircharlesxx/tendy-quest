@@ -28,6 +28,10 @@ pub enum GameState {
     PubPortalCutscene,
     /// Level 3: Dedicated spacious Tendy Palace Casino hall (`casino.rs`).
     CasinoPlay,
+    /// Willy Wonka + 2001 Stargate 5-hero roller coaster cutscene (`club.rs`).
+    CoasterCutscene,
+    /// Level 4: Shiny Trippy Velvet Disco Club (`club.rs`).
+    ClubPlay,
     /// Turn-based 5-hero RPG showdown against Giant Lexie (`lexie_battle.rs`).
     LexieBattle,
     LexieVictoryCutscene,
@@ -119,6 +123,12 @@ pub struct PlayerStats {
     pub casino_esc_grace: bool,
     /// True while inside the standalone Level 3 Tendy Palace Casino (`GameState::CasinoPlay`).
     pub in_casino_level: bool,
+    /// True while inside the standalone Level 4 Velvet Disco Club (`GameState::ClubPlay`).
+    pub in_club_level: bool,
+    /// True while a VIP disco dance camera sequence is active inside `ClubPlay`.
+    pub club_dance_open: bool,
+    /// One-shot QA/preview flag so `?club=1` / `?club_broke=1` can set test TW without reading localStorage.
+    pub club_skip_tw_sync: bool,
     /// Set when stepping into the Casino South Portal to return directly to Pub 217 (`CityPlay`).
     pub casino_return_city: bool,
     /// True while talking to Maria the bartender inside Pub 217 (`pub_portal.rs`).
@@ -229,6 +239,9 @@ impl Default for PlayerStats {
             arcade_open: false,
             casino_esc_grace: false,
             in_casino_level: false,
+            in_club_level: false,
+            club_dance_open: false,
+            club_skip_tw_sync: false,
             casino_return_city: false,
             bartender_open: false,
             char_select_open: false,
@@ -264,7 +277,7 @@ impl PlayerStats {
     ///   tendies need gentle increments around small counter props while the final 4 tendies
     ///   must rapidly vault Stan to adult height (`6.0`) to reach the refrigerator handle.
     pub fn target_scale(&self) -> f32 {
-        if self.in_casino_level {
+        if self.in_casino_level || self.in_club_level {
             return 1.8;
         }
         if self.in_city && self.free_roam {
@@ -412,7 +425,7 @@ impl PlayerStats {
     /// Scale Stan's model is drawn at (and his saber and camera are sized for): `player_scale`
     /// in the apartment, `city_body_scale(player_scale)` in the city & Casino level.
     pub fn body_scale(&self) -> f32 {
-        if self.in_city || self.in_casino_level {
+        if self.in_city || self.in_casino_level || self.in_club_level {
             city_body_scale(self.player_scale)
         } else {
             self.player_scale
@@ -426,7 +439,7 @@ impl PlayerStats {
     }
 
     pub fn height_cm(&self) -> u32 {
-        if self.in_city || self.in_casino_level {
+        if self.in_city || self.in_casino_level || self.in_club_level {
             // 1.8 scale is a 180 cm adult and 18.0 is the 6500 cm kaiju; interpolate between them
             // so the HUD does not claim 650 cm at the start of the city.
             let t = ((self.player_scale - 1.8) / (18.0 - 1.8)).clamp(0.0, 1.0);
@@ -438,6 +451,9 @@ impl PlayerStats {
     }
 
     pub fn size_tier(&self) -> &'static str {
+        if self.in_club_level {
+            return "Velvet Disco VIP";
+        }
         if self.in_casino_level {
             return "Tendy Palace VIP";
         }

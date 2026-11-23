@@ -35,6 +35,12 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playCasinoJazzMusic)]
         fn js_play_casino_jazz_music();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playWonkaTripMusic)]
+        fn js_play_wonka_trip_music();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playClubDiscoMusic)]
+        fn js_play_club_disco_music();
+
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playLexieRpgBossMusic)]
         fn js_play_lexie_rpg_boss_music();
 
@@ -238,6 +244,14 @@ mod imp {
 
     pub fn play_casino_jazz_music() {
         js_play_casino_jazz_music();
+    }
+
+    pub fn play_wonka_trip_music() {
+        js_play_wonka_trip_music();
+    }
+
+    pub fn play_club_disco_music() {
+        js_play_club_disco_music();
     }
 
     pub fn play_lexie_rpg_music() {
@@ -616,6 +630,10 @@ mod imp {
 
     pub fn play_casino_jazz_music() {}
 
+    pub fn play_wonka_trip_music() {}
+
+    pub fn play_club_disco_music() {}
+
     pub fn play_lexie_rpg_music() {}
 
     pub fn speak_voice(_text: &str, _role: &str) {}
@@ -838,8 +856,8 @@ mod imp {
 
 pub use imp::{
     debug_autoskip_enabled, debug_city_start, debug_combat_demo, debug_keys_enabled, has_defeated_mom, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
-    mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_casino_jazz_music, play_cutscene_music, play_hacking_music,
-    play_headphone_music, play_lexie_rpg_music, play_scooter_music, play_sfx, play_viking_chant_music, save_checkpoint,
+    mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_casino_jazz_music, play_club_disco_music, play_cutscene_music, play_hacking_music,
+    play_headphone_music, play_lexie_rpg_music, play_scooter_music, play_sfx, play_viking_chant_music, play_wonka_trip_music, save_checkpoint,
     set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
     skip_touch_ui, stop_voice, set_they_live_mode, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,

@@ -68,6 +68,7 @@ pub const EVENT_CREW_UNLOCK: u32 = 5;
 pub const EVENT_CASINO_WARP_ALL: u32 = 6;
 pub const EVENT_LEXIE_BATTLE: u32 = 7;
 pub const EVENT_LEXIE_MOVE: u32 = 8;
+pub const EVENT_COASTER_WARP_ALL: u32 = 9;
 
 pub const CHAR_STAN: u8 = 0;
 pub const CHAR_NATE: u8 = 1;
@@ -111,7 +112,11 @@ pub struct NetPlugin;
 fn mp_playable(state: Res<State<GameState>>) -> bool {
     matches!(
         *state.get(),
-        GameState::Playing | GameState::BossFight | GameState::CityPlay | GameState::CasinoPlay
+        GameState::Playing
+            | GameState::BossFight
+            | GameState::CityPlay
+            | GameState::CasinoPlay
+            | GameState::ClubPlay
     )
 }
 
@@ -125,6 +130,7 @@ impl Plugin for NetPlugin {
             GameState::BossFight,
             GameState::CityPlay,
             GameState::CasinoPlay,
+            GameState::ClubPlay,
         ] {
             app.add_systems(
                 OnEnter(st),
@@ -334,6 +340,7 @@ fn scene_id_for_state(state: &GameState) -> u8 {
         GameState::BossFight => 2,
         GameState::CityPlay => 3,
         GameState::CasinoPlay => 4,
+        GameState::ClubPlay => 5,
         _ => 0,
     }
 }
@@ -776,6 +783,8 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
     );
     if scene_id == 4 {
         pos += crate::casino::CASINO_LEVEL_ORIGIN;
+    } else if scene_id == 5 {
+        pos += crate::club::CLUB_LEVEL_ORIGIN;
     }
     let q = Quat::from_xyzw(f(8), f(9), f(10), f(11));
     let rot = if q.length() > 0.5 { q.normalize() } else { Quat::IDENTITY };
@@ -996,6 +1005,16 @@ fn receive_remote_states(
                         }
                         format!("{} TELEPORTED SQUAD TO CASINO!", label)
                     }
+                    EVENT_COASTER_WARP_ALL => {
+                        if *state.get() == GameState::CasinoPlay {
+                            stats.casino_open = false;
+                            stats.arcade_open = false;
+                            stats.bartender_open = false;
+                            stats.phone_open = false;
+                            next_state.set(GameState::CoasterCutscene);
+                        }
+                        format!("{} LAUNCHED STARGATE COASTER!", label)
+                    }
                     EVENT_LEXIE_BATTLE => {
                         if *state.get() == GameState::CityPlay && !stats.free_roam {
                             next_state.set(GameState::LexieBattle);
@@ -1041,6 +1060,7 @@ fn publish_local_state(
     tf_q: Query<&Transform, Without<Player>>,
 ) {
     let is_casino = *state.get() == GameState::CasinoPlay;
+    let is_club = *state.get() == GameState::ClubPlay;
     if stats.char_select_open || !mp_playable(state) {
         return;
     }
@@ -1100,6 +1120,8 @@ fn publish_local_state(
     }
     let wire_pos = if is_casino {
         pos - crate::casino::CASINO_LEVEL_ORIGIN
+    } else if is_club {
+        pos - crate::club::CLUB_LEVEL_ORIGIN
     } else {
         pos
     };
@@ -1135,7 +1157,7 @@ fn sync_local_crew_avatar(
     local_crew_q: Query<(Entity, &LocalCrewVisual)>,
     mut vis_q: Query<&mut Visibility, (Without<Player>, Without<LocalCrewVisual>)>,
 ) {
-    let in_city_or_casino = matches!(*state.get(), GameState::CityPlay | GameState::CasinoPlay);
+    let in_city_or_casino = matches!(*state.get(), GameState::CityPlay | GameState::CasinoPlay | GameState::ClubPlay);
     let want_crew = if in_city_or_casino
         && matches!(net.local_char, CHAR_NATE | CHAR_GLENN | CHAR_TJ | CHAR_DEREK)
     {
@@ -1246,6 +1268,11 @@ fn sample_at(samples: &VecDeque<Sample>, render_t: f64) -> Option<Sample> {
                 rel.x = rel.x.clamp(-half, half);
                 rel.z = rel.z.clamp(-half, half);
                 s.pos = rel + crate::casino::CASINO_LEVEL_ORIGIN;
+            } else if s.scene_id == 5 {
+                let mut rel = s.pos - crate::club::CLUB_LEVEL_ORIGIN;
+                rel.x = rel.x.clamp(-half, half);
+                rel.z = rel.z.clamp(-half, half);
+                s.pos = rel + crate::club::CLUB_LEVEL_ORIGIN;
             } else {
                 s.pos.x = s.pos.x.clamp(-half, half);
                 s.pos.z = s.pos.z.clamp(-half, half);

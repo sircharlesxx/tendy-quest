@@ -493,6 +493,10 @@ pub fn update_hurt_flash(
 
 /// The single "what do I do now" line for the HUD.
 fn objective_line(stats: &PlayerStats) -> String {
+    if stats.in_club_level {
+        return "> VELVET DISCO CLUB: Candy, Luna, Star & Velvet Dances (TW) | South Portal -> Casino"
+            .to_string();
+    }
     if stats.in_casino_level {
         return "> TENDY PALACE CASINO: Blackjack, Buffalo & Lucky Ladies Slots (TW) | South Portal -> Pub 217"
             .to_string();
@@ -619,13 +623,15 @@ pub fn update_hud(
         border.0 = Color::srgba(1.0, 0.84, 0.32, 0.55 * hint_alpha);
     }
 
-    let unlocked = !stats.in_city || stats.in_casino_level || stats.city_tendies_unlocked();
+    let unlocked = !stats.in_city || stats.in_casino_level || stats.in_club_level || stats.city_tendies_unlocked();
     let tags = status_tags(&stats);
     for (mut text, mut color, field) in &mut text_q {
         let new_text = match field {
             HudField::Hearts => format!("{}/{}", stats.hearts.max(0), stats.max_hearts),
             HudField::Tendies => {
-                if stats.in_casino_level {
+                if stats.in_club_level {
+                    "CLUB LEVEL".to_string()
+                } else if stats.in_casino_level {
                     "CASINO LEVEL".to_string()
                 } else if stats.in_city && stats.free_roam {
                     "CITY CLEARED".to_string()
@@ -639,14 +645,16 @@ pub fn update_hud(
             HudField::Flask => format!("FLASK [Q] {}/{}", stats.estus_flasks, stats.max_estus_flasks),
             // The license is saved with the checkpoint; Tendy Wendies persist across modes.
             HudField::Credits => {
-                if (stats.in_city || stats.in_casino_level) && stats.has_license {
+                if (stats.in_city || stats.in_casino_level || stats.in_club_level) && stats.has_license {
                     format!("TW {} | CR {} | LICENSE", stats.tendy_wendies, stats.tendy_credits)
                 } else {
                     format!("TW {} | CR {}", stats.tendy_wendies, stats.tendy_credits)
                 }
             }
             HudField::App => {
-                if stats.in_casino_level {
+                if stats.in_club_level {
+                    "CASINO: SOUTH".to_string()
+                } else if stats.in_casino_level {
                     "PORTAL: SOUTH".to_string()
                 } else if stats.scooter_app_unlocked {
                     "SCOOTER APP OK".to_string()
@@ -657,7 +665,9 @@ pub fn update_hud(
             HudField::Objective => objective_line(&stats),
             HudField::Status => tags.join("  "),
             HudField::Score => {
-                if stats.in_casino_level {
+                if stats.in_club_level {
+                    format!("SCORE: {:06}\nVELVET DISCO CLUB", stats.score)
+                } else if stats.in_casino_level {
                     format!("SCORE: {:06}\nTENDY PALACE CASINO", stats.score)
                 } else if stats.in_city && stats.free_roam {
                     format!("SCORE: {:06}\nCEDAR RAPIDS | FREE ROAM", stats.score)
@@ -689,7 +699,7 @@ pub fn update_hud(
 
     for (slot, mut node) in &mut slot_q {
         let show = match slot {
-            HudSlot::CityChip => stats.in_city || stats.in_casino_level,
+            HudSlot::CityChip => stats.in_city || stats.in_casino_level || stats.in_club_level,
             HudSlot::Status => !tags.is_empty(),
         };
         let want = if show { Display::Flex } else { Display::None };
@@ -713,7 +723,7 @@ pub fn update_hud(
     }
     if let Ok((mut node, mut bg)) = tendy_bar_q.get_single_mut() {
         // Free roam & Casino have no tendies; the bar reads as complete.
-        let frac = if stats.in_casino_level || (stats.in_city && stats.free_roam) {
+        let frac = if stats.in_casino_level || stats.in_club_level || (stats.in_city && stats.free_roam) {
             1.0
         } else {
             stats.tendies as f32 / stats.total_tendies.max(1) as f32
@@ -1207,6 +1217,53 @@ pub fn check_url_test_mode(
             stats.boss_hp = 950.0;
             stats.boss_max_hp = 950.0;
             next_state.set_from_black(GameState::LexieBattle);
+        }
+        // `?coaster_cutscene=1`: QA/dev direct-preview link for the Wonka/2001 Stargate Coaster cutscene.
+        22 => {
+            stats.in_city = false;
+            stats.in_casino_level = true;
+            stats.in_club_level = false;
+            stats.player_scale = 1.8;
+            stats.free_roam = true;
+            stats.lexie_defeated = true;
+            stats.scooter_app_unlocked = true;
+            stats.saved_city_pos =
+                crate::city::PUB217_ANCHOR + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set_from_black(GameState::CoasterCutscene);
+        }
+        // `?club=1`: QA/dev direct-preview link for Level 4 Velvet Disco Club.
+        23 => {
+            stats.in_city = false;
+            stats.in_casino_level = false;
+            stats.in_club_level = true;
+            stats.player_scale = 1.8;
+            stats.free_roam = true;
+            stats.lexie_defeated = true;
+            stats.scooter_app_unlocked = true;
+            stats.sync_tendy_wendies_from_save();
+            stats.tendy_wendies = stats.tendy_wendies.max(100);
+            stats.club_skip_tw_sync = true;
+            stats.saved_city_pos =
+                crate::city::PUB217_ANCHOR + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set_from_black(GameState::ClubPlay);
+        }
+        // `?club_broke=1`: QA/dev link for out-of-TW Club -> Casino teleport check.
+        24 => {
+            stats.in_city = false;
+            stats.in_casino_level = false;
+            stats.in_club_level = true;
+            stats.player_scale = 1.8;
+            stats.free_roam = true;
+            stats.lexie_defeated = true;
+            stats.scooter_app_unlocked = true;
+            stats.tendy_wendies = 0;
+            stats.club_skip_tw_sync = true;
+            stats.saved_city_pos =
+                crate::city::PUB217_ANCHOR + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set_from_black(GameState::ClubPlay);
         }
         _ => {}
     }

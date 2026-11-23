@@ -47,6 +47,8 @@ fn sim_running(help: Res<HelpPause>) -> bool {
     !help.open
 }
 
+pub const COASTER_RIDE_COST: u32 = 100_000_000;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ArcadeKind {
     CoinPusher,
@@ -65,7 +67,7 @@ impl ArcadeKind {
             Self::Plinko => "PLINKO TOWER (5 TW) [F/E]",
             Self::Skeeball => "SKEEBALL ALLEY (5 TW / 3 BALLS) [F/E]",
             Self::JazzBand => "TIP JAZZ BAND (5 TW) - TRUMPET SOLO! [F/E]",
-            Self::RollerCoaster => "RIDE STARGATE COASTER (2001 TRIP!) [F/E]",
+            Self::RollerCoaster => "RIDE STARGATE COASTER (100,000,000 TW!) [F/E]",
         }
     }
 
@@ -1578,6 +1580,7 @@ fn update_arcade_proximity(
     mut stats: ResMut<PlayerStats>,
     help: Res<HelpPause>,
     mut arcade: ResMut<ArcadeState>,
+    mut next_state: crate::transition::SceneTransition,
     player_q: Query<&Transform, With<Player>>,
     ring_q: Query<(&ArcadeStationRing, &Transform)>,
     prompt_q: Query<Entity, With<ArcadePromptUi>>,
@@ -1669,6 +1672,21 @@ fn update_arcade_proximity(
             stats.hint_text = "Need 5 TW to tip the Jazz Band! (Cashier gives +25 TW below 25 TW)".to_string();
         }
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        return;
+    }
+    if kind == ArcadeKind::RollerCoaster {
+        if stats.spend_tendy_wendies(COASTER_RIDE_COST) {
+            play_sfx("portal_suck");
+            crate::audio::net_event(crate::net::EVENT_COASTER_WARP_ALL, 1);
+            next_state.set(crate::state::GameState::CoasterCutscene);
+        } else {
+            play_sfx("hit");
+            stats.hint_text = format!(
+                "Need 100,000,000 TW to ride the Stargate Coaster! (You have {} TW)",
+                stats.tendy_wendies
+            );
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        }
         return;
     }
 

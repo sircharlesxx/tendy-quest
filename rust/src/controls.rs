@@ -30,6 +30,7 @@ pub enum ControlContext {
     Car,
     Wheel,
     Casino,
+    Club,
 }
 
 impl ControlContext {
@@ -43,6 +44,7 @@ impl ControlContext {
             GameState::CityPlay if stats.driving_car.is_some() => Some(Self::Car),
             GameState::CityPlay => Some(Self::CityFoot),
             GameState::CasinoPlay => Some(Self::Casino),
+            GameState::ClubPlay => Some(Self::Club),
             _ => None,
         }
     }
@@ -56,6 +58,7 @@ impl ControlContext {
             Self::Car => "Driving a car",
             Self::Wheel => "Riding the Ferris wheel",
             Self::Casino => "Tendy Palace Casino",
+            Self::Club => "Velvet Disco Club",
         }
     }
 }
@@ -144,6 +147,15 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             bind("SPACE", "A", "Jump", true),
             bind("SHIFT", "B", "Dash", true),
             bind("F / E", "X", "Play / Return Portal", true),
+            PAUSE,
+            LOOK,
+            bind("WHEEL", "", "Zoom", false),
+        ],
+        ControlContext::Club => vec![
+            bind("WASD", "L-STICK", "Move", true),
+            bind("SPACE", "A", "Jump", true),
+            bind("SHIFT", "B", "Dash", true),
+            bind("F / E", "X", "Dance Menu / Casino Portal", true),
             PAUSE,
             LOOK,
             bind("WHEEL", "", "Zoom", false),
@@ -679,6 +691,7 @@ fn update_pause_menu(
                     match state.get() {
                         GameState::CityPlay
                         | GameState::CasinoPlay
+                        | GameState::ClubPlay
                         | GameState::LexieBattle
                         | GameState::LexieVictoryCutscene => {
                             crate::ui::save_game_checkpoint("city", &stats);
@@ -790,7 +803,7 @@ fn run_pause_restart(world: &mut World) {
         return;
     };
     let _ = world.try_run_schedule(OnExit(state));
-    if state != GameState::CasinoPlay {
+    if state != GameState::CasinoPlay && state != GameState::ClubPlay {
         let _ = world.run_system_once_with((state == GameState::CityPlay, false), restart_world_for_pause);
     }
     let _ = world.try_run_schedule(OnEnter(state));
@@ -845,7 +858,8 @@ impl Plugin for ControlsPlugin {
                         in_state(GameState::Playing)
                             .or(in_state(GameState::BossFight))
                             .or(in_state(GameState::CityPlay))
-                            .or(in_state(GameState::CasinoPlay)),
+                            .or(in_state(GameState::CasinoPlay))
+                            .or(in_state(GameState::ClubPlay)),
                     )
                     .run_if(sim_running),
             )
@@ -855,6 +869,7 @@ impl Plugin for ControlsPlugin {
             GameState::BossFight,
             GameState::CityPlay,
             GameState::CasinoPlay,
+            GameState::ClubPlay,
         ] {
             app.add_systems(
                 OnTransition {

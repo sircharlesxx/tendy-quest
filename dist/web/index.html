@@ -1012,6 +1012,11 @@
           mkResNoise("bandpass", 0.0, 0.95, 0.28, 350, 2800, 2.2);
           return true;
         }
+        if (name === "bubble_pop") {
+          mkOsc("sine", 340, 95, 0.07, 0.34);
+          mkResNoise("highpass", 0.0, 0.045, 0.22, 1800, 4200, 1.5);
+          return true;
+        }
         return false;
       }
 
@@ -2076,6 +2081,195 @@
             jazzTimer = setInterval(tickJazzBeat, 652);
           } catch (_) {}
         },
+        playWonkaTripMusic() {
+          if (isTrackRestart("wonka_trip")) return;
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
+
+            // Eerie accelerating Willy Wonka tunnel-organ arpeggios + 2001 sci-fi shimmer pad
+            const padLp = ac.createBiquadFilter();
+            padLp.type = "lowpass";
+            padLp.frequency.value = 1800;
+            padLp.connect(out);
+            const oscA = ac.createOscillator();
+            oscA.type = "sawtooth";
+            oscA.frequency.value = 146.83;
+            const oscB = ac.createOscillator();
+            oscB.type = "sawtooth";
+            oscB.frequency.value = 148.2;
+            const pg = ac.createGain();
+            pg.gain.value = 0.06;
+            oscA.connect(pg);
+            oscB.connect(pg);
+            pg.connect(padLp);
+            oscA.start();
+            oscB.start();
+            droneOsc1 = oscA;
+            droneOsc2 = oscB;
+            droneGain = pg;
+
+            const scale = [261.63, 293.66, 311.13, 369.99, 415.30, 493.88, 554.37, 622.25];
+            let step = 0;
+            const tick = () => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const accel = 1.0 + Math.min(0.65, step * 0.012);
+              const f = scale[step % scale.length] * accel;
+              step++;
+
+              const organ = ac.createOscillator();
+              const og = ac.createGain();
+              organ.type = step % 2 === 0 ? "triangle" : "sawtooth";
+              organ.frequency.setValueAtTime(f, now);
+              organ.frequency.exponentialRampToValueAtTime(f * 1.04, now + 0.14);
+              og.gain.setValueAtTime(0.0001, now);
+              og.gain.linearRampToValueAtTime(0.085, now + 0.015);
+              og.gain.exponentialRampToValueAtTime(0.0008, now + 0.17);
+              organ.connect(og);
+              og.connect(out);
+              organ.start(now);
+              organ.stop(now + 0.18);
+
+              if (step % 4 === 0) {
+                const bass = ac.createOscillator();
+                const bg = ac.createGain();
+                bass.type = "sine";
+                const bf = 65.41 * (1.0 + Math.min(0.5, step * 0.008));
+                bass.frequency.setValueAtTime(bf, now);
+                bg.gain.setValueAtTime(0.16, now);
+                bg.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+                bass.connect(bg);
+                bg.connect(out);
+                bass.start(now);
+                bass.stop(now + 0.36);
+              }
+            };
+            tick();
+            jazzTimer = setInterval(tick, 145);
+          } catch (_) {}
+        },
+        playClubDiscoMusic() {
+          if (isTrackRestart("club_disco")) return;
+          stopSpecialAudio();
+          bgmRequested = true;
+          preloadAll();
+          unlockAndMaybeStart();
+          startLoops();
+          try {
+            const ac = ensureCtx();
+            if (!ac || !masterGain) return;
+            const out = newMusicBus(ac);
+            if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+            if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
+
+            const nLen = Math.floor(ac.sampleRate * 0.12);
+            const hatBuf = ac.createBuffer(1, nLen, ac.sampleRate);
+            const hd = hatBuf.getChannelData(0);
+            for (let i = 0; i < nLen; i++) hd[i] = Math.random() * 2 - 1;
+
+            const bassRoots = [65.41, 65.41, 77.78, 87.31, 98.00, 87.31, 77.78, 73.42];
+            const stabChords = [
+              [261.63, 311.13, 392.00, 466.16],
+              [293.66, 349.23, 440.00, 523.25],
+              [311.13, 392.00, 466.16, 587.33],
+              [293.66, 349.23, 415.30, 493.88],
+            ];
+            const arp = [523.25, 622.25, 783.99, 932.33, 1046.50, 932.33, 783.99, 622.25];
+            let step = 0;
+            const tick = () => {
+              if (muted || ac.state !== "running") return;
+              const now = ac.currentTime;
+              const s = step % 16;
+              const chordIdx = (step >> 2) % stabChords.length;
+              step++;
+
+              // 1. 124 BPM 4-on-the-floor disco kick (every 2 steps = 242ms -> ~124 BPM)
+              if (s % 2 === 0) {
+                const kick = ac.createOscillator();
+                const kg = ac.createGain();
+                kick.type = "sine";
+                kick.frequency.setValueAtTime(135, now);
+                kick.frequency.exponentialRampToValueAtTime(42, now + 0.11);
+                kg.gain.setValueAtTime(0.28, now);
+                kg.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                kick.connect(kg);
+                kg.connect(out);
+                kick.start(now);
+                kick.stop(now + 0.15);
+              } else {
+                // Crisp off-beat open disco hi-hat
+                const hs = ac.createBufferSource();
+                hs.buffer = hatBuf;
+                const hp = ac.createBiquadFilter();
+                hp.type = "highpass";
+                hp.frequency.value = 6500;
+                const hg = ac.createGain();
+                hg.gain.setValueAtTime(0.08, now);
+                hg.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+                hs.connect(hp);
+                hp.connect(hg);
+                hg.connect(out);
+                hs.start(now);
+                hs.stop(now + 0.10);
+              }
+
+              // 2. Funky octave disco bassline
+              const root = bassRoots[(s >> 1) % bassRoots.length];
+              const bf = s % 2 === 0 ? root : root * 2.0;
+              const bass = ac.createOscillator();
+              const blp = ac.createBiquadFilter();
+              blp.type = "lowpass";
+              blp.frequency.value = 720;
+              const bg = ac.createGain();
+              bass.type = "sawtooth";
+              bass.frequency.setValueAtTime(bf, now);
+              bg.gain.setValueAtTime(0.14, now);
+              bg.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+              bass.connect(blp);
+              blp.connect(bg);
+              bg.connect(out);
+              bass.start(now);
+              bass.stop(now + 0.20);
+
+              // 3. Shimmering disco synth stabs on beat 1 & 3 + sparkle arp
+              if (s % 4 === 0) {
+                for (const nf of stabChords[chordIdx]) {
+                  const st = ac.createOscillator();
+                  const sg = ac.createGain();
+                  st.type = "triangle";
+                  st.frequency.setValueAtTime(nf, now);
+                  sg.gain.setValueAtTime(0.042, now);
+                  sg.gain.exponentialRampToValueAtTime(0.0008, now + 0.34);
+                  st.connect(sg);
+                  sg.connect(out);
+                  st.start(now);
+                  st.stop(now + 0.36);
+                }
+              }
+              const ao = ac.createOscillator();
+              const ag = ac.createGain();
+              ao.type = "sine";
+              ao.frequency.setValueAtTime(arp[s % arp.length], now);
+              ag.gain.setValueAtTime(0.038, now);
+              ag.gain.exponentialRampToValueAtTime(0.0008, now + 0.15);
+              ao.connect(ag);
+              ag.connect(out);
+              ao.start(now);
+              ao.stop(now + 0.16);
+            };
+            tick();
+            jazzTimer = setInterval(tick, 242);
+          } catch (_) {}
+        },
         // --- Per-character voices (Web Speech API, no network) ---
         // Each speaker gets its own installed voice when the browser offers several, plus its
         // own pitch and rate so characters stay distinct even with only one or two voices.
@@ -2976,7 +3170,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-22d91c56947c22c.js" crossorigin="anonymous" integrity="sha384-hZlOanmotd4+f37zsrDD7vH+v+/DyTejg8lIU7oNaN5QvHRmoKRP4fACJttfrYVb"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-22d91c56947c22c_bg.wasm" crossorigin="anonymous" integrity="sha384-iWLRXOO3NbH6AoGAs79EftR4BIAzTfDtR7Y8m6JpFs1n+79N3kmXQOaskGJL6p7y" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-99cd42a5735c44e8.js" crossorigin="anonymous" integrity="sha384-dp7jp9IwphcptVcOxtZ7oEId3DxbEPtQRIFVRlHds41LWT7DTXAhqke8f9y7MKAd"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-99cd42a5735c44e8_bg.wasm" crossorigin="anonymous" integrity="sha384-t4t2va23F1htk77IGja/HyrVbUzbEHnURj8Hq2kzcfOd7ODoYtVC+k9GqigY+vyl" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3520,6 +3714,7 @@
       let pendingInitMode = (() => {
         const s = window.location.search;
         if (s.includes("free_roam=1")) return 17;
+        if (s.includes("coaster_cutscene=1")) return 22;
         if (s.includes("cutscene=1")) return 1;
         if (s.includes("boss=1")) return 2;
         if (s.includes("anime=1")) return 3;
@@ -3541,6 +3736,8 @@
         if (s.includes("casino=1")) return 19;
         if (s.includes("pub_portal=1")) return 20;
         if (s.includes("lexie_battle=1")) return 21;
+        if (s.includes("club_broke=1")) return 24;
+        if (s.includes("club=1")) return 23;
         return 0;
       })();
       const debugKeysEnabled = /[?&]debug=1(?:&|$)/.test(window.location.search);
@@ -6127,8 +6324,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-22d91c56947c22c.js';
-const wasm = await init({ module_or_path: './tendy-quest-22d91c56947c22c_bg.wasm' });
+import init, * as bindings from './tendy-quest-99cd42a5735c44e8.js';
+const wasm = await init({ module_or_path: './tendy-quest-99cd42a5735c44e8_bg.wasm' });
 
 
 window.wasmBindings = bindings;
