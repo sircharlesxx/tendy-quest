@@ -93,6 +93,7 @@ impl Plugin for CasinoPlugin {
                     update_casino_mirror_and_hair.run_if(sim_running),
                     update_casino_coins.run_if(sim_running),
                     update_casino_station_camera.run_if(sim_running),
+                    update_casino_summon_city_squad.run_if(sim_running),
                     refresh_casino_ui,
                 )
                     .chain()
@@ -1071,6 +1072,15 @@ struct CasinoPromptButton;
 #[derive(Component)]
 struct CasinoPromptText;
 
+#[derive(Component)]
+struct CasinoSummonUi;
+
+#[derive(Component)]
+struct CasinoSummonBtn;
+
+#[derive(Component)]
+struct CasinoSummonText;
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines, clippy::type_complexity)]
 fn enter_casino_play(
     mut commands: Commands,
@@ -1115,6 +1125,47 @@ fn enter_casino_play(
         node.display = Display::Flex;
         *vis = Visibility::Inherited;
     }
+
+    // Persistent top-right "Teleport Remaining City Players Here [T]" control in CasinoPlay
+    commands
+        .spawn((
+            LevelEntity,
+            CasinoLevelEntity,
+            CasinoSummonUi,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(134.0),
+                right: Val::Px(12.0),
+                display: Display::Flex,
+                ..default()
+            },
+            GlobalZIndex(10),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                CasinoSummonBtn,
+                Button,
+                Node {
+                    padding: UiRect::axes(Val::Px(11.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.18, 0.12, 0.28, 0.86)),
+                BorderColor(Color::srgba(0.65, 0.55, 0.85, 0.65)),
+                BorderRadius::all(Val::Px(8.0)),
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    CasinoSummonText,
+                    Text::new("TELEPORT CITY SQUAD [T]"),
+                    TextFont {
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
 
     commands.insert_resource(ClearColor(Color::srgb(0.015, 0.008, 0.028)));
     commands.insert_resource(AmbientLight {
@@ -2468,6 +2519,9 @@ fn exit_casino_play(
     }
     for e in &prompt_q {
         commands.entity(e).despawn_recursive();
+    }
+    for e in &level_q {
+        let _ = e;
     }
 }
 
@@ -5404,5 +5458,65 @@ fn update_casino_station_camera(
         if let Projection::Perspective(ref mut p) = *proj {
             p.fov += (want_fov - p.fov) * k;
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn update_casino_summon_city_squad(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut stats: ResMut<PlayerStats>,
+    help: Res<HelpPause>,
+    mut root_q: Query<&mut Node, With<CasinoSummonUi>>,
+    mut btn_q: Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<CasinoSummonBtn>>,
+    mut text_q: Query<&mut Text, With<CasinoSummonText>>,
+) {
+    let hidden = stats.casino_open || stats.arcade_open || help.open;
+    for mut node in &mut root_q {
+        let want = if hidden { Display::None } else { Display::Flex };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    let sq = crate::audio::net_squad_info();
+    let city_peers = sq[3];
+    let label = if city_peers > 0 {
+        format!(
+            "TELEPORT {} CITY PLAYER{} HERE [T]",
+            city_peers,
+            if city_peers == 1 { "" } else { "S" }
+        )
+    } else {
+        "TELEPORT CITY SQUAD (0 IN CITY) [T]".to_string()
+    };
+    for mut txt in &mut text_q {
+        if txt.0 != label {
+            txt.0 = label.clone();
+        }
+    }
+    let mut pressed = !hidden && keys.just_pressed(KeyCode::KeyT);
+    let (want_bg, want_border) = if city_peers > 0 {
+        (Color::srgb(0.76, 0.44, 0.08), Color::srgb(1.0, 0.88, 0.34))
+    } else {
+        (
+            Color::srgba(0.18, 0.12, 0.28, 0.86),
+            Color::srgba(0.65, 0.55, 0.85, 0.65),
+        )
+    };
+    for (inter, mut bg, mut border) in &mut btn_q {
+        bg.0 = want_bg;
+        border.0 = want_border;
+        if !hidden && *inter == Interaction::Pressed {
+            pressed = true;
+        }
+    }
+    if pressed {
+        crate::audio::net_event(crate::net::EVENT_CASINO_WARP_ALL, 2);
+        play_sfx("portal_suck");
+        stats.hint_text = if city_peers > 0 {
+            "TELEPORTED REMAINING CITY PLAYERS TO TENDY PALACE CASINO!".to_string()
+        } else {
+            "SENT CASINO TELEPORT TO CEDAR RAPIDS!".to_string()
+        };
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
     }
 }

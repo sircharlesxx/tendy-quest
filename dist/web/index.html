@@ -2976,7 +2976,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-9b085ca6a6bb98c6.js" crossorigin="anonymous" integrity="sha384-p61aGgLuvarhI3klcWzHoI/gs613oiwB2RQBNvKFfhbzOlfYBep0efcRlCCQsYDX"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-9b085ca6a6bb98c6_bg.wasm" crossorigin="anonymous" integrity="sha384-MaWkLSBwVrF8iYQHbhpW4stGbgEeqRzoPJJwgwlzzI0Uk1jAJRlkLG8KapQJPpTY" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-22d91c56947c22c.js" crossorigin="anonymous" integrity="sha384-hZlOanmotd4+f37zsrDD7vH+v+/DyTejg8lIU7oNaN5QvHRmoKRP4fACJttfrYVb"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-22d91c56947c22c_bg.wasm" crossorigin="anonymous" integrity="sha384-iWLRXOO3NbH6AoGAs79EftR4BIAzTfDtR7Y8m6JpFs1n+79N3kmXQOaskGJL6p7y" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4617,7 +4617,7 @@
         if (!pc || typeof pc.getTransceivers !== "function") return;
         for (const tr of pc.getTransceivers()) {
           if (tr.receiver && tr.receiver.track && tr.receiver.track.kind === "audio") {
-            try { tr.direction = "sendrecv"; } catch (_) {}
+            try { if (tr.direction !== "sendrecv") tr.direction = "sendrecv"; } catch (_) {}
             if (voice.micOn && voice.track && tr.sender) {
               try { await tr.sender.replaceTrack(voice.track); } catch (_) {}
             }
@@ -4875,7 +4875,11 @@
           },
           connCount() { return conns.filter((c) => c.open).length; },
           newConn() {
-            const pc = new RTCPeerConnection({ iceServers: stunUrl ? [{ urls: stunUrl }] : [] });
+            const pc = new RTCPeerConnection({
+              iceServers: stunUrl ? [{ urls: stunUrl }] : [],
+              bundlePolicy: "max-bundle",
+              rtcpMuxPolicy: "require",
+            });
             attachVoiceHandlers(pc, isHost);
             const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
             const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
@@ -4919,17 +4923,27 @@
         if (pc.iceGatheringState === "complete") return Promise.resolve();
         return new Promise((res) => {
           let doneFlag = false;
+          let graceTimer = null;
           const finish = () => {
             if (doneFlag) return;
             doneFlag = true;
             clearTimeout(timer);
+            if (graceTimer) clearTimeout(graceTimer);
             pc.removeEventListener("icegatheringstatechange", onChange);
             pc.removeEventListener("icecandidate", onCand);
             res();
           };
           const onChange = () => { if (pc.iceGatheringState === "complete") finish(); };
-          const onCand = (e) => { if (!e.candidate) finish(); };
-          const timer = setTimeout(finish, timeoutMs || 4000);
+          const onCand = (e) => {
+            if (!e.candidate) {
+              finish();
+              return;
+            }
+            if (!graceTimer && e.candidate.candidate && (e.candidate.candidate.includes("typ srflx") || e.candidate.candidate.includes("typ relay"))) {
+              graceTimer = setTimeout(finish, 350);
+            }
+          };
+          const timer = setTimeout(finish, timeoutMs || 2500);
           pc.addEventListener("icegatheringstatechange", onChange);
           pc.addEventListener("icecandidate", onCand);
         });
@@ -5012,7 +5026,6 @@
         let infoHash = makeInfoHash(room, shard);
         let shardJoinedAt = performance.now();
         let sawFirstSignal = false;
-        let sawRoomFullHint = false;
         let trackersUp = 0;
 
         const conns = new Map();        // peer_id -> conn record
@@ -5075,6 +5088,7 @@
           };
           const teardown = () => {
             c.open = false;
+            dropVoicePc(c.pc);
             if (c.remotePeerId && conns.get(c.remotePeerId) === c) conns.delete(c.remotePeerId);
             if (c.boundId) {
               const p = net.peers.get(c.boundId);
@@ -5115,7 +5129,7 @@
                 const offerIdBytes = new Uint32Array(3);
                 crypto.getRandomValues(offerIdBytes);
                 const offerId = Array.from(offerIdBytes, (x) => x.toString(16).padStart(8, "0")).join("").slice(0, 20);
-                const pc = new RTCPeerConnection({ iceServers });
+                const pc = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" });
                 attachVoiceHandlers(pc, true);
                 const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
                 const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
@@ -5125,9 +5139,10 @@
                 try {
                   await pc.setLocalDescription(await pc.createOffer());
                   await iceGathered(pc, 1800);
-                  if (closed || !pc.localDescription) { try { pc.close(); } catch (_) {} pendingOffers.delete(offerId); return; }
+                  if (closed || !pc.localDescription) { dropVoicePc(pc); try { pc.close(); } catch (_) {} pendingOffers.delete(offerId); return; }
                   c.sdp = pc.localDescription.sdp;
                 } catch (_) {
+                  dropVoicePc(pc);
                   try { pc.close(); } catch (_) {}
                   pendingOffers.delete(offerId);
                 }
@@ -5144,7 +5159,7 @@
 
         function sendAnnounce(stEntry, forceOffers) {
           if (closed || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
-          if (performance.now() - stEntry.lastAnnounceAt < 1200) return;
+          if (performance.now() - stEntry.lastAnnounceAt < (forceOffers ? 300 : 1200)) return;
           const roomSlotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
           const offersPayload = [];
           if (roomSlotsLeft > 0) {
@@ -5201,9 +5216,6 @@
           }
           if (msg.info_hash && msg.info_hash !== infoHash) return;
           if (msg.to_peer_id && msg.to_peer_id !== myPeerId) return;
-          if (typeof msg.incomplete === "number" && msg.incomplete >= MESH_MAX_REMOTES + 2 && openConnCount() === 0) {
-            sawRoomFullHint = true;
-          }
           if (!msg.peer_id || msg.peer_id === myPeerId) return;
 
           // MQTT broadcast fan-out: when a peer announces multiple offers on the shared topic,
@@ -5253,10 +5265,11 @@
               ) {
                 return;
               }
+              dropVoicePc(existing.pc);
               try { existing.pc.close(); } catch (_) {}
               conns.delete(msg.peer_id);
             }
-            const pc = new RTCPeerConnection({ iceServers });
+            const pc = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" });
             attachVoiceHandlers(pc, false);
             const st = pc.createDataChannel("st", { negotiated: true, id: 0, ordered: false, maxRetransmits: 0 });
             const ev = pc.createDataChannel("ev", { negotiated: true, id: 1, ordered: true });
@@ -5268,17 +5281,32 @@
               await ensureAnswererAudio(pc);
               await pc.setLocalDescription(await pc.createAnswer());
               await iceGathered(pc, 2400);
-              if (closed || !pc.localDescription || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
-              sendSignalObj(stEntry, {
+              if (closed || !pc.localDescription) return;
+              const answerObj = {
                 action: "announce",
                 info_hash: infoHash,
                 peer_id: myPeerId,
                 to_peer_id: msg.peer_id,
                 offer_id: msg.offer_id,
                 answer: { type: "answer", sdp: pc.localDescription.sdp },
-              });
+              };
+              let sent = false;
+              if (stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
+                sendSignalObj(stEntry, answerObj);
+                sent = true;
+              }
+              const mqttEntry = trackerStates.find((x) => x.isMqtt && x.ready && x.ws && x.ws.readyState === WebSocket.OPEN);
+              if (mqttEntry && mqttEntry !== stEntry) {
+                sendSignalObj(mqttEntry, answerObj);
+                sent = true;
+              }
+              if (!sent) {
+                const fallbackEntry = trackerStates.find((x) => x.ready && x.ws && x.ws.readyState === WebSocket.OPEN);
+                if (fallbackEntry) sendSignalObj(fallbackEntry, answerObj);
+              }
             } catch (_) {
               if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
+              dropVoicePc(pc);
               try { pc.close(); } catch (_) {}
             }
             return;
@@ -5293,9 +5321,11 @@
               // Prevent duplicate RTCPeerConnection leaks on simultaneous glare.
               if (dup.open || myPeerId > msg.peer_id) {
                 pendingOffers.delete(msg.offer_id);
+                dropVoicePc(c.pc);
                 try { c.pc.close(); } catch (_) {}
                 return;
               }
+              dropVoicePc(dup.pc);
               try { dup.pc.close(); } catch (_) {}
             }
             pendingOffers.delete(msg.offer_id);
@@ -5306,6 +5336,7 @@
               await c.pc.setRemoteDescription({ type: "answer", sdp: msg.answer.sdp });
             } catch (_) {
               if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
+              dropVoicePc(c.pc);
               try { c.pc.close(); } catch (_) {}
             }
           }
@@ -5376,17 +5407,16 @@
         }
 
         function bumpShard() {
-          for (const c of conns.values()) { try { c.pc.close(); } catch (_) {} }
+          for (const c of conns.values()) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
           conns.clear();
           for (const id of [...net.peers.keys()]) removePeer(id);
           shard = (shard + 1) % 16;
           net.shard = shard;
           infoHash = makeInfoHash(room, shard);
           shardJoinedAt = performance.now();
-          sawRoomFullHint = false;
           for (const oid of [...pendingOffers.keys()]) {
             const c = pendingOffers.get(oid);
-            if (c) try { c.pc.close(); } catch (_) {}
+            if (c) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
           }
           pendingOffers.clear();
           prepareOfferPool(3).then(() => {
@@ -5411,6 +5441,7 @@
           for (const [oid, c] of [...pendingOffers]) {
             if (now - c.createdAt > 45000) {
               pendingOffers.delete(oid);
+              dropVoicePc(c.pc);
               try { c.pc.close(); } catch (_) {}
             }
           }
@@ -5418,6 +5449,7 @@
           for (const [pid, c] of [...conns]) {
             if (!c.open && now - (c.createdAt || 0) > 10000) {
               conns.delete(pid);
+              dropVoicePc(c.pc);
               try { c.pc.close(); } catch (_) {}
             }
           }
@@ -5436,9 +5468,6 @@
                 sendAnnounce(stEntry, slotsLeft > 0);
               }
             }
-          }
-          if (sawRoomFullHint && openConnCount() === 0 && now - shardJoinedAt > 16000) {
-            bumpShard();
           }
         }, 3000);
 
@@ -5472,9 +5501,9 @@
             for (const stEntry of trackerStates) {
               if (stEntry.ws) { try { stEntry.ws.close(); } catch (_) {} stEntry.ws = null; }
             }
-            for (const c of pendingOffers.values()) { try { c.pc.close(); } catch (_) {} }
+            for (const c of pendingOffers.values()) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
             pendingOffers.clear();
-            for (const c of conns.values()) { try { c.pc.close(); } catch (_) {} }
+            for (const c of conns.values()) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
             conns.clear();
           },
           connCount() { return openConnCount(); },
@@ -5994,13 +6023,20 @@
       function squadInfo() {
         let inLvl1 = net.sceneId === 1 ? 1 : 0;
         let readyLvl1 = (net.sceneId === 1 && net.level1Ready) ? 1 : 0;
+        let inCityPeers = 0;
+        let inCasinoPeers = 0;
         for (const p of net.peers.values()) {
-          if ((p.sceneId || 0) === 1) {
+          const ps = p.sceneId || 0;
+          if (ps === 1) {
             inLvl1++;
             if (p.level1Ready) readyLvl1++;
+          } else if (ps === 3) {
+            inCityPeers++;
+          } else if (ps === 4) {
+            inCasinoPeers++;
           }
         }
-        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1]);
+        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1, inCityPeers, inCasinoPeers]);
       }
 
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);
@@ -6026,6 +6062,23 @@
         voiceState() { return { micOn: voice.micOn, deafened: voice.deafened, dspActive: voice.dspActive, remoteStreams: voice.audios.size, err: voice.err }; },
         lockChar,
         squadInfo,
+        debugState() {
+          return {
+            myPeerId,
+            room: net.room,
+            shard: net.shard,
+            sceneId: net.sceneId,
+            myChar: net.myChar,
+            charLocked: net.charLocked,
+            charSelectOpen: net.charSelectOpen,
+            peers: net.peers.size,
+            connections: net.transport ? net.transport.connCount() : 0,
+            trackersUp: net.transport && typeof net.transport.trackersUp === "number" ? net.transport.trackersUp : 0,
+            status: net.status,
+            squadInfo: Array.from(squadInfo()),
+            voice: { micOn: voice.micOn, deafened: voice.deafened, pcs: voice.pcs.size, remoteStreams: voice.audios.size },
+          };
+        },
         publish(state) {
           if (!state || state.length !== 14) return;
           net.lastState = Float32Array.from(state);
@@ -6074,8 +6127,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-9b085ca6a6bb98c6.js';
-const wasm = await init({ module_or_path: './tendy-quest-9b085ca6a6bb98c6_bg.wasm' });
+import init, * as bindings from './tendy-quest-22d91c56947c22c.js';
+const wasm = await init({ module_or_path: './tendy-quest-22d91c56947c22c_bg.wasm' });
 
 
 window.wasmBindings = bindings;

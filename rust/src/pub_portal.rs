@@ -363,6 +363,9 @@ pub struct BartenderHeadPivot;
 #[derive(Component)]
 struct BartenderUiRoot;
 
+#[derive(Component)]
+struct BartenderTeleportPrompt;
+
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum BartenderAction {
     OrderTenBeers,
@@ -707,6 +710,7 @@ fn handle_bartender_modal_input(
     mut next_state: SceneTransition,
     btn_q: Query<(&Interaction, &BartenderAction), Changed<Interaction>>,
     ui_q: Query<Entity, With<BartenderUiRoot>>,
+    teleport_prompt_q: Query<(), With<BartenderTeleportPrompt>>,
 ) {
     if !stats.bartender_open {
         return;
@@ -716,7 +720,11 @@ fn handle_bartender_modal_input(
     if keys.just_pressed(KeyCode::Escape) {
         action_choice = Some(BartenderAction::Leave);
     } else if keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) {
-        action_choice = Some(BartenderAction::OrderTenBeers);
+        if !teleport_prompt_q.is_empty() {
+            action_choice = Some(BartenderAction::TeleportEveryone);
+        } else {
+            action_choice = Some(BartenderAction::OrderTenBeers);
+        }
     } else {
         for (inter, act) in &btn_q {
             if *inter == Interaction::Pressed {
@@ -742,16 +750,11 @@ fn handle_bartender_modal_input(
             stop_voice();
         }
         BartenderAction::OrderTenBeers => {
-            if crate::audio::net_squad_info()[0] > 1 {
-                stats.bartender_open = true;
-                spawn_casino_teleport_prompt(&mut commands);
-                return;
-            }
-            stop_voice();
-            play_sfx("estus_drink");
-            stats.saved_city_pos = bartender_bar_trigger_pos();
-            stats.saved_casino_city_scale = stats.player_scale;
-            next_state.set(GameState::PubPortalCutscene);
+            let sq = crate::audio::net_squad_info();
+            let total_squad = sq[0];
+            let in_city_peers = sq[3];
+            stats.bartender_open = true;
+            spawn_casino_teleport_prompt(&mut commands, in_city_peers, total_squad);
         }
         BartenderAction::TeleportEveryone => {
             crate::audio::net_event(crate::net::EVENT_CASINO_WARP_ALL, 1);
@@ -771,10 +774,21 @@ fn handle_bartender_modal_input(
     }
 }
 
-fn spawn_casino_teleport_prompt(commands: &mut Commands) {
+fn spawn_casino_teleport_prompt(commands: &mut Commands, in_city_peers: u32, total_squad: u32) {
+    let body_msg = if in_city_peers > 0 {
+        format!(
+            "{} other player(s) are still in Cedar Rapids. Bring everyone through the Pub 217 portal with you, or go alone?",
+            in_city_peers
+        )
+    } else if total_squad > 1 {
+        "Other squad players are online. Send the Casino teleport to anyone in Cedar Rapids, or go alone?".to_string()
+    } else {
+        "Ready for Tendy Palace Casino! Choose TELEPORT EVERYONE to pull any players in Cedar Rapids with you, or GO ALONE.".to_string()
+    };
     commands
         .spawn((
             BartenderUiRoot,
+            BartenderTeleportPrompt,
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
@@ -810,7 +824,7 @@ fn spawn_casino_teleport_prompt(commands: &mut Commands) {
                     TextColor(Color::srgb(1.0, 0.88, 0.35)),
                 ));
                 card.spawn((
-                    Text::new("Other players are in your squad shard. Bring everyone through the Pub 217 portal or go alone?"),
+                    Text::new(body_msg),
                     TextFont {
                         font_size: 13.5,
                         ..default()
@@ -819,8 +833,10 @@ fn spawn_casino_teleport_prompt(commands: &mut Commands) {
                 ));
                 card.spawn(Node {
                     flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::FlexEnd,
                     column_gap: Val::Px(10.0),
+                    row_gap: Val::Px(8.0),
                     ..default()
                 })
                 .with_children(|row| {
@@ -876,7 +892,7 @@ fn spawn_casino_teleport_prompt(commands: &mut Commands) {
                     ))
                     .with_children(|b| {
                         b.spawn((
-                            Text::new("TELEPORT EVERYONE"),
+                            Text::new("TELEPORT EVERYONE [SPACE]"),
                             TextFont { font_size: 14.0, ..default() },
                             TextColor(Color::WHITE),
                         ));

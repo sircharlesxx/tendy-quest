@@ -566,12 +566,14 @@ mod imp {
         js_net_lock_char(char_id);
     }
 
-    pub fn net_squad_info() -> [u32; 3] {
+    pub fn net_squad_info() -> [u32; 5] {
         let v = js_net_squad_info();
         [
             v.first().copied().unwrap_or(1),
             v.get(1).copied().unwrap_or(0),
             v.get(2).copied().unwrap_or(1),
+            v.get(3).copied().unwrap_or(0),
+            v.get(4).copied().unwrap_or(0),
         ]
     }
 
@@ -819,8 +821,8 @@ mod imp {
 
     pub fn net_lock_char(_char_id: u32) {}
 
-    pub fn net_squad_info() -> [u32; 3] {
-        [1, 0, 1]
+    pub fn net_squad_info() -> [u32; 5] {
+        [1, 0, 1, 0, 0]
     }
 
     pub fn net_publish(_state: &[f32]) {}

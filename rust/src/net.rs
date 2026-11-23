@@ -344,6 +344,7 @@ fn enter_city_net(
     mut stats: ResMut<PlayerStats>,
     mut net: ResMut<NetState>,
 ) {
+    let prev_scene_id = net.local_scene_id;
     let sid = scene_id_for_state(state.get());
     net.local_scene_id = sid;
     crate::audio::net_set_free_roam(true);
@@ -355,7 +356,7 @@ fn enter_city_net(
             crate::audio::net_lock_char(u32::from(CHAR_STAN));
         }
         GameState::CityPlay => {
-            if stats.needs_city_char_select || stats.free_roam {
+            if stats.needs_city_char_select || (stats.free_roam && prev_scene_id != 4) {
                 stats.needs_city_char_select = false;
                 crate::audio::net_open_char_select("");
             }
@@ -768,11 +769,14 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
         return None;
     }
     let half = crate::city::CITY_HALF_EXTENT;
-    let pos = Vec3::new(
+    let mut pos = Vec3::new(
         f(5).clamp(-half, half),
         f(6).clamp(Y_RANGE.0, Y_RANGE.1),
         f(7).clamp(-half, half),
     );
+    if scene_id == 4 {
+        pos += crate::casino::CASINO_LEVEL_ORIGIN;
+    }
     let q = Quat::from_xyzw(f(8), f(9), f(10), f(11));
     let rot = if q.length() > 0.5 { q.normalize() } else { Quat::IDENTITY };
     Some(Sample {
@@ -976,7 +980,19 @@ fn receive_remote_states(
                     }
                     EVENT_CASINO_WARP_ALL => {
                         if *state.get() == GameState::CityPlay {
-                            next_state.set(GameState::PubPortalCutscene);
+                            stats.saved_city_pos = crate::city::PUB217_ANCHOR
+                                + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+                            stats.saved_casino_city_scale = stats.player_scale;
+                            stats.bartender_open = false;
+                            stats.phone_open = false;
+                            stats.driving_car = None;
+                            stats.riding_scooter = None;
+                            stats.riding_wheel = false;
+                            if value == 2 {
+                                next_state.set(GameState::CasinoPlay);
+                            } else {
+                                next_state.set(GameState::PubPortalCutscene);
+                            }
                         }
                         format!("{} TELEPORTED SQUAD TO CASINO!", label)
                     }
@@ -1024,6 +1040,7 @@ fn publish_local_state(
     player_q: Query<(&Transform, &Player, &Visibility)>,
     tf_q: Query<&Transform, Without<Player>>,
 ) {
+    let is_casino = *state.get() == GameState::CasinoPlay;
     if stats.char_select_open || !mp_playable(state) {
         return;
     }
@@ -1081,10 +1098,15 @@ fn publish_local_state(
     if *vis == Visibility::Hidden {
         flags |= FLAG_HIDDEN;
     }
+    let wire_pos = if is_casino {
+        pos - crate::casino::CASINO_LEVEL_ORIGIN
+    } else {
+        pos
+    };
     crate::audio::net_publish(&[
-        pos.x,
-        pos.y,
-        pos.z,
+        wire_pos.x,
+        wire_pos.y,
+        wire_pos.z,
         rot.x,
         rot.y,
         rot.z,
@@ -1219,8 +1241,15 @@ fn sample_at(samples: &VecDeque<Sample>, render_t: f64) -> Option<Sample> {
             let ahead = ((render_t - last.t).min(MAX_EXTRAPOLATE_MS) / 1000.0) as f32;
             s.pos += Vec3::new(s.vel.x, 0.0, s.vel.z) * ahead;
             let half = crate::city::CITY_HALF_EXTENT;
-            s.pos.x = s.pos.x.clamp(-half, half);
-            s.pos.z = s.pos.z.clamp(-half, half);
+            if s.scene_id == 4 {
+                let mut rel = s.pos - crate::casino::CASINO_LEVEL_ORIGIN;
+                rel.x = rel.x.clamp(-half, half);
+                rel.z = rel.z.clamp(-half, half);
+                s.pos = rel + crate::casino::CASINO_LEVEL_ORIGIN;
+            } else {
+                s.pos.x = s.pos.x.clamp(-half, half);
+                s.pos.z = s.pos.z.clamp(-half, half);
+            }
         }
         return Some(s);
     }
@@ -1619,7 +1648,7 @@ fn animate_local_crew_visual(
     stride_arm_q: Query<&CrewStrideArm>,
     mut part_q: Query<&mut Transform, (Without<RemoteAvatar>, Without<Player>)>,
 ) {
-    if !stats.free_roam || local_vis_q.is_empty() {
+    if local_vis_q.is_empty() {
         return;
     }
     let Ok(player) = player_q.get_single() else {
@@ -1733,7 +1762,6 @@ fn update_net_overlay(
     mut commands: Commands,
     time: Res<Time<Real>>,
     mut net: ResMut<NetState>,
-    stats: Res<PlayerStats>,
     player_q: Query<&Transform, With<Player>>,
     avatar_q: Query<(&Transform, &Visibility), (With<RemoteAvatar>, Without<Player>)>,
     cam_q: Query<(&Camera, &Transform), (With<Camera3d>, Without<Player>, Without<RemoteAvatar>)>,
@@ -1742,10 +1770,8 @@ fn update_net_overlay(
     mut players_text_q: Query<&mut Text, (With<NetPlayersText>, Without<NetEventText>)>,
     mut event_text_q: Query<(&mut Text, Entity), (With<NetEventText>, Without<NetPlayersText>)>,
 ) {
-    if !stats.free_roam {
-        return;
-    }
     let dt = time.delta_secs();
+    let local_scene_id = net.local_scene_id;
     let cam = cam_q.iter().find(|(c, _)| c.is_active);
     let radar = radar_q.get_single().ok().map(|p| p.get());
     let to_pct = |v: f32| -> f32 {
@@ -1755,7 +1781,9 @@ fn update_net_overlay(
     let mut tele = String::new();
     for r in &mut net.remotes {
         let shown = r.shown;
-        let away = shown.map(|s| s.mode == MODE_AWAY).unwrap_or(true);
+        let away = shown
+            .map(|s| s.mode == MODE_AWAY || s.scene_id == 0 || s.scene_id != local_scene_id)
+            .unwrap_or(true);
         let mut label_at = None;
         if let (Some(s), Some((camera, cam_tf))) = (shown, cam) {
             if !away {
