@@ -609,6 +609,20 @@
           mkNoise(0.08, 0.24, 1200);
           return true;
         }
+        if (name === "wonka_scream") {
+          mkOsc("sawtooth", 820, 1660, 0.52, 0.24);
+          mkOsc("sawtooth", 835, 420, 1.15, 0.20);
+          mkOsc("triangle", 1240, 620, 0.90, 0.18);
+          mkNoise(0.35, 0.12, 2400);
+          return true;
+        }
+        if (name === "wonka_halt") {
+          stopSpecialAudio();
+          mkOsc("triangle", 150, 42, 0.22, 0.34);
+          mkOsc("square", 980, 320, 0.06, 0.18);
+          mkNoise(0.09, 0.26, 950);
+          return true;
+        }
         if (name === "sleep_snore") {
           mkOsc("triangle", 110, 78, 0.45, 0.18);
           return true;
@@ -2095,19 +2109,25 @@
             if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
             if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
 
-            // Eerie accelerating Willy Wonka tunnel-organ arpeggios + 2001 sci-fi shimmer pad
+            // Willy Wonka Wondrous Boat Ride + 2001 monolith score:
+            // starts quietly & calmly ("Round the world and home again..."), then accelerates
+            // in pitch, tempo, and dissonance until "wonka_halt" cuts it abruptly.
             const padLp = ac.createBiquadFilter();
             padLp.type = "lowpass";
-            padLp.frequency.value = 1800;
+            padLp.frequency.setValueAtTime(650, ac.currentTime);
+            padLp.frequency.exponentialRampToValueAtTime(2800, ac.currentTime + 21.0);
             padLp.connect(out);
             const oscA = ac.createOscillator();
             oscA.type = "sawtooth";
-            oscA.frequency.value = 146.83;
+            oscA.frequency.setValueAtTime(110.0, ac.currentTime);
+            oscA.frequency.linearRampToValueAtTime(164.81, ac.currentTime + 22.0);
             const oscB = ac.createOscillator();
             oscB.type = "sawtooth";
-            oscB.frequency.value = 148.2;
+            oscB.frequency.setValueAtTime(110.6, ac.currentTime);
+            oscB.frequency.linearRampToValueAtTime(168.4, ac.currentTime + 22.0);
             const pg = ac.createGain();
-            pg.gain.value = 0.06;
+            pg.gain.setValueAtTime(0.015, ac.currentTime);
+            pg.gain.linearRampToValueAtTime(0.11, ac.currentTime + 20.0);
             oscA.connect(pg);
             oscB.connect(pg);
             pg.connect(padLp);
@@ -2117,44 +2137,62 @@
             droneOsc2 = oscB;
             droneGain = pg;
 
-            const scale = [261.63, 293.66, 311.13, 369.99, 415.30, 493.88, 554.37, 622.25];
+            const calmScale = [261.63, 329.63, 392.00, 329.63, 293.66, 349.23, 440.00, 392.00];
+            const eerieScale = [261.63, 293.66, 311.13, 369.99, 415.30, 493.88, 554.37, 622.25];
             let step = 0;
+            const scheduleNext = (delayMs) => {
+              jazzTimer = setTimeout(tick, delayMs);
+            };
             const tick = () => {
-              if (muted || ac.state !== "running") return;
-              const now = ac.currentTime;
-              const accel = 1.0 + Math.min(0.65, step * 0.012);
-              const f = scale[step % scale.length] * accel;
-              step++;
+              if (musicBus !== out || currentTrack !== "wonka_trip") return;
+              const isCalm = step < 16;
+              if (!muted && ac.state === "running") {
+                const now = ac.currentTime;
+                const intens = Math.min(1.0, Math.max(0.0, (step - 12) / 96.0));
+                const accel = isCalm ? 1.0 : (1.0 + Math.min(0.68, (step - 15) * 0.011));
+                const baseNote = isCalm
+                  ? calmScale[step % calmScale.length]
+                  : eerieScale[step % eerieScale.length];
+                const f = baseNote * accel;
 
-              const organ = ac.createOscillator();
-              const og = ac.createGain();
-              organ.type = step % 2 === 0 ? "triangle" : "sawtooth";
-              organ.frequency.setValueAtTime(f, now);
-              organ.frequency.exponentialRampToValueAtTime(f * 1.04, now + 0.14);
-              og.gain.setValueAtTime(0.0001, now);
-              og.gain.linearRampToValueAtTime(0.085, now + 0.015);
-              og.gain.exponentialRampToValueAtTime(0.0008, now + 0.17);
-              organ.connect(og);
-              og.connect(out);
-              organ.start(now);
-              organ.stop(now + 0.18);
+                const organ = ac.createOscillator();
+                const og = ac.createGain();
+                organ.type = isCalm ? "sine" : (step % 2 === 0 ? "triangle" : "sawtooth");
+                organ.frequency.setValueAtTime(f, now);
+                if (!isCalm) {
+                  organ.frequency.exponentialRampToValueAtTime(f * (1.02 + intens * 0.04), now + 0.13);
+                }
+                const peak = isCalm ? 0.042 : (0.065 + intens * 0.045);
+                const noteDur = isCalm ? 0.24 : Math.max(0.09, 0.17 - intens * 0.07);
+                og.gain.setValueAtTime(0.0001, now);
+                og.gain.linearRampToValueAtTime(peak, now + 0.015);
+                og.gain.exponentialRampToValueAtTime(0.0008, now + noteDur);
+                organ.connect(og);
+                og.connect(out);
+                organ.start(now);
+                organ.stop(now + noteDur + 0.02);
 
-              if (step % 4 === 0) {
-                const bass = ac.createOscillator();
-                const bg = ac.createGain();
-                bass.type = "sine";
-                const bf = 65.41 * (1.0 + Math.min(0.5, step * 0.008));
-                bass.frequency.setValueAtTime(bf, now);
-                bg.gain.setValueAtTime(0.16, now);
-                bg.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
-                bass.connect(bg);
-                bg.connect(out);
-                bass.start(now);
-                bass.stop(now + 0.36);
+                if (step % 4 === 0 && !isCalm) {
+                  const bass = ac.createOscillator();
+                  const bg = ac.createGain();
+                  bass.type = "sine";
+                  const bf = 65.41 * (1.0 + Math.min(0.55, (step - 15) * 0.008));
+                  bass.frequency.setValueAtTime(bf, now);
+                  bg.gain.setValueAtTime(0.11 + intens * 0.08, now);
+                  bg.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+                  bass.connect(bg);
+                  bg.connect(out);
+                  bass.start(now);
+                  bass.stop(now + 0.30);
+                }
               }
+              step++;
+              const nextDelay = isCalm
+                ? 230
+                : Math.max(82, Math.round(210 - Math.min(128, (step - 15) * 1.65)));
+              scheduleNext(nextDelay);
             };
             tick();
-            jazzTimer = setInterval(tick, 145);
           } catch (_) {}
         },
         playClubDiscoMusic() {

@@ -11,6 +11,7 @@
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension};
@@ -44,7 +45,11 @@ impl Plugin for ClubPlugin {
             .add_systems(OnExit(GameState::CoasterCutscene), exit_coaster_cutscene)
             .add_systems(
                 Update,
-                update_coaster_cutscene
+                (
+                    update_coaster_cutscene,
+                    animate_wonka_boat_and_projections,
+                )
+                    .chain()
                     .run_if(in_state(GameState::CoasterCutscene))
                     .run_if(sim_running),
             )
@@ -70,6 +75,8 @@ struct ClubArt {
     env_cubemap: Handle<Image>,
     club_sign: Handle<Image>,
     return_sign: Handle<Image>,
+    red_door_sign: Handle<Image>,
+    proj_textures: [Handle<Image>; 5],
 }
 
 fn fill_px(data: &mut [u8], w: u32, x: u32, y: u32, rgba: [u8; 4]) {
@@ -87,8 +94,12 @@ fn paint_block_text(data: &mut [u8], w: u32, h: u32, text: &str, cy: i32, scale:
             'C' => [0b01111, 0b10000, 0b10000, 0b10000, 0b01111],
             'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b11110],
             'E' => [0b11111, 0b10000, 0b11110, 0b10000, 0b11111],
+            'F' => [0b11111, 0b10000, 0b11110, 0b10000, 0b10000],
+            'G' => [0b01111, 0b10000, 0b10111, 0b10001, 0b01110],
+            'H' => [0b10001, 0b10001, 0b11111, 0b10001, 0b10001],
             'I' => [0b11111, 0b00100, 0b00100, 0b00100, 0b11111],
             'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+            'M' => [0b10001, 0b11011, 0b10101, 0b10001, 0b10001],
             'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001],
             'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b01110],
             'P' => [0b11110, 0b10001, 0b11110, 0b10000, 0b10000],
@@ -99,6 +110,8 @@ fn paint_block_text(data: &mut [u8], w: u32, h: u32, text: &str, cy: i32, scale:
             'V' => [0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
             'W' => [0b10001, 0b10001, 0b10101, 0b11011, 0b10001],
             'Y' => [0b10001, 0b01010, 0b00100, 0b00100, 0b00100],
+            '4' => [0b10010, 0b10010, 0b11111, 0b00010, 0b00010],
+            '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b11110],
             ' ' => [0, 0, 0, 0, 0],
             _ => [0b11111, 0b10001, 0b10001, 0b10001, 0b11111],
         }
@@ -215,6 +228,156 @@ fn paint_club_env_cubemap() -> Image {
     img
 }
 
+fn fill_disk(data: &mut [u8], w: u32, h: u32, cx: f32, cy: f32, r: f32, rgba: [u8; 4]) {
+    let min_x = (cx - r).floor().max(0.0) as u32;
+    let max_x = (cx + r).ceil().min((w - 1) as f32) as u32;
+    let min_y = (cy - r).floor().max(0.0) as u32;
+    let max_y = (cy + r).ceil().min((h - 1) as f32) as u32;
+    let r2 = r * r;
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            if dx * dx + dy * dy <= r2 {
+                fill_px(data, w, x, y, rgba);
+            }
+        }
+    }
+}
+
+fn fill_rect(data: &mut [u8], w: u32, h: u32, x0: i32, y0: i32, x1: i32, y1: i32, rgba: [u8; 4]) {
+    let sx = x0.clamp(0, w as i32 - 1) as u32;
+    let ex = x1.clamp(0, w as i32 - 1) as u32;
+    let sy = y0.clamp(0, h as i32 - 1) as u32;
+    let ey = y1.clamp(0, h as i32 - 1) as u32;
+    for y in sy..=ey {
+        for x in sx..=ex {
+            fill_px(data, w, x, y, rgba);
+        }
+    }
+}
+
+/// Procedurally paints the 1971 Wonka Boat Ride tunnel nightmare wall projections:
+/// 0 = Crawling Centipede/Insects, 1 = Coiled Viper Snake, 2 = Bloodshot Staring Eyes,
+/// 3 = Decapitated Chicken & Cleaver, 4 = Arthur Slugworth Silhouette.
+fn make_wonka_proj_img(kind: usize) -> Image {
+    let (w, h) = (128_u32, 96_u32);
+    let mut data = vec![0_u8; (w * h * 4) as usize];
+    for y in 0..h {
+        let scan = if y % 3 == 0 { 16_u8 } else { 0 };
+        let bg = match kind {
+            0 => [14 + scan / 2, 24 + scan, 10, 255],
+            1 => [34 + scan, 10, 28 + scan / 2, 255],
+            2 => [12 + scan / 2, 8, 22 + scan, 255],
+            3 => [44 + scan, 12, 16, 255],
+            _ => [16 + scan / 2, 26 + scan / 2, 42 + scan, 255],
+        };
+        for x in 0..w {
+            let edge = x < 4 || x >= w - 4 || y < 4 || y >= h - 4;
+            let px = if edge { [255, 210, 120, 255] } else { bg };
+            fill_px(&mut data, w, x, y, px);
+        }
+    }
+    match kind {
+        0 => {
+            // Crawling neon centipede + legs across dark film frame
+            for s in 0..14_i32 {
+                let cx = 18.0 + s as f32 * 6.8;
+                let cy = 48.0 + (s as f32 * 0.65).sin() * 14.0;
+                fill_disk(&mut data, w, h, cx, cy, 6.2, [130, 235, 45, 255]);
+                fill_disk(&mut data, w, h, cx, cy - 1.5, 3.2, [255, 195, 40, 255]);
+                for side in [-1.0_f32, 1.0] {
+                    for l in 1..10_i32 {
+                        let lx = (cx + side * l as f32 * 0.6) as i32;
+                        let ly = (cy + side * (5.0 + l as f32 * 1.4)) as i32;
+                        fill_px(&mut data, w, lx as u32, ly as u32, [220, 255, 95, 255]);
+                    }
+                }
+            }
+            fill_disk(&mut data, w, h, 108.0, 48.0, 7.5, [215, 255, 65, 255]);
+            fill_disk(&mut data, w, h, 111.0, 45.0, 2.2, [255, 25, 35, 255]);
+            fill_disk(&mut data, w, h, 111.0, 51.0, 2.2, [255, 25, 35, 255]);
+        }
+        1 => {
+            // Coiled emerald viper with white fangs & forked crimson tongue
+            for s in 0..22_i32 {
+                let a = s as f32 * 0.28;
+                let cx = 64.0 + a.cos() * (28.0 - s as f32 * 0.5);
+                let cy = 54.0 + a.sin() * (22.0 - s as f32 * 0.35);
+                fill_disk(&mut data, w, h, cx, cy, 7.5, [30, 210, 75, 255]);
+                fill_disk(&mut data, w, h, cx, cy, 3.5, [255, 215, 50, 255]);
+            }
+            fill_disk(&mut data, w, h, 64.0, 32.0, 12.0, [45, 235, 85, 255]);
+            fill_disk(&mut data, w, h, 57.0, 28.0, 2.8, [255, 40, 20, 255]);
+            fill_disk(&mut data, w, h, 71.0, 28.0, 2.8, [255, 40, 20, 255]);
+            fill_rect(&mut data, w, h, 58, 35, 60, 44, [255, 255, 255, 255]);
+            fill_rect(&mut data, w, h, 68, 35, 70, 44, [255, 255, 255, 255]);
+            fill_rect(&mut data, w, h, 63, 40, 65, 58, [255, 25, 65, 255]);
+        }
+        2 => {
+            // Giant bloodshot horror eyes staring out of the dark
+            for (ex, ey, er) in [(32.0, 48.0, 17.0), (64.0, 36.0, 19.0), (96.0, 50.0, 17.0)] {
+                fill_disk(&mut data, w, h, ex, ey, er, [248, 240, 240, 255]);
+                fill_disk(&mut data, w, h, ex - 9.0, ey + 4.0, 2.5, [220, 30, 40, 255]);
+                fill_disk(&mut data, w, h, ex + 9.0, ey - 5.0, 2.5, [220, 30, 40, 255]);
+                fill_disk(&mut data, w, h, ex, ey, er * 0.48, [255, 190, 25, 255]);
+                fill_rect(
+                    &mut data,
+                    w,
+                    h,
+                    (ex - 2.0) as i32,
+                    (ey - er * 0.4) as i32,
+                    (ex + 2.0) as i32,
+                    (ey + er * 0.4) as i32,
+                    [10, 8, 12, 255],
+                );
+            }
+        }
+        3 => {
+            // Wonka 1971 Chicken Being Decapitated (plummeting cleaver flash + flying head)
+            fill_disk(&mut data, w, h, 38.0, 60.0, 17.0, [250, 242, 225, 255]); // body
+            fill_rect(&mut data, w, h, 26, 74, 30, 86, [255, 175, 25, 255]); // left leg
+            fill_rect(&mut data, w, h, 44, 74, 48, 86, [255, 175, 25, 255]); // right leg
+            fill_rect(&mut data, w, h, 62, 8, 67, 88, [225, 238, 255, 255]); // flashing cleaver blade
+            fill_disk(&mut data, w, h, 64.5, 50.0, 10.0, [255, 35, 35, 255]); // crimson flash
+            fill_disk(&mut data, w, h, 92.0, 36.0, 10.0, [252, 245, 230, 255]); // severed head
+            fill_disk(&mut data, w, h, 90.0, 24.0, 4.5, [255, 35, 35, 255]); // red comb
+            fill_rect(&mut data, w, h, 101, 34, 111, 39, [255, 185, 20, 255]); // beak
+            fill_disk(&mut data, w, h, 95.0, 33.0, 2.0, [15, 15, 15, 255]); // X eye
+        }
+        _ => {
+            // Arthur Slugworth sinister shadowy silhouette (fedora + trench coat + glowing glasses)
+            fill_rect(&mut data, w, h, 32, 62, 96, 92, [14, 14, 22, 255]); // coat shoulders
+            fill_disk(&mut data, w, h, 64.0, 46.0, 16.0, [215, 200, 175, 255]); // shadowy face
+            fill_rect(&mut data, w, h, 38, 28, 90, 34, [12, 12, 18, 255]); // fedora brim
+            fill_rect(&mut data, w, h, 48, 12, 80, 29, [18, 18, 28, 255]); // fedora crown
+            fill_disk(&mut data, w, h, 56.0, 42.0, 5.2, [120, 245, 255, 255]); // left lens glare
+            fill_disk(&mut data, w, h, 72.0, 42.0, 5.2, [120, 245, 255, 255]); // right lens glare
+            fill_rect(&mut data, w, h, 55, 54, 74, 57, [80, 20, 25, 255]); // creepy smirk
+        }
+    }
+    // Cuboid faces map data row (h - 1 - y) toward the top (+Y), so flip vertically once
+    let row_bytes = (w * 4) as usize;
+    let mut flipped = vec![0_u8; data.len()];
+    for y in 0..h as usize {
+        flipped[y * row_bytes..(y + 1) * row_bytes]
+            .copy_from_slice(&data[(h as usize - 1 - y) * row_bytes..(h as usize - y) * row_bytes]);
+    }
+    let mut img = Image::new(
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        flipped,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = ImageSampler::nearest();
+    img
+}
+
 fn setup_club_art(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let env_cubemap = images.add(paint_club_env_cubemap());
     let club_sign = images.add(make_banner_img(
@@ -231,10 +394,26 @@ fn setup_club_art(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         "CASINO",
         "PORTAL",
     ));
+    let red_door_sign = images.add(make_banner_img(
+        [185, 16, 26],
+        [95, 6, 12],
+        [255, 225, 90, 255],
+        "VELVET CLUB",
+        "ENTER HERE",
+    ));
+    let proj_textures = [
+        images.add(make_wonka_proj_img(0)),
+        images.add(make_wonka_proj_img(1)),
+        images.add(make_wonka_proj_img(2)),
+        images.add(make_wonka_proj_img(3)),
+        images.add(make_wonka_proj_img(4)),
+    ];
     commands.insert_resource(ClubArt {
         env_cubemap,
         club_sign,
         return_sign,
+        red_door_sign,
+        proj_textures,
     });
 }
 
@@ -294,6 +473,32 @@ struct NateBubblePopShard {
     dir: Vec3,
 }
 
+#[derive(Component)]
+struct OompaOarPivot {
+    side: f32,
+    phase: f32,
+}
+
+#[derive(Component)]
+struct WonkaProjectionScreen {
+    slot: usize,
+    z_pos: f32,
+    is_backdrop: bool,
+}
+
+#[derive(Component)]
+struct WonkaRiverStrip {
+    z_pos: f32,
+}
+
+#[derive(Component)]
+struct WonkaPipeDoor {
+    z_pos: f32,
+}
+
+#[derive(Component)]
+struct WonkaBrightRedDoor;
+
 #[derive(Resource, Default)]
 struct CoasterCutsceneState {
     beat: u8,
@@ -301,6 +506,9 @@ struct CoasterCutsceneState {
     total_t: f32,
     bubble_popped: bool,
     warp_sfx_played: bool,
+    scream_sfx_played: bool,
+    halt_sfx_played: bool,
+    rush_speed: f32,
 }
 
 // Coaster train car Z offsets along +Z forward
@@ -315,47 +523,55 @@ struct CoasterBeatDef {
     max_secs: f32,
 }
 
-const COASTER_BEATS: [CoasterBeatDef; 7] = [
+const COASTER_BEATS: [CoasterBeatDef; 9] = [
     CoasterBeatDef {
-        speaker: "STARGATE EXPRESS - 100,000,000 TW",
-        sub: "ALL ABOARD! NEXT STOP: THE VELVET DISCO CLUB...",
-        voice_line: "",
-        voice_id: "",
-        min_secs: 3.0,
-        max_secs: 3.0,
-    },
-    CoasterBeatDef {
-        speaker: "TJ",
-        sub: "\"I never wanted this.\"",
-        voice_line: "I never wanted this.",
-        voice_id: "tj_upset",
-        min_secs: 2.6,
-        max_secs: 6.0,
-    },
-    CoasterBeatDef {
-        speaker: "GLENN",
-        sub: "\"Same!\"",
-        voice_line: "Same!",
-        voice_id: "glenn",
-        min_secs: 2.0,
-        max_secs: 5.0,
-    },
-    CoasterBeatDef {
-        speaker: "STAN",
-        sub: "\"This is what we all need, boys!\"",
-        voice_line: "This is what we all need, boys!",
+        speaker: "STAN (WILLY WONKA)",
+        sub: "\"Round the world and home again... that's the sailor's way. This is what we all need, boys.\"",
+        voice_line: "Round the world and home again... that's the sailor's way. This is what we all need, boys.",
         voice_id: "stan",
-        min_secs: 2.8,
-        max_secs: 6.0,
+        min_secs: 3.4,
+        max_secs: 6.8,
     },
-    // Beat 4: Nate says NOTHING — completely silent except the bubblegum pop SFX!
     CoasterBeatDef {
-        speaker: "NATE",
-        sub: "(says nothing... slowly blows a pink bubble... *POP!*)",
+        speaker: "STAN (WILLY WONKA)",
+        sub: "\"There's no earthly way of knowing... which direction we are going! There's no knowing where we're rowing!\"",
+        voice_line: "There's no earthly way of knowing... which direction we are going! There's no knowing where we're rowing!",
+        voice_id: "stan",
+        min_secs: 3.6,
+        max_secs: 7.2,
+    },
+    CoasterBeatDef {
+        speaker: "TJ (PANICKING PASSENGER)",
+        sub: "\"I never wanted this! Turn the lights on! Make it stop, Stan!\"",
+        voice_line: "I never wanted this! Turn the lights on! Make it stop, Stan!",
+        voice_id: "tj_upset",
+        min_secs: 3.0,
+        max_secs: 6.2,
+    },
+    CoasterBeatDef {
+        speaker: "GLENN (FEELING SICK)",
+        sub: "\"Same! I think I'm gonna be sick! What kind of strip club tunnel IS this?!\"",
+        voice_line: "Same! I think I'm gonna be sick! What kind of strip club tunnel IS this?!",
+        voice_id: "glenn",
+        min_secs: 3.0,
+        max_secs: 6.2,
+    },
+    CoasterBeatDef {
+        speaker: "STAN (WILLY WONKA)",
+        sub: "\"Not a speck of light is showing, so the danger must be growing... Are the fires of hell a-glowing?! Is the grisly reaper mowing?!\"",
+        voice_line: "Not a speck of light is showing, so the danger must be growing... Are the fires of hell a-glowing?! Is the grisly reaper mowing?!",
+        voice_id: "stan",
+        min_secs: 3.8,
+        max_secs: 7.4,
+    },
+    // Beat 5: Nate stays completely calm like Charlie Bucket and says NOTHING — only a bubblegum *POP!*
+    CoasterBeatDef {
+        speaker: "NATE (CALM AS CHARLIE BUCKET)",
+        sub: "(says nothing... calmly takes it all in and blows a pink bubble... *POP!*)",
         voice_line: "",
         voice_id: "",
-        min_secs: 3.4,
-        max_secs: 3.4,
+        min_secs: 3.5,
+        max_secs: 3.5,
     },
     CoasterBeatDef {
         speaker: "DEREK",
@@ -363,15 +579,23 @@ const COASTER_BEATS: [CoasterBeatDef; 7] = [
         voice_line: "Heh heh heh... buckle up, boys!",
         voice_id: "derek",
         min_secs: 2.8,
-        max_secs: 6.0,
+        max_secs: 5.8,
     },
     CoasterBeatDef {
-        speaker: "HYPER-DIMENSIONAL STARGATE",
-        sub: "IT'S FULL OF DISCO LIGHTS - WELCOME TO THE CLUB!!",
-        voice_line: "",
-        voice_id: "",
-        min_secs: 2.6,
-        max_secs: 2.6,
+        speaker: "STAN (WILLY WONKA)",
+        sub: "\"YES! The danger must be growing -- AND THEY'RE CERTAINLY NOT SHOWING ANY SIGNS THAT THEY ARE SLOWING!! AAAAAHHHHH!!\"",
+        voice_line: "YES! The danger must be growing - and they're certainly not showing any signs that they are slowing!! AAAAAHHHHH!!",
+        voice_id: "stan",
+        min_secs: 3.6,
+        max_secs: 7.2,
+    },
+    CoasterBeatDef {
+        speaker: "STAN (ABRUPT STOP AT BRIGHT RED DOOR)",
+        sub: "\"...Oh, look. Here we are. Right through the bright red door, gentlemen.\"",
+        voice_line: "...Oh, look. Here we are. Right through the bright red door, gentlemen.",
+        voice_id: "stan",
+        min_secs: 3.4,
+        max_secs: 6.5,
     },
 ];
 
@@ -379,6 +603,7 @@ const COASTER_BEATS: [CoasterBeatDef; 7] = [
 fn enter_coaster_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    art: Option<Res<ClubArt>>,
     mut stats: ResMut<PlayerStats>,
     mut c_state: ResMut<CoasterCutsceneState>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -397,6 +622,9 @@ fn enter_coaster_cutscene(
     stats.in_casino_level = false;
     stats.in_club_level = false;
     *c_state = CoasterCutsceneState::default();
+    if !COASTER_BEATS[0].voice_line.is_empty() {
+        speak_voice(COASTER_BEATS[0].voice_line, COASTER_BEATS[0].voice_id);
+    }
 
     for mut vis in &mut hud_q {
         *vis = Visibility::Hidden;
@@ -414,12 +642,49 @@ fn enter_coaster_cutscene(
     let box_m = meshes.add(Cuboid::from_size(Vec3::ONE));
     let cyl_m = meshes.add(Cylinder::new(0.5, 1.0));
     let sph_m = meshes.add(Sphere::new(0.5));
-    let ring_m = meshes.add(Torus::new(5.8, 6.35));
+    let ring_m = meshes.add(Torus::new(5.9, 6.35));
 
     let car_gold = materials.add(StandardMaterial {
         base_color: Color::srgb(0.98, 0.78, 0.16),
         metallic: 0.90,
         perceptual_roughness: 0.14,
+        ..default()
+    });
+    let candy_pink = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.34, 0.68),
+        emissive: LinearRgba::new(0.45, 0.08, 0.28, 1.0),
+        perceptual_roughness: 0.22,
+        clearcoat: 1.0,
+        ..default()
+    });
+    let wonka_purple = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.44, 0.12, 0.56),
+        perceptual_roughness: 0.58,
+        ..default()
+    });
+    let hat_plum = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.28, 0.14, 0.22),
+        perceptual_roughness: 0.65,
+        ..default()
+    });
+    let oompa_skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.44, 0.12),
+        perceptual_roughness: 0.48,
+        ..default()
+    });
+    let oompa_hair = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.82, 0.24),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let oompa_white = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.96, 0.96, 0.98),
+        perceptual_roughness: 0.50,
+        ..default()
+    });
+    let oompa_brown = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.26, 0.14, 0.08),
+        perceptual_roughness: 0.70,
         ..default()
     });
     let car_trim = materials.add(StandardMaterial {
@@ -441,8 +706,34 @@ fn enter_coaster_cutscene(
         clearcoat: 1.0,
         ..default()
     });
+    let choc_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.26, 0.11, 0.06),
+        perceptual_roughness: 0.18,
+        clearcoat: 0.9,
+        ..default()
+    });
+    let pink_river_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.86, 0.34, 0.62),
+        emissive: LinearRgba::new(0.26, 0.04, 0.14, 1.0),
+        perceptual_roughness: 0.22,
+        clearcoat: 0.9,
+        ..default()
+    });
+    let door_dark_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.12, 0.22),
+        metallic: 0.45,
+        perceptual_roughness: 0.45,
+        ..default()
+    });
+    let red_door_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.92, 0.08, 0.12),
+        emissive: LinearRgba::new(1.15, 0.08, 0.10, 1.0),
+        perceptual_roughness: 0.24,
+        clearcoat: 0.85,
+        ..default()
+    });
 
-    // Twin neon rails running down the infinite Wonka/2001 tunnel
+    // Twin neon rails over the churning Chocolate & Pink Hard-Candy River
     for side in [-0.75_f32, 0.75] {
         commands.spawn((
             CoasterCutsceneEntity,
@@ -453,7 +744,134 @@ fn enter_coaster_cutscene(
         ));
     }
 
-    // 5-Car Neon Coaster Train carrying Stan (Car 0), TJ (Car 1), Glenn (Car 2), Nate (Car 3), Derek (Car 4)
+    // Churning Chocolate & Pink Hard-Candy River strips flowing under the boat
+    for ri in 0..18_usize {
+        let z_pos = -20.0 + ri as f32 * 4.0;
+        let is_candy = ri % 2 == 0;
+        commands.spawn((
+            CoasterCutsceneEntity,
+            WonkaRiverStrip { z_pos },
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(if is_candy {
+                pink_river_mat.clone()
+            } else {
+                choc_mat.clone()
+            }),
+            Transform::from_translation(COASTER_STAGE + Vec3::new(0.0, -1.15, z_pos))
+                .with_scale(Vec3::new(12.5, 0.16, 4.05)),
+        ));
+    }
+
+    // Roald Dahl's Giant Pipe Tunnel Factory Doors along both walls
+    for di in 0..8_usize {
+        let z_pos = -16.0 + di as f32 * 9.0;
+        let side = if di % 2 == 0 { -5.35_f32 } else { 5.35_f32 };
+        commands.spawn((
+            CoasterCutsceneEntity,
+            WonkaPipeDoor { z_pos },
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(door_dark_mat.clone()),
+            Transform::from_translation(COASTER_STAGE + Vec3::new(side, 1.35, z_pos))
+                .with_scale(Vec3::new(0.28, 3.8, 2.2)),
+        ));
+    }
+
+    // Bright Red Door ("VELVET CLUB") waiting at the end of the tunnel for Beat 8's Abrupt Stop!
+    let sign_tex = art
+        .as_ref()
+        .map(|a| a.red_door_sign.clone())
+        .unwrap_or_default();
+    let red_sign_mat = materials.add(StandardMaterial {
+        base_color_texture: Some(sign_tex),
+        emissive: LinearRgba::new(0.85, 0.85, 0.85, 1.0),
+        unlit: true,
+        ..default()
+    });
+    commands
+        .spawn((
+            CoasterCutsceneEntity,
+            WonkaBrightRedDoor,
+            Transform::from_translation(COASTER_STAGE + Vec3::new(0.0, 2.1, 36.0)),
+            Visibility::Hidden,
+        ))
+        .with_children(|door| {
+            // Giant glowing bright red double door leaf & gold frame
+            door.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(car_gold.clone()),
+                Transform::from_xyz(0.0, 0.0, 0.18).with_scale(Vec3::new(5.6, 5.2, 0.36)),
+            ));
+            door.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(red_door_mat.clone()),
+                Transform::from_xyz(0.0, -0.1, 0.0).with_scale(Vec3::new(4.9, 4.6, 0.45)),
+            ));
+            // Brass center seam & handles
+            door.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(car_gold.clone()),
+                Transform::from_xyz(0.0, -0.1, -0.25).with_scale(Vec3::new(0.14, 4.6, 0.08)),
+            ));
+            for hx in [-0.42_f32, 0.42] {
+                door.spawn((
+                    Mesh3d(sph_m.clone()),
+                    MeshMaterial3d(car_gold.clone()),
+                    Transform::from_xyz(hx, -0.2, -0.35).with_scale(Vec3::splat(0.28)),
+                ));
+            }
+            // "VELVET CLUB / ENTER HERE" plaque above the red doors facing the boat
+            door.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(red_sign_mat),
+                Transform::from_xyz(0.0, 1.75, -0.30)
+                    .with_rotation(Quat::from_rotation_y(PI))
+                    .with_scale(Vec3::new(3.8, 1.15, 0.10)),
+            ));
+        });
+
+    // 6 Flashing Tunnel Wall & Close-up Backdrop Nightmare Projection Screens
+    let fallback_proj = art.as_ref().map(|a| a.proj_textures[0].clone());
+    let proj_coords: [(f32, f32, f32, bool); 6] = [
+        // Close-up flank screens angled behind passengers so Beats 2, 3, 4, 7 frame them clearly
+        (-1.45, 2.22, CAR_Z[1] - 1.35, true),
+        (1.45, 2.20, CAR_Z[2] - 1.35, true),
+        (-1.60, 2.35, CAR_Z[0] - 1.35, true),
+        (1.60, 2.35, CAR_Z[0] - 1.35, true),
+        // Tunnel wall mega-screens
+        (-4.55, 2.65, 11.5, false),
+        (4.55, 2.65, 15.5, false),
+    ];
+    for (si, &(px, py, pz, is_backdrop)) in proj_coords.iter().enumerate() {
+        let pmat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: fallback_proj.clone(),
+            emissive: LinearRgba::new(1.05, 1.05, 1.05, 1.0),
+            unlit: true,
+            ..default()
+        });
+        let yaw = if px < 0.0 { 0.42 } else { -0.42 };
+        let scale = if is_backdrop {
+            Vec3::new(2.2, 1.65, 0.08)
+        } else {
+            Vec3::new(3.6, 2.7, 0.10)
+        };
+        commands.spawn((
+            CoasterCutsceneEntity,
+            WonkaProjectionScreen {
+                slot: si,
+                z_pos: pz,
+                is_backdrop,
+            },
+            Mesh3d(box_m.clone()),
+            MeshMaterial3d(pmat),
+            Transform::from_translation(COASTER_STAGE + Vec3::new(px, py, pz))
+                .with_rotation(Quat::from_rotation_y(yaw))
+                .with_scale(scale),
+            Visibility::Hidden,
+        ));
+    }
+
+    // 5-Car Pink Wonka Candy Boat-Coaster carrying Stan (Wonka, Car 0), TJ, Glenn, Nate, Derek + 4 Oompa Loompa Rowers
     commands
         .spawn((
             CoasterCutsceneEntity,
@@ -462,6 +880,95 @@ fn enter_coaster_cutscene(
             Visibility::default(),
         ))
         .with_children(|train| {
+            // Pink Hard-Candy Boat Gunwales & Pointed Bow Prow
+            for side in [-0.94_f32, 0.94] {
+                train.spawn((
+                    Mesh3d(box_m.clone()),
+                    MeshMaterial3d(candy_pink.clone()),
+                    Transform::from_xyz(side, 0.56, 0.3).with_scale(Vec3::new(0.24, 0.72, 14.2)),
+                ));
+                train.spawn((
+                    Mesh3d(box_m.clone()),
+                    MeshMaterial3d(car_gold.clone()),
+                    Transform::from_xyz(side, 0.95, 0.3).with_scale(Vec3::new(0.28, 0.10, 14.3)),
+                ));
+            }
+            // Sculpted Pink Candy Boat Prow at +Z
+            train.spawn((
+                Mesh3d(box_m.clone()),
+                MeshMaterial3d(candy_pink.clone()),
+                Transform::from_xyz(0.0, 0.62, 7.65)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4))
+                    .with_scale(Vec3::new(1.42, 0.78, 1.42)),
+            ));
+            train.spawn((
+                Mesh3d(sph_m.clone()),
+                MeshMaterial3d(car_gold.clone()),
+                Transform::from_xyz(0.0, 1.12, 8.35).with_scale(Vec3::splat(0.36)),
+            ));
+
+            // 4 3D Oompa Loompa Rowers on port & starboard gunwales rowing into the chocolate river!
+            for (oi, &(ox, oz)) in [(-1.12_f32, 4.05_f32), (1.12, 4.05), (-1.12, -3.95), (1.12, -3.95)]
+                .iter()
+                .enumerate()
+            {
+                let side = if ox < 0.0 { -1.0_f32 } else { 1.0_f32 };
+                train
+                    .spawn((
+                        Transform::from_xyz(ox, 0.92, oz),
+                        Visibility::Inherited,
+                    ))
+                    .with_children(|ol| {
+                        // White overalls & brown shirt torso
+                        ol.spawn((
+                            Mesh3d(box_m.clone()),
+                            MeshMaterial3d(oompa_brown.clone()),
+                            Transform::from_xyz(0.0, 0.36, 0.0).with_scale(Vec3::new(0.36, 0.42, 0.24)),
+                        ));
+                        ol.spawn((
+                            Mesh3d(box_m.clone()),
+                            MeshMaterial3d(oompa_white.clone()),
+                            Transform::from_xyz(0.0, 0.24, 0.03).with_scale(Vec3::new(0.38, 0.28, 0.26)),
+                        ));
+                        // Orange head & bright green pompadour hair
+                        ol.spawn((
+                            Mesh3d(sph_m.clone()),
+                            MeshMaterial3d(oompa_skin.clone()),
+                            Transform::from_xyz(0.0, 0.72, 0.0).with_scale(Vec3::splat(0.30)),
+                        ));
+                        ol.spawn((
+                            Mesh3d(sph_m.clone()),
+                            MeshMaterial3d(oompa_hair.clone()),
+                            Transform::from_xyz(0.0, 0.87, -0.02).with_scale(Vec3::new(0.34, 0.16, 0.32)),
+                        ));
+                        // Articulated Oar Pivot dipping down into the chocolate river
+                        ol.spawn((
+                            OompaOarPivot {
+                                side,
+                                phase: oi as f32 * 0.45,
+                            },
+                            Transform::from_xyz(side * 0.16, 0.38, 0.0),
+                            Visibility::Inherited,
+                        ))
+                        .with_children(|oar| {
+                            oar.spawn((
+                                Mesh3d(cyl_m.clone()),
+                                MeshMaterial3d(car_gold.clone()),
+                                Transform::from_xyz(side * 0.48, -0.75, 0.0)
+                                    .with_rotation(Quat::from_rotation_z(side * 0.56))
+                                    .with_scale(Vec3::new(0.07, 2.25, 0.07)),
+                            ));
+                            oar.spawn((
+                                Mesh3d(box_m.clone()),
+                                MeshMaterial3d(candy_pink.clone()),
+                                Transform::from_xyz(side * 0.96, -1.55, 0.0)
+                                    .with_rotation(Quat::from_rotation_z(side * 0.56))
+                                    .with_scale(Vec3::new(0.06, 0.55, 0.22)),
+                            ));
+                        });
+                    });
+            }
+
             for (ci, &cz) in CAR_Z.iter().enumerate() {
                 // Car chassis, glowing bumper bar, and seat backrest
                 train.spawn((
@@ -483,13 +990,60 @@ fn enter_coaster_cutscene(
                 // Mount each hero inside their car facing +Z
                 match ci {
                     0 => {
-                        // Stan (`plaid_hero.glb` faces -Z by default, rotate PI so he faces +Z)
+                        // Stan as Willy Wonka (`plaid_hero.glb` faces -Z by default, rotate PI so he faces +Z)
                         train.spawn((
                             SceneRoot(asset_server.load("models/plaid_hero.glb#Scene0")),
                             Transform::from_xyz(0.0, 0.34, cz + 0.05)
                                 .with_rotation(Quat::from_rotation_y(PI))
                                 .with_scale(Vec3::splat(1.12)),
                             Visibility::Inherited,
+                        ));
+                        // 3D Willy Wonka Top Hat + Gold Hatband perched cleanly atop Stan's head
+                        train.spawn((
+                            Mesh3d(cyl_m.clone()),
+                            MeshMaterial3d(hat_plum.clone()),
+                            Transform::from_xyz(0.0, 2.56, cz + 0.05)
+                                .with_rotation(Quat::from_rotation_z(-0.08))
+                                .with_scale(Vec3::new(0.76, 0.05, 0.76)),
+                        ));
+                        train.spawn((
+                            Mesh3d(cyl_m.clone()),
+                            MeshMaterial3d(hat_plum.clone()),
+                            Transform::from_xyz(0.02, 2.82, cz + 0.05)
+                                .with_rotation(Quat::from_rotation_z(-0.08))
+                                .with_scale(Vec3::new(0.42, 0.48, 0.42)),
+                        ));
+                        train.spawn((
+                            Mesh3d(cyl_m.clone()),
+                            MeshMaterial3d(car_gold.clone()),
+                            Transform::from_xyz(0.01, 2.62, cz + 0.05)
+                                .with_rotation(Quat::from_rotation_z(-0.08))
+                                .with_scale(Vec3::new(0.45, 0.09, 0.45)),
+                        ));
+                        // Purple Velvet Wonka Coat Shoulders/Flaps, Gold Bow Tie & Gold-Topped Cane
+                        train.spawn((
+                            Mesh3d(box_m.clone()),
+                            MeshMaterial3d(wonka_purple.clone()),
+                            Transform::from_xyz(0.0, 1.56, cz - 0.02)
+                                .with_scale(Vec3::new(0.74, 0.76, 0.42)),
+                        ));
+                        train.spawn((
+                            Mesh3d(box_m.clone()),
+                            MeshMaterial3d(car_gold.clone()),
+                            Transform::from_xyz(0.0, 1.88, cz + 0.28)
+                                .with_scale(Vec3::new(0.24, 0.12, 0.08)),
+                        ));
+                        train.spawn((
+                            Mesh3d(cyl_m.clone()),
+                            MeshMaterial3d(hat_plum.clone()),
+                            Transform::from_xyz(-0.36, 1.24, cz + 0.34)
+                                .with_scale(Vec3::new(0.05, 1.15, 0.05)),
+                        ));
+                        train.spawn((
+                            Mesh3d(sph_m.clone()),
+                            MeshMaterial3d(car_gold.clone()),
+                            Transform::from_xyz(-0.36, 1.84, cz + 0.34)
+                                .with_scale(Vec3::splat(0.12)),
                         ));
                     }
                     1 => {
@@ -681,7 +1235,7 @@ fn enter_coaster_cutscene(
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::FlexEnd,
                 align_items: AlignItems::Center,
-                padding: UiRect::bottom(Val::Px(34.0)),
+                padding: UiRect::bottom(Val::Px(10.0)),
                 ..default()
             },
             GlobalZIndex(20),
@@ -689,24 +1243,24 @@ fn enter_coaster_cutscene(
         .with_children(|root| {
             root.spawn((
                 Node {
-                    max_width: Val::Px(760.0),
-                    padding: UiRect::axes(Val::Px(22.0), Val::Px(12.0)),
+                    max_width: Val::Px(680.0),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(7.0)),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(6.0),
+                    row_gap: Val::Px(3.0),
                     border: UiRect::all(Val::Px(2.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.04, 0.01, 0.10, 0.86)),
+                BackgroundColor(Color::srgba(0.04, 0.01, 0.10, 0.80)),
                 BorderColor(Color::srgb(1.0, 0.42, 0.92)),
-                BorderRadius::all(Val::Px(12.0)),
+                BorderRadius::all(Val::Px(10.0)),
             ))
             .with_children(|card| {
                 card.spawn((
                     CoasterSpeakerText,
                     Text::new(COASTER_BEATS[0].speaker),
                     TextFont {
-                        font_size: 16.0,
+                        font_size: 14.0,
                         ..default()
                     },
                     TextColor(Color::srgb(0.35, 0.96, 1.0)),
@@ -715,7 +1269,7 @@ fn enter_coaster_cutscene(
                     CoasterSubText,
                     Text::new(COASTER_BEATS[0].sub),
                     TextFont {
-                        font_size: 18.0,
+                        font_size: 15.0,
                         ..default()
                     },
                     TextColor(Color::WHITE),
@@ -782,7 +1336,7 @@ fn update_coaster_cutscene(
         return;
     }
 
-    let dt = time.delta_secs().min(0.05);
+    let dt = time.delta_secs().min(0.10);
     c_state.beat_t += dt;
     c_state.total_t += dt;
     let t = c_state.total_t;
@@ -817,33 +1371,64 @@ fn update_coaster_cutscene(
     let beat = c_state.beat;
     let bt = c_state.beat_t;
 
-    // Climax SFX on Beat 6
-    if beat == 6 && !c_state.warp_sfx_played {
+    // Climax & Abrupt Stop SFX
+    if beat == 7 && !c_state.scream_sfx_played {
+        c_state.scream_sfx_played = true;
+        play_sfx("wonka_scream");
+    }
+    if beat == 7 && bt > 1.2 && !c_state.warp_sfx_played {
         c_state.warp_sfx_played = true;
         play_sfx("portal_suck");
     }
+    if beat == 8 && !c_state.halt_sfx_played {
+        c_state.halt_sfx_played = true;
+        play_sfx("wonka_halt");
+    }
 
-    // Tunnel rush acceleration (Willy Wonka escalating terror + 2001 lightspeed)
-    let rush_speed = 24.0 + beat as f32 * 7.5 + if beat == 6 { bt * 24.0 } else { 0.0 };
+    // Tunnel rush acceleration: starts calm on Beat 0, escalates wildly through Beat 7, then STOPS DEAD on Beat 8!
+    let rush_speed = match beat {
+        0 => 8.0,
+        1..=6 => 16.0 + beat as f32 * 9.0,
+        7 => 78.0 + bt * 20.0,
+        _ => 0.0,
+    };
+    c_state.rush_speed = rush_speed;
 
-    // Wild coaster train pitching, rolling & vibrating
-    let shake = (t * 28.0).sin() * 0.035 + if beat == 6 { (t * 48.0).sin() * 0.08 } else { 0.0 };
+    // Coaster Boat pitching, rolling & vibrating (calm glide on Beat 0, frantic on 1..=7, dead still on Beat 8!)
     let mut train_tf = Transform::from_translation(COASTER_STAGE);
     if let Ok(mut t_tf) = train_q.get_single_mut() {
-        t_tf.translation = COASTER_STAGE + Vec3::new((t * 3.1).sin() * 0.16, (t * 5.2).cos() * 0.14, 0.0);
-        t_tf.rotation = Quat::from_rotation_z((t * 2.4).sin() * 0.22 + shake)
-            * Quat::from_rotation_x((t * 1.9).cos() * 0.09);
+        if beat == 8 {
+            t_tf.translation = COASTER_STAGE;
+            t_tf.rotation = Quat::IDENTITY;
+        } else {
+            let amp = if beat == 0 {
+                0.22
+            } else {
+                0.65 + (beat as f32 * 0.14)
+            };
+            let shake = (t * 28.0).sin() * 0.025 * amp
+                + if beat == 7 { (t * 52.0).sin() * 0.085 } else { 0.0 };
+            t_tf.translation = COASTER_STAGE
+                + Vec3::new((t * 3.1).sin() * 0.14 * amp, (t * 5.2).cos() * 0.11 * amp, 0.0);
+            t_tf.rotation = Quat::from_rotation_z((t * 2.4).sin() * 0.18 * amp + shake)
+                * Quat::from_rotation_x((t * 1.9).cos() * 0.07 * amp);
+        }
         train_tf = *t_tf;
     }
 
-    // Animate 36 Wonka/2001 Stargate rings rushing backwards along -Z
+    // Animate 36 Wonka/2001 Stargate rings (hidden/dimmed once stopped at the Bright Red Door)
     for (mut ring, mut tf, mat_h) in &mut ring_q {
+        if beat == 8 {
+            tf.scale = Vec3::ZERO;
+            continue;
+        }
         ring.z_pos -= rush_speed * dt;
         if ring.z_pos < -22.0 {
             ring.z_pos += 68.0;
         }
-        let wob_x = (t * 2.4 + ring.idx as f32 * 0.35).sin() * 0.65;
-        let wob_y = 1.8 + (t * 2.1 + ring.idx as f32 * 0.45).cos() * 0.55;
+        let wob_amp = if beat == 0 { 0.2 } else { 0.65 };
+        let wob_x = (t * 2.4 + ring.idx as f32 * 0.35).sin() * wob_amp;
+        let wob_y = 1.8 + (t * 2.1 + ring.idx as f32 * 0.45).cos() * (wob_amp * 0.85);
         tf.translation = COASTER_STAGE + Vec3::new(wob_x, wob_y, ring.z_pos);
         tf.rotation = Quat::from_rotation_x(FRAC_PI_2)
             * Quat::from_rotation_y(t * 1.8 + ring.idx as f32 * 0.3);
@@ -854,7 +1439,13 @@ fn update_coaster_cutscene(
             let hue = ((t * 210.0 + ring.idx as f32 * 24.0) % 360.0 + 360.0) % 360.0;
             let col = Color::hsl(hue, 1.0, 0.56);
             let l = col.to_linear();
-            let boost = if beat == 6 { 6.5 } else { 3.8 + 2.2 * (t * 12.0 + ring.idx as f32).sin().abs() };
+            let boost = if beat == 0 {
+                1.4
+            } else if beat == 7 {
+                6.8
+            } else {
+                3.6 + 2.2 * (t * 12.0 + ring.idx as f32).sin().abs()
+            };
             mat.base_color = col;
             mat.emissive = LinearRgba::new(l.red * boost, l.green * boost, l.blue * boost, 1.0);
         }
@@ -862,6 +1453,10 @@ fn update_coaster_cutscene(
 
     // 2001 slit-scan streak bars
     for (mut bar, mut tf) in &mut streak_q {
+        if beat == 0 || beat == 8 {
+            tf.scale = Vec3::ZERO;
+            continue;
+        }
         bar.z_pos -= rush_speed * 1.35 * dt;
         if bar.z_pos < -22.0 {
             bar.z_pos += 68.0;
@@ -869,37 +1464,60 @@ fn update_coaster_cutscene(
         let ang = bar.angle + t * 0.9;
         tf.translation = COASTER_STAGE
             + Vec3::new(ang.cos() * bar.dist, 1.8 + ang.sin() * bar.dist, bar.z_pos);
-        tf.scale = Vec3::new(0.16, 0.16, 4.5 + beat as f32 * 1.1);
+        tf.scale = Vec3::new(0.16, 0.16, 3.8 + beat as f32 * 1.0);
     }
 
     // Surreal Wonka floating orbs
     for (orb, mut tf) in &mut orb_q {
+        if beat == 8 {
+            tf.scale = Vec3::ZERO;
+            continue;
+        }
         tf.translation = orb.base
             + Vec3::new(
                 (t * 2.8 + orb.phase).sin() * 1.4,
                 (t * 3.3 + orb.phase).cos() * 1.2,
                 (t * 2.1 + orb.phase).sin() * 1.6,
             );
-        tf.scale = Vec3::splat(0.45 + 0.3 * (t * 5.0 + orb.phase).sin().abs());
+        tf.scale = Vec3::splat(if beat == 0 { 0.3 } else { 0.45 + 0.3 * (t * 5.0 + orb.phase).sin().abs() });
     }
 
-    // Rapid Wonka psychedelic strobe background & lights
-    let bg_flash = if (t * 9.0).sin() > 0.65 { 0.14 } else { 0.02 };
-    clear.0 = Color::srgb(
-        bg_flash + 0.06 * (t * 3.1).sin().abs(),
-        0.008 + 0.04 * (t * 4.2).cos().abs(),
-        0.08 + 0.12 * (t * 2.7).sin().abs(),
-    );
-    for (st, mut light) in &mut strobe_q {
-        let ph = t * 18.0 + st.0 as f32 * 1.57;
-        let pulse = (ph.sin() * 0.5 + 0.5).powi(2);
-        let hue = ((t * 290.0 + st.0 as f32 * 90.0) % 360.0 + 360.0) % 360.0;
-        light.color = Color::hsl(hue, 1.0, 0.58);
-        light.intensity = 120_000.0 + 750_000.0 * pulse;
+    // Wonka Tunnel Strobe Background & Lights (calm warm/cool on Beat 0 & Beat 8, hypnotic nightmare on 1..=7)
+    if beat == 0 {
+        clear.0 = Color::srgb(0.05, 0.02, 0.07);
+        for (st, mut light) in &mut strobe_q {
+            light.color = if st.0 % 2 == 0 {
+                Color::srgb(1.0, 0.52, 0.82)
+            } else {
+                Color::srgb(0.45, 0.85, 1.0)
+            };
+            light.intensity = 220_000.0;
+        }
+    } else if beat == 8 {
+        clear.0 = Color::srgb(0.09, 0.02, 0.04);
+        for (_, mut light) in &mut strobe_q {
+            light.color = Color::srgb(1.0, 0.82, 0.56);
+            light.intensity = 260_000.0;
+        }
+    } else {
+        let freq = 8.0 + beat as f32 * 2.2;
+        let bg_flash = if (t * freq).sin() > 0.65 { 0.15 } else { 0.015 };
+        clear.0 = Color::srgb(
+            bg_flash + 0.06 * (t * 3.1).sin().abs(),
+            0.008 + 0.04 * (t * 4.2).cos().abs(),
+            0.06 + 0.12 * (t * 2.7).sin().abs(),
+        );
+        for (st, mut light) in &mut strobe_q {
+            let ph = t * (14.0 + beat as f32 * 2.5) + st.0 as f32 * 1.57;
+            let pulse = (ph.sin() * 0.5 + 0.5).powi(2);
+            let hue = ((t * 290.0 + st.0 as f32 * 90.0) % 360.0 + 360.0) % 360.0;
+            light.color = Color::hsl(hue, 1.0, 0.58);
+            light.intensity = 120_000.0 + 750_000.0 * pulse;
+        }
     }
 
-    // Beat 4: Nate's silent bubblegum blow + *POP!*
-    if beat == 4 {
+    // Beat 5: Nate (calm as Charlie Bucket) silently blows & pops a pink bubble!
+    if beat == 5 {
         if bt < 1.95 && !c_state.bubble_popped {
             let u = ((bt - 0.35) / 1.55).clamp(0.0, 1.0);
             let sc = 0.005 + u * 0.24;
@@ -936,13 +1554,14 @@ fn update_coaster_cutscene(
         }
     }
 
-    // Camera Choreography + Extreme Lit Face Close-ups (Beats 1=TJ, 2=Glenn, 3=Stan, 4=Nate, 5=Derek)
+    // Camera Choreography + Fun Movie-Imitating Close-Ups:
+    // 1=Stan(Wonka prow), 2=TJ(panic), 3=Glenn(sick), 4=Stan(hellfire), 5=Nate(Charlie Bucket silent), 6=Derek(chuckle), 7=Stan(scream!)
     let focus_local_head: Option<Vec3> = match beat {
-        1 => Some(Vec3::new(0.0, 2.13, CAR_Z[1] + 0.14)), // TJ close-up: extreme strobing face lighting
-        2 => Some(Vec3::new(0.0, 2.10, CAR_Z[2] + 0.14)), // Glenn close-up
-        3 => Some(Vec3::new(0.0, 2.10, CAR_Z[0] + 0.14)), // Stan close-up
-        4 => Some(Vec3::new(0.0, 2.02, CAR_Z[3] + 0.24)), // Nate deadpan silent bubblegum pop close-up
-        5 => Some(Vec3::new(0.0, 2.04, CAR_Z[4] + 0.14)), // Derek chuckle + "buckle up boys"
+        1 | 4 | 7 => Some(Vec3::new(0.0, 2.15, CAR_Z[0] + 0.14)),
+        2 => Some(Vec3::new(0.0, 2.13, CAR_Z[1] + 0.14)),
+        3 => Some(Vec3::new(0.0, 2.10, CAR_Z[2] + 0.14)),
+        5 => Some(Vec3::new(0.0, 2.02, CAR_Z[3] + 0.24)),
+        6 => Some(Vec3::new(0.0, 2.04, CAR_Z[4] + 0.14)),
         _ => None,
     };
     let focus_world_head = focus_local_head.map(|p| train_tf.transform_point(p));
@@ -950,73 +1569,227 @@ fn update_coaster_cutscene(
     if let Ok((mut f_light, mut f_tf)) = face_light_q.get_single_mut() {
         if let Some(head_world) = focus_world_head {
             let strobe_side = if (t * 16.0).sin() >= 0.0 { 0.85 } else { -0.85 };
-            f_tf.translation = head_world + Vec3::new(strobe_side, 0.18, 1.05);
-            let hue = if beat == 1 {
-                // Extra harsh crimson / cyan Wonka strobe on TJ's face!
-                if (t * 14.0).sin() > 0.0 { 350.0 } else { 190.0 }
-            } else {
-                ((t * 220.0 + beat as f32 * 60.0) % 360.0 + 360.0) % 360.0
+            f_tf.translation = head_world + Vec3::new(strobe_side, 0.20, 1.05);
+            let hue = match beat {
+                2 => {
+                    if (t * 15.0).sin() > 0.0 { 350.0 } else { 190.0 }
+                }
+                3 => {
+                    if (t * 12.0).sin() > 0.0 { 118.0 } else { 300.0 }
+                }
+                4 | 7 => {
+                    if (t * 18.0).sin() > 0.0 { 6.0 } else { 32.0 }
+                }
+                5 => 315.0, // Calm rose highlight for Charlie-Bucket Nate!
+                _ => ((t * 220.0 + beat as f32 * 60.0) % 360.0 + 360.0) % 360.0,
             };
-            f_light.color = Color::hsl(hue, 1.0, 0.58);
-            f_light.intensity = if beat == 1 {
-                680_000.0 + 480_000.0 * (t * 24.0).sin().abs()
+            f_light.color = Color::hsl(hue, if beat == 5 { 0.55 } else { 1.0 }, 0.58);
+            f_light.intensity = if beat == 2 || beat == 7 {
+                720_000.0 + 480_000.0 * (t * 24.0).sin().abs()
             } else {
                 540_000.0
             };
         } else {
-            f_light.intensity = 120_000.0;
+            f_light.color = Color::srgb(1.0, 0.85, 0.65);
+            f_light.intensity = 180_000.0;
         }
     }
 
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        let (cam_pos, look_at, fov) = match beat {
+        let (cam_pos, look_at, fov, up_vec) = match beat {
             0 => (
-                COASTER_STAGE + Vec3::new(3.8 - bt * 0.9, 3.2, 10.6 - bt * 0.6),
-                COASTER_STAGE + Vec3::new(0.0, 1.5, 0.5),
+                COASTER_STAGE + Vec3::new(3.2 - bt * 0.45, 2.8, 9.6 - bt * 0.25),
+                COASTER_STAGE + Vec3::new(0.0, 1.55, 1.2),
                 0.86,
+                Vec3::Y,
             ),
             1 => {
-                // TJ extreme close-up on his face
+                // Stan (Willy Wonka) in top hat & purple velvet tailcoat
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (
-                    head + Vec3::new(0.18 + (t * 9.0).sin() * 0.04, 0.06, 1.08),
-                    head,
-                    0.46,
-                )
+                (head + Vec3::new(0.36, 0.28, 2.08), head + Vec3::Y * 0.24, 0.62, Vec3::Y)
             }
             2 => {
-                // Glenn dramatic close-up
+                // TJ extreme close-up under crimson/cyan Wonka strobes + Insect/Snake backdrop
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.22, 0.06, 1.12), head, 0.48)
-            }
-            3 => {
-                // Stan close-up
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(0.24, 0.05, 1.15), head, 0.48)
-            }
-            4 => {
-                // Nate close-up framing mouth + inflating pink bubble
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.26, 0.03, 1.05), head, 0.46)
-            }
-            5 => {
-                // Derek grinning close-up
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(0.24, 0.06, 1.14), head, 0.48)
-            }
-            _ => {
-                // Beat 6: Climax hyper-dimensional 2001 warp POV zooming ahead down the tunnel
                 (
-                    COASTER_STAGE + Vec3::new(0.0, 2.75, 6.8 + bt * 1.4),
-                    COASTER_STAGE + Vec3::new(0.0, 2.1, 32.0),
-                    (0.75 + bt * 0.22).min(1.25),
+                    head + Vec3::new(0.24 + (t * 9.0).sin() * 0.04, 0.06, 1.25),
+                    head,
+                    0.50,
+                    Vec3::Y,
                 )
             }
+            3 => {
+                // Glenn queasy close-up + Decapitated Chicken / Slugworth backdrop
+                let head = focus_world_head.unwrap_or(COASTER_STAGE);
+                (head + Vec3::new(-0.26, 0.06, 1.28), head, 0.50, Vec3::Y)
+            }
+            4 => {
+                // Stan hellfire close-up ("Are the fires of hell a-glowing?!")
+                let head = focus_world_head.unwrap_or(COASTER_STAGE);
+                (head + Vec3::new(-0.28, 0.26, 1.98), head + Vec3::Y * 0.24, 0.60, Vec3::Y)
+            }
+            5 => {
+                // Nate calm Charlie-Bucket close-up framing pink bubble *POP!*
+                let head = focus_world_head.unwrap_or(COASTER_STAGE);
+                (head + Vec3::new(-0.26, 0.03, 1.18), head, 0.48, Vec3::Y)
+            }
+            6 => {
+                // Derek chuckling close-up ("Heh heh heh... buckle up, boys!")
+                let head = focus_world_head.unwrap_or(COASTER_STAGE);
+                (head + Vec3::new(0.24, 0.06, 1.25), head, 0.50, Vec3::Y)
+            }
+            7 => {
+                // Climax Gene Wilder Dutch-angle scream close-up + rapid-fire projections!
+                let head = focus_world_head.unwrap_or(COASTER_STAGE);
+                let tilt = Vec3::new((t * 10.0).sin() * 0.24, 1.0, 0.0).normalize();
+                (
+                    head + Vec3::new(-0.26 + (t * 20.0).sin() * 0.05, 0.26, 1.92 - (bt * 0.14).min(0.24)),
+                    head + Vec3::Y * 0.24,
+                    0.64,
+                    tilt,
+                )
+            }
+            _ => (
+                // Beat 8: Abrupt stop! Framing Stan (Wonka) & boat crew stopped dead in front of the Bright Red Door!
+                COASTER_STAGE + Vec3::new(2.2, 2.45, 2.2),
+                COASTER_STAGE + Vec3::new(0.0, 2.05, 10.5),
+                0.76,
+                Vec3::Y,
+            ),
         };
         c_tf.translation = cam_pos;
-        c_tf.look_at(look_at, Vec3::Y);
+        c_tf.look_at(look_at, up_vec);
         if let Projection::Perspective(ref mut p) = *proj {
             p.fov = fov;
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn animate_wonka_boat_and_projections(
+    time: Res<Time<Real>>,
+    c_state: Res<CoasterCutsceneState>,
+    art: Option<Res<ClubArt>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut oar_q: Query<(&OompaOarPivot, &mut Transform)>,
+    mut proj_q: Query<
+        (
+            &WonkaProjectionScreen,
+            &MeshMaterial3d<StandardMaterial>,
+            &mut Visibility,
+        ),
+        Without<OompaOarPivot>,
+    >,
+    mut river_q: Query<
+        (&mut WonkaRiverStrip, &mut Transform),
+        (Without<OompaOarPivot>, Without<WonkaProjectionScreen>),
+    >,
+    mut door_q: Query<
+        (&mut WonkaPipeDoor, &mut Transform),
+        (
+            Without<OompaOarPivot>,
+            Without<WonkaProjectionScreen>,
+            Without<WonkaRiverStrip>,
+        ),
+    >,
+    mut red_door_q: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<WonkaBrightRedDoor>,
+            Without<OompaOarPivot>,
+            Without<WonkaProjectionScreen>,
+            Without<WonkaRiverStrip>,
+            Without<WonkaPipeDoor>,
+        ),
+    >,
+) {
+    let dt = time.delta_secs().min(0.10);
+    let beat = c_state.beat;
+    let t = c_state.total_t;
+    let speed = c_state.rush_speed;
+
+    // 1. Oompa Loompa rowing oars: gentle stroke at start, manic frenzy mid-tunnel, dead still at Bright Red Door
+    for (oar, mut tf) in &mut oar_q {
+        if beat >= 8 || speed <= 0.01 {
+            tf.rotation = Quat::IDENTITY;
+        } else {
+            let stroke_rate = 2.6 + beat as f32 * 1.45;
+            let s = (t * stroke_rate + oar.phase).sin();
+            let c = (t * stroke_rate + oar.phase).cos();
+            tf.rotation = Quat::from_rotation_x(s * 0.42)
+                * Quat::from_rotation_z(oar.side * c * 0.14);
+        }
+    }
+
+    // 2. Churning Chocolate & Pink Hard-Candy River scrolling under the boat
+    for (mut strip, mut tf) in &mut river_q {
+        if speed > 0.01 {
+            strip.z_pos -= speed * dt;
+            if strip.z_pos < -24.0 {
+                strip.z_pos += 72.0;
+            }
+        }
+        tf.translation.z = COASTER_STAGE.z + strip.z_pos;
+    }
+
+    // 3. Roald Dahl's Giant Pipe Tunnel Factory Doors rushing past both sides
+    for (mut pd, mut tf) in &mut door_q {
+        if speed > 0.01 {
+            pd.z_pos -= speed * dt;
+            if pd.z_pos < -20.0 {
+                pd.z_pos += 72.0;
+            }
+        }
+        tf.translation.z = COASTER_STAGE.z + pd.z_pos;
+    }
+
+    // 4. 1971 Rapid-Fire Nightmare Wall Projections (Insect, Snake, Eyes, Decapitated Chicken, Arthur Slugworth)
+    let flash_rate = if beat >= 7 { 9.5 } else { 4.2 + beat as f32 * 0.6 };
+    let tick_idx = (t * flash_rate).floor() as usize;
+    for (scr, mat_h, mut vis) in &mut proj_q {
+        let _ = scr.is_backdrop;
+        let active = match scr.slot {
+            0 => beat == 2,
+            1 => beat == 3,
+            2 | 3 => matches!(beat, 1 | 4 | 7),
+            _ => (1..=7).contains(&beat),
+        };
+        *vis = if active {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        if active {
+            if let (Some(art_res), Some(mat)) = (art.as_ref(), materials.get_mut(&mat_h.0)) {
+                // Bias beat 2 toward Insects/Snake and beat 3 toward Decapitated Chicken/Slugworth, cycling all 5 wildly
+                let kind = match (beat, scr.slot) {
+                    (2, 0) => tick_idx % 2, // 0=Insect, 1=Snake
+                    (3, 1) => 3 + (tick_idx % 2), // 3=Decapitated Chicken, 4=Slugworth
+                    _ => (tick_idx + scr.slot) % 5,
+                };
+                mat.base_color_texture = Some(art_res.proj_textures[kind].clone());
+                let flicker = if (t * 28.0 + scr.slot as f32).sin() > -0.6 {
+                    1.15
+                } else {
+                    0.55
+                };
+                mat.emissive = LinearRgba::new(flicker, flicker, flicker, 1.0);
+                let _ = scr.z_pos;
+            }
+        }
+    }
+
+    // 5. Bright Red Door at tunnel exit (hidden early, closes in during Beat 7, parked at bow on Beat 8!)
+    for (mut tf, mut vis) in &mut red_door_q {
+        if beat == 7 {
+            *vis = Visibility::Visible;
+            let u = (c_state.beat_t / 3.4).clamp(0.0, 1.0);
+            tf.translation = COASTER_STAGE + Vec3::new(0.0, 2.1, 36.0 - u * 23.0);
+        } else if beat >= 8 {
+            *vis = Visibility::Visible;
+            tf.translation = COASTER_STAGE + Vec3::new(0.0, 2.1, 11.4);
+        } else {
+            *vis = Visibility::Hidden;
         }
     }
 }
