@@ -4084,9 +4084,10 @@
       let params;
       try { params = new URLSearchParams(window.location.search); } catch (_) { params = new URLSearchParams(""); }
       const mpParam = (params.get("mp") || "").toLowerCase();
+      const isForcedSolo = mpParam === "off" || mpParam === "0" || mpParam === "solo";
       const onlineStorageKey = "tendy_mp_online";
       const readOnlinePref = () => {
-        if (mpParam === "off" || mpParam === "0" || mpParam === "solo") return false;
+        if (isForcedSolo) return false;
         if (mpParam === "tabs" || mpParam === "rtc" || mpParam === "1" || mpParam === "mesh") return true;
         try {
           const saved = localStorage.getItem(onlineStorageKey);
@@ -4152,11 +4153,19 @@
       const isTouchHint = (() => {
         try { return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); } catch (_) { return false; }
       })();
+      function getNetConnection() {
+        try { return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null; } catch (_) { return null; }
+      }
+      function isCellularOrMobile() {
+        const nc = getNetConnection();
+        if (nc && (nc.type === "cellular" || nc.saveData)) return true;
+        return isTouchHint;
+      }
 
       const initialKind = mpParam === "tabs" ? "tabs" : mpParam === "rtc" ? "rtc" : "mesh";
       const net = {
         inFreeRoam: true,
-        onlinePref: true,
+        onlinePref: !isForcedSolo,
         sceneId: 0,
         level1Ready: false,
         transport: null,     // { kind, send(buf, reliable, exceptConn), close(), connCount(), ... }
@@ -5219,6 +5228,10 @@
 
       function meshTransport(room, initialShard) {
         let closed = false;
+        let signalingSuspended = false;
+        let cleanCloses = 0;
+        let zombieCloses = 0;
+        let netResetTimer = null;
         let shard = initialShard | 0;
         let infoHash = makeInfoHash(room, shard);
         let shardJoinedAt = performance.now();
@@ -5237,6 +5250,12 @@
             backoffMs: 4000,
             nextRetryAt: 0,
             lastAnnounceAt: 0,
+            connectTimer: null,
+            lastRxAt: 0,
+            lastReadyAt: 0,
+            lastPingSentAt: 0,
+            awaitingPong: false,
+            pendingAnnounceAt: 0,
           })),
           {
             idx: TRACKER_URLS.length,
@@ -5247,6 +5266,12 @@
             backoffMs: 4000,
             nextRetryAt: 0,
             lastAnnounceAt: 0,
+            connectTimer: null,
+            lastRxAt: 0,
+            lastReadyAt: 0,
+            lastPingSentAt: 0,
+            awaitingPong: false,
+            pendingAnnounceAt: 0,
           },
         ];
 
@@ -5264,8 +5289,84 @@
           return n;
         }
 
+        function openWsCount() {
+          let n = 0;
+          for (const s of trackerStates) if (s.ws) n++;
+          return n;
+        }
+
+        function updateTrackersUp() {
+          trackersUp = trackerStates.filter((x) => x.ready).length;
+        }
+
+        function closePeerConn(c) {
+          if (!c) return;
+          c.open = false;
+          if (c.disconnectTimer) {
+            clearTimeout(c.disconnectTimer);
+            c.disconnectTimer = null;
+          }
+          if (c.st) {
+            c.st.onmessage = null;
+            c.st.onopen = null;
+            c.st.onclose = null;
+            try { c.st.close(); } catch (_) {}
+          }
+          if (c.ev) {
+            c.ev.onmessage = null;
+            c.ev.onopen = null;
+            c.ev.onclose = null;
+            try { c.ev.close(); } catch (_) {}
+          }
+          if (c.pc) {
+            c.pc.onconnectionstatechange = null;
+            c.pc.oniceconnectionstatechange = null;
+            c.pc.ontrack = null;
+            dropVoicePc(c.pc);
+            try { c.pc.close(); } catch (_) {}
+          }
+        }
+
+        function closeTrackerSocket(stEntry, code, reason, isZombie) {
+          if (stEntry.connectTimer) {
+            clearTimeout(stEntry.connectTimer);
+            stEntry.connectTimer = null;
+          }
+          const ws = stEntry.ws;
+          stEntry.ws = null;
+          stEntry.ready = false;
+          stEntry.awaitingPong = false;
+          stEntry.pendingAnnounceAt = 0;
+          if (ws) {
+            ws.onopen = null;
+            ws.onmessage = null;
+            ws.onerror = null;
+            ws.onclose = null;
+            if (stEntry.isMqtt && ws.readyState === WebSocket.OPEN) {
+              try { ws.send(new Uint8Array([0xe0, 0x00])); } catch (_) {} // MQTT DISCONNECT
+            }
+            if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+              try { ws.close(code || 1000, reason || ""); } catch (_) {}
+            }
+            if (isZombie) zombieCloses++;
+            else cleanCloses++;
+          }
+          updateTrackersUp();
+        }
+
+        function scheduleRetry(stEntry, baseOverride) {
+          const base = baseOverride || stEntry.backoffMs;
+          const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+          stEntry.nextRetryAt = performance.now() + delay;
+          if (!baseOverride) {
+            stEntry.backoffMs = Math.min(60000, stEntry.backoffMs * 2);
+          }
+        }
+
         function attachDataChannels(c, remotePeerId) {
           c.remotePeerId = remotePeerId || c.remotePeerId || "";
+          c.disconnectTimer = null;
+          c.cleaned = false;
           c.st.binaryType = "arraybuffer";
           c.ev.binaryType = "arraybuffer";
           c.st.onmessage = (e) => onWire(e.data, c, false);
@@ -5273,6 +5374,10 @@
           c.ev.onopen = () => {
             if (closed || net.transport !== t) return;
             c.open = true;
+            if (c.disconnectTimer) {
+              clearTimeout(c.disconnectTimer);
+              c.disconnectTimer = null;
+            }
             net.joinedAt = Math.min(net.joinedAt, performance.now());
             sendHello();
             sendMeta();
@@ -5284,8 +5389,10 @@
             updateTelemetry();
           };
           const teardown = () => {
-            c.open = false;
-            dropVoicePc(c.pc);
+            if (c.cleaned) return;
+            c.cleaned = true;
+            closePeerConn(c);
+            if (c.offerId && pendingOffers.get(c.offerId) === c) pendingOffers.delete(c.offerId);
             if (c.remotePeerId && conns.get(c.remotePeerId) === c) conns.delete(c.remotePeerId);
             if (c.boundId) {
               const p = net.peers.get(c.boundId);
@@ -5294,12 +5401,36 @@
             if (!closed && net.transport === t) {
               setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
               refreshPanel();
+              updateTelemetry();
             }
           };
           c.ev.onclose = teardown;
-          c.pc.onconnectionstatechange = () => {
-            if (c.pc.connectionState === "failed" || c.pc.connectionState === "closed") teardown();
+          const handleState = () => {
+            if (c.cleaned) return;
+            const cs = c.pc.connectionState;
+            const ice = c.pc.iceConnectionState;
+            if (cs === "failed" || cs === "closed" || ice === "failed" || ice === "closed") {
+              teardown();
+              return;
+            }
+            if (cs === "connected" || ice === "connected" || ice === "completed") {
+              if (c.disconnectTimer) {
+                clearTimeout(c.disconnectTimer);
+                c.disconnectTimer = null;
+              }
+              return;
+            }
+            if ((cs === "disconnected" || ice === "disconnected") && !c.disconnectTimer) {
+              c.disconnectTimer = setTimeout(() => {
+                c.disconnectTimer = null;
+                if (!c.cleaned && (c.pc.connectionState === "disconnected" || c.pc.iceConnectionState === "disconnected")) {
+                  teardown();
+                }
+              }, 5000);
+            }
           };
+          c.pc.onconnectionstatechange = handleState;
+          c.pc.oniceconnectionstatechange = handleState;
         }
 
         function sendPingToConn(c) {
@@ -5311,10 +5442,10 @@
 
         let offerPoolPromise = null;
         async function prepareOfferPool(targetCount) {
-          if (closed) return;
+          if (closed || signalingSuspended) return;
           if (offerPoolPromise) {
             await offerPoolPromise;
-            if (closed) return;
+            if (closed || signalingSuspended) return;
           }
           const readyOffers = [...pendingOffers.values()].filter((c) => !!c.sdp).length;
           const needed = Math.max(0, Math.min(3, targetCount) - readyOffers);
@@ -5323,6 +5454,7 @@
             const jobs = [];
             for (let i = 0; i < needed; i++) {
               jobs.push((async () => {
+                if (closed || signalingSuspended) return;
                 const offerIdBytes = new Uint32Array(3);
                 crypto.getRandomValues(offerIdBytes);
                 const offerId = Array.from(offerIdBytes, (x) => x.toString(16).padStart(8, "0")).join("").slice(0, 20);
@@ -5336,12 +5468,15 @@
                 try {
                   await pc.setLocalDescription(await pc.createOffer());
                   await iceGathered(pc, 1800);
-                  if (closed || !pc.localDescription) { dropVoicePc(pc); try { pc.close(); } catch (_) {} pendingOffers.delete(offerId); return; }
+                  if (closed || signalingSuspended || !pc.localDescription || !pendingOffers.has(offerId)) {
+                    pendingOffers.delete(offerId);
+                    closePeerConn(c);
+                    return;
+                  }
                   c.sdp = pc.localDescription.sdp;
                 } catch (_) {
-                  dropVoicePc(pc);
-                  try { pc.close(); } catch (_) {}
                   pendingOffers.delete(offerId);
+                  closePeerConn(c);
                 }
               })());
             }
@@ -5355,7 +5490,12 @@
         }
 
         function sendAnnounce(stEntry, forceOffers) {
-          if (closed || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
+          if (closed || signalingSuspended || !stEntry.ws || stEntry.ws.readyState !== WebSocket.OPEN) return;
+          if (stEntry.ws.bufferedAmount > 65536) {
+            closeTrackerSocket(stEntry, 4003, "backpressure", true);
+            scheduleRetry(stEntry);
+            return;
+          }
           if (performance.now() - stEntry.lastAnnounceAt < (forceOffers ? 300 : 1200)) return;
           const roomSlotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
           const offersPayload = [];
@@ -5387,6 +5527,7 @@
               stEntry.ws.send(mqttPublishPkt("tendy-quest/v1/" + infoHash, JSON.stringify(payload)));
             } else {
               stEntry.ws.send(JSON.stringify(payload));
+              stEntry.pendingAnnounceAt = performance.now();
             }
             stEntry.lastAnnounceAt = performance.now();
           } catch (_) {}
@@ -5462,8 +5603,7 @@
               ) {
                 return;
               }
-              dropVoicePc(existing.pc);
-              try { existing.pc.close(); } catch (_) {}
+              closePeerConn(existing);
               conns.delete(msg.peer_id);
             }
             const pc = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle", rtcpMuxPolicy: "require" });
@@ -5478,7 +5618,7 @@
               await ensureAnswererAudio(pc);
               await pc.setLocalDescription(await pc.createAnswer());
               await iceGathered(pc, 2400);
-              if (closed || !pc.localDescription) return;
+              if (closed || signalingSuspended || !pc.localDescription) return;
               const answerObj = {
                 action: "announce",
                 info_hash: infoHash,
@@ -5503,8 +5643,7 @@
               }
             } catch (_) {
               if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
-              dropVoicePc(pc);
-              try { pc.close(); } catch (_) {}
+              closePeerConn(c);
             }
             return;
           }
@@ -5518,12 +5657,10 @@
               // Prevent duplicate RTCPeerConnection leaks on simultaneous glare.
               if (dup.open || myPeerId > msg.peer_id) {
                 pendingOffers.delete(msg.offer_id);
-                dropVoicePc(c.pc);
-                try { c.pc.close(); } catch (_) {}
+                closePeerConn(c);
                 return;
               }
-              dropVoicePc(dup.pc);
-              try { dup.pc.close(); } catch (_) {}
+              closePeerConn(dup);
             }
             pendingOffers.delete(msg.offer_id);
             c.remotePeerId = msg.peer_id;
@@ -5533,48 +5670,80 @@
               await c.pc.setRemoteDescription({ type: "answer", sdp: msg.answer.sdp });
             } catch (_) {
               if (conns.get(msg.peer_id) === c) conns.delete(msg.peer_id);
-              dropVoicePc(c.pc);
-              try { c.pc.close(); } catch (_) {}
+              closePeerConn(c);
             }
           }
         }
 
         function connectTracker(stEntry) {
-          if (closed || stEntry.ws) return;
+          if (closed || signalingSuspended || stEntry.ws || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
           try {
             const ws = stEntry.isMqtt ? new WebSocket(stEntry.url, ["mqtt"]) : new WebSocket(stEntry.url);
             if (stEntry.isMqtt) ws.binaryType = "arraybuffer";
             stEntry.ws = ws;
+            stEntry.ready = false;
+            stEntry.awaitingPong = false;
+            stEntry.pendingAnnounceAt = 0;
+            if (stEntry.connectTimer) clearTimeout(stEntry.connectTimer);
+            stEntry.connectTimer = setTimeout(() => {
+              if (stEntry.ws === ws && ws.readyState === WebSocket.CONNECTING) {
+                closeTrackerSocket(stEntry, 4000, "connect-timeout", true);
+                if (!closed && !signalingSuspended) scheduleRetry(stEntry);
+                refreshPanel();
+                updateTelemetry();
+              }
+            }, 10000);
             ws.onopen = async () => {
-              if (closed) { try { ws.close(); } catch (_) {} return; }
+              if (stEntry.connectTimer) {
+                clearTimeout(stEntry.connectTimer);
+                stEntry.connectTimer = null;
+              }
+              if (closed || signalingSuspended || stEntry.ws !== ws) {
+                if (stEntry.ws === ws) closeTrackerSocket(stEntry, 1000, "closed", false);
+                else {
+                  ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+                  try { ws.close(1000, "closed"); } catch (_) {}
+                }
+                return;
+              }
+              const now = performance.now();
+              stEntry.lastRxAt = now;
               if (stEntry.isMqtt) {
-                ws.send(mqttConnectPkt("tq_" + myPeerId.slice(6)));
+                try { ws.send(mqttConnectPkt("tq_" + myPeerId.slice(6))); } catch (_) {}
                 return;
               }
               stEntry.ready = true;
-              stEntry.backoffMs = 4000;
-              if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = performance.now(); }
-              trackersUp = trackerStates.filter((x) => x.ready).length;
+              stEntry.lastReadyAt = now;
+              if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = now; }
+              updateTrackersUp();
               setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
-              if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(3);
+              if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(isCellularOrMobile() ? 2 : 3);
+              if (closed || signalingSuspended || stEntry.ws !== ws) return;
               sendAnnounce(stEntry, true);
               refreshPanel();
               updateTelemetry();
             };
             ws.onmessage = async (e) => {
+              if (stEntry.ws !== ws || closed) return;
+              const now = performance.now();
+              stEntry.lastRxAt = now;
+              stEntry.pendingAnnounceAt = 0;
               if (stEntry.isMqtt && e.data instanceof ArrayBuffer) {
                 for (const pkt of mqttDecodePackets(e.data)) {
                   if (pkt.type === 2) {
                     stEntry.ready = true;
-                    stEntry.backoffMs = 4000;
-                    if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = performance.now(); }
-                    trackersUp = trackerStates.filter((x) => x.ready).length;
-                    ws.send(mqttSubscribePkt(1, "tendy-quest/v1/" + infoHash));
+                    stEntry.lastReadyAt = now;
+                    if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = now; }
+                    updateTrackersUp();
+                    try { ws.send(mqttSubscribePkt(1, "tendy-quest/v1/" + infoHash)); } catch (_) {}
                     setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
-                    if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(3);
+                    if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(isCellularOrMobile() ? 2 : 3);
+                    if (closed || signalingSuspended || stEntry.ws !== ws) return;
                     sendAnnounce(stEntry, true);
                     refreshPanel();
                     updateTelemetry();
+                  } else if (pkt.type === 13) {
+                    stEntry.awaitingPong = false;
                   } else if (pkt.type === 3 && pkt.text) {
                     handleTrackerMsg(stEntry, pkt.text);
                   }
@@ -5585,38 +5754,35 @@
             };
             const onDown = () => {
               if (stEntry.ws !== ws) return;
-              stEntry.ws = null;
-              stEntry.ready = false;
-              trackersUp = trackerStates.filter((x) => x.ready).length;
-              stEntry.nextRetryAt = performance.now() + stEntry.backoffMs;
-              stEntry.backoffMs = Math.min(60000, stEntry.backoffMs * 2);
+              closeTrackerSocket(stEntry, 1000, "down", false);
+              if (!closed && !signalingSuspended && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+                scheduleRetry(stEntry);
+              }
               refreshPanel();
               updateTelemetry();
             };
             ws.onerror = onDown;
             ws.onclose = onDown;
           } catch (_) {
-            stEntry.ws = null;
-            stEntry.ready = false;
-            stEntry.nextRetryAt = performance.now() + stEntry.backoffMs;
-            stEntry.backoffMs = Math.min(60000, stEntry.backoffMs * 2);
+            closeTrackerSocket(stEntry, 1000, "err", false);
+            if (!closed && !signalingSuspended && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+              scheduleRetry(stEntry);
+            }
           }
         }
 
         function bumpShard() {
-          for (const c of conns.values()) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
+          for (const c of conns.values()) closePeerConn(c);
           conns.clear();
           for (const id of [...net.peers.keys()]) removePeer(id);
           shard = (shard + 1) % 16;
           net.shard = shard;
           infoHash = makeInfoHash(room, shard);
           shardJoinedAt = performance.now();
-          for (const oid of [...pendingOffers.keys()]) {
-            const c = pendingOffers.get(oid);
-            if (c) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
-          }
+          for (const c of pendingOffers.values()) closePeerConn(c);
           pendingOffers.clear();
-          prepareOfferPool(3).then(() => {
+          prepareOfferPool(isCellularOrMobile() ? 2 : 3).then(() => {
+            if (closed || signalingSuspended) return;
             for (const stEntry of trackerStates) {
               if (!stEntry.ready) continue;
               if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
@@ -5629,43 +5795,89 @@
           setStatus("Shard full, trying Shard " + (shard + 1) + "...");
         }
 
-        for (const stEntry of trackerStates) connectTracker(stEntry);
+        const startMobile = isCellularOrMobile();
+        const startNow = performance.now();
+        for (const stEntry of trackerStates) {
+          if (!startMobile || stEntry.isMqtt || stEntry.idx === 0) {
+            connectTracker(stEntry);
+          } else {
+            stEntry.nextRetryAt = startNow + stEntry.idx * 600;
+          }
+        }
 
         const maintTimer = setInterval(async () => {
-          if (closed || net.transport !== t) return;
+          if (closed || net.transport !== t || signalingSuspended || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
           const now = performance.now();
-          // Prune stale unanswered offers older than 45s.
+          const mobile = isCellularOrMobile();
+          const offerTarget = mobile ? 2 : 3;
+          const offerTtlMs = mobile ? 75000 : 45000;
           for (const [oid, c] of [...pendingOffers]) {
-            if (now - c.createdAt > 45000) {
+            if (now - c.createdAt > offerTtlMs) {
               pendingOffers.delete(oid);
-              dropVoicePc(c.pc);
-              try { c.pc.close(); } catch (_) {}
+              closePeerConn(c);
             }
           }
           // Prune stale half-open connections older than 10s so retries can proceed.
           for (const [pid, c] of [...conns]) {
             if (!c.open && now - (c.createdAt || 0) > 10000) {
               conns.delete(pid);
-              dropVoicePc(c.pc);
-              try { c.pc.close(); } catch (_) {}
+              closePeerConn(c);
             }
           }
           const slotsLeft = Math.max(0, MESH_MAX_REMOTES - openConnCount());
-          if (slotsLeft > 0 && readyOfferCount() < 3) {
-            await prepareOfferPool(3);
+          if (slotsLeft > 0 && readyOfferCount() < offerTarget) {
+            await prepareOfferPool(offerTarget);
+            if (closed || signalingSuspended) return;
+          }
+          let primaryKeep = null;
+          if (slotsLeft === 0) {
+            primaryKeep = trackerStates.find((x) => x.isMqtt && x.ready) || trackerStates.find((x) => x.ready) || null;
           }
           for (const stEntry of trackerStates) {
-            if (!stEntry.ws && now >= stEntry.nextRetryAt) connectTracker(stEntry);
-            else if (stEntry.ready) {
-              if (stEntry.isMqtt && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
-                try { stEntry.ws.send(new Uint8Array([0xc0, 0x00])); } catch (_) {} // MQTT PINGREQ
+            if (slotsLeft === 0 && primaryKeep && stEntry !== primaryKeep) {
+              if (stEntry.ws) closeTrackerSocket(stEntry, 1000, "squad-full", false);
+              continue;
+            }
+            if (stEntry.ready && now - stEntry.lastReadyAt >= 8000) {
+              stEntry.backoffMs = 4000;
+            }
+            if (!stEntry.ws && now >= stEntry.nextRetryAt) {
+              connectTracker(stEntry);
+              continue;
+            }
+            if (stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN && stEntry.ws.bufferedAmount > 65536) {
+              closeTrackerSocket(stEntry, 4003, "backpressure", true);
+              scheduleRetry(stEntry);
+              continue;
+            }
+            if (stEntry.ready) {
+              if (stEntry.isMqtt) {
+                if (stEntry.awaitingPong && now - stEntry.lastPingSentAt > 8000) {
+                  closeTrackerSocket(stEntry, 4001, "ping-timeout", true);
+                  scheduleRetry(stEntry);
+                  continue;
+                }
+                if (!stEntry.awaitingPong && now - stEntry.lastRxAt >= 18000 && stEntry.ws && stEntry.ws.readyState === WebSocket.OPEN) {
+                  try {
+                    stEntry.ws.send(new Uint8Array([0xc0, 0x00]));
+                    stEntry.awaitingPong = true;
+                    stEntry.lastPingSentAt = now;
+                  } catch (_) {} // MQTT PINGREQ
+                }
+              } else if (stEntry.pendingAnnounceAt > 0 && now - stEntry.pendingAnnounceAt > 15000) {
+                closeTrackerSocket(stEntry, 4002, "announce-timeout", true);
+                scheduleRetry(stEntry);
+                continue;
               }
-              const announcePeriod = openConnCount() === 0 ? 4500 : (slotsLeft > 0 ? (now - shardJoinedAt < 45000 ? 5500 : 15000) : 55000);
+              const announcePeriod = mobile
+                ? (openConnCount() === 0 ? 8000 : (slotsLeft > 0 ? 18000 : 75000))
+                : (openConnCount() === 0 ? 4500 : (slotsLeft > 0 ? (now - shardJoinedAt < 45000 ? 6500 : 15000) : 60000));
               if (now - stEntry.lastAnnounceAt >= announcePeriod) {
                 sendAnnounce(stEntry, slotsLeft > 0);
               }
             }
           }
+          updateTelemetry();
         }, 3000);
 
         const pingTimer = setInterval(() => {
@@ -5682,6 +5894,76 @@
             if (!closed && net.peers.size === 0) bumpShard();
           },
           get trackersUp() { return trackersUp; },
+          openWsCount,
+          debugMetrics() {
+            return {
+              openWebSockets: openWsCount(),
+              pendingOffers: pendingOffers.size,
+              signalingSuspended,
+              cleanCloses,
+              zombieCloses,
+            };
+          },
+          suspendSignaling(reason) {
+            if (closed) return;
+            signalingSuspended = true;
+            if (netResetTimer) {
+              clearTimeout(netResetTimer);
+              netResetTimer = null;
+            }
+            for (const stEntry of trackerStates) {
+              closeTrackerSocket(stEntry, 1000, reason || "suspend", false);
+            }
+            for (const c of pendingOffers.values()) closePeerConn(c);
+            pendingOffers.clear();
+            refreshPanel();
+            updateTelemetry();
+          },
+          resumeSignaling(reason) {
+            if (closed || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+            if (netResetTimer) {
+              clearTimeout(netResetTimer);
+              netResetTimer = null;
+            }
+            const wasSuspended = signalingSuspended;
+            signalingSuspended = false;
+            const now = performance.now();
+            if (wasSuspended) {
+              for (const stEntry of trackerStates) {
+                stEntry.backoffMs = 4000;
+                stEntry.lastAnnounceAt = 0;
+                stEntry.nextRetryAt = now + (stEntry.isMqtt ? 0 : stEntry.idx * 250);
+              }
+            }
+            for (const stEntry of trackerStates) {
+              if (!stEntry.ws && (stEntry.idx === 0 || stEntry.isMqtt || now >= stEntry.nextRetryAt)) {
+                connectTracker(stEntry);
+              }
+            }
+            if (openConnCount() < MESH_MAX_REMOTES) {
+              void prepareOfferPool(isCellularOrMobile() ? 2 : 3);
+            }
+            setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
+            refreshPanel();
+            updateTelemetry();
+          },
+          resetForNetworkChange(reason) {
+            if (closed) return;
+            t.suspendSignaling(reason || "net-change");
+            for (const [pid, c] of [...conns]) {
+              const cs = c.pc ? c.pc.connectionState : "closed";
+              const ice = c.pc ? c.pc.iceConnectionState : "closed";
+              if (cs === "disconnected" || cs === "failed" || cs === "closed" || ice === "disconnected" || ice === "failed" || ice === "closed") {
+                conns.delete(pid);
+                closePeerConn(c);
+                if (c.boundId) removePeer(c.boundId);
+              }
+            }
+            netResetTimer = setTimeout(() => {
+              netResetTimer = null;
+              if (!closed) t.resumeSignaling(reason || "net-change");
+            }, 700);
+          },
           send(buf, reliable, except) {
             let n = 0;
             for (const c of conns.values()) {
@@ -5693,14 +5975,19 @@
           },
           close() {
             closed = true;
+            signalingSuspended = true;
+            if (netResetTimer) {
+              clearTimeout(netResetTimer);
+              netResetTimer = null;
+            }
             clearInterval(maintTimer);
             clearInterval(pingTimer);
             for (const stEntry of trackerStates) {
-              if (stEntry.ws) { try { stEntry.ws.close(); } catch (_) {} stEntry.ws = null; }
+              closeTrackerSocket(stEntry, 1000, "close", false);
             }
-            for (const c of pendingOffers.values()) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
+            for (const c of pendingOffers.values()) closePeerConn(c);
             pendingOffers.clear();
-            for (const c of conns.values()) { dropVoicePc(c.pc); try { c.pc.close(); } catch (_) {} }
+            for (const c of conns.values()) closePeerConn(c);
             conns.clear();
           },
           connCount() { return openConnCount(); },
@@ -5762,7 +6049,14 @@
       }
 
       // ---- Session control ----
+      let hiddenSuspendTimer = null;
+      let suspendedByPagehide = false;
+      let netChangeDebounce = null;
+
       function leave() {
+        if (hiddenSuspendTimer) { clearTimeout(hiddenSuspendTimer); hiddenSuspendTimer = null; }
+        if (netChangeDebounce) { clearTimeout(netChangeDebounce); netChangeDebounce = null; }
+        suspendedByPagehide = false;
         sendBye();
         if (net.transport) { try { net.transport.close(); } catch (_) {} }
         net.transport = null;
@@ -5875,7 +6169,83 @@
         for (const [id, p] of [...net.peers]) if (now - p.last > PEER_TIMEOUT_MS) removePeer(id);
         updateTelemetry();
       }, KEEPALIVE_MS);
-      window.addEventListener("pagehide", sendBye);
+
+      const handlePageLeave = (e) => {
+        if (hiddenSuspendTimer) { clearTimeout(hiddenSuspendTimer); hiddenSuspendTimer = null; }
+        if (netChangeDebounce) { clearTimeout(netChangeDebounce); netChangeDebounce = null; }
+        sendBye();
+        if (net.transport) {
+          if (e && e.type === "pagehide") suspendedByPagehide = true;
+          try { net.transport.close(); } catch (_) {}
+          net.transport = null;
+          updateTelemetry();
+        }
+      };
+      window.addEventListener("pagehide", handlePageLeave);
+      window.addEventListener("beforeunload", handlePageLeave);
+      window.addEventListener("pageshow", (e) => {
+        if (e.persisted && suspendedByPagehide && net.onlinePref && !net.transport) {
+          suspendedByPagehide = false;
+          if (net.transportKind === "tabs") joinTabs(net.room);
+          else if (net.transportKind !== "rtc") joinMesh(net.room);
+        }
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") {
+          if (hiddenSuspendTimer) clearTimeout(hiddenSuspendTimer);
+          hiddenSuspendTimer = setTimeout(() => {
+            hiddenSuspendTimer = null;
+            if (document.visibilityState === "hidden" && net.transport && net.transport.suspendSignaling) {
+              net.transport.suspendSignaling("hidden");
+              setStatus("Paused in background");
+            }
+          }, 6000);
+        } else if (document.visibilityState === "visible") {
+          if (hiddenSuspendTimer) { clearTimeout(hiddenSuspendTimer); hiddenSuspendTimer = null; }
+          if (suspendedByPagehide && net.onlinePref && !net.transport) {
+            suspendedByPagehide = false;
+            if (net.transportKind === "tabs") joinTabs(net.room);
+            else if (net.transportKind !== "rtc") joinMesh(net.room);
+          } else if (net.transport && net.transport.resumeSignaling) {
+            net.transport.resumeSignaling("visible");
+          }
+        }
+      });
+      window.addEventListener("offline", () => {
+        if (netChangeDebounce) { clearTimeout(netChangeDebounce); netChangeDebounce = null; }
+        if (net.transport && net.transport.suspendSignaling) {
+          net.transport.suspendSignaling("offline");
+          setStatus("Offline (waiting for network...)");
+        }
+      });
+      window.addEventListener("online", () => {
+        if (netChangeDebounce) clearTimeout(netChangeDebounce);
+        netChangeDebounce = setTimeout(() => {
+          netChangeDebounce = null;
+          if (document.visibilityState !== "hidden" && net.transport && net.transport.resetForNetworkChange) {
+            net.transport.resetForNetworkChange("online");
+          }
+        }, 800);
+      });
+      (() => {
+        const nc = getNetConnection();
+        if (!nc || typeof nc.addEventListener !== "function") return;
+        const connSig = () => (nc.type || "") + "|" + (nc.effectiveType || "") + "|" + (nc.saveData ? "1" : "0");
+        let lastConnSig = connSig();
+        nc.addEventListener("change", () => {
+          const sig = connSig();
+          if (sig === lastConnSig) return;
+          lastConnSig = sig;
+          if (document.visibilityState === "hidden" || !net.onlinePref) return;
+          if (netChangeDebounce) clearTimeout(netChangeDebounce);
+          netChangeDebounce = setTimeout(() => {
+            netChangeDebounce = null;
+            if (document.visibilityState !== "hidden" && net.transport && net.transport.resetForNetworkChange) {
+              net.transport.resetForNetworkChange("net-change");
+            }
+          }, 1500);
+        });
+      })();
 
       // ---- Collapsible Panel (shown only in Free Mode or explicit ?mp=tabs/rtc) ----
       const ui = {};
@@ -6156,10 +6526,18 @@
         ui.panel.style.display = show ? "" : "none";
         ui.pill.setAttribute("aria-expanded", show ? "true" : "false");
       }
+      function getTransportMetrics() {
+        if (net.transport && typeof net.transport.debugMetrics === "function") {
+          return net.transport.debugMetrics();
+        }
+        return { openWebSockets: 0, pendingOffers: 0, signalingSuspended: false, cleanCloses: 0, zombieCloses: 0 };
+      }
+
       function updateTelemetry() {
         const t = window.tendyTelemetry;
         if (!t) return;
         const myMeta = CHARS[net.myChar] || CHARS[0];
+        const m = getTransportMetrics();
         t.mp = Object.assign({ remote: [], local: null }, net.game || {}, {
           enabled: true,
           buildId: window.TQ_BUILD_ID || "dev",
@@ -6177,6 +6555,11 @@
           anchorId: net.anchorId,
           anchorRttMs: net.anchorRttMs,
           trackersUp: net.transport && typeof net.transport.trackersUp === "number" ? net.transport.trackersUp : 0,
+          openWebSockets: m.openWebSockets,
+          pendingOffers: m.pendingOffers,
+          signalingSuspended: m.signalingSuspended,
+          cleanCloses: m.cleanCloses,
+          zombieCloses: m.zombieCloses,
           status: net.status,
           peers: net.peers.size,
           connections: net.transport ? net.transport.connCount() : 0,
@@ -6198,8 +6581,17 @@
         updateTelemetry();
       }
 
-      function setOnline(_on) {
-        net.onlinePref = true;
+      function setOnline(on) {
+        if (!on) {
+          net.onlinePref = false;
+          leave();
+        } else {
+          net.onlinePref = true;
+          if (!net.transport) {
+            if (net.transportKind === "tabs") joinTabs(net.room);
+            else if (net.transportKind !== "rtc") joinMesh(net.room);
+          }
+        }
         refreshPanel();
         updateTelemetry();
       }
@@ -6238,7 +6630,10 @@
 
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);
       else buildPanel();
-      if (mpParam === "tabs") {
+      if (isForcedSolo) {
+        net.onlinePref = false;
+        setStatus("Solo (offline)");
+      } else if (mpParam === "tabs") {
         joinTabs(roomFromUrl || "MAIN");
       } else if (mpParam === "rtc") {
         setStatus("Not connected: pick a transport or Create invite");
@@ -6252,7 +6647,7 @@
         setFreeRoam,
         isInFreeRoam() { return !!net.inFreeRoam; },
         setOnline,
-        isOnline() { return true; },
+        isOnline() { return !!net.onlinePref; },
         setScene,
         toggleMic,
         toggleDeafen,
@@ -6260,6 +6655,7 @@
         lockChar,
         squadInfo,
         debugState() {
+          const m = getTransportMetrics();
           return {
             myPeerId,
             room: net.room,
@@ -6268,9 +6664,16 @@
             myChar: net.myChar,
             charLocked: net.charLocked,
             charSelectOpen: net.charSelectOpen,
+            transport: net.transport ? net.transport.kind : "",
+            online: !!net.onlinePref,
             peers: net.peers.size,
             connections: net.transport ? net.transport.connCount() : 0,
             trackersUp: net.transport && typeof net.transport.trackersUp === "number" ? net.transport.trackersUp : 0,
+            openWebSockets: m.openWebSockets,
+            pendingOffers: m.pendingOffers,
+            signalingSuspended: m.signalingSuspended,
+            cleanCloses: m.cleanCloses,
+            zombieCloses: m.zombieCloses,
             status: net.status,
             squadInfo: Array.from(squadInfo()),
             voice: { micOn: voice.micOn, deafened: voice.deafened, pcs: voice.pcs.size, remoteStreams: voice.audios.size },
