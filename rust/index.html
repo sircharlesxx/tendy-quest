@@ -312,6 +312,11 @@
       setClub(line) {
         this.club = line;
       },
+      // Turn-based Lexie showdown debug telemetry JSON (?debug=1&lexie_battle=1).
+      lexie: "",
+      setLexie(line) {
+        this.lexie = line;
+      },
       // Skate park debug demos (?debug=1&park_demo=...) append per-frame state lines here.
       parkLog(line) {
         const log = (window.tendyParkLog = window.tendyParkLog || []);
@@ -4486,7 +4491,7 @@
 
       function resolveCharClaims(sourceId, peer) {
         if (urlCharId !== null) return;
-        if (!net.transport || net.peers.size === 0 || net.sceneId < 3) return;
+        if (!net.transport || net.peers.size === 0 || net.sceneId < 3 || net.sceneId === 6) return;
         if (!net.charLocked || !peer.charLocked || peer.charId !== net.myChar) return;
         const myAge = Math.floor((performance.now() - net.charClaimedAt) / 1000);
         const theirAge = peer.claimAgeSec || 0;
@@ -5247,7 +5252,7 @@
               sendHello();
               sendMeta();
               if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
-              if (net.inFreeRoam && net.sceneId >= 3 && !net.charLocked && !net.charSelectOpen) openCharSelect("");
+              if (net.inFreeRoam && net.sceneId >= 3 && net.sceneId <= 5 && !net.charLocked && !net.charSelectOpen) openCharSelect("");
               else refreshCharSelect();
             };
             const closed = () => {
@@ -6246,7 +6251,7 @@
         setStatus("Tabs room " + room + ": open this page in another tab of this browser");
         sendHello();
         sendMeta();
-        if (net.inFreeRoam && net.sceneId >= 3 && urlCharId === null) openCharSelect("");
+        if (net.inFreeRoam && net.sceneId >= 3 && net.sceneId <= 5 && urlCharId === null) openCharSelect("");
       }
 
       async function rtcCreateInvite() {
@@ -6496,7 +6501,7 @@
         ui.btnTabs.classList.toggle("on", k === "tabs");
         ui.btnRtc.classList.toggle("on", k === "rtc");
         ui.btnLeave.disabled = !net.transport;
-        if (ui.btnChangeChar) ui.btnChangeChar.disabled = net.sceneId < 3;
+        if (ui.btnChangeChar) ui.btnChangeChar.disabled = net.sceneId < 3 || net.sceneId === 6;
       }
       function buildPanel() {
         const style = el("style", {});
@@ -6763,7 +6768,12 @@
         let inCityPeers = 0;
         let inCasinoPeers = 0;
         let inClubPeers = 0;
+        let inLexiePeers = 0;
+        let claimedMask = (net.myChar >= 0 && net.myChar <= 4) ? (1 << net.myChar) : 0;
         for (const p of net.peers.values()) {
+          if ((p.charLocked || p.sceneId === 6) && p.charId >= 0 && p.charId <= 4) {
+            claimedMask |= (1 << p.charId);
+          }
           const ps = p.sceneId || 0;
           if (ps === 1) {
             inLvl1++;
@@ -6774,9 +6784,11 @@
             inCasinoPeers++;
           } else if (ps === 5) {
             inClubPeers++;
+          } else if (ps === 6) {
+            inLexiePeers++;
           }
         }
-        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1, inCityPeers, inCasinoPeers, inClubPeers]);
+        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1, inCityPeers, inCasinoPeers, inClubPeers, inLexiePeers, claimedMask]);
       }
 
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);

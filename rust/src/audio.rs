@@ -169,6 +169,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = setClub)]
         fn js_set_club_telemetry(line: &str);
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = setLexie)]
+        fn js_set_lexie_telemetry(line: &str);
+
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCheckpoint)]
         fn js_save_checkpoint(json: &str);
 
@@ -587,7 +590,7 @@ mod imp {
         js_net_lock_char(char_id);
     }
 
-    pub fn net_squad_info() -> [u32; 6] {
+    pub fn net_squad_info() -> [u32; 8] {
         let v = js_net_squad_info();
         [
             v.first().copied().unwrap_or(1),
@@ -596,6 +599,8 @@ mod imp {
             v.get(3).copied().unwrap_or(0),
             v.get(4).copied().unwrap_or(0),
             v.get(5).copied().unwrap_or(0),
+            v.get(6).copied().unwrap_or(0),
+            v.get(7).copied().unwrap_or(1),
         ]
     }
 
@@ -627,6 +632,11 @@ mod imp {
     /// Updates `window.tendyTelemetry.club` for headless Velvet Disco Club checks.
     pub fn set_club_telemetry(line: &str) {
         js_set_club_telemetry(line);
+    }
+
+    /// Updates `window.tendyTelemetry.lexie` for headless turn-based Lexie battle checks.
+    pub fn set_lexie_telemetry(line: &str) {
+        js_set_lexie_telemetry(line);
     }
 }
 
@@ -708,11 +718,7 @@ mod imp {
 
     pub fn set_wheel_telemetry(_line: &str) {}
 
-    pub fn debug_fast_club() -> bool {
-        false
-    }
-
-    pub fn set_club_telemetry(_line: &str) {}
+    pub fn set_lexie_telemetry(_line: &str) {}
 
     pub fn play_sfx(_name: &str) {}
 
@@ -870,8 +876,8 @@ mod imp {
 
     pub fn net_lock_char(_char_id: u32) {}
 
-    pub fn net_squad_info() -> [u32; 6] {
-        [1, 0, 1, 0, 0, 0]
+    pub fn net_squad_info() -> [u32; 8] {
+        [1, 0, 1, 0, 0, 0, 0, 1]
     }
 
     pub fn net_publish(_state: &[f32]) {}
@@ -912,5 +918,7 @@ pub use imp::{debug_park_demo, park_log, touch_jump_held};
 pub use imp::{debug_wheel_demo, set_wheel_telemetry};
 // Velvet Disco Club debug fast-timer & telemetry hooks (club.rs).
 pub use imp::{debug_fast_club, set_club_telemetry};
+// Turn-based Lexie showdown telemetry hook (lexie_battle.rs).
+pub use imp::set_lexie_telemetry;
 // Distributed multiplayer bridge (net.rs & controls.rs).
 pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_lock_char, net_open_char_select, net_publish, net_set_free_roam, net_set_online, net_set_scene, net_squad_info, net_telemetry};

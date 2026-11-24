@@ -69,6 +69,19 @@ pub const EVENT_CASINO_WARP_ALL: u32 = 6;
 pub const EVENT_LEXIE_BATTLE: u32 = 7;
 pub const EVENT_LEXIE_MOVE: u32 = 8;
 pub const EVENT_COASTER_WARP_ALL: u32 = 9;
+pub const EVENT_LEXIE_COMMIT: u32 = 10;
+
+pub fn pack_lexie_move(round: u32, actor: usize, is_heavy: bool) -> u32 {
+    ((round.min(4095)) << 4) | (((actor as u32) & 7) << 1) | u32::from(is_heavy)
+}
+
+pub fn unpack_lexie_move(value: u32) -> (u32, usize, bool) {
+    (
+        (value >> 4) & 0x0FFF,
+        ((value >> 1) & 7) as usize,
+        (value & 1) != 0,
+    )
+}
 
 pub const CHAR_STAN: u8 = 0;
 pub const CHAR_NATE: u8 = 1;
@@ -79,7 +92,9 @@ pub const CHAR_DEREK: u8 = 4;
 #[derive(Resource, Default)]
 pub struct NetCoopEvents {
     pub mom_damage: f32,
-    pub lexie_moves: Vec<(u8, usize, bool)>,
+    pub lexie_moves: Vec<(u8, u32, usize, bool)>,
+    pub lexie_commits: Vec<(u32, usize, bool)>,
+    pub lexie_battle_players: u32,
 }
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
@@ -273,12 +288,12 @@ impl NetState {
         self.online_active && self.peers > 0
     }
 
-    pub fn remote_peer_count(&self) -> usize {
-        self.remotes.len()
-    }
-
     pub fn local_char(&self) -> u8 {
         self.local_char
+    }
+
+    pub fn is_anchor(&self) -> bool {
+        self.is_anchor
     }
 
     /// Total players in the active online session (1 when solo/offline; `1 + peers` when online).
@@ -368,6 +383,7 @@ fn scene_id_for_state(state: &GameState) -> u8 {
         GameState::CityPlay => 3,
         GameState::CasinoPlay => 4,
         GameState::ClubPlay => 5,
+        GameState::LexieBattle => 6,
         _ => 0,
     }
 }
@@ -1060,17 +1076,41 @@ fn receive_remote_states(
                         }
                     }
                     EVENT_LEXIE_BATTLE => {
-                        if *state.get() == GameState::CityPlay && !stats.free_roam {
+                        if value > 0 {
+                            coop.lexie_battle_players = value.clamp(1, 5);
+                        }
+                        if matches!(
+                            *state.get(),
+                            GameState::CityPlay | GameState::CasinoPlay | GameState::ClubPlay
+                        ) && !stats.free_roam
+                        {
+                            stats.casino_open = false;
+                            stats.arcade_open = false;
+                            stats.bartender_open = false;
+                            stats.phone_open = false;
+                            stats.club_modal_open = false;
+                            stats.club_dance_open = false;
+                            stats.driving_car = None;
+                            stats.riding_scooter = None;
+                            stats.riding_wheel = false;
                             next_state.set(GameState::LexieBattle);
                         }
                         format!("{} STARTED LEXIE SHOWDOWN!", label)
                     }
                     EVENT_LEXIE_MOVE => {
-                        let actor = ((value >> 8) & 7) as usize;
-                        let is_heavy = (value & 1) != 0;
-                        coop.lexie_moves.push((slot, actor, is_heavy));
+                        let (round, actor, is_heavy) = unpack_lexie_move(value);
+                        coop.lexie_moves.push((slot, round, actor, is_heavy));
                         format!(
                             "{} VOTED {}!",
+                            label,
+                            if is_heavy { "HEAVY" } else { "LIGHT" }
+                        )
+                    }
+                    EVENT_LEXIE_COMMIT => {
+                        let (round, actor, is_heavy) = unpack_lexie_move(value);
+                        coop.lexie_commits.push((round, actor, is_heavy));
+                        format!(
+                            "{} LOCKED {}!",
                             label,
                             if is_heavy { "HEAVY" } else { "LIGHT" }
                         )

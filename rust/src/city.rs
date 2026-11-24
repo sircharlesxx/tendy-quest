@@ -4662,7 +4662,8 @@ pub fn update_city_lexie(
             && !stats.lexie_defeated
             && (!lexie.on_tower && dist < 26.0 || lexie_contact.is_some())
         {
-            crate::audio::net_event(crate::net::EVENT_LEXIE_BATTLE, 1);
+            let players = crate::audio::net_squad_info()[0].clamp(1, 5);
+            crate::audio::net_event(crate::net::EVENT_LEXIE_BATTLE, players);
             commands.entity(lexie_ent).despawn_recursive();
             next_state.set(GameState::LexieBattle);
             return;

@@ -146,6 +146,11 @@ pub struct RpgBattleState {
     lexie_attack_kind: u8,
     lexie_target: usize,
     turn_round: u32,
+    coop_players: u32,
+    coop_online: bool,
+    turn_owner_claimed: bool,
+    turn_local_owns: bool,
+    local_char_id: u8,
     local_vote: Option<bool>,
     remote_votes: Vec<(u8, bool)>,
     vote_coop_active: bool,
@@ -155,12 +160,79 @@ pub struct RpgBattleState {
     party: [PartyMember; 5],
 }
 
+fn actor_to_char_id(actor: usize) -> u8 {
+    match actor {
+        0 => crate::net::CHAR_STAN,  // 0
+        1 => crate::net::CHAR_GLENN, // 2
+        2 => crate::net::CHAR_NATE,  // 1
+        3 => crate::net::CHAR_DEREK, // 4
+        _ => crate::net::CHAR_TJ,    // 3
+    }
+}
+
+fn lexie_scaled_max_hp(players: u32) -> f32 {
+    1550.0 + (players.clamp(1, 5).saturating_sub(1) as f32) * 450.0
+}
+
+fn lexie_coop_damage_mul(players: u32) -> f32 {
+    1.0 + (players.clamp(1, 5).saturating_sub(1) as f32) * 0.08
+}
+
+/// Refreshes per-turn character ownership and voter counts for the current active hero.
+fn sync_turn_ownership(battle: &mut RpgBattleState, net: Option<&crate::net::NetState>) {
+    let coop_active = net.is_some_and(|n| n.is_coop_active());
+    let sq = crate::audio::net_squad_info();
+    let total_voters = if coop_active {
+        net.map(|n| n.online_player_count() as usize)
+            .unwrap_or(1)
+            .max(sq[0] as usize)
+            .max(1)
+    } else {
+        1
+    };
+    let claimed_mask = sq[7] as u8;
+    let local_char = net.map(|n| n.local_char()).unwrap_or(0);
+    let actor_char = actor_to_char_id(battle.actor);
+    let actor_is_claimed = coop_active && ((claimed_mask & (1 << actor_char)) != 0);
+    let local_owns_actor = !coop_active || (actor_is_claimed && local_char == actor_char);
+
+    battle.coop_online = coop_active;
+    battle.local_char_id = local_char;
+    battle.turn_owner_claimed = actor_is_claimed;
+    battle.turn_local_owns = local_owns_actor;
+    battle.vote_coop_active = coop_active && !actor_is_claimed;
+    battle.vote_total_players = total_voters;
+}
+
+fn sync_lexie_coop_scale(
+    battle: &mut RpgBattleState,
+    stats: &mut PlayerStats,
+    coop: Option<&crate::net::NetCoopEvents>,
+) {
+    let squad_players = crate::audio::net_squad_info()[0].clamp(1, 5);
+    let event_players = coop.map(|c| c.lexie_battle_players).unwrap_or(0).clamp(0, 5);
+    let target_players = squad_players.max(event_players).max(battle.coop_players).clamp(1, 5);
+    if target_players != battle.coop_players {
+        battle.coop_players = target_players;
+        battle.lexie_max_hp = lexie_scaled_max_hp(target_players);
+        battle.lexie_hp = battle.lexie_max_hp;
+        stats.boss_max_hp = battle.lexie_max_hp;
+        stats.boss_hp = battle.lexie_hp;
+        if target_players > 1 && battle.phase == RpgPhase::Intro {
+            battle.banner_msg = format!(
+                "{}P CO-OP VS LEXIE ({:.0} HP)! EACH PLAYER CONTROLS THEIR HERO!",
+                target_players, battle.lexie_max_hp
+            );
+        }
+    }
+}
+
 impl Default for RpgBattleState {
     fn default() -> Self {
         Self {
             phase: RpgPhase::Intro,
             phase_timer: 0.0,
-            phase_duration: 0.4,
+            phase_duration: 1.6,
             actor: 0,
             selected_btn: 0,
             is_heavy: false,
@@ -174,6 +246,11 @@ impl Default for RpgBattleState {
             lexie_attack_kind: 0,
             lexie_target: 0,
             turn_round: 1,
+            coop_players: 1,
+            coop_online: false,
+            turn_owner_claimed: false,
+            turn_local_owns: true,
+            local_char_id: 0,
             local_vote: None,
             remote_votes: Vec::new(),
             vote_coop_active: false,
@@ -328,9 +405,24 @@ pub fn enter_lexie_battle(
     asset_server: Res<AssetServer>,
     mut stats: ResMut<PlayerStats>,
     mut battle: ResMut<RpgBattleState>,
+    coop: Option<Res<crate::net::NetCoopEvents>>,
     mut cam_q: Query<(&mut Transform, &mut Projection), With<Camera3d>>,
 ) {
+    crate::audio::net_set_scene(6, stats.tendies >= 12);
     *battle = RpgBattleState::default();
+    let squad_players = crate::audio::net_squad_info()[0].clamp(1, 5);
+    let event_players = coop.as_ref().map(|c| c.lexie_battle_players).unwrap_or(0).clamp(0, 5);
+    let players = squad_players.max(event_players).clamp(1, 5);
+    battle.coop_players = players;
+    battle.lexie_max_hp = lexie_scaled_max_hp(players);
+    battle.lexie_hp = battle.lexie_max_hp;
+    battle.phase_duration = 1.6;
+    if players > 1 {
+        battle.banner_msg = format!(
+            "{}P CO-OP VS LEXIE ({:.0} HP)! EACH PLAYER CONTROLS THEIR HERO!",
+            players, battle.lexie_max_hp
+        );
+    }
     stats.boss_mode = true;
     stats.boss_hp = battle.lexie_hp;
     stats.boss_max_hp = battle.lexie_max_hp;
@@ -810,7 +902,10 @@ fn spawn_rpg_ui(commands: &mut Commands, battle: &RpgBattleState) {
                 .with_children(|box_node| {
                     box_node.spawn((
                         RpgBossStatusText,
-                        Text::new("LEXIE - PICKLED GARLIC QUEEN   HP 950 / 950"),
+                        Text::new(format!(
+                            "LEXIE - PICKLED GARLIC QUEEN   HP {:.0} / {:.0}",
+                            battle.lexie_hp, battle.lexie_max_hp
+                        )),
                         TextFont {
                             font_size: 16.0,
                             ..default()
@@ -1006,11 +1101,18 @@ fn spawn_rpg_ui(commands: &mut Commands, battle: &RpgBattleState) {
 pub fn exit_lexie_battle(
     mut commands: Commands,
     mut stats: ResMut<PlayerStats>,
+    mut coop: Option<ResMut<crate::net::NetCoopEvents>>,
     ents: Query<Entity, With<LexieBattleEntity>>,
     overlays: Query<Entity, With<LexieBattleOverlay>>,
 ) {
     stop_voice();
+    crate::audio::net_set_scene(0, stats.tendies >= 12);
     stats.boss_mode = false;
+    if let Some(ref mut ce) = coop {
+        ce.lexie_moves.clear();
+        ce.lexie_commits.clear();
+        ce.lexie_battle_players = 0;
+    }
     for e in &ents {
         commands.entity(e).despawn_recursive();
     }
@@ -1049,6 +1151,9 @@ pub fn update_lexie_battle(
 
     match battle.phase {
         RpgPhase::Intro => {
+            if (battle.lexie_hp - battle.lexie_max_hp).abs() < 0.01 {
+                sync_lexie_coop_scale(&mut battle, &mut stats, coop.as_deref());
+            }
             if phase_finished_with_voice(&battle, 6.0) {
                 start_actor_turn(&mut battle, 0);
             }
@@ -1061,75 +1166,118 @@ pub fn update_lexie_battle(
             }
         }
         RpgPhase::PlayerSelect => {
-            let coop_active = net.as_ref().is_some_and(|n| n.is_coop_active());
-            let total_voters = if coop_active {
-                1 + net.as_ref().map(|n| n.remote_peer_count().max(1)).unwrap_or(1)
-            } else {
-                1
-            };
+            if battle.turn_round == 1
+                && battle.actor == 0
+                && (battle.lexie_hp - battle.lexie_max_hp).abs() < 0.01
+                && battle.local_vote.is_none()
+            {
+                sync_lexie_coop_scale(&mut battle, &mut stats, coop.as_deref());
+            }
+            sync_turn_ownership(&mut battle, net.as_deref());
+            let coop_active = battle.coop_online;
+            let total_voters = battle.vote_total_players;
+            let is_anchor = net.as_ref().is_some_and(|n| n.is_anchor());
+            let actor_is_claimed = battle.turn_owner_claimed;
+            let local_owns_actor = battle.turn_local_owns;
+            let can_input = !coop_active || !actor_is_claimed || local_owns_actor;
+
             if coop_active {
+                // Step A: Authoritative commit drain (applies matching (round, actor) move immediately).
+                let mut matched_commit: Option<bool> = None;
                 if let Some(ref mut ce) = coop {
+                    let cur_round = battle.turn_round;
                     let cur_actor = battle.actor;
-                    let mut remaining = Vec::new();
-                    for (slot, actor, is_heavy) in ce.lexie_moves.drain(..) {
-                        if actor == cur_actor {
+                    let mut kept = Vec::new();
+                    for (round, actor, is_heavy) in ce.lexie_commits.drain(..) {
+                        if round == cur_round && actor == cur_actor {
+                            if matched_commit.is_none() {
+                                matched_commit = Some(is_heavy);
+                            }
+                        } else if round > cur_round || (round == cur_round && actor > cur_actor) {
+                            kept.push((round, actor, is_heavy));
+                        }
+                    }
+                    ce.lexie_commits = kept;
+                }
+                if let Some(committed_heavy) = matched_commit {
+                    battle.local_vote = None;
+                    battle.remote_votes.clear();
+                    begin_hero_action(&mut battle, committed_heavy);
+                    return;
+                }
+
+                // Step B: Vote drain for unclaimed turns (prunes stale rounds/turns).
+                if let Some(ref mut ce) = coop {
+                    let cur_round = battle.turn_round;
+                    let cur_actor = battle.actor;
+                    let mut kept = Vec::new();
+                    for (slot, round, actor, is_heavy) in ce.lexie_moves.drain(..) {
+                        if round == cur_round && actor == cur_actor {
                             if let Some(existing) = battle.remote_votes.iter_mut().find(|(s, _)| *s == slot) {
                                 existing.1 = is_heavy;
                             } else {
                                 battle.remote_votes.push((slot, is_heavy));
                             }
-                        } else {
-                            remaining.push((slot, actor, is_heavy));
+                        } else if round > cur_round || (round == cur_round && actor > cur_actor) {
+                            kept.push((slot, round, actor, is_heavy));
                         }
                     }
-                    ce.lexie_moves = remaining;
+                    ce.lexie_moves = kept;
                 }
             } else if let Some(ref mut ce) = coop {
                 ce.lexie_moves.clear();
+                ce.lexie_commits.clear();
             }
 
+            // Step C: Input gating & button visuals
             let mut chosen: Option<bool> = None;
-            if keys.just_pressed(KeyCode::Digit1) {
-                chosen = Some(false);
-            } else if keys.just_pressed(KeyCode::Digit2) {
-                chosen = Some(true);
-            } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
-                battle.selected_btn = 0;
-            } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
-                battle.selected_btn = 1;
-            } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
-                chosen = Some(battle.selected_btn == 1);
-            }
-
-            for gp in &gamepads {
-                if gp.just_pressed(GamepadButton::DPadLeft) {
+            if can_input {
+                if keys.just_pressed(KeyCode::Digit1) {
+                    chosen = Some(false);
+                } else if keys.just_pressed(KeyCode::Digit2) {
+                    chosen = Some(true);
+                } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
                     battle.selected_btn = 0;
-                } else if gp.just_pressed(GamepadButton::DPadRight) {
+                } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
                     battle.selected_btn = 1;
-                } else if gp.just_pressed(GamepadButton::South) {
+                } else if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
                     chosen = Some(battle.selected_btn == 1);
+                }
+
+                for gp in &gamepads {
+                    if gp.just_pressed(GamepadButton::DPadLeft) {
+                        battle.selected_btn = 0;
+                    } else if gp.just_pressed(GamepadButton::DPadRight) {
+                        battle.selected_btn = 1;
+                    } else if gp.just_pressed(GamepadButton::South) {
+                        chosen = Some(battle.selected_btn == 1);
+                    }
                 }
             }
 
             for (btn, inter, mut bg, mut border) in &mut btn_q {
-                let hovered = *inter == Interaction::Hovered;
-                let pressed = *inter == Interaction::Pressed;
+                let hovered = can_input && *inter == Interaction::Hovered;
+                let pressed = can_input && *inter == Interaction::Pressed;
                 if hovered {
                     battle.selected_btn = btn.0;
                 }
                 if pressed {
                     chosen = Some(btn.0 == 1);
                 }
-                let voted_this = battle.local_vote == Some(btn.0 == 1);
-                let sel = battle.selected_btn == btn.0 || voted_this;
-                *bg = BackgroundColor(if voted_this {
+                let voted_this = can_input && battle.local_vote == Some(btn.0 == 1);
+                let sel = can_input && (battle.selected_btn == btn.0 || voted_this);
+                *bg = BackgroundColor(if !can_input {
+                    Color::srgb(0.07, 0.09, 0.15)
+                } else if voted_this {
                     Color::srgb(0.14, 0.42, 0.28)
                 } else if sel {
                     Color::srgb(0.16, 0.30, 0.56)
                 } else {
                     Color::srgb(0.08, 0.14, 0.26)
                 });
-                *border = BorderColor(if voted_this {
+                *border = BorderColor(if !can_input {
+                    Color::srgb(0.26, 0.32, 0.46)
+                } else if voted_this {
                     Color::srgb(0.45, 1.0, 0.55)
                 } else if sel {
                     Color::srgb(1.0, 0.88, 0.25)
@@ -1138,12 +1286,36 @@ pub fn update_lexie_battle(
                 });
             }
 
+            // Step D: Action resolution
             if !coop_active {
-                battle.vote_coop_active = false;
                 battle.vote_total_players = 1;
                 battle.vote_time_left = 0.0;
                 if let Some(is_heavy) = chosen {
                     begin_hero_action(&mut battle, is_heavy);
+                }
+            } else if actor_is_claimed {
+                let deadline = 20.0;
+                battle.vote_total_players = total_voters;
+                battle.vote_time_left = (deadline - battle.phase_timer).max(0.0);
+                if local_owns_actor {
+                    if let Some(is_heavy) = chosen {
+                        crate::audio::net_event(
+                            crate::net::EVENT_LEXIE_COMMIT,
+                            crate::net::pack_lexie_move(battle.turn_round, battle.actor, is_heavy),
+                        );
+                        begin_hero_action(&mut battle, is_heavy);
+                        return;
+                    }
+                }
+                let fallback_heavy = (battle.turn_round + battle.actor as u32) % 2 == 1;
+                if is_anchor && battle.phase_timer >= deadline {
+                    crate::audio::net_event(
+                        crate::net::EVENT_LEXIE_COMMIT,
+                        crate::net::pack_lexie_move(battle.turn_round, battle.actor, fallback_heavy),
+                    );
+                    begin_hero_action(&mut battle, fallback_heavy);
+                } else if !is_anchor && battle.phase_timer >= deadline + 4.0 {
+                    begin_hero_action(&mut battle, fallback_heavy);
                 }
             } else {
                 if let Some(is_heavy) = chosen {
@@ -1151,17 +1323,16 @@ pub fn update_lexie_battle(
                         battle.local_vote = Some(is_heavy);
                         crate::audio::net_event(
                             crate::net::EVENT_LEXIE_MOVE,
-                            ((battle.actor as u32) << 8) | (is_heavy as u32),
+                            crate::net::pack_lexie_move(battle.turn_round, battle.actor, is_heavy),
                         );
                     }
                 }
-                let total_cast = (battle.local_vote.is_some() as usize) + battle.remote_votes.len();
+                let total_cast = usize::from(battle.local_vote.is_some()) + battle.remote_votes.len();
                 let deadline = if total_cast > 0 { 8.0 } else { 15.0 };
-                battle.vote_coop_active = true;
                 battle.vote_total_players = total_voters;
                 battle.vote_time_left = (deadline - battle.phase_timer).max(0.0);
 
-                if total_cast >= total_voters || battle.phase_timer >= deadline {
+                let winner_is_heavy = {
                     let mut light_votes = usize::from(battle.local_vote == Some(false));
                     let mut heavy_votes = usize::from(battle.local_vote == Some(true));
                     for &(_, h) in &battle.remote_votes {
@@ -1171,13 +1342,23 @@ pub fn update_lexie_battle(
                             light_votes += 1;
                         }
                     }
-                    let winner_is_heavy = if heavy_votes > light_votes {
+                    if heavy_votes > light_votes {
                         true
                     } else if light_votes > heavy_votes {
                         false
                     } else {
                         (battle.turn_round + battle.actor as u32) % 2 == 1
-                    };
+                    }
+                };
+                if is_anchor && (total_cast >= total_voters || battle.phase_timer >= deadline) {
+                    crate::audio::net_event(
+                        crate::net::EVENT_LEXIE_COMMIT,
+                        crate::net::pack_lexie_move(battle.turn_round, battle.actor, winner_is_heavy),
+                    );
+                    battle.local_vote = None;
+                    battle.remote_votes.clear();
+                    begin_hero_action(&mut battle, winner_is_heavy);
+                } else if !is_anchor && battle.phase_timer >= deadline + 4.0 {
                     battle.local_vote = None;
                     battle.remote_votes.clear();
                     begin_hero_action(&mut battle, winner_is_heavy);
@@ -1271,6 +1452,9 @@ pub fn update_lexie_battle(
                 next_state.set(GameState::GameOver);
             }
         }
+    }
+    if battle.phase == RpgPhase::PlayerSelect {
+        sync_turn_ownership(&mut battle, net.as_deref());
     }
 }
 
@@ -2015,9 +2199,10 @@ fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
     } else {
         1.0
     };
+    let dmg_mul = lexie_coop_damage_mul(battle.coop_players) * enrage;
     match battle.lexie_attack_kind {
         0 => {
-            let dmg = (52.0 * enrage).round() as i32;
+            let dmg = (52.0 * dmg_mul).round() as i32;
             let t = battle.lexie_target;
             battle.party[t].hp = (battle.party[t].hp - dmg).max(0);
             battle.party[t].hit_flash = 0.6;
@@ -2026,7 +2211,7 @@ fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
             spawn_floating_popup(commands, format!("-{}", dmg), Color::srgb(1.0, 0.32, 0.32), sx, sy);
         }
         1 => {
-            let dmg = (34.0 * enrage).round() as i32;
+            let dmg = (34.0 * dmg_mul).round() as i32;
             for i in 0..5 {
                 if battle.party[i].hp > 0 {
                     battle.party[i].hp = (battle.party[i].hp - dmg).max(0);
@@ -2044,7 +2229,7 @@ fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
             }
         }
         _ => {
-            let dmg = (68.0 * enrage).round() as i32;
+            let dmg = (68.0 * dmg_mul).round() as i32;
             let t = battle.lexie_target;
             battle.party[t].hp = (battle.party[t].hp - dmg).max(0);
             battle.party[t].hit_flash = 0.75;
@@ -2430,6 +2615,11 @@ pub fn update_lexie_battle_ui(
         fill.width = Val::Percent((battle.lexie_hp / battle.lexie_max_hp * 100.0).clamp(0.0, 100.0));
     }
     if let Ok(mut txt) = txt_qs.p0().get_single_mut() {
+        let coop_tag = if battle.coop_players > 1 {
+            format!("  [{}P CO-OP]", battle.coop_players)
+        } else {
+            String::new()
+        };
         let stun_tag = if battle.lexie_stunned > 0 {
             "  [STUNNED!]"
         } else if battle.lexie_hp < battle.lexie_max_hp * 0.5 {
@@ -2440,8 +2630,8 @@ pub fn update_lexie_battle_ui(
             ""
         };
         txt.0 = format!(
-            "LEXIE - PICKLED GARLIC QUEEN   HP {:.0} / {:.0}{}",
-            battle.lexie_hp, battle.lexie_max_hp, stun_tag
+            "LEXIE - PICKLED GARLIC QUEEN   HP {:.0} / {:.0}{}{}",
+            battle.lexie_hp, battle.lexie_max_hp, coop_tag, stun_tag
         );
     }
     if let Ok(mut btxt) = txt_qs.p1().get_single_mut() {
@@ -2467,14 +2657,17 @@ pub fn update_lexie_battle_ui(
     }
     for (st, mut txt) in &mut txt_qs.p3() {
         let m = &battle.party[st.0];
+        let is_you = battle.coop_online && actor_to_char_id(st.0) == battle.local_char_id;
+        let is_active = (battle.phase == RpgPhase::PlayerSelect || battle.phase == RpgPhase::HeroAction)
+            && battle.actor == st.0;
         txt.0 = if m.hp <= 0 {
             "KO".to_string()
         } else if m.asleep_turns > 0 {
             "ASLEEP (4h)".to_string()
-        } else if (battle.phase == RpgPhase::PlayerSelect || battle.phase == RpgPhase::HeroAction)
-            && battle.actor == st.0
-        {
-            "ACTIVE!".to_string()
+        } else if is_active {
+            if is_you { "YOU - ACTIVE!" } else { "ACTIVE!" }.to_string()
+        } else if is_you {
+            "YOU".to_string()
         } else {
             "READY".to_string()
         };
@@ -2494,9 +2687,23 @@ pub fn update_lexie_battle_ui(
         let heavy_v = usize::from(battle.local_vote == Some(true))
             + battle.remote_votes.iter().filter(|&&(_, h)| h).count();
         if let Ok(mut hdr) = txt_qs.p4().get_single_mut() {
-            hdr.0 = if battle.vote_coop_active {
+            hdr.0 = if battle.turn_owner_claimed {
+                if battle.turn_local_owns {
+                    format!(
+                        "YOUR TURN ({})! [1 / 2] OR CLICK ({:.0}s)",
+                        m.name,
+                        battle.vote_time_left.ceil()
+                    )
+                } else {
+                    format!(
+                        "WAITING FOR {}'S PLAYER... ({:.0}s)",
+                        m.name,
+                        battle.vote_time_left.ceil()
+                    )
+                }
+            } else if battle.vote_coop_active {
                 format!(
-                    "SQUAD VOTE FOR {}! ({}/{} VOTED - {:.0}s)",
+                    "SQUAD VOTE FOR {} (UNCLAIMED)! ({}/{} VOTED - {:.0}s)",
                     m.name,
                     light_v + heavy_v,
                     battle.vote_total_players,
@@ -2519,6 +2726,38 @@ pub fn update_lexie_battle_ui(
                 format!("[2] HEAVY: {}\n({})", m.heavy_name, m.heavy_tag)
             };
         }
+    }
+
+    if crate::audio::debug_keys_enabled() {
+        let phase_name = match battle.phase {
+            RpgPhase::Intro => "Intro",
+            RpgPhase::HeroAsleepSkip => "HeroAsleepSkip",
+            RpgPhase::PlayerSelect => "PlayerSelect",
+            RpgPhase::HeroAction => "HeroAction",
+            RpgPhase::LexieWindup => "LexieWindup",
+            RpgPhase::LexieAction => "LexieAction",
+            RpgPhase::VictoryDelay => "VictoryDelay",
+            RpgPhase::DefeatDelay => "DefeatDelay",
+        };
+        let tele = format!(
+            "{{\"phase\":\"{}\",\"round\":{},\"actor\":{},\"coopPlayers\":{},\"lexieHp\":{:.0},\"lexieMaxHp\":{:.0},\"ownerClaimed\":{},\"localOwns\":{},\"voteCoop\":{},\"voteTotal\":{},\"partyHp\":[{},{},{},{},{}]}}",
+            phase_name,
+            battle.turn_round,
+            battle.actor,
+            battle.coop_players,
+            battle.lexie_hp,
+            battle.lexie_max_hp,
+            battle.turn_owner_claimed,
+            battle.turn_local_owns,
+            battle.vote_coop_active,
+            battle.vote_total_players,
+            battle.party[0].hp,
+            battle.party[1].hp,
+            battle.party[2].hp,
+            battle.party[3].hp,
+            battle.party[4].hp,
+        );
+        crate::audio::set_lexie_telemetry(&tele);
     }
 
     for (e, mut ft, mut node) in &mut node_qs.p2() {
