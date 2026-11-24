@@ -50,6 +50,7 @@ impl Plugin for ClubPlugin {
                 Update,
                 (
                     update_coaster_cutscene,
+                    adapt_coaster_overlay_to_viewport,
                     animate_wonka_boat_and_projections,
                 )
                     .chain()
@@ -515,6 +516,9 @@ struct CoasterCutsceneEntity;
 
 #[derive(Component)]
 struct CoasterCutsceneOverlay;
+
+#[derive(Component)]
+struct CoasterSubCard;
 
 #[derive(Component)]
 struct CoasterSpeakerText;
@@ -1302,12 +1306,12 @@ fn enter_coaster_cutscene(
     ));
     let _ = cyl_m;
 
-    // Initial wide camera shot
+    // Initial wide Beat 0 camera shot
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        c_tf.translation = COASTER_STAGE + Vec3::new(4.8, 3.6, 11.2);
-        c_tf.look_at(COASTER_STAGE + Vec3::new(0.0, 1.6, 0.0), Vec3::Y);
+        c_tf.translation = COASTER_STAGE + Vec3::new(4.45, 2.95, 13.4);
+        c_tf.look_at(COASTER_STAGE + Vec3::new(0.0, 1.15, 0.8), Vec3::Y);
         if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = 0.86;
+            p.fov = 0.94;
         }
     }
 
@@ -1329,16 +1333,18 @@ fn enter_coaster_cutscene(
         ))
         .with_children(|root| {
             root.spawn((
+                CoasterSubCard,
                 Node {
-                    max_width: Val::Px(680.0),
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(7.0)),
+                    max_width: Val::Px(640.0),
+                    margin: UiRect::horizontal(Val::Px(12.0)),
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::Center,
-                    row_gap: Val::Px(3.0),
+                    row_gap: Val::Px(2.0),
                     border: UiRect::all(Val::Px(2.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.04, 0.01, 0.10, 0.80)),
+                BackgroundColor(Color::srgba(0.04, 0.01, 0.10, 0.82)),
                 BorderColor(Color::srgb(1.0, 0.42, 0.92)),
                 BorderRadius::all(Val::Px(10.0)),
             ))
@@ -1347,7 +1353,7 @@ fn enter_coaster_cutscene(
                     CoasterSpeakerText,
                     Text::new(COASTER_BEATS[0].speaker),
                     TextFont {
-                        font_size: 14.0,
+                        font_size: 13.5,
                         ..default()
                     },
                     TextColor(Color::srgb(0.35, 0.96, 1.0)),
@@ -1356,7 +1362,7 @@ fn enter_coaster_cutscene(
                     CoasterSubText,
                     Text::new(COASTER_BEATS[0].sub),
                     TextFont {
-                        font_size: 15.0,
+                        font_size: 14.0,
                         ..default()
                     },
                     TextColor(Color::WHITE),
@@ -1365,9 +1371,61 @@ fn enter_coaster_cutscene(
         });
 }
 
+/// Expands vertical FOV on narrow/portrait viewports (`aspect < min_aspect`) so characters
+/// framed for widescreen never clip horizontally on mobile portrait screens.
+fn coaster_aspect_fov(base_fov: f32, aspect: f32, min_aspect: f32) -> f32 {
+    if aspect >= min_aspect {
+        return base_fov;
+    }
+    let scale = (min_aspect / aspect.max(0.35)).max(1.0);
+    let half_tan = (base_fov * 0.5).tan() * scale;
+    (2.0 * half_tan.atan()).min(1.86)
+}
+
+/// Keeps the subtitle card compact and lifted above the bottom-right skip prompt on small viewports.
+#[allow(clippy::type_complexity)]
+fn adapt_coaster_overlay_to_viewport(
+    window_q: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut root_q: Query<&mut Node, With<CoasterCutsceneOverlay>>,
+    mut card_q: Query<&mut Node, (With<CoasterSubCard>, Without<CoasterCutsceneOverlay>)>,
+    mut spk_q: Query<&mut TextFont, With<CoasterSpeakerText>>,
+    mut sub_q: Query<&mut TextFont, (With<CoasterSubText>, Without<CoasterSpeakerText>)>,
+) {
+    let Ok(win) = window_q.get_single() else {
+        return;
+    };
+    let w = win.width();
+    let h = win.height();
+    let small = w < 760.0 || h < 480.0;
+    let clear_skip = w < 1040.0;
+    if let Ok(mut root) = root_q.get_single_mut() {
+        root.padding = UiRect {
+            bottom: Val::Px(if clear_skip { 38.0 } else { 10.0 }),
+            left: Val::Px(10.0),
+            right: Val::Px(10.0),
+            top: Val::Px(0.0),
+        };
+    }
+    if let Ok(mut card) = card_q.get_single_mut() {
+        card.max_width = Val::Px((w - 28.0).clamp(240.0, 640.0));
+        card.padding = if small {
+            UiRect::axes(Val::Px(12.0), Val::Px(5.0))
+        } else {
+            UiRect::axes(Val::Px(16.0), Val::Px(7.0))
+        };
+    }
+    if let Ok(mut tf) = spk_q.get_single_mut() {
+        tf.font_size = if small { 11.5 } else { 13.5 };
+    }
+    if let Ok(mut tf) = sub_q.get_single_mut() {
+        tf.font_size = if small { 12.0 } else { 14.5 };
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_coaster_cutscene(
     time: Res<Time<Real>>,
+    window_q: Query<&Window, With<bevy::window::PrimaryWindow>>,
     mut c_state: ResMut<CoasterCutsceneState>,
     mut next_state: SceneTransition,
     mut clear: ResMut<ClearColor>,
@@ -1414,8 +1472,7 @@ fn update_coaster_cutscene(
             Without<NateBubblePopShard>,
         ),
     >,
-    mut spk_q: Query<&mut Text, (With<CoasterSpeakerText>, Without<CoasterSubText>)>,
-    mut sub_q: Query<&mut Text, (With<CoasterSubText>, Without<CoasterSpeakerText>)>,
+    mut sub_txt_q: Query<(&mut Text, Has<CoasterSpeakerText>), Or<(With<CoasterSpeakerText>, With<CoasterSubText>)>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if crate::skip::skipping() {
@@ -1447,11 +1504,12 @@ fn update_coaster_cutscene(
         if !nb.voice_line.is_empty() {
             speak_voice(nb.voice_line, nb.voice_id);
         }
-        if let Ok(mut s) = spk_q.get_single_mut() {
-            s.0 = nb.speaker.to_string();
-        }
-        if let Ok(mut s) = sub_q.get_single_mut() {
-            s.0 = nb.sub.to_string();
+        for (mut txt, is_speaker) in &mut sub_txt_q {
+            txt.0 = if is_speaker {
+                nb.speaker.to_string()
+            } else {
+                nb.sub.to_string()
+            };
         }
     }
 
@@ -1493,12 +1551,13 @@ fn update_coaster_cutscene(
             } else {
                 0.65 + (beat as f32 * 0.14)
             };
-            let shake = (t * 28.0).sin() * 0.025 * amp
-                + if beat == 7 { (t * 52.0).sin() * 0.085 } else { 0.0 };
+            let shake = (t * 28.0).sin() * 0.022 * amp.min(1.2)
+                + if beat == 7 { (t * 52.0).sin() * 0.045 } else { 0.0 };
+            let roll = ((t * 2.4).sin() * 0.14 * amp.min(1.1) + shake).clamp(-0.20, 0.20);
+            let pitch = ((t * 1.9).cos() * 0.06 * amp.min(1.1)).clamp(-0.08, 0.08);
             t_tf.translation = COASTER_STAGE
-                + Vec3::new((t * 3.1).sin() * 0.14 * amp, (t * 5.2).cos() * 0.11 * amp, 0.0);
-            t_tf.rotation = Quat::from_rotation_z((t * 2.4).sin() * 0.18 * amp + shake)
-                * Quat::from_rotation_x((t * 1.9).cos() * 0.07 * amp);
+                + Vec3::new((t * 3.1).sin() * 0.12 * amp, (t * 5.2).cos() * 0.09 * amp, 0.0);
+            t_tf.rotation = Quat::from_rotation_z(roll) * Quat::from_rotation_x(pitch);
         }
         train_tf = *t_tf;
     }
@@ -1645,9 +1704,9 @@ fn update_coaster_cutscene(
     // 1=Stan(Wonka prow), 2=TJ(panic), 3=Glenn(sick), 4=Stan(hellfire), 5=Nate(Charlie Bucket silent), 6=Derek(chuckle), 7=Stan(scream!)
     let focus_local_head: Option<Vec3> = match beat {
         1 | 4 | 7 => Some(Vec3::new(0.0, 2.15, CAR_Z[0] + 0.14)),
-        2 => Some(Vec3::new(0.0, 2.13, CAR_Z[1] + 0.14)),
+        2 => Some(Vec3::new(0.0, 2.12, CAR_Z[1] + 0.14)),
         3 => Some(Vec3::new(0.0, 2.10, CAR_Z[2] + 0.14)),
-        5 => Some(Vec3::new(0.0, 2.02, CAR_Z[3] + 0.24)),
+        5 => Some(Vec3::new(0.0, 2.02, CAR_Z[3] + 0.20)),
         6 => Some(Vec3::new(0.0, 2.04, CAR_Z[4] + 0.14)),
         _ => None,
     };
@@ -1683,71 +1742,80 @@ fn update_coaster_cutscene(
     }
 
     if let Ok((mut c_tf, mut proj)) = cam_q.get_single_mut() {
-        let (cam_pos, look_at, fov, up_vec) = match beat {
+        let aspect = window_q
+            .get_single()
+            .map(|w| w.width() / w.height().max(1.0))
+            .unwrap_or(16.0 / 9.0);
+        let (cam_pos, look_at, base_fov, min_aspect, up_vec) = match beat {
             0 => (
-                COASTER_STAGE + Vec3::new(3.2 - bt * 0.45, 2.8, 9.6 - bt * 0.25),
-                COASTER_STAGE + Vec3::new(0.0, 1.55, 1.2),
-                0.86,
+                // Wide 3/4 establishing shot: frames all 5 cars (Stan..Derek), Oompa Loompas & boat prow above subtitles
+                COASTER_STAGE + Vec3::new(4.45 - (bt * 0.12).min(0.45), 2.95, 13.4 - (bt * 0.18).min(0.70)),
+                COASTER_STAGE + Vec3::new(0.0, 1.15, 0.8),
+                0.94,
+                1.60,
                 Vec3::Y,
             ),
             1 => {
-                // Stan (Willy Wonka) in top hat & purple velvet tailcoat
+                // Stan (Willy Wonka) in full top hat & purple velvet tailcoat (ample headroom + above subtitles)
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(0.36, 0.28, 2.08), head + Vec3::Y * 0.24, 0.62, Vec3::Y)
+                (head + Vec3::new(0.48, 0.10, 3.15), head + Vec3::Y * 0.02, 0.76, 1.25, Vec3::Y)
             }
             2 => {
-                // TJ extreme close-up under crimson/cyan Wonka strobes + Insect/Snake backdrop
+                // TJ close-up cleanly clear of Stan's backrest and with full hair/glasses/collar headroom
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
                 (
-                    head + Vec3::new(0.24 + (t * 9.0).sin() * 0.04, 0.06, 1.25),
-                    head,
-                    0.50,
+                    head + Vec3::new(0.36 + (t * 8.0).sin() * 0.03, 0.04, 1.66),
+                    head + Vec3::Y * (-0.12),
+                    0.80,
+                    1.20,
                     Vec3::Y,
                 )
             }
             3 => {
-                // Glenn queasy close-up + Decapitated Chicken / Slugworth backdrop
+                // Glenn queasy close-up framing full curly mane & boulder shoulders
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.26, 0.06, 1.28), head, 0.50, Vec3::Y)
+                (head + Vec3::new(-0.38, 0.06, 1.68), head + Vec3::Y * (-0.06), 0.86, 1.32, Vec3::Y)
             }
             4 => {
-                // Stan hellfire close-up ("Are the fires of hell a-glowing?!")
+                // Stan hellfire close-up ("Are the fryer fires of hell a-glowing?!") with full top hat visible
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.28, 0.26, 1.98), head + Vec3::Y * 0.24, 0.60, Vec3::Y)
+                (head + Vec3::new(-0.46, 0.10, 3.05), head + Vec3::Y * 0.02, 0.78, 1.25, Vec3::Y)
             }
             5 => {
-                // Nate calm Charlie-Bucket close-up framing pink bubble *POP!*
+                // Nate calm Charlie-Bucket close-up framing baseball cap, beard & inflating pink bubble *POP!*
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.26, 0.03, 1.18), head, 0.48, Vec3::Y)
+                (head + Vec3::new(-0.42, 0.04, 1.60), head + Vec3::Y * (-0.10), 0.84, 1.25, Vec3::Y)
             }
             6 => {
-                // Derek chuckling close-up ("Heh heh heh... buckle up, boys!")
+                // Derek chuckling close-up ("Heh heh heh... buckle up, boys!") cleanly clear of Nate's backrest
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(0.24, 0.06, 1.25), head, 0.50, Vec3::Y)
+                (head + Vec3::new(0.38, 0.04, 1.64), head + Vec3::Y * (-0.10), 0.82, 1.25, Vec3::Y)
             }
             7 => {
-                // Climax Gene Wilder Dutch-angle scream close-up + rapid-fire projections!
+                // Climax Gene Wilder Dutch-angle scream close-up with full top hat & bowtie safely framed inside roll
                 let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                let tilt = Vec3::new((t * 10.0).sin() * 0.24, 1.0, 0.0).normalize();
+                let tilt = Vec3::new((t * 10.0).sin() * 0.15, 1.0, 0.0).normalize();
                 (
-                    head + Vec3::new(-0.26 + (t * 20.0).sin() * 0.05, 0.26, 1.92 - (bt * 0.14).min(0.24)),
-                    head + Vec3::Y * 0.24,
-                    0.64,
+                    head + Vec3::new(-0.42 + (t * 18.0).sin() * 0.04, 0.12, 3.05 - (bt * 0.08).min(0.18)),
+                    head + Vec3::Y * 0.04,
+                    0.82,
+                    1.30,
                     tilt,
                 )
             }
             _ => (
-                // Beat 8: Abrupt stop! Framing Stan (Wonka) & boat crew stopped dead in front of the Bright Red Door!
-                COASTER_STAGE + Vec3::new(2.2, 2.45, 2.2),
-                COASTER_STAGE + Vec3::new(0.0, 2.05, 10.5),
-                0.76,
+                // Beat 8: Abrupt stop! Framing ALL 5 heroes (Derek..Stan) & Oompa Loompas facing the Bright Red Door!
+                COASTER_STAGE + Vec3::new(3.8, 3.25, -11.4),
+                COASTER_STAGE + Vec3::new(0.0, 1.65, 2.2),
+                0.88,
+                1.55,
                 Vec3::Y,
             ),
         };
         c_tf.translation = cam_pos;
         c_tf.look_at(look_at, up_vec);
         if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = fov;
+            p.fov = coaster_aspect_fov(base_fov, aspect, min_aspect);
         }
     }
 }
