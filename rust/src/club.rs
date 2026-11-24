@@ -595,6 +595,17 @@ struct CoasterCutsceneState {
     beat: u8,
     beat_t: f32,
     total_t: f32,
+    voice_triggered: bool,
+    post_voice_dwell_t: f32,
+    in_transition: bool,
+    trans_t: f32,
+    trans_dur: f32,
+    cam_from_pos: Vec3,
+    cam_from_look: Vec3,
+    cam_from_up: Vec3,
+    cam_from_fov: f32,
+    cam_last_look: Vec3,
+    cam_last_up: Vec3,
     bubble_popped: bool,
     warp_sfx_played: bool,
     scream_sfx_played: bool,
@@ -612,48 +623,66 @@ struct CoasterBeatDef {
     voice_id: &'static str,
     min_secs: f32,
     max_secs: f32,
+    speak_delay: f32,
+    trans_in_secs: f32,
+    dwell_after_secs: f32,
 }
 
 const COASTER_BEATS: [CoasterBeatDef; 9] = [
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"Round the fryer and home again... that's the tendy sailor's way. Golden breading, honey mustard, and VIP lights -- this is what we all need, boys.\"",
-        voice_line: "Round the fryer and home again... that's the tendy sailor's way. Golden breading, honey mustard, and VIP lights - this is what we all need, boys.",
+        sub: "\"Round the fryer and home again... that's the tendy sailor's way. Golden breading, honey mustard, and VIP lights, boys.\"",
+        voice_line: "Round the fryer and home again... that's the tendy sailor's way. Golden breading, honey mustard, and VIP lights, boys.",
         voice_id: "stan",
-        min_secs: 3.4,
-        max_secs: 6.8,
+        min_secs: 4.5,
+        max_secs: 18.0,
+        speak_delay: 0.45,
+        trans_in_secs: 0.0,
+        dwell_after_secs: 0.45,
     },
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"There's no earthly way of knowing... which deep fryer we are going! There's no knowing where we're rowing... or which ranch river is a-flowing!\"",
-        voice_line: "There's no earthly way of knowing... which deep fryer we are going! There's no knowing where we're rowing... or which ranch river is a-flowing!",
+        sub: "\"There's no earthly way of knowing... which deep fryer we are going! Or which ranch river is a-flowing!\"",
+        voice_line: "There's no earthly way of knowing... which deep fryer we are going! Or which ranch river is a-flowing!",
         voice_id: "stan",
-        min_secs: 3.6,
-        max_secs: 7.2,
+        min_secs: 4.5,
+        max_secs: 18.0,
+        speak_delay: 0.0,
+        trans_in_secs: 0.45,
+        dwell_after_secs: 0.45,
     },
     CoasterBeatDef {
         speaker: "TJ (PANICKING PASSENGER)",
         sub: "\"I never wanted this! Turn the lights on! Make it stop, Stan!\"",
         voice_line: "I never wanted this! Turn the lights on! Make it stop, Stan!",
         voice_id: "tj_upset",
-        min_secs: 3.0,
-        max_secs: 6.2,
+        min_secs: 3.2,
+        max_secs: 15.0,
+        speak_delay: 0.0,
+        trans_in_secs: 0.42,
+        dwell_after_secs: 0.45,
     },
     CoasterBeatDef {
         speaker: "GLENN (FEELING SICK)",
         sub: "\"Same! I think I'm gonna be sick! What kind of strip club tunnel IS this?!\"",
         voice_line: "Same! I think I'm gonna be sick! What kind of strip club tunnel IS this?!",
         voice_id: "glenn",
-        min_secs: 3.0,
-        max_secs: 6.2,
+        min_secs: 3.5,
+        max_secs: 15.0,
+        speak_delay: 0.0,
+        trans_in_secs: 0.42,
+        dwell_after_secs: 0.45,
     },
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"Not a crumb of ranch is showing, so the tendy hunger's growing... Are the fryer fires of hell a-glowing?! Is the crispy tendy reaper mowing?!\"",
-        voice_line: "Not a crumb of ranch is showing, so the tendy hunger's growing... Are the fryer fires of hell a-glowing?! Is the crispy tendy reaper mowing?!",
+        sub: "\"Not a crumb of ranch is showing, so the tendy hunger's growing! Are the fryer fires of hell a-glowing?!\"",
+        voice_line: "Not a crumb of ranch is showing, so the tendy hunger's growing! Are the fryer fires of hell a-glowing?!",
         voice_id: "stan",
-        min_secs: 3.8,
-        max_secs: 7.4,
+        min_secs: 4.6,
+        max_secs: 18.0,
+        speak_delay: 0.0,
+        trans_in_secs: 0.45,
+        dwell_after_secs: 0.45,
     },
     // Beat 5: Nate stays completely calm like Charlie Bucket and says NOTHING — only a bubblegum *POP!*
     CoasterBeatDef {
@@ -661,8 +690,11 @@ const COASTER_BEATS: [CoasterBeatDef; 9] = [
         sub: "(says nothing... calmly takes it all in and blows a pink bubble... *POP!*)",
         voice_line: "",
         voice_id: "",
-        min_secs: 3.5,
-        max_secs: 3.5,
+        min_secs: 3.6,
+        max_secs: 3.6,
+        speak_delay: 0.0,
+        trans_in_secs: 0.42,
+        dwell_after_secs: 0.25,
     },
     CoasterBeatDef {
         speaker: "DEREK",
@@ -670,23 +702,32 @@ const COASTER_BEATS: [CoasterBeatDef; 9] = [
         voice_line: "Heh heh heh... buckle up, boys!",
         voice_id: "derek",
         min_secs: 2.8,
-        max_secs: 5.8,
+        max_secs: 12.0,
+        speak_delay: 0.0,
+        trans_in_secs: 0.40,
+        dwell_after_secs: 0.40,
     },
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"YES! The crispy crunch is growing -- AND THE HONEY-MUSTARD ROWERS ARE CERTAINLY NOT SHOWING ANY SIGNS THAT THEY ARE SLOWING!! TENDY TIME!! AAAAAHHHHH!!\"",
-        voice_line: "YES! The crispy crunch is growing - and the honey-mustard rowers are certainly not showing any signs that they are slowing!! Tendy time!! AAAAAHHHHH!!",
+        sub: "\"YES! The honey-mustard rowers are certainly NOT showing ANY signs that they are slowing!! TENDY TIME!! AAAAAHHHHH!!\"",
+        voice_line: "YES! The honey-mustard rowers are certainly NOT showing ANY signs that they are slowing!! TENDY TIME!! AAAAAHHHHH!!",
         voice_id: "stan",
-        min_secs: 3.6,
-        max_secs: 7.2,
+        min_secs: 4.5,
+        max_secs: 18.0,
+        speak_delay: 0.0,
+        trans_in_secs: 0.42,
+        dwell_after_secs: 1.25,
     },
     CoasterBeatDef {
         speaker: "STAN (ABRUPT STOP AT BRIGHT RED DOOR)",
-        sub: "\"...Oh, look. Golden brown and crispy to perfection. Right through the bright red door for our tendy-earned reward, gentlemen.\"",
-        voice_line: "...Oh, look. Golden brown and crispy to perfection. Right through the bright red door for our tendy-earned reward, gentlemen.",
+        sub: "\"...Oh, look. Golden brown and crispy to perfection. Right through the bright red door, gentlemen.\"",
+        voice_line: "...Oh, look. Golden brown and crispy to perfection. Right through the bright red door, gentlemen.",
         voice_id: "stan",
-        min_secs: 3.4,
-        max_secs: 6.5,
+        min_secs: 4.2,
+        max_secs: 18.0,
+        speak_delay: 0.55,
+        trans_in_secs: 0.0,
+        dwell_after_secs: 0.90,
     },
 ];
 
@@ -712,10 +753,11 @@ fn enter_coaster_cutscene(
     stats.club_dance_open = false;
     stats.in_casino_level = false;
     stats.in_club_level = false;
-    *c_state = CoasterCutsceneState::default();
-    if !COASTER_BEATS[0].voice_line.is_empty() {
-        speak_voice(COASTER_BEATS[0].voice_line, COASTER_BEATS[0].voice_id);
-    }
+    *c_state = CoasterCutsceneState {
+        cam_last_look: COASTER_STAGE + Vec3::new(0.0, 1.15, 0.8),
+        cam_last_up: Vec3::Y,
+        ..default()
+    };
 
     for mut vis in &mut hud_q {
         *vis = Visibility::Hidden;
@@ -1422,7 +1464,81 @@ fn adapt_coaster_overlay_to_viewport(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn coaster_beat_camera(
+    beat: u8,
+    bt: f32,
+    t: f32,
+    focus_world_head: Option<Vec3>,
+) -> (Vec3, Vec3, f32, f32, Vec3) {
+    match beat {
+        0 => (
+            // Wide 3/4 establishing shot: frames all 5 cars (Stan..Derek), Oompa Loompas & boat prow above subtitles
+            COASTER_STAGE + Vec3::new(4.45 - (bt * 0.12).min(0.45), 2.95, 13.4 - (bt * 0.18).min(0.70)),
+            COASTER_STAGE + Vec3::new(0.0, 1.15, 0.8),
+            0.94,
+            1.60,
+            Vec3::Y,
+        ),
+        1 => {
+            // Stan (Willy Wonka) in full top hat & purple velvet tailcoat (ample headroom + above subtitles)
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            (head + Vec3::new(0.48, 0.10, 3.15), head + Vec3::Y * 0.02, 0.76, 1.25, Vec3::Y)
+        }
+        2 => {
+            // TJ close-up cleanly clear of Stan's backrest and with full hair/glasses/collar headroom
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            (
+                head + Vec3::new(0.36 + (t * 8.0).sin() * 0.03, 0.04, 1.66),
+                head + Vec3::Y * (-0.12),
+                0.80,
+                1.20,
+                Vec3::Y,
+            )
+        }
+        3 => {
+            // Glenn queasy close-up framing full curly mane & boulder shoulders
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            (head + Vec3::new(-0.38, 0.06, 1.68), head + Vec3::Y * (-0.06), 0.86, 1.32, Vec3::Y)
+        }
+        4 => {
+            // Stan hellfire close-up ("Are the fryer fires of hell a-glowing?!") with full top hat visible
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            (head + Vec3::new(-0.46, 0.10, 3.05), head + Vec3::Y * 0.02, 0.78, 1.25, Vec3::Y)
+        }
+        5 => {
+            // Nate calm Charlie-Bucket close-up framing baseball cap, beard & inflating pink bubble *POP!*
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            (head + Vec3::new(-0.42, 0.04, 1.60), head + Vec3::Y * (-0.10), 0.84, 1.25, Vec3::Y)
+        }
+        6 => {
+            // Derek chuckling close-up ("Heh heh heh... buckle up, boys!") cleanly clear of Nate's backrest
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            (head + Vec3::new(0.38, 0.04, 1.64), head + Vec3::Y * (-0.10), 0.82, 1.25, Vec3::Y)
+        }
+        7 => {
+            // Climax Gene Wilder Dutch-angle scream close-up with full top hat & bowtie safely framed inside roll
+            let head = focus_world_head.unwrap_or(COASTER_STAGE);
+            let tilt = Vec3::new((t * 10.0).sin() * 0.15, 1.0, 0.0).normalize();
+            (
+                head + Vec3::new(-0.42 + (t * 18.0).sin() * 0.04, 0.12, 3.05 - (bt * 0.08).min(0.22)),
+                head + Vec3::Y * 0.04,
+                0.82,
+                1.30,
+                tilt,
+            )
+        }
+        _ => (
+            // Beat 8: Abrupt stop! Framing ALL 5 heroes (Derek..Stan) & Oompa Loompas facing the Bright Red Door!
+            COASTER_STAGE + Vec3::new(3.8, 3.25, -11.4),
+            COASTER_STAGE + Vec3::new(0.0, 1.65, 2.2),
+            0.88,
+            1.55,
+            Vec3::Y,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn update_coaster_cutscene(
     time: Res<Time<Real>>,
     window_q: Query<&Window, With<bevy::window::PrimaryWindow>>,
@@ -1481,50 +1597,87 @@ fn update_coaster_cutscene(
     }
 
     let dt = time.delta_secs().min(0.10);
-    c_state.beat_t += dt;
     c_state.total_t += dt;
     let t = c_state.total_t;
-    let bt = c_state.beat_t;
 
-    let idx = c_state.beat as usize;
-    let def = &COASTER_BEATS[idx];
-    let ready = if !def.voice_line.is_empty() {
-        (bt >= def.min_secs && !is_voice_speaking()) || bt >= def.max_secs
+    if c_state.in_transition {
+        c_state.trans_t += dt;
+        if c_state.trans_t >= c_state.trans_dur {
+            c_state.in_transition = false;
+            c_state.beat_t = 0.0;
+        }
     } else {
-        bt >= def.min_secs
-    };
-    if ready {
-        if c_state.beat + 1 >= COASTER_BEATS.len() as u8 {
-            next_state.set(GameState::ClubPlay);
-            return;
+        c_state.beat_t += dt;
+        let idx = c_state.beat as usize;
+        let def = &COASTER_BEATS[idx];
+        let bt = c_state.beat_t;
+
+        if !c_state.voice_triggered && bt >= def.speak_delay {
+            c_state.voice_triggered = true;
+            if !def.voice_line.is_empty() {
+                speak_voice(def.voice_line, def.voice_id);
+            }
         }
-        c_state.beat += 1;
-        c_state.beat_t = 0.0;
-        let nb = &COASTER_BEATS[c_state.beat as usize];
-        if !nb.voice_line.is_empty() {
-            speak_voice(nb.voice_line, nb.voice_id);
-        }
-        for (mut txt, is_speaker) in &mut sub_txt_q {
-            txt.0 = if is_speaker {
-                nb.speaker.to_string()
-            } else {
-                nb.sub.to_string()
-            };
+
+        let line_done = if !def.voice_line.is_empty() {
+            c_state.voice_triggered
+                && ((bt >= def.speak_delay + def.min_secs && !is_voice_speaking())
+                    || bt >= def.speak_delay + def.max_secs)
+        } else {
+            bt >= def.speak_delay + def.min_secs
+        };
+
+        if line_done {
+            c_state.post_voice_dwell_t += dt;
+            if idx == 7 && !c_state.scream_sfx_played {
+                c_state.scream_sfx_played = true;
+                play_sfx("wonka_scream");
+                c_state.warp_sfx_played = true;
+                play_sfx("portal_suck");
+            }
+            if c_state.post_voice_dwell_t >= def.dwell_after_secs {
+                if c_state.beat + 1 >= COASTER_BEATS.len() as u8 {
+                    next_state.set(GameState::ClubPlay);
+                    return;
+                }
+                let next_idx = idx + 1;
+                let nb = &COASTER_BEATS[next_idx];
+                if let Ok((c_tf, proj)) = cam_q.get_single() {
+                    c_state.cam_from_pos = c_tf.translation;
+                    c_state.cam_from_look = c_state.cam_last_look;
+                    c_state.cam_from_up = c_state.cam_last_up;
+                    c_state.cam_from_fov = match *proj {
+                        Projection::Perspective(ref p) => p.fov,
+                        _ => 0.84,
+                    };
+                }
+                c_state.beat = next_idx as u8;
+                c_state.beat_t = 0.0;
+                c_state.voice_triggered = false;
+                c_state.post_voice_dwell_t = 0.0;
+                if nb.trans_in_secs > 0.01 {
+                    c_state.in_transition = true;
+                    c_state.trans_t = 0.0;
+                    c_state.trans_dur = nb.trans_in_secs;
+                } else {
+                    c_state.in_transition = false;
+                }
+                for (mut txt, is_speaker) in &mut sub_txt_q {
+                    txt.0 = if is_speaker {
+                        nb.speaker.to_string()
+                    } else {
+                        nb.sub.to_string()
+                    };
+                }
+            }
+        } else {
+            c_state.post_voice_dwell_t = 0.0;
         }
     }
 
     let beat = c_state.beat;
     let bt = c_state.beat_t;
 
-    // Climax & Abrupt Stop SFX
-    if beat == 7 && !c_state.scream_sfx_played {
-        c_state.scream_sfx_played = true;
-        play_sfx("wonka_scream");
-    }
-    if beat == 7 && bt > 1.2 && !c_state.warp_sfx_played {
-        c_state.warp_sfx_played = true;
-        play_sfx("portal_suck");
-    }
     if beat == 8 && !c_state.halt_sfx_played {
         c_state.halt_sfx_played = true;
         play_sfx("wonka_halt");
@@ -1746,76 +1899,29 @@ fn update_coaster_cutscene(
             .get_single()
             .map(|w| w.width() / w.height().max(1.0))
             .unwrap_or(16.0 / 9.0);
-        let (cam_pos, look_at, base_fov, min_aspect, up_vec) = match beat {
-            0 => (
-                // Wide 3/4 establishing shot: frames all 5 cars (Stan..Derek), Oompa Loompas & boat prow above subtitles
-                COASTER_STAGE + Vec3::new(4.45 - (bt * 0.12).min(0.45), 2.95, 13.4 - (bt * 0.18).min(0.70)),
-                COASTER_STAGE + Vec3::new(0.0, 1.15, 0.8),
-                0.94,
-                1.60,
-                Vec3::Y,
-            ),
-            1 => {
-                // Stan (Willy Wonka) in full top hat & purple velvet tailcoat (ample headroom + above subtitles)
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(0.48, 0.10, 3.15), head + Vec3::Y * 0.02, 0.76, 1.25, Vec3::Y)
-            }
-            2 => {
-                // TJ close-up cleanly clear of Stan's backrest and with full hair/glasses/collar headroom
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (
-                    head + Vec3::new(0.36 + (t * 8.0).sin() * 0.03, 0.04, 1.66),
-                    head + Vec3::Y * (-0.12),
-                    0.80,
-                    1.20,
-                    Vec3::Y,
-                )
-            }
-            3 => {
-                // Glenn queasy close-up framing full curly mane & boulder shoulders
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.38, 0.06, 1.68), head + Vec3::Y * (-0.06), 0.86, 1.32, Vec3::Y)
-            }
-            4 => {
-                // Stan hellfire close-up ("Are the fryer fires of hell a-glowing?!") with full top hat visible
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.46, 0.10, 3.05), head + Vec3::Y * 0.02, 0.78, 1.25, Vec3::Y)
-            }
-            5 => {
-                // Nate calm Charlie-Bucket close-up framing baseball cap, beard & inflating pink bubble *POP!*
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(-0.42, 0.04, 1.60), head + Vec3::Y * (-0.10), 0.84, 1.25, Vec3::Y)
-            }
-            6 => {
-                // Derek chuckling close-up ("Heh heh heh... buckle up, boys!") cleanly clear of Nate's backrest
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                (head + Vec3::new(0.38, 0.04, 1.64), head + Vec3::Y * (-0.10), 0.82, 1.25, Vec3::Y)
-            }
-            7 => {
-                // Climax Gene Wilder Dutch-angle scream close-up with full top hat & bowtie safely framed inside roll
-                let head = focus_world_head.unwrap_or(COASTER_STAGE);
-                let tilt = Vec3::new((t * 10.0).sin() * 0.15, 1.0, 0.0).normalize();
-                (
-                    head + Vec3::new(-0.42 + (t * 18.0).sin() * 0.04, 0.12, 3.05 - (bt * 0.08).min(0.18)),
-                    head + Vec3::Y * 0.04,
-                    0.82,
-                    1.30,
-                    tilt,
-                )
-            }
-            _ => (
-                // Beat 8: Abrupt stop! Framing ALL 5 heroes (Derek..Stan) & Oompa Loompas facing the Bright Red Door!
-                COASTER_STAGE + Vec3::new(3.8, 3.25, -11.4),
-                COASTER_STAGE + Vec3::new(0.0, 1.65, 2.2),
-                0.88,
-                1.55,
-                Vec3::Y,
-            ),
+        let (target_pos, target_look, base_fov, min_aspect, target_up) =
+            coaster_beat_camera(beat, bt, t, focus_world_head);
+        let target_fov = coaster_aspect_fov(base_fov, aspect, min_aspect);
+
+        let (cam_pos, look_at, up_vec, fov) = if c_state.in_transition && c_state.trans_dur > 0.001 {
+            let u = (c_state.trans_t / c_state.trans_dur).clamp(0.0, 1.0);
+            let s = u * u * (3.0 - 2.0 * u);
+            let up_mix = c_state.cam_from_up.lerp(target_up, s).normalize_or_zero();
+            (
+                c_state.cam_from_pos.lerp(target_pos, s),
+                c_state.cam_from_look.lerp(target_look, s),
+                if up_mix.length_squared() > 0.01 { up_mix } else { Vec3::Y },
+                c_state.cam_from_fov + (target_fov - c_state.cam_from_fov) * s,
+            )
+        } else {
+            (target_pos, target_look, target_up, target_fov)
         };
+        c_state.cam_last_look = look_at;
+        c_state.cam_last_up = up_vec;
         c_tf.translation = cam_pos;
         c_tf.look_at(look_at, up_vec);
         if let Projection::Perspective(ref mut p) = *proj {
-            p.fov = coaster_aspect_fov(base_fov, aspect, min_aspect);
+            p.fov = fov;
         }
     }
 }

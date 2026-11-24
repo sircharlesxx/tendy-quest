@@ -2152,19 +2152,19 @@
             const padLp = ac.createBiquadFilter();
             padLp.type = "lowpass";
             padLp.frequency.setValueAtTime(650, ac.currentTime);
-            padLp.frequency.exponentialRampToValueAtTime(2800, ac.currentTime + 21.0);
+            padLp.frequency.exponentialRampToValueAtTime(2800, ac.currentTime + 42.0);
             padLp.connect(out);
             const oscA = ac.createOscillator();
             oscA.type = "sawtooth";
             oscA.frequency.setValueAtTime(110.0, ac.currentTime);
-            oscA.frequency.linearRampToValueAtTime(164.81, ac.currentTime + 22.0);
+            oscA.frequency.linearRampToValueAtTime(164.81, ac.currentTime + 44.0);
             const oscB = ac.createOscillator();
             oscB.type = "sawtooth";
             oscB.frequency.setValueAtTime(110.6, ac.currentTime);
-            oscB.frequency.linearRampToValueAtTime(168.4, ac.currentTime + 22.0);
+            oscB.frequency.linearRampToValueAtTime(168.4, ac.currentTime + 44.0);
             const pg = ac.createGain();
             pg.gain.setValueAtTime(0.015, ac.currentTime);
-            pg.gain.linearRampToValueAtTime(0.11, ac.currentTime + 20.0);
+            pg.gain.linearRampToValueAtTime(0.11, ac.currentTime + 38.0);
             oscA.connect(pg);
             oscB.connect(pg);
             pg.connect(padLp);
@@ -2182,11 +2182,11 @@
             };
             const tick = () => {
               if (musicBus !== out || currentTrack !== "wonka_trip") return;
-              const isCalm = step < 16;
+              const isCalm = step < 18;
               if (!muted && ac.state === "running") {
                 const now = ac.currentTime;
-                const intens = Math.min(1.0, Math.max(0.0, (step - 12) / 96.0));
-                const accel = isCalm ? 1.0 : (1.0 + Math.min(0.68, (step - 15) * 0.011));
+                const intens = Math.min(1.0, Math.max(0.0, (step - 16) / 170.0));
+                const accel = isCalm ? 1.0 : (1.0 + Math.min(0.68, (step - 17) * 0.0065));
                 const baseNote = isCalm
                   ? calmScale[step % calmScale.length]
                   : eerieScale[step % eerieScale.length];
@@ -2505,6 +2505,7 @@
         _voiceToken: 0,
         _voiceActive: false,
         _voiceGraceUntilMs: 0,
+        _voiceQuietSinceMs: 0,
         _voiceUntilMs: 0,
         _activeUtterance: null,
         _voiceTimer: null,
@@ -2518,6 +2519,7 @@
             const token = ++this._voiceToken;
             if (muted || !window.speechSynthesis || !text) {
               this._voiceActive = false;
+              this._voiceQuietSinceMs = 0;
               this._voiceUntilMs = 0;
               this._activeUtterance = null;
               return;
@@ -2545,13 +2547,16 @@
               } catch (_) {}
             }
             const words = String(text).trim().split(/\s+/).filter(Boolean).length;
+            const estMs = Math.min(24000, Math.max(5500, (words * 720) / prof.rate + 4000));
             const now = performance.now();
             this._voiceActive = true;
-            this._voiceGraceUntilMs = now + 950;
-            this._voiceUntilMs = now + Math.min(15000, Math.max(4500, (words * 650) / prof.rate + 3000));
+            this._voiceQuietSinceMs = 0;
+            this._voiceGraceUntilMs = now + 1150;
+            this._voiceUntilMs = now + estMs;
 
             const launch = (useLocalFallback) => {
               if (this._voiceToken !== token || muted) return;
+              this._voiceGraceUntilMs = Math.max(this._voiceGraceUntilMs, performance.now() + 1000);
               const u = new SpeechSynthesisUtterance(text);
               u.pitch = prof.pitch;
               u.rate = prof.rate;
@@ -2576,6 +2581,8 @@
               u.onstart = () => {
                 if (this._voiceToken !== token) return;
                 started = true;
+                this._voiceQuietSinceMs = 0;
+                this._voiceUntilMs = Math.max(this._voiceUntilMs, performance.now() + estMs);
                 if (this._voiceFallbackTimer) {
                   clearTimeout(this._voiceFallbackTimer);
                   this._voiceFallbackTimer = null;
@@ -2584,6 +2591,7 @@
               u.onend = () => {
                 if (this._voiceToken === token) {
                   this._voiceActive = false;
+                  this._voiceQuietSinceMs = 0;
                   this._activeUtterance = null;
                   if (this._voiceFallbackTimer) {
                     clearTimeout(this._voiceFallbackTimer);
@@ -2601,17 +2609,22 @@
                 if (!useLocalFallback && err !== "canceled" && err !== "interrupted") {
                   if (voice) this._brokenVoices.add(voice.voiceURI || voice.name);
                   try { synth.cancel(); } catch (_) {}
-                  this._lastCancelMs = performance.now();
+                  const retryAt = performance.now();
+                  this._lastCancelMs = retryAt;
+                  this._voiceGraceUntilMs = Math.max(this._voiceGraceUntilMs, retryAt + 1150);
                   this._voiceTimer = setTimeout(() => { this._voiceTimer = null; launch(true); }, 70);
                   return;
                 }
                 if (!useLocalFallback && !started) {
                   try { synth.cancel(); } catch (_) {}
-                  this._lastCancelMs = performance.now();
+                  const retryAt = performance.now();
+                  this._lastCancelMs = retryAt;
+                  this._voiceGraceUntilMs = Math.max(this._voiceGraceUntilMs, retryAt + 1150);
                   this._voiceTimer = setTimeout(() => { this._voiceTimer = null; launch(true); }, 90);
                   return;
                 }
                 this._voiceActive = false;
+                this._voiceQuietSinceMs = 0;
                 this._activeUtterance = null;
               };
               try {
@@ -2625,12 +2638,15 @@
                       this._brokenVoices.add(voice.voiceURI || voice.name);
                     }
                     try { synth.cancel(); } catch (_) {}
-                    this._lastCancelMs = performance.now();
+                    const retryAt = performance.now();
+                    this._lastCancelMs = retryAt;
+                    this._voiceGraceUntilMs = Math.max(this._voiceGraceUntilMs, retryAt + 1150);
                     this._voiceTimer = setTimeout(() => { this._voiceTimer = null; launch(true); }, 70);
                   }, 750);
                 }
               } catch (_) {
                 this._voiceActive = false;
+                this._voiceQuietSinceMs = 0;
                 this._activeUtterance = null;
               }
             };
@@ -2642,15 +2658,18 @@
             }
             const sinceCancel = performance.now() - this._lastCancelMs;
             if (needCancel || sinceCancel < 120) {
+              const delayMs = Math.max(70, 120 - sinceCancel);
+              this._voiceGraceUntilMs = Math.max(this._voiceGraceUntilMs, performance.now() + delayMs + 1000);
               this._voiceTimer = setTimeout(() => {
                 this._voiceTimer = null;
                 launch(false);
-              }, Math.max(70, 120 - sinceCancel));
+              }, delayMs);
             } else {
               launch(false);
             }
           } catch (_) {
             this._voiceActive = false;
+            this._voiceQuietSinceMs = 0;
             this._activeUtterance = null;
           }
         },
@@ -2661,6 +2680,7 @@
             if (this._voiceFallbackTimer) { clearTimeout(this._voiceFallbackTimer); this._voiceFallbackTimer = null; }
             this._voiceToken++;
             this._voiceActive = false;
+            this._voiceQuietSinceMs = 0;
             this._voiceUntilMs = 0;
             this._activeUtterance = null;
             this._lastCancelMs = performance.now();
@@ -2673,13 +2693,32 @@
             const now = performance.now();
             if (now >= this._voiceUntilMs) {
               this._voiceActive = false;
+              this._voiceQuietSinceMs = 0;
               return false;
             }
-            if (now < this._voiceGraceUntilMs) return true;
-            if (window.speechSynthesis && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) {
+            if (now < this._voiceGraceUntilMs) {
+              this._voiceQuietSinceMs = 0;
+              return true;
+            }
+            const synth = window.speechSynthesis;
+            if (synth) {
+              if (synth.paused) {
+                try { synth.resume(); } catch (_) {}
+              }
+              if (synth.speaking || synth.pending) {
+                this._voiceQuietSinceMs = 0;
+                return true;
+              }
+            }
+            if (!this._voiceQuietSinceMs) {
+              this._voiceQuietSinceMs = now;
+              return true;
+            }
+            if (now - this._voiceQuietSinceMs < 350) {
               return true;
             }
             this._voiceActive = false;
+            this._voiceQuietSinceMs = 0;
             return false;
           } catch (_) {
             return false;
@@ -3249,7 +3288,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-ff378d5609027101.js" crossorigin="anonymous" integrity="sha384-OGlzV/3GqhOKmG+yVLzKD4i7Qp64VzOfCpc/175CClzKu6ja6PEBl6TRi/5Xhr4k"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-ff378d5609027101_bg.wasm" crossorigin="anonymous" integrity="sha384-GJIgUBcSAg9MRpZ6XFtnTFvUeLFGrZB3lEDCt2XP2Ujv6QrUrZhEWxvjZCTUMp/4" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-49ba2ae68de3e365.js" crossorigin="anonymous" integrity="sha384-OGlzV/3GqhOKmG+yVLzKD4i7Qp64VzOfCpc/175CClzKu6ja6PEBl6TRi/5Xhr4k"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-49ba2ae68de3e365_bg.wasm" crossorigin="anonymous" integrity="sha384-4iGgwGtzC7vnf0/C9qdQxEVUxxQcXbXDxurDRIw320bF3uyqLSD9SVu2uimwqb2K" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -6814,8 +6853,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-ff378d5609027101.js';
-const wasm = await init({ module_or_path: './tendy-quest-ff378d5609027101_bg.wasm' });
+import init, * as bindings from './tendy-quest-49ba2ae68de3e365.js';
+const wasm = await init({ module_or_path: './tendy-quest-49ba2ae68de3e365_bg.wasm' });
 
 
 window.wasmBindings = bindings;
