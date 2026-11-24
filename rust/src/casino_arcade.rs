@@ -47,7 +47,23 @@ fn sim_running(help: Res<HelpPause>) -> bool {
     !help.open
 }
 
-pub const COASTER_RIDE_COST: u32 = 100_000_000;
+pub const COASTER_RIDE_COST: u32 = 100_000;
+
+pub fn coaster_ride_cost(online_players: u32) -> u32 {
+    COASTER_RIDE_COST.saturating_mul(online_players.max(1))
+}
+
+fn format_tw_commas(n: u32) -> String {
+    let s = n.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ArcadeKind {
@@ -67,7 +83,7 @@ impl ArcadeKind {
             Self::Plinko => "PLINKO TOWER (5 TW) [F/E]",
             Self::Skeeball => "SKEEBALL ALLEY (5 TW / 3 BALLS) [F/E]",
             Self::JazzBand => "TIP JAZZ BAND (5 TW) - TRUMPET SOLO! [F/E]",
-            Self::RollerCoaster => "RIDE STARGATE COASTER (100,000,000 TW!) [F/E]",
+            Self::RollerCoaster => "RIDE STARGATE COASTER (100,000 TW!) [F/E]",
         }
     }
 
@@ -1577,6 +1593,7 @@ fn spawn_casino_arcade_machines(
 fn update_arcade_proximity(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    net: Res<crate::net::NetState>,
     mut stats: ResMut<PlayerStats>,
     help: Res<HelpPause>,
     mut arcade: ResMut<ArcadeState>,
@@ -1611,7 +1628,24 @@ fn update_arcade_proximity(
         return;
     };
 
-    let label = kind.prompt();
+    let online_players = net.online_player_count();
+    let coaster_cost = coaster_ride_cost(online_players);
+    let label: String = if kind == ArcadeKind::RollerCoaster {
+        if online_players > 1 {
+            format!(
+                "RIDE STARGATE COASTER ({} TW - {} ONLINE PLAYERS!) [F/E]",
+                format_tw_commas(coaster_cost),
+                online_players
+            )
+        } else {
+            format!(
+                "RIDE STARGATE COASTER ({} TW!) [F/E]",
+                format_tw_commas(coaster_cost)
+            )
+        }
+    } else {
+        kind.prompt().to_string()
+    };
     if prompt_q.is_empty() {
         commands
             .spawn((
@@ -1640,7 +1674,7 @@ fn update_arcade_proximity(
                 .with_children(|btn| {
                     btn.spawn((
                         ArcadePromptText,
-                        Text::new(label),
+                        Text::new(label.clone()),
                         TextFont { font_size: 16.0, ..default() },
                         TextColor(Color::WHITE),
                     ));
@@ -1648,7 +1682,7 @@ fn update_arcade_proximity(
             });
     } else if let Ok(mut t) = text_q.get_single_mut() {
         if t.0 != label {
-            t.0 = label.to_string();
+            t.0 = label.clone();
         }
     }
 
@@ -1675,16 +1709,26 @@ fn update_arcade_proximity(
         return;
     }
     if kind == ArcadeKind::RollerCoaster {
-        if stats.spend_tendy_wendies(COASTER_RIDE_COST) {
+        if stats.spend_tendy_wendies(coaster_cost) {
             play_sfx("portal_suck");
             crate::audio::net_event(crate::net::EVENT_COASTER_WARP_ALL, 1);
             next_state.set(crate::state::GameState::CoasterCutscene);
         } else {
             play_sfx("hit");
-            stats.hint_text = format!(
-                "Need 100,000,000 TW to ride the Stargate Coaster! (You have {} TW)",
-                stats.tendy_wendies
-            );
+            stats.hint_text = if online_players > 1 {
+                format!(
+                    "Need {} TW ({} online players x 100,000 TW) to ride the Stargate Coaster! (You have {} TW)",
+                    format_tw_commas(coaster_cost),
+                    online_players,
+                    format_tw_commas(stats.tendy_wendies)
+                )
+            } else {
+                format!(
+                    "Need {} TW to ride the Stargate Coaster! (You have {} TW)",
+                    format_tw_commas(coaster_cost),
+                    format_tw_commas(stats.tendy_wendies)
+                )
+            };
             stats.hint_bump = stats.hint_bump.wrapping_add(1);
         }
         return;

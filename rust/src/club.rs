@@ -1,7 +1,7 @@
 //! Willy Wonka + 2001 Stargate 5-Hero Coaster Cutscene (`GameState::CoasterCutscene`) and
 //! Level 4: Velvet Disco Club (`GameState::ClubPlay`).
 //!
-//! Why: gives spending 100,000,000 Tendy Wendies at the Stargate Coaster an unforgettable payoff—
+//! Why: gives spending 100,000+ Tendy Wendies (scaled by online players) at the Stargate Coaster an unforgettable payoff—
 //! flying Stan, TJ, Glenn, Nate, and Derek through a hypnotic Wonka-meets-2001 tunnel with
 //! extreme strobing close-ups into a super-shiny mirror-floored disco club with dancing VIP stages.
 //!
@@ -613,16 +613,16 @@ struct CoasterBeatDef {
 const COASTER_BEATS: [CoasterBeatDef; 9] = [
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"Round the world and home again... that's the sailor's way. This is what we all need, boys.\"",
-        voice_line: "Round the world and home again... that's the sailor's way. This is what we all need, boys.",
+        sub: "\"Round the fryer and home again... that's the tendy sailor's way. Golden breading, honey mustard, and VIP lights -- this is what we all need, boys.\"",
+        voice_line: "Round the fryer and home again... that's the tendy sailor's way. Golden breading, honey mustard, and VIP lights - this is what we all need, boys.",
         voice_id: "stan",
         min_secs: 3.4,
         max_secs: 6.8,
     },
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"There's no earthly way of knowing... which direction we are going! There's no knowing where we're rowing!\"",
-        voice_line: "There's no earthly way of knowing... which direction we are going! There's no knowing where we're rowing!",
+        sub: "\"There's no earthly way of knowing... which deep fryer we are going! There's no knowing where we're rowing... or which ranch river is a-flowing!\"",
+        voice_line: "There's no earthly way of knowing... which deep fryer we are going! There's no knowing where we're rowing... or which ranch river is a-flowing!",
         voice_id: "stan",
         min_secs: 3.6,
         max_secs: 7.2,
@@ -645,8 +645,8 @@ const COASTER_BEATS: [CoasterBeatDef; 9] = [
     },
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"Not a speck of light is showing, so the danger must be growing... Are the fires of hell a-glowing?! Is the grisly reaper mowing?!\"",
-        voice_line: "Not a speck of light is showing, so the danger must be growing... Are the fires of hell a-glowing?! Is the grisly reaper mowing?!",
+        sub: "\"Not a crumb of ranch is showing, so the tendy hunger's growing... Are the fryer fires of hell a-glowing?! Is the crispy tendy reaper mowing?!\"",
+        voice_line: "Not a crumb of ranch is showing, so the tendy hunger's growing... Are the fryer fires of hell a-glowing?! Is the crispy tendy reaper mowing?!",
         voice_id: "stan",
         min_secs: 3.8,
         max_secs: 7.4,
@@ -670,16 +670,16 @@ const COASTER_BEATS: [CoasterBeatDef; 9] = [
     },
     CoasterBeatDef {
         speaker: "STAN (WILLY WONKA)",
-        sub: "\"YES! The danger must be growing -- AND THEY'RE CERTAINLY NOT SHOWING ANY SIGNS THAT THEY ARE SLOWING!! AAAAAHHHHH!!\"",
-        voice_line: "YES! The danger must be growing - and they're certainly not showing any signs that they are slowing!! AAAAAHHHHH!!",
+        sub: "\"YES! The crispy crunch is growing -- AND THE HONEY-MUSTARD ROWERS ARE CERTAINLY NOT SHOWING ANY SIGNS THAT THEY ARE SLOWING!! TENDY TIME!! AAAAAHHHHH!!\"",
+        voice_line: "YES! The crispy crunch is growing - and the honey-mustard rowers are certainly not showing any signs that they are slowing!! Tendy time!! AAAAAHHHHH!!",
         voice_id: "stan",
         min_secs: 3.6,
         max_secs: 7.2,
     },
     CoasterBeatDef {
         speaker: "STAN (ABRUPT STOP AT BRIGHT RED DOOR)",
-        sub: "\"...Oh, look. Here we are. Right through the bright red door, gentlemen.\"",
-        voice_line: "...Oh, look. Here we are. Right through the bright red door, gentlemen.",
+        sub: "\"...Oh, look. Golden brown and crispy to perfection. Right through the bright red door for our tendy-earned reward, gentlemen.\"",
+        voice_line: "...Oh, look. Golden brown and crispy to perfection. Right through the bright red door for our tendy-earned reward, gentlemen.",
         voice_id: "stan",
         min_secs: 3.4,
         max_secs: 6.5,

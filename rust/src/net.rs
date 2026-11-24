@@ -280,6 +280,15 @@ impl NetState {
     pub fn local_char(&self) -> u8 {
         self.local_char
     }
+
+    /// Total players in the active online session (1 when solo/offline; `1 + peers` when online).
+    pub fn online_player_count(&self) -> u32 {
+        if self.online_active {
+            1_u32.saturating_add(self.peers)
+        } else {
+            1
+        }
+    }
 }
 
 /// Remote avatar root; `slot` picks overflow tint for >4-player local tab tests.
