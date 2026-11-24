@@ -17,9 +17,9 @@ use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat, TextureViewDimension};
 
 use crate::audio::{
-    debug_fast_club, debug_keys_enabled, is_voice_speaking, play_club_disco_music, play_sfx,
-    play_wonka_trip_music, set_club_telemetry, set_touch_boss_mode, set_touch_playing, speak_voice,
-    stop_voice,
+    debug_fast_club, debug_fentanyl_mode, debug_keys_enabled, is_voice_speaking,
+    play_club_disco_music, play_sfx, play_wonka_trip_music, rand_unit, set_club_telemetry,
+    set_touch_boss_mode, set_touch_playing, speak_voice, stop_voice,
 };
 use crate::derek::{make_derek_materials, spawn_derek_rig};
 use crate::glenn::{make_glenn_materials, spawn_glenn_rig};
@@ -43,6 +43,7 @@ impl Plugin for ClubPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CoasterCutsceneState>()
             .init_resource::<ClubState>()
+            .init_resource::<crate::fentanyl::ClubOverdoseState>()
             .add_systems(Startup, setup_club_art)
             .add_systems(OnEnter(GameState::CoasterCutscene), enter_coaster_cutscene)
             .add_systems(OnExit(GameState::CoasterCutscene), exit_coaster_cutscene)
@@ -64,11 +65,14 @@ impl Plugin for ClubPlugin {
                 (
                     animate_club_disco_and_dancers,
                     animate_club_bathrooms_and_sage,
+                    crate::fentanyl::animate_ethereal_god_and_sky,
+                    crate::fentanyl::animate_ethereal_battle_and_narcan,
                     update_club_modals.run_if(gameplay_running),
                     update_club_roamers_and_quests.run_if(gameplay_running),
                     animate_roaming_dancer_limbs,
                     update_club_quest_overlays,
                     update_club_seating.run_if(gameplay_running),
+                    crate::fentanyl::update_fentanyl_overdose,
                     update_club_stations.run_if(gameplay_running),
                     update_club_dance_and_broke_warp,
                     update_club_flush_cutscene,
@@ -2095,7 +2099,7 @@ const SAGE_VISION_RANGE: f32 = 12.2;
 const SAGE_VISION_HALF_ANGLE: f32 = 0.56;
 const LOBBY_SEAT_LOCAL: Vec3 = Vec3::new(0.5, 0.14, 6.5);
 
-fn club_char_profile(char_id: u8) -> (&'static str, &'static str) {
+pub(crate) fn club_char_profile(char_id: u8) -> (&'static str, &'static str) {
     match char_id {
         CHAR_STAN => ("Stan", "stan"),
         CHAR_NATE => ("Nate", "nate"),
@@ -2310,7 +2314,7 @@ struct ClubState {
 }
 
 #[derive(Component)]
-struct ClubLevelEntity;
+pub(crate) struct ClubLevelEntity;
 
 #[derive(Component)]
 struct ClubStationRing {
@@ -3214,6 +3218,7 @@ fn enter_club_play(
     mut stats: ResMut<PlayerStats>,
     mut orbit: ResMut<CameraOrbit>,
     mut club: ResMut<ClubState>,
+    mut overdose: ResMut<crate::fentanyl::ClubOverdoseState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     old_club_q: Query<Entity, With<ClubLevelEntity>>,
@@ -3224,6 +3229,7 @@ fn enter_club_play(
     for e in &old_club_q {
         commands.entity(e).despawn_recursive();
     }
+    crate::fentanyl::clear_overdose_state(&mut overdose);
 
     if !stats.club_skip_tw_sync {
         stats.sync_tendy_wendies_from_save();
@@ -4881,6 +4887,7 @@ fn animate_club_disco_and_dancers(
     time: Res<Time<Real>>,
     net: Res<NetState>,
     club: Res<ClubState>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     mut ball_q: Query<&mut Transform, With<ClubDiscoBall>>,
     mut spot_q: Query<(&ClubDiscoSpot, &mut Transform), Without<ClubDiscoBall>>,
     mut beam_q: Query<(&ClubLaserBeam, &mut Transform), (Without<ClubDiscoBall>, Without<ClubDiscoSpot>)>,
@@ -4892,7 +4899,14 @@ fn animate_club_disco_and_dancers(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let t = time.elapsed_secs();
-    let dancing_boost = if club.dance_timer > 0.0 { 1.45 } else { 1.0 };
+    let emergency = overdose.emergency_active();
+    let dancing_boost = if emergency {
+        5.8
+    } else if club.dance_timer > 0.0 {
+        1.45
+    } else {
+        1.0
+    };
 
     for mut tf in &mut ball_q {
         tf.rotation = Quat::from_rotation_y(t * 0.95 * dancing_boost);
@@ -4905,27 +4919,50 @@ fn animate_club_disco_and_dancers(
     }
 
     for (bm, mut tf) in &mut beam_q {
-        let sweep = (t * 1.4 + bm.idx as f32 * 0.85).sin() * 0.62;
-        let yaw = bm.base_yaw + t * 0.45;
-        let tilt = 0.68 + 0.25 * (t * 2.1 + bm.idx as f32).cos();
+        let speed_mul = if emergency { 6.2 } else { 1.0 };
+        let sweep = (t * 1.4 * speed_mul + bm.idx as f32 * 0.85).sin() * if emergency { 1.15 } else { 0.62 };
+        let yaw = bm.base_yaw + t * 0.45 * speed_mul;
+        let tilt = 0.68 + 0.25 * (t * 2.1 * speed_mul + bm.idx as f32).cos();
         tf.rotation = Quat::from_rotation_y(yaw + sweep) * Quat::from_rotation_x(tilt);
     }
 
     for (tile, mat_h) in &mut tile_q {
         if let Some(mat) = materials.get_mut(&mat_h.0) {
-            let hue = ((t * 95.0 + tile.idx as f32 * 22.0) % 360.0 + 360.0) % 360.0;
-            let col = Color::hsl(hue, 1.0, 0.52);
-            let l = col.to_linear();
-            let pulse = 1.1 + 0.9 * (t * 4.5 + tile.idx as f32 * 0.6).sin().abs();
-            mat.base_color = col;
-            mat.emissive = LinearRgba::new(l.red * pulse, l.green * pulse, l.blue * pulse, 1.0);
+            if emergency {
+                let step = ((t * 16.0) as usize + tile.idx) % 3;
+                let col = match step {
+                    0 => Color::srgb(1.0, 0.05, 0.14),
+                    1 => Color::srgb(0.08, 0.28, 1.0),
+                    _ => Color::WHITE,
+                };
+                let l = col.to_linear();
+                mat.base_color = col;
+                mat.emissive = LinearRgba::new(l.red * 3.2, l.green * 3.2, l.blue * 3.2, 1.0);
+            } else {
+                let hue = ((t * 95.0 + tile.idx as f32 * 22.0) % 360.0 + 360.0) % 360.0;
+                let col = Color::hsl(hue, 1.0, 0.52);
+                let l = col.to_linear();
+                let pulse = 1.1 + 0.9 * (t * 4.5 + tile.idx as f32 * 0.6).sin().abs();
+                mat.base_color = col;
+                mat.emissive = LinearRgba::new(l.red * pulse, l.green * pulse, l.blue * pulse, 1.0);
+            }
         }
     }
 
     for (dl, mut light) in &mut light_q {
-        let hue = ((t * 130.0 + dl.0 as f32 * 60.0) % 360.0 + 360.0) % 360.0;
-        light.color = Color::hsl(hue, 1.0, 0.58);
-        light.intensity = 460_000.0 + 420_000.0 * (t * 8.0 + dl.0 as f32 * 1.4).sin().abs();
+        if emergency {
+            let phase = ((t * 14.0) as usize + dl.0) % 3;
+            light.color = match phase {
+                0 => Color::srgb(1.0, 0.04, 0.08),
+                1 => Color::srgb(0.05, 0.25, 1.0),
+                _ => Color::WHITE,
+            };
+            light.intensity = 2_200_000.0;
+        } else {
+            let hue = ((t * 130.0 + dl.0 as f32 * 60.0) % 360.0 + 360.0) % 360.0;
+            light.color = Color::hsl(hue, 1.0, 0.58);
+            light.intensity = 460_000.0 + 420_000.0 * (t * 8.0 + dl.0 as f32 * 1.4).sin().abs();
+        }
     }
 
     for (d, mut tf) in &mut dancer_q {
@@ -6339,11 +6376,21 @@ fn update_club_quest_overlays(
     time: Res<Time<Real>>,
     net: Res<NetState>,
     club: Res<ClubState>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     roamer_q: Query<&ClubRoamingDancer>,
     banner_q: Query<Entity, With<ClubQuestBanner>>,
     mut text_q: Query<&mut Text, With<ClubQuestBannerText>>,
     mut overlay_q: Query<(Entity, &mut BackgroundColor), With<ClubPsychedelicOverlay>>,
 ) {
+    if overdose.is_active() {
+        for (e, _) in &overlay_q {
+            commands.entity(e).despawn_recursive();
+        }
+        for e in &banner_q {
+            commands.entity(e).despawn_recursive();
+        }
+        return;
+    }
     let t = time.elapsed_secs();
     let (char_name, _) = club_char_profile(net.local_char());
     let char_upper = char_name.to_uppercase();
@@ -6615,6 +6662,7 @@ fn update_club_stations(
     net: Res<NetState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
+    mut overdose: ResMut<crate::fentanyl::ClubOverdoseState>,
     mut orbit: ResMut<CameraOrbit>,
     mut next_state: SceneTransition,
     mut player_q: Query<&mut Transform, With<Player>>,
@@ -6636,6 +6684,8 @@ fn update_club_stations(
         || stats.club_seated
         || club.modal_cd > 0.0
         || club.broke_timer > 0.0
+        || overdose.is_victim()
+        || overdose.prompt_claimed
     {
         for e in &ui.prompt_q {
             commands.entity(e).despawn_recursive();
@@ -6761,6 +6811,24 @@ fn update_club_stations(
                 if ingest_progress >= 1.0 {
                     for e in &ui.prompt_q {
                         commands.entity(e).despawn_recursive();
+                    }
+                    let is_fentanyl = match debug_fentanyl_mode() {
+                        1 => true,
+                        0 => false,
+                        _ => rand_unit() < 0.5,
+                    };
+                    if is_fentanyl {
+                        crate::fentanyl::trigger_local_fentanyl_overdose(
+                            &mut commands,
+                            &mut meshes,
+                            &mut materials,
+                            &mut stats,
+                            &mut overdose,
+                            &mut p_tf,
+                            local_char,
+                        );
+                        club.derek_quest = DerekQuestPhase::None;
+                        return;
                     }
                     play_sfx("powder_trip");
                     speak_voice(
@@ -7380,6 +7448,7 @@ fn emit_club_debug_telemetry(
     net: Res<NetState>,
     stats: Res<PlayerStats>,
     club: Res<ClubState>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     player_q: Query<&Transform, With<Player>>,
     roamer_q_pos: Query<(&ClubRoamingDancer, &Transform), Without<Player>>,
 ) {
@@ -7440,8 +7509,10 @@ fn emit_club_debug_telemetry(
         };
         r_states.push(format!("\"{}\"", st));
     }
+    let (_, narcan_rel) = crate::fentanyl::NARCAN_SPOTS
+        [(overdose.narcan_spot as usize).min(crate::fentanyl::NARCAN_SPOTS.len() - 1)];
     let json = format!(
-        "{{\"char\":{},\"tw\":{},\"entryT\":{:.2},\"modal\":\"{}\",\"seated\":{},\"beers\":{},\"tjRefusals\":{},\"derekQuest\":\"{}\",\"derekRoom\":{},\"suspicion\":{:.2},\"seesDerek\":{},\"ingestProgress\":{:.2},\"flushCutscene\":{},\"flushStage\":{},\"sageX\":{:.2},\"sageZ\":{:.2},\"timeLeft\":{:.2},\"psychedelic\":{:.2},\"danceActive\":{},\"px\":{:.2},\"pz\":{:.2},\"r0x\":{:.2},\"r0z\":{:.2},\"roamers\":[{}]}}",
+        "{{\"char\":{},\"tw\":{},\"entryT\":{:.2},\"modal\":\"{}\",\"seated\":{},\"beers\":{},\"tjRefusals\":{},\"derekQuest\":\"{}\",\"derekRoom\":{},\"suspicion\":{:.2},\"seesDerek\":{},\"ingestProgress\":{:.2},\"flushCutscene\":{},\"flushStage\":{},\"sageX\":{:.2},\"sageZ\":{:.2},\"timeLeft\":{:.2},\"psychedelic\":{:.2},\"danceActive\":{},\"overdosePhase\":\"{}\",\"overdoseTimeLeft\":{:.2},\"overdoseVictim\":{},\"narcanSpot\":{},\"narcanX\":{:.2},\"narcanZ\":{:.2},\"hasNarcan\":{},\"sirensActive\":{},\"etherealChants\":{},\"px\":{:.2},\"pz\":{:.2},\"r0x\":{:.2},\"r0z\":{:.2},\"roamers\":[{}]}}",
         net.local_char(),
         stats.tendy_wendies,
         club.entry_t,
@@ -7461,6 +7532,15 @@ fn emit_club_debug_telemetry(
         dq_t,
         stats.club_psychedelic_timer,
         stats.club_dance_open,
+        overdose.phase_label(),
+        overdose.time_left,
+        overdose.victim_char,
+        overdose.narcan_spot,
+        narcan_rel.x,
+        narcan_rel.z,
+        overdose.has_narcan,
+        overdose.phase == crate::fentanyl::OverdosePhase::RescuerEmergency,
+        overdose.chant_count,
         px,
         pz,
         r0_pos.0,
@@ -7537,10 +7617,13 @@ fn update_club_summon_squad(
 fn exit_club_play(
     mut commands: Commands,
     mut stats: ResMut<PlayerStats>,
+    mut overdose: ResMut<crate::fentanyl::ClubOverdoseState>,
     mut player_q: Query<&mut Visibility, With<Player>>,
     cam_q: Query<Entity, With<Camera3d>>,
     level_q: Query<Entity, With<ClubLevelEntity>>,
 ) {
+    stop_voice();
+    crate::fentanyl::clear_overdose_state(&mut overdose);
     for ce in &cam_q {
         commands.entity(ce).remove::<EnvironmentMapLight>();
     }

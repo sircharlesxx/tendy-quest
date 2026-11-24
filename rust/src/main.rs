@@ -9,6 +9,7 @@ mod city;
 mod controls;
 mod derek;
 mod enemies;
+mod fentanyl;
 mod ferris;
 mod gfx;
 mod glenn;

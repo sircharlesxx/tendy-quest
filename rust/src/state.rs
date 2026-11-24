@@ -129,6 +129,8 @@ pub struct PlayerStats {
     pub club_dance_open: bool,
     /// True while the Men's Room toilet flush caught cutscene is active inside `ClubPlay`.
     pub club_cutscene_open: bool,
+    /// True when the player dies from a 30s fentanyl overdose in `ClubPlay` so Game Over returns to the club.
+    pub club_fentanyl_death: bool,
     /// True while a Velvet Disco Club modal dialog is open (locks movement & unlocks cursor).
     pub club_modal_open: bool,
     /// True while seated in the Public Lobby stage-side seats drinking beer.
@@ -250,6 +252,7 @@ impl Default for PlayerStats {
             in_club_level: false,
             club_dance_open: false,
             club_cutscene_open: false,
+            club_fentanyl_death: false,
             club_modal_open: false,
             club_seated: false,
             club_psychedelic_timer: 0.0,

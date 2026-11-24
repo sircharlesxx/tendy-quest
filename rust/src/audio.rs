@@ -166,6 +166,15 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = fastClub)]
         fn js_fast_club() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = fentanylMode)]
+        fn js_fentanyl_mode() -> i32;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = overdoseSecs)]
+        fn js_overdose_secs() -> f32;
+
+        #[wasm_bindgen(js_namespace = Math, js_name = random)]
+        fn js_math_random() -> f64;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = setClub)]
         fn js_set_club_telemetry(line: &str);
 
@@ -638,6 +647,22 @@ mod imp {
     pub fn set_lexie_telemetry(line: &str) {
         js_set_lexie_telemetry(line);
     }
+
+    /// Debug override for 50% fentanyl roll (`1` = force overdose, `0` = force safe, `-1` = random).
+    pub fn debug_fentanyl_mode() -> i32 {
+        js_fentanyl_mode()
+    }
+
+    /// Debug override for fentanyl Narcan rescue countdown (defaults to `30.0` seconds).
+    pub fn debug_overdose_secs() -> f32 {
+        let v = js_overdose_secs();
+        if v > 0.0 { v } else { 30.0 }
+    }
+
+    /// Uniform random float in `[0.0, 1.0)`.
+    pub fn rand_unit() -> f32 {
+        (js_math_random() as f32).clamp(0.0, 0.99999)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -708,6 +733,18 @@ mod imp {
 
     pub fn debug_fast_club() -> bool {
         false
+    }
+
+    pub fn debug_fentanyl_mode() -> i32 {
+        -1
+    }
+
+    pub fn debug_overdose_secs() -> f32 {
+        30.0
+    }
+
+    pub fn rand_unit() -> f32 {
+        0.25
     }
 
     pub fn set_club_telemetry(_line: &str) {}
@@ -916,8 +953,8 @@ pub use imp::debug_at_beer;
 pub use imp::{debug_park_demo, park_log, touch_jump_held};
 // Ferris wheel debug driver and telemetry (ferris.rs).
 pub use imp::{debug_wheel_demo, set_wheel_telemetry};
-// Velvet Disco Club debug fast-timer & telemetry hooks (club.rs).
-pub use imp::{debug_fast_club, set_club_telemetry};
+// Velvet Disco Club debug fast-timer, fentanyl test flags & telemetry hooks (club.rs, fentanyl.rs).
+pub use imp::{debug_fast_club, debug_fentanyl_mode, debug_overdose_secs, rand_unit, set_club_telemetry};
 // Turn-based Lexie showdown telemetry hook (lexie_battle.rs).
 pub use imp::set_lexie_telemetry;
 // Distributed multiplayer bridge (net.rs & controls.rs).

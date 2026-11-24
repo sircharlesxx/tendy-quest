@@ -1422,6 +1422,17 @@ pub fn spawn_stage_clear_overlay(commands: Commands, mut stats: ResMut<PlayerSta
 }
 
 pub fn spawn_game_over_overlay(commands: Commands, stats: Res<PlayerStats>) {
+    if stats.club_fentanyl_death {
+        spawn_end_card(
+            commands,
+            "YOU DIED -- FENTANYL OVERDOSE",
+            "NOBODY FOUND THE NARCAN IN TIME!\nSTAN GOD CLAIMED YOUR SOUL IN THE ETHEREAL REALM.\n\"TENDY WENDY FENDY BENDY...\"",
+            "RETURN TO VELVET DISCO CLUB (R / CLICK)",
+            Color::srgb(0.95, 0.14, 0.22),
+            false,
+        );
+        return;
+    }
     let title = "YOU DIED";
     let btn = if stats.in_city {
         "RETRY NYC (R / CLICK)"
@@ -1639,7 +1650,9 @@ pub fn handle_restart_input(
         return;
     }
     let retry_city = *state.get() == GameState::GameOver && stats.in_city;
-    next_state.set(if retry_city {
+    next_state.set(if *state.get() == GameState::GameOver && stats.club_fentanyl_death {
+        GameState::ClubPlay
+    } else if retry_city {
         GameState::CityPlay
     } else {
         GameState::Playing
@@ -1648,15 +1661,27 @@ pub fn handle_restart_input(
 
 /// OnExit(GameOver): reset while black. Retrying in the city respawns only the hero.
 pub fn restart_world_after_game_over(
-    commands: Commands,
+    mut commands: Commands,
     asset_server: Res<AssetServer>,
     meshes: ResMut<Assets<Mesh>>,
     materials: ResMut<Assets<StandardMaterial>>,
-    stats: ResMut<PlayerStats>,
+    mut stats: ResMut<PlayerStats>,
     orbit: ResMut<CameraOrbit>,
     level_q: Query<Entity, With<LevelEntity>>,
     end_q: Query<Entity, With<EndOverlay>>,
 ) {
+    if stats.club_fentanyl_death {
+        for e in &end_q {
+            commands.entity(e).despawn_recursive();
+        }
+        stats.club_fentanyl_death = false;
+        stats.hearts = stats.max_hearts;
+        stats.club_cutscene_open = false;
+        stats.club_modal_open = false;
+        stats.club_dance_open = false;
+        stats.club_psychedelic_timer = 0.0;
+        return;
+    }
     let retry_city = stats.in_city;
     reset_world_for_restart(
         retry_city, commands, asset_server, meshes, materials, stats, orbit, level_q, end_q,

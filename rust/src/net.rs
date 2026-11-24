@@ -70,6 +70,10 @@ pub const EVENT_LEXIE_BATTLE: u32 = 7;
 pub const EVENT_LEXIE_MOVE: u32 = 8;
 pub const EVENT_COASTER_WARP_ALL: u32 = 9;
 pub const EVENT_LEXIE_COMMIT: u32 = 10;
+pub const EVENT_CLUB_OVERDOSE: u32 = 11;
+pub const EVENT_CLUB_NARCAN_PICKUP: u32 = 12;
+pub const EVENT_CLUB_OVERDOSE_REVIVE: u32 = 13;
+pub const EVENT_CLUB_OVERDOSE_DEATH: u32 = 14;
 
 pub fn pack_lexie_move(round: u32, actor: usize, is_heavy: bool) -> u32 {
     ((round.min(4095)) << 4) | (((actor as u32) & 7) << 1) | u32::from(is_heavy)
@@ -81,6 +85,55 @@ pub fn unpack_lexie_move(value: u32) -> (u32, usize, bool) {
         ((value >> 1) & 7) as usize,
         (value & 1) != 0,
     )
+}
+
+pub fn pack_club_overdose(victim_char: u8, narcan_spot: u8, local_x: f32, local_z: f32, incident_id: u8) -> u32 {
+    let qx = (((local_x + 32.0) * 4.0).round().clamp(0.0, 255.0)) as u32;
+    let qz = (((local_z + 32.0) * 4.0).round().clamp(0.0, 255.0)) as u32;
+    (u32::from(victim_char & 7))
+        | (u32::from(narcan_spot & 15) << 3)
+        | (qx << 7)
+        | (qz << 15)
+        | (u32::from(incident_id) << 23)
+}
+
+pub fn unpack_club_overdose(value: u32) -> (u8, u8, f32, f32, u8) {
+    let victim_char = (value & 7) as u8;
+    let narcan_spot = ((value >> 3) & 15) as u8;
+    let qx = ((value >> 7) & 0xFF) as f32;
+    let qz = ((value >> 15) & 0xFF) as f32;
+    let incident_id = ((value >> 23) & 0xFF) as u8;
+    (victim_char, narcan_spot, qx * 0.25 - 32.0, qz * 0.25 - 32.0, incident_id)
+}
+
+pub fn pack_narcan_pickup(incident_id: u8, rescuer_char: u8) -> u32 {
+    u32::from(incident_id) | (u32::from(rescuer_char & 7) << 8)
+}
+
+pub fn unpack_narcan_pickup(value: u32) -> (u8, u8) {
+    ((value & 0xFF) as u8, ((value >> 8) & 7) as u8)
+}
+
+pub fn pack_overdose_revive(incident_id: u8, victim_char: u8, rescuer_char: u8) -> u32 {
+    u32::from(incident_id)
+        | (u32::from(victim_char & 7) << 8)
+        | (u32::from(rescuer_char & 7) << 11)
+}
+
+pub fn unpack_overdose_revive(value: u32) -> (u8, u8, u8) {
+    (
+        (value & 0xFF) as u8,
+        ((value >> 8) & 7) as u8,
+        ((value >> 11) & 7) as u8,
+    )
+}
+
+pub fn pack_overdose_death(incident_id: u8, victim_char: u8) -> u32 {
+    u32::from(incident_id) | (u32::from(victim_char & 7) << 8)
+}
+
+pub fn unpack_overdose_death(value: u32) -> (u8, u8) {
+    ((value & 0xFF) as u8, ((value >> 8) & 7) as u8)
 }
 
 pub const CHAR_STAN: u8 = 0;
@@ -95,6 +148,10 @@ pub struct NetCoopEvents {
     pub lexie_moves: Vec<(u8, u32, usize, bool)>,
     pub lexie_commits: Vec<(u32, usize, bool)>,
     pub lexie_battle_players: u32,
+    pub club_overdoses: Vec<(u8, u8, f32, f32, u8)>,
+    pub club_narcan_pickups: Vec<(u8, u8)>,
+    pub club_overdose_revives: Vec<(u8, u8, u8)>,
+    pub club_overdose_deaths: Vec<(u8, u8)>,
 }
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
@@ -1003,8 +1060,13 @@ fn receive_remote_states(
                     .map(|r| r.char_id)
                     .unwrap_or(char_id);
                 let label = char_name(peer_char, slot);
-                let value = rec[3].clamp(0.0, 1.0e6) as u32;
-                net.event_line = match rec[2] as u32 {
+                let code = rec[2] as u32;
+                let value = if code <= 10 {
+                    rec[3].clamp(0.0, 1.0e6) as u32
+                } else {
+                    rec[3].clamp(0.0, u32::MAX as f64) as u32
+                };
+                net.event_line = match code {
                     EVENT_TRICK => format!("{} SCOOTER SCORE +{}", label, value),
                     EVENT_BEER => format!("{} DRANK A BEER", label),
                     EVENT_ENTER_MOM_BOSS => {
@@ -1091,6 +1153,7 @@ fn receive_remote_states(
                             stats.club_modal_open = false;
                             stats.club_dance_open = false;
                             stats.club_cutscene_open = false;
+                            stats.club_fentanyl_death = false;
                             stats.driving_car = None;
                             stats.riding_scooter = None;
                             stats.riding_wheel = false;
@@ -1115,6 +1178,26 @@ fn receive_remote_states(
                             label,
                             if is_heavy { "HEAVY" } else { "LIGHT" }
                         )
+                    }
+                    EVENT_CLUB_OVERDOSE => {
+                        let (vc, spot, lx, lz, inc) = unpack_club_overdose(value);
+                        coop.club_overdoses.push((vc, spot, lx, lz, inc));
+                        format!("UH OH! {} OVERDOSED — FIND NARCAN IN CLUB!", label)
+                    }
+                    EVENT_CLUB_NARCAN_PICKUP => {
+                        let (inc, rc) = unpack_narcan_pickup(value);
+                        coop.club_narcan_pickups.push((inc, rc));
+                        format!("{} FOUND THE HIDDEN NARCAN!", label)
+                    }
+                    EVENT_CLUB_OVERDOSE_REVIVE => {
+                        let (inc, vc, rc) = unpack_overdose_revive(value);
+                        coop.club_overdose_revives.push((inc, vc, rc));
+                        format!("{} REVIVED SQUADMATE WITH NARCAN!", label)
+                    }
+                    EVENT_CLUB_OVERDOSE_DEATH => {
+                        let (inc, vc) = unpack_overdose_death(value);
+                        coop.club_overdose_deaths.push((inc, vc));
+                        format!("{} OVERDOSE — FLATLINE!", label)
                     }
                     _ => continue,
                 };

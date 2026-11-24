@@ -684,6 +684,63 @@
           mkOsc("sine", 260, 480, 0.10, 0.08);
           return true;
         }
+        if (name === "fentanyl_drop") {
+          mkOsc("sine", 140, 28, 1.4, 0.36);
+          mkOsc("sine", 2850, 2600, 1.3, 0.05);
+          mkNoise(0.28, 0.22, 260);
+          mkOsc("triangle", 72, 46, 0.14, 0.24);
+          setTimeout(() => mkOsc("triangle", 64, 38, 0.16, 0.20), 260);
+          return true;
+        }
+        if (name === "ethereal_boom") {
+          [55, 110, 165, 220, 330, 440].forEach((f, idx) => {
+            mkOsc(idx < 2 ? "sawtooth" : "triangle", f * 0.98, f, 2.0, idx < 2 ? 0.14 : 0.08);
+          });
+          mkNoise(0.9, 0.16, 220);
+          return true;
+        }
+        if (name === "god_chant_pulse") {
+          mkOsc("sine", 65, 42, 0.85, 0.32);
+          mkOsc("sawtooth", 98, 92, 0.72, 0.14);
+          mkOsc("triangle", 130, 126, 0.78, 0.12);
+          return true;
+        }
+        if (name === "angel_demon_clash") {
+          mkOsc("triangle", 1480, 2217, 0.26, 0.18);
+          mkOsc("sawtooth", 160, 55, 0.34, 0.18);
+          mkNoise(0.20, 0.20, 1800);
+          return true;
+        }
+        if (name === "club_siren") {
+          mkOsc("sawtooth", 580, 1080, 0.50, 0.24);
+          mkOsc("square", 590, 1090, 0.50, 0.10);
+          setTimeout(() => {
+            mkOsc("sawtooth", 1080, 580, 0.50, 0.24);
+            mkOsc("square", 1090, 590, 0.50, 0.10);
+          }, 500);
+          return true;
+        }
+        if (name === "narcan_grab") {
+          mkNoise(0.08, 0.18, 1600);
+          [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+            setTimeout(() => mkOsc("triangle", f, f * 1.02, 0.22, 0.20), i * 55);
+          });
+          return true;
+        }
+        if (name === "narcan_revive") {
+          mkOsc("sine", 320, 1280, 0.25, 0.20);
+          setTimeout(() => {
+            [523.25, 659.25, 783.99, 1046.5].forEach((f) => {
+              mkOsc("triangle", f, f, 0.95, 0.14);
+            });
+          }, 180);
+          return true;
+        }
+        if (name === "flatline_death") {
+          mkOsc("sine", 1046, 1046, 2.3, 0.26);
+          mkOsc("sawtooth", 55, 36, 1.8, 0.24);
+          return true;
+        }
         if (name === "beer_sip") {
           mkOsc("sine", 340, 620, 0.14, 0.16);
           mkOsc("triangle", 980, 1420, 0.08, 0.12);
@@ -2408,6 +2465,8 @@
           narrator_uzumaki: { pitch: 0.60, rate: 0.98 },
           narrator_cosmic: { pitch: 0.54, rate: 1.06 },
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
+          stan_god: { pitch: 0.40, rate: 0.78, volume: 1.0 },
+          stan_god_chant: { pitch: 0.34, rate: 0.90, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
         _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender", "wise_midget", "stripper"],
@@ -3317,7 +3376,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-76c5b4ba2b463b5d.js" crossorigin="anonymous" integrity="sha384-wMjGx+mPe3PmEdbTZZed9okCo7kKRMfokrh1EUzOTEA2lr9UPMZnMqydfO77PKVq"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-76c5b4ba2b463b5d_bg.wasm" crossorigin="anonymous" integrity="sha384-3yA8SbXuMrdJZP7H5qTlpdw63D85nI4Wj39QoIdwY2BaEfatDjF/TYA1bchvXiqA" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-c45d0bc83772e7a1.js" crossorigin="anonymous" integrity="sha384-IpNKsYpols3BBD85QbnbKd5ROtRjrjLW0fl3tEwiiGI4qoAO4kfUoS3vU3N3GJ3N"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-c45d0bc83772e7a1_bg.wasm" crossorigin="anonymous" integrity="sha384-9l1ySe57KiFByf2w7D1VFzGfaSY4mvgUOMyuOW0fVLTK0jrzzS48Wzyjthuk+fbJ" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4200,6 +4259,19 @@
         atBeer() { return debugKeysEnabled && /[?&]at_beer=1(?:&|$)/.test(window.location.search); },
         // Debug: ?debug=1&fast_club=1 shortens TJ chair approach timers in the Velvet Disco Club.
         fastClub() { return debugKeysEnabled && /[?&]fast_club=1(?:&|$)/.test(window.location.search); },
+        // Debug: ?debug=1&fentanyl=1 forces 100% fentanyl overdose, ?debug=1&fentanyl=0 forces safe trip.
+        fentanylMode() {
+          if (!debugKeysEnabled) return -1;
+          if (/[?&]fentanyl=1(?:&|$)/.test(window.location.search)) return 1;
+          if (/[?&]fentanyl=0(?:&|$)/.test(window.location.search)) return 0;
+          return -1;
+        },
+        // Debug: ?debug=1&od_secs=12 overrides the 30s fentanyl Narcan rescue countdown.
+        overdoseSecs() {
+          if (!debugKeysEnabled) return 30.0;
+          const m = window.location.search.match(/[?&]od_secs=([0-9]+(?:\.[0-9]+)?)/);
+          return m ? Math.max(5.0, Math.min(60.0, parseFloat(m[1]))) : 30.0;
+        },
       };
     })();
   </script>
@@ -4717,7 +4789,7 @@
           rec[19] = charId;
         } else if (type === T_EVENT) {
           const code = v.getUint8(12), value = v.getUint32(16, true);
-          if (code < 1 || code > 12 || value > 1000000) return drop();
+          if (code < 1 || code > 20 || (code <= 10 && value > 1000000)) return drop();
           rec = new Float64Array(REC_W);
           rec[0] = 3; rec[2] = code; rec[3] = value;
         } else if (type === T_META) {
@@ -6868,8 +6940,9 @@
         event(code, value) {
           if (!net.transport) return;
           const [buf, v] = header(T_EVENT, LEN[T_EVENT]);
-          v.setUint8(12, code & 255);
-          v.setUint32(16, Math.min(value >>> 0, 1000000), true);
+          const c = code & 255;
+          v.setUint8(12, c);
+          v.setUint32(16, c <= 10 ? Math.min(value >>> 0, 1000000) : (value >>> 0), true);
           sendBuf(buf, true);
         },
         // [now_ms, peers, n, local_char, flags_mask, avg_rtt_ms, shard_idx, ... n * REC_W]
@@ -6907,8 +6980,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-76c5b4ba2b463b5d.js';
-const wasm = await init({ module_or_path: './tendy-quest-76c5b4ba2b463b5d_bg.wasm' });
+import init, * as bindings from './tendy-quest-c45d0bc83772e7a1.js';
+const wasm = await init({ module_or_path: './tendy-quest-c45d0bc83772e7a1_bg.wasm' });
 
 
 window.wasmBindings = bindings;
