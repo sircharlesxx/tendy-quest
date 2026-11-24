@@ -127,6 +127,12 @@ pub struct PlayerStats {
     pub in_club_level: bool,
     /// True while a VIP disco dance camera sequence is active inside `ClubPlay`.
     pub club_dance_open: bool,
+    /// True while a Velvet Disco Club modal dialog is open (locks movement & unlocks cursor).
+    pub club_modal_open: bool,
+    /// True while seated in the Public Lobby stage-side seats drinking beer.
+    pub club_seated: bool,
+    /// Remaining seconds of Derek's psychedelic camera distortion inside `ClubPlay`.
+    pub club_psychedelic_timer: f32,
     /// One-shot QA/preview flag so `?club=1` / `?club_broke=1` can set test TW without reading localStorage.
     pub club_skip_tw_sync: bool,
     /// Set when stepping into the Casino South Portal to return directly to Pub 217 (`CityPlay`).
@@ -241,6 +247,9 @@ impl Default for PlayerStats {
             in_casino_level: false,
             in_club_level: false,
             club_dance_open: false,
+            club_modal_open: false,
+            club_seated: false,
+            club_psychedelic_timer: 0.0,
             club_skip_tw_sync: false,
             casino_return_city: false,
             bartender_open: false,

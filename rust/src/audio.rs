@@ -163,6 +163,12 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = atBeer)]
         fn js_at_beer() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = fastClub)]
+        fn js_fast_club() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTelemetry"], js_name = setClub)]
+        fn js_set_club_telemetry(line: &str);
+
         #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCheckpoint)]
         fn js_save_checkpoint(json: &str);
 
@@ -610,6 +616,16 @@ mod imp {
     pub fn net_telemetry(json: &str) {
         js_net_telemetry(json);
     }
+
+    /// `fast_club=1` URL flag (debug=1): shortens TJ chair approach interval in Velvet Disco Club.
+    pub fn debug_fast_club() -> bool {
+        js_fast_club()
+    }
+
+    /// Updates `window.tendyTelemetry.club` for headless Velvet Disco Club checks.
+    pub fn set_club_telemetry(line: &str) {
+        js_set_club_telemetry(line);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -678,11 +694,23 @@ mod imp {
         false
     }
 
+    pub fn debug_fast_club() -> bool {
+        false
+    }
+
+    pub fn set_club_telemetry(_line: &str) {}
+
     pub fn debug_wheel_demo() -> String {
         String::new()
     }
 
     pub fn set_wheel_telemetry(_line: &str) {}
+
+    pub fn debug_fast_club() -> bool {
+        false
+    }
+
+    pub fn set_club_telemetry(_line: &str) {}
 
     pub fn play_sfx(_name: &str) {}
 
@@ -877,5 +905,7 @@ pub use imp::debug_at_beer;
 pub use imp::{debug_park_demo, park_log, touch_jump_held};
 // Ferris wheel debug driver and telemetry (ferris.rs).
 pub use imp::{debug_wheel_demo, set_wheel_telemetry};
+// Velvet Disco Club debug fast-timer & telemetry hooks (club.rs).
+pub use imp::{debug_fast_club, set_club_telemetry};
 // Distributed multiplayer bridge (net.rs & controls.rs).
 pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_lock_char, net_open_char_select, net_publish, net_set_free_roam, net_set_online, net_set_scene, net_squad_info, net_telemetry};

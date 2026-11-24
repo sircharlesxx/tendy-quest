@@ -613,6 +613,13 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
+    if stats.club_modal_open {
+        if let Ok(mut window) = window_q.get_single_mut() {
+            window.cursor_options.grab_mode = CursorGrabMode::None;
+            window.cursor_options.visible = true;
+        }
+        return;
+    }
     if stats.casino_open || stats.arcade_open || stats.bartender_open || stats.char_select_open || stats.club_dance_open {
         return;
     }
@@ -841,6 +848,8 @@ pub fn player_movement(
         || stats.bartender_open
         || stats.char_select_open
         || stats.club_dance_open
+        || stats.club_modal_open
+        || stats.club_seated
     {
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
@@ -873,9 +882,14 @@ pub fn player_movement(
     let raw_move = forward * forward_in + right * right_in;
     let move_mag = raw_move.length().min(1.0);
     let mut dir = raw_move.normalize_or_zero();
-    // Beer: a slow, wandering drift on the walk direction (see `drunk_steer_drift`).
+    // Beer / Psychedelic powder: a slow, wandering drift on the walk direction.
     if stats.in_city && stats.drunk_timer > 0.0 && dir != Vec3::ZERO {
         let a = drunk_steer_drift(time.elapsed_secs(), stats.drunk_timer) * 0.45;
+        dir = Quat::from_rotation_y(a) * dir;
+    } else if stats.in_club_level && stats.club_psychedelic_timer > 0.0 && dir != Vec3::ZERO {
+        let t = time.elapsed_secs();
+        let a = drunk_steer_drift(t * 1.35, stats.club_psychedelic_timer) * 0.34
+            + (t * 2.1).sin() * 0.16;
         dir = Quat::from_rotation_y(a) * dir;
     }
 
@@ -1865,7 +1879,7 @@ pub fn update_camera(
     }
     let drunk_amp = orbit.wobble_amp;
     // Beer sway: slower and rollier than the high sway (a ship deck rather than a buzz).
-    let beer_target = if stats.in_city && stats.drunk_timer > 0.0 {
+    let beer_target = if (stats.in_city || stats.in_club_level) && stats.drunk_timer > 0.0 {
         (stats.drunk_timer / 3.0).min(1.0)
     } else {
         0.0
@@ -1913,6 +1927,23 @@ pub fn update_camera(
         final_look += Vec3::new((t * 0.55).sin() * 0.35, 0.0, 0.0) * beer_amp;
         roll += ((t * 0.62).sin() * 0.13 + (t * 1.7).sin() * 0.025) * beer_amp;
         fov += (t * 0.8).sin() * 0.04 * beer_amp;
+    }
+    if stats.in_club_level && stats.club_psychedelic_timer > 0.0 {
+        let psych_amp = (stats.club_psychedelic_timer / 2.5).clamp(0.0, 1.0);
+        let t = time.elapsed_secs();
+        final_cam_pos += Vec3::new(
+            (t * 1.55).sin() * 1.25,
+            (t * 2.15).cos() * 0.72,
+            (t * 1.25).cos() * 0.95,
+        ) * psych_amp;
+        final_cam_pos = final_cam_pos.clamp(room_min, room_max);
+        final_look += Vec3::new(
+            (t * 1.85).cos() * 0.95,
+            (t * 2.4).sin() * 0.55,
+            (t * 1.4).sin() * 0.65,
+        ) * psych_amp;
+        roll += ((t * 1.45).sin() * 0.52 + (t * 2.95).cos() * 0.18) * psych_amp;
+        fov = (fov + (0.24 + (t * 2.3).sin() * 0.21) * psych_amp).clamp(0.55, 1.48);
     }
     let mut goal = Transform::from_translation(final_cam_pos);
     goal.look_at(final_look, Vec3::Y);

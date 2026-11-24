@@ -242,6 +242,14 @@
       },
       loadTendyWendies() {
         try {
+          const sp = new URLSearchParams(window.location.search);
+          if ((sp.get("club") === "1" || sp.get("debug") === "1") && sp.has("tw")) {
+            const ov = Math.max(0, Math.floor(Number(sp.get("tw"))));
+            if (Number.isFinite(ov)) {
+              if (window.tendyTelemetry) window.tendyTelemetry.tendyWendies = ov;
+              return ov;
+            }
+          }
           const raw = localStorage.getItem("tendy_wendies_v1");
           if (raw === null || raw === "") {
             const seed = 100;
@@ -287,6 +295,11 @@
       wheel: "",
       setWheel(line) {
         this.wheel = line;
+      },
+      // Velvet Disco Club debug telemetry line (debug=1 runs in ClubPlay).
+      club: "",
+      setClub(line) {
+        this.club = line;
       },
       // Skate park debug demos (?debug=1&park_demo=...) append per-frame state lines here.
       parkLog(line) {
@@ -628,6 +641,23 @@
           mkOsc("sine", 523, 1046, 0.35, 0.22);
           mkOsc("triangle", 659, 1318, 0.42, 0.18);
           mkOsc("sine", 784, 1568, 0.50, 0.18);
+          return true;
+        }
+        if (name === "powder_trip") {
+          mkNoise(0.55, 0.14, 1400);
+          mkOsc("sine", 220, 880, 0.85, 0.20);
+          mkOsc("triangle", 277.18, 1108.73, 0.90, 0.16);
+          mkOsc("sawtooth", 311.13, 622.25, 0.72, 0.12);
+          return true;
+        }
+        if (name === "caught_alarm") {
+          mkOsc("square", 520, 310, 0.26, 0.24);
+          mkOsc("sawtooth", 390, 210, 0.32, 0.18);
+          return true;
+        }
+        if (name === "beer_sip") {
+          mkOsc("sine", 340, 620, 0.14, 0.16);
+          mkOsc("triangle", 980, 1420, 0.08, 0.12);
           return true;
         }
         if (name === "sleep_snore") {
@@ -2335,6 +2365,8 @@
           bartender: { pitch: 1.16, rate: 0.96, volume: 1.0, g: "f" },
           // Voice profile for the kind, wise Men's Room attendant.
           wise_midget: { pitch: 1.24, rate: 0.90, volume: 1.0, g: "m" },
+          // Voice profile for Velvet Disco Club dancers.
+          stripper: { pitch: 1.28, rate: 1.03, volume: 1.0, g: "f" },
         },
         // Mood variants keep their dramatic tuning but speak with the base character's voice.
         _VOICE_MOODS: {
@@ -2349,7 +2381,7 @@
           tj_upset: { pitch: 1.32, rate: 1.12, volume: 1.0 },
         },
         // Fixed order so the cast is deterministic for a given installed voice list.
-        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender", "wise_midget"],
+        _VOICE_ORDER: ["stan", "narrator", "mom", "lexie", "tj", "derek", "nate", "glenn", "mike", "chillary", "bartender", "wise_midget", "stripper"],
         _voiceCast: null,
         _voiceCastKey: "",
         _voiceCastLocked: false,
@@ -3217,7 +3249,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-49432802eaa896de.js" crossorigin="anonymous" integrity="sha384-2zMDNaTz0KRKQtMd5RbKHgBfGvZfU0K5J7kG1TlERfr7t+OS25ms0iryX+pXzToF"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-49432802eaa896de_bg.wasm" crossorigin="anonymous" integrity="sha384-SG0Ol7qptvVGFhVXK8vN4AF0Mn2kIekHgT4mXxvrmp/cYtqN44pQ150D8cvVGIT1" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-a8ff0ab895aa6fa3.js" crossorigin="anonymous" integrity="sha384-qWkwHuPQ6fgorm06nf4ZXgb41rapXzZq/G5AZSGrtR7pqolG8WMC1/Tbc3FP9yZ2"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-a8ff0ab895aa6fa3_bg.wasm" crossorigin="anonymous" integrity="sha384-GeqjfVFJ91EVNokPprqya7K+vjDlxVtCPWkb6EnB7Oa708FvVnQE64GuS3+7eDmp" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4098,6 +4130,8 @@
         },
         // Debug: ?debug=1&at_beer=1 starts Stan inside Pub 217 facing the beer tower.
         atBeer() { return debugKeysEnabled && /[?&]at_beer=1(?:&|$)/.test(window.location.search); },
+        // Debug: ?debug=1&fast_club=1 shortens TJ chair approach timers in the Velvet Disco Club.
+        fastClub() { return debugKeysEnabled && /[?&]fast_club=1(?:&|$)/.test(window.location.search); },
       };
     })();
   </script>
@@ -4209,6 +4243,9 @@
         return isTouchHint;
       }
 
+      const charParam = (params.get("char") || "").trim().toLowerCase();
+      const urlCharId = ({ stan: 0, nate: 1, glenn: 2, tj: 3, derek: 4 })[charParam] ?? null;
+
       const initialKind = mpParam === "tabs" ? "tabs" : mpParam === "rtc" ? "rtc" : "mesh";
       const net = {
         inFreeRoam: true,
@@ -4220,8 +4257,8 @@
         room: roomFromUrl || "MAIN",
         shard: 0,
         status: "Connecting...",
-        myChar: 0,           // 0=STAN, 1=NATE, 2=GLENN, 3=TJ, 4=DEREK
-        charLocked: true,    // Stan is locked in Level 1 until post-Mom Character Select
+        myChar: urlCharId !== null ? urlCharId : 0, // 0=STAN, 1=NATE, 2=GLENN, 3=TJ, 4=DEREK
+        charLocked: urlCharId !== null,    // Stan is locked in Level 1 until post-Mom Character Select unless ?char= is set
         charSelectOpen: false,
         charClaimedAt: performance.now(),
         charSelectNotice: "",
@@ -4343,6 +4380,7 @@
       }
 
       function openCharSelect(notice) {
+        if (urlCharId !== null) return;
         if (!net.transport) return;
         net.charLocked = false;
         net.charClaimedAt = 0;
@@ -4396,6 +4434,7 @@
       }
 
       function resolveCharClaims(sourceId, peer) {
+        if (urlCharId !== null) return;
         if (!net.transport || net.peers.size === 0 || net.sceneId < 3) return;
         if (!net.charLocked || !peer.charLocked || peer.charId !== net.myChar) return;
         const myAge = Math.floor((performance.now() - net.charClaimedAt) / 1000);
@@ -6108,8 +6147,8 @@
         if (net.transport) { try { net.transport.close(); } catch (_) {} }
         net.transport = null;
         for (const id of [...net.peers.keys()]) removePeer(id);
-        net.myChar = 0;
-        net.charLocked = false;
+        net.myChar = urlCharId !== null ? urlCharId : 0;
+        net.charLocked = urlCharId !== null;
         net.charSelectOpen = false;
         net.charClaimedAt = 0;
         net.charSelectNotice = "";
@@ -6125,7 +6164,7 @@
         net.room = String(room || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) || "MAIN";
         net.shard = 0;
         net.joinedAt = performance.now();
-        net.myChar = 0;
+        net.myChar = urlCharId !== null ? urlCharId : 0;
         net.charLocked = true;
         net.charClaimedAt = performance.now();
         net.transport = meshTransport(net.room, 0);
@@ -6141,12 +6180,13 @@
         net.transportKind = "tabs";
         net.room = room;
         net.joinedAt = performance.now();
-        net.myChar = 0;
+        net.myChar = urlCharId !== null ? urlCharId : 0;
+        net.charLocked = urlCharId !== null;
         net.transport = tabsTransport(room);
         setStatus("Tabs room " + room + ": open this page in another tab of this browser");
         sendHello();
         sendMeta();
-        if (net.inFreeRoam) openCharSelect("");
+        if (net.inFreeRoam && urlCharId === null) openCharSelect("");
       }
 
       async function rtcCreateInvite() {
@@ -6774,8 +6814,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-49432802eaa896de.js';
-const wasm = await init({ module_or_path: './tendy-quest-49432802eaa896de_bg.wasm' });
+import init, * as bindings from './tendy-quest-a8ff0ab895aa6fa3.js';
+const wasm = await init({ module_or_path: './tendy-quest-a8ff0ab895aa6fa3_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -276,6 +276,10 @@ impl NetState {
     pub fn remote_peer_count(&self) -> usize {
         self.remotes.len()
     }
+
+    pub fn local_char(&self) -> u8 {
+        self.local_char
+    }
 }
 
 /// Remote avatar root; `slot` picks overflow tint for >4-player local tab tests.
