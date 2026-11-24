@@ -3249,7 +3249,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-f970139dd0be0384.js" crossorigin="anonymous" integrity="sha384-Rdf8EKl+rOaoukZG5Iz0oll/FZAvHtFehwDiqxmViIQT+J6jPnjv5VmdAbG02VM9"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-f970139dd0be0384_bg.wasm" crossorigin="anonymous" integrity="sha384-AVr+79FfiZvSKzDzGb3efeDq0PoBsUIeS9E9SvS6I+z3p/byGRRQ7iDMNg1Rq364" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-c1885e0b4c1edcb.js" crossorigin="anonymous" integrity="sha384-PcS5C1uCWTLyoPwuSAoQb8IazD5uYT6rp0ApFypWimRwp72Ry3rCSDZTCl8Yiubb"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-c1885e0b4c1edcb_bg.wasm" crossorigin="anonymous" integrity="sha384-3Sk27Z/Co1mAEXPXUZH9XKcc/ldMBoZJ2/gc9ss9ba6FTu0ra/Hgn7lgmTiDoAhZ" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4381,7 +4381,6 @@
 
       function openCharSelect(notice) {
         if (urlCharId !== null) return;
-        if (!net.transport) return;
         net.charLocked = false;
         net.charClaimedAt = 0;
         net.charSelectOpen = true;
@@ -5187,7 +5186,7 @@
               sendHello();
               sendMeta();
               if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
-              if (net.inFreeRoam && !net.charLocked && !net.charSelectOpen) openCharSelect("");
+              if (net.inFreeRoam && net.sceneId >= 3 && !net.charLocked && !net.charSelectOpen) openCharSelect("");
               else refreshCharSelect();
             };
             const closed = () => {
@@ -6186,7 +6185,7 @@
         setStatus("Tabs room " + room + ": open this page in another tab of this browser");
         sendHello();
         sendMeta();
-        if (net.inFreeRoam && urlCharId === null) openCharSelect("");
+        if (net.inFreeRoam && net.sceneId >= 3 && urlCharId === null) openCharSelect("");
       }
 
       async function rtcCreateInvite() {
@@ -6365,7 +6364,7 @@
       }
       function refreshCharSelect() {
         if (!ui.charBox) return;
-        const show = !!(net.transport && net.charSelectOpen);
+        const show = !!net.charSelectOpen;
         ui.charBox.style.display = show ? "flex" : "none";
         if (!show) return;
         const taken = getTakenChars();
@@ -6436,7 +6435,7 @@
         ui.btnTabs.classList.toggle("on", k === "tabs");
         ui.btnRtc.classList.toggle("on", k === "rtc");
         ui.btnLeave.disabled = !net.transport;
-        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || net.sceneId < 3;
+        if (ui.btnChangeChar) ui.btnChangeChar.disabled = net.sceneId < 3;
       }
       function buildPanel() {
         const style = el("style", {});
@@ -6597,7 +6596,7 @@
           document.body.appendChild(node);
         }
         window.addEventListener("keydown", (e) => {
-          if (!net.charSelectOpen || !net.transport) return;
+          if (!net.charSelectOpen) return;
           if (e.key >= "1" && e.key <= "5") {
             const idx = Number(e.key) - 1;
             selectChar(idx);
@@ -6669,6 +6668,7 @@
       }
 
       function setOnline(on) {
+        if (on && isForcedSolo) return;
         if (!on) {
           net.onlinePref = false;
           leave();
@@ -6814,8 +6814,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-f970139dd0be0384.js';
-const wasm = await init({ module_or_path: './tendy-quest-f970139dd0be0384_bg.wasm' });
+import init, * as bindings from './tendy-quest-c1885e0b4c1edcb.js';
+const wasm = await init({ module_or_path: './tendy-quest-c1885e0b4c1edcb_bg.wasm' });
 
 
 window.wasmBindings = bindings;

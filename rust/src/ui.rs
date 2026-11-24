@@ -16,10 +16,7 @@ pub struct EndOverlay;
 #[derive(Component)]
 pub struct StartButton;
 
-#[derive(Component)]
-pub struct ContinueButton;
-
-/// Start-menu button launching Solo Cedar Rapids Free Mode directly (`?mp=off` behavior).
+/// Start-menu button launching multiplayer Cedar Rapids Free Roam directly (with Character Select).
 /// Always available; preserves unfinished story checkpoints.
 #[derive(Component)]
 pub struct FreeModeButton;
@@ -821,12 +818,6 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                     },
                     TextColor(Color::srgb(0.85, 0.95, 1.0)),
                 ));
-                let saved = crate::audio::load_checkpoint();
-                let mom_defeated = crate::audio::has_defeated_mom()
-                    || saved.split('|').next() == Some("city");
-                let saved_stage = saved.split('|').next().unwrap_or("");
-                let beaten = saved_game_beaten(&saved);
-
                 card.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
@@ -861,17 +852,6 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                             TextColor(Color::WHITE),
                         ));
                     });
-                    let (free_label, free_bg) = if beaten {
-                        (
-                            "FREE MODE [F / C] (LEXIE BEATEN!)",
-                            Color::srgb(0.14, 0.58, 0.28),
-                        )
-                    } else {
-                        (
-                            "FREE MODE [F]",
-                            Color::srgb(0.11, 0.46, 0.72),
-                        )
-                    };
                     row.spawn((
                         FreeModeButton,
                         Button,
@@ -879,49 +859,20 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                             padding: UiRect::axes(Val::Px(18.0), Val::Px(9.0)),
                             ..default()
                         },
-                        BackgroundColor(free_bg),
+                        BackgroundColor(Color::srgb(0.11, 0.46, 0.72)),
                         BorderRadius::all(Val::Px(10.0)),
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Text::new(free_label),
+                            Text::new("FREE ROAM [F]"),
                             TextFont {
-                                font_size: 14.5,
+                                font_size: 15.5,
                                 ..default()
                             },
                             TextColor(Color::WHITE),
                         ));
                     });
                 });
-
-                if !beaten && (mom_defeated || saved_stage == "boss") {
-                    let label = if mom_defeated {
-                        "SKIP TO CEDAR RAPIDS [C] (MOM DEFEATED!)"
-                    } else {
-                        "CONTINUE CHECKPOINT: MOM BOSS [C]"
-                    };
-                    card.spawn((
-                        ContinueButton,
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(18.0), Val::Px(8.0)),
-                            margin: UiRect::top(Val::Px(4.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.14, 0.58, 0.28)),
-                        BorderRadius::all(Val::Px(10.0)),
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new(label),
-                            TextFont {
-                                font_size: 14.5,
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
-                }
             });
         });
 }
@@ -1164,6 +1115,7 @@ pub fn check_url_test_mode(
         17 => {
             hydrate_beaten_free_roam_stats(&mut stats);
             stats.prepare_free_roam();
+            stats.needs_city_char_select = true;
             next_state.set_from_black(GameState::CityPlay);
         }
         // `?chillary=1`: QA/dev direct-preview link for the optional boardwalk NPC cutscene so it can
@@ -1291,27 +1243,25 @@ fn hydrate_beaten_free_roam_stats(stats: &mut PlayerStats) {
     }
 }
 
-/// Enters Cedar Rapids Free Mode from the Start Menu in either Solo or Online P2P mode while
-/// preserving unfinished campaign progress.
+/// Enters Cedar Rapids Free Roam (Online P2P by default, with Character Select) from the Start Menu
+/// while preserving unfinished campaign progress.
 fn enter_free_mode_from_menu(
     stats: &mut PlayerStats,
     next_state: &mut crate::transition::SceneTransition,
-    multiplayer: bool,
 ) {
     hydrate_beaten_free_roam_stats(stats);
-    crate::audio::net_set_online(multiplayer);
+    crate::audio::net_set_online(true);
     stats.prepare_free_roam();
+    stats.needs_city_char_select = true;
     next_state.set(GameState::CityPlay);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
     touches: Res<Touches>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: crate::transition::SceneTransition,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
-    cont_q: Query<&Interaction, (Changed<Interaction>, With<ContinueButton>)>,
     free_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeButton>)>,
 ) {
     // Debug scene skips, only with `?debug=1` in the URL.
@@ -1325,55 +1275,8 @@ pub fn handle_tutorial_input(
     }
     let free_clicked = free_q.iter().any(|i| *i == Interaction::Pressed);
     if free_clicked || keys.just_pressed(KeyCode::KeyF) {
-        enter_free_mode_from_menu(&mut stats, &mut next_state, true);
+        enter_free_mode_from_menu(&mut stats, &mut next_state);
         return;
-    }
-    let cont_clicked = cont_q.iter().any(|i| *i == Interaction::Pressed);
-    if cont_clicked || keys.just_pressed(KeyCode::KeyC) {
-        let saved = crate::audio::load_checkpoint();
-        let parts: Vec<&str> = saved.split('|').collect();
-        let stage = parts.first().copied().unwrap_or("");
-        let mom_defeated = crate::audio::has_defeated_mom() || stage == "city";
-        if mom_defeated || stage == "boss" {
-            if let Some(s) = parts.get(1).and_then(|v| v.parse::<u32>().ok()) {
-                stats.score = s;
-            }
-            if let Some(c) = parts.get(3).and_then(|v| v.parse::<u32>().ok()) {
-                stats.tendy_credits = c;
-            }
-            if parts.get(5).copied() == Some("1") {
-                stats.scooter_app_unlocked = true;
-            }
-            if parts.get(8).copied() == Some("1") {
-                stats.has_license = true;
-            }
-            if mom_defeated && saved_game_beaten(&saved) {
-                // Lexie already beaten: continue straight into post-game free roam.
-                stats.game_beaten = true;
-                stats.prepare_free_roam();
-                next_state.set(GameState::CityPlay);
-                return;
-            } else if mom_defeated {
-                // Restore gate progress (applied by `enter_city_play`). Tendies always restart
-                // at 0, so an old save with tendies but no crew can't skip the gate. Saves from
-                // before the gate mask existed only know about TJ (field 4).
-                stats.restore_gate_mask = parts
-                    .get(6)
-                    .and_then(|v| v.parse::<u8>().ok())
-                    .unwrap_or_else(|| (parts.get(4).copied() == Some("1")) as u8)
-                    & 31;
-                stats.in_city = true;
-                stats.tendies = 0;
-                stats.total_tendies = 50;
-                stats.player_scale = 1.8;
-                stats.wave = 4;
-                next_state.set(GameState::CityPlay);
-                return;
-            } else if stage == "boss" {
-                next_state.set(GameState::BossFight);
-                return;
-            }
-        }
     }
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
     if clicked
@@ -1387,6 +1290,7 @@ pub fn handle_tutorial_input(
         if stats.boss_mode {
             next_state.set(GameState::BossFight);
         } else {
+            crate::audio::net_set_online(true);
             stats.free_roam = false;
             stats.needs_city_char_select = true;
             crate::audio::play_bgm();

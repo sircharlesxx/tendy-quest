@@ -376,7 +376,7 @@ fn enter_city_net(
             crate::audio::net_lock_char(u32::from(CHAR_STAN));
         }
         GameState::CityPlay => {
-            if stats.needs_city_char_select || (stats.free_roam && prev_scene_id != 4) {
+            if stats.needs_city_char_select || (stats.free_roam && prev_scene_id == 0) {
                 stats.needs_city_char_select = false;
                 crate::audio::net_open_char_select("");
             }

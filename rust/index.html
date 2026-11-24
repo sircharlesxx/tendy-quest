@@ -4381,7 +4381,6 @@
 
       function openCharSelect(notice) {
         if (urlCharId !== null) return;
-        if (!net.transport) return;
         net.charLocked = false;
         net.charClaimedAt = 0;
         net.charSelectOpen = true;
@@ -5187,7 +5186,7 @@
               sendHello();
               sendMeta();
               if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
-              if (net.inFreeRoam && !net.charLocked && !net.charSelectOpen) openCharSelect("");
+              if (net.inFreeRoam && net.sceneId >= 3 && !net.charLocked && !net.charSelectOpen) openCharSelect("");
               else refreshCharSelect();
             };
             const closed = () => {
@@ -6186,7 +6185,7 @@
         setStatus("Tabs room " + room + ": open this page in another tab of this browser");
         sendHello();
         sendMeta();
-        if (net.inFreeRoam && urlCharId === null) openCharSelect("");
+        if (net.inFreeRoam && net.sceneId >= 3 && urlCharId === null) openCharSelect("");
       }
 
       async function rtcCreateInvite() {
@@ -6365,7 +6364,7 @@
       }
       function refreshCharSelect() {
         if (!ui.charBox) return;
-        const show = !!(net.transport && net.charSelectOpen);
+        const show = !!net.charSelectOpen;
         ui.charBox.style.display = show ? "flex" : "none";
         if (!show) return;
         const taken = getTakenChars();
@@ -6436,7 +6435,7 @@
         ui.btnTabs.classList.toggle("on", k === "tabs");
         ui.btnRtc.classList.toggle("on", k === "rtc");
         ui.btnLeave.disabled = !net.transport;
-        if (ui.btnChangeChar) ui.btnChangeChar.disabled = !net.transport || net.sceneId < 3;
+        if (ui.btnChangeChar) ui.btnChangeChar.disabled = net.sceneId < 3;
       }
       function buildPanel() {
         const style = el("style", {});
@@ -6597,7 +6596,7 @@
           document.body.appendChild(node);
         }
         window.addEventListener("keydown", (e) => {
-          if (!net.charSelectOpen || !net.transport) return;
+          if (!net.charSelectOpen) return;
           if (e.key >= "1" && e.key <= "5") {
             const idx = Number(e.key) - 1;
             selectChar(idx);
@@ -6669,6 +6668,7 @@
       }
 
       function setOnline(on) {
+        if (on && isForcedSolo) return;
         if (!on) {
           net.onlinePref = false;
           leave();
