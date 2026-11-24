@@ -1067,7 +1067,8 @@ pub fn update_scooter_stunts(
             }
         }
     } else {
-        let g = if sc.flat_hop && sc.vy > 0.0 { HOP_RISE_GRAVITY } else { STUNT_GRAVITY };
+        let g = if sc.flat_hop && sc.vy > 0.0 { HOP_RISE_GRAVITY } else { STUNT_GRAVITY }
+            * sc.gravity_scale;
         sc.vy -= g * dt;
         sc.y += sc.vy * dt;
         sc.air_t += dt;
@@ -1122,6 +1123,10 @@ pub fn update_scooter_stunts(
                     stats.tendy_credits += 1 + flips;
                     let tw = (1 + flips * 3 + if car_hop { 2 } else { 0 } + (st.combo / 3)).min(15);
                     stats.add_tendy_wendies(tw);
+                    let grav_dropped = sc.apply_landed_backflips(flips);
+                    if grav_dropped {
+                        stats.scooter_gravity_scale = sc.gravity_scale;
+                    }
                     play_sfx(if flips > 0 { "powerup" } else { "tendy" });
                     let flip_txt = if flips > 0 {
                         format!("{}x BACKFLIP! ", flips)
@@ -1130,10 +1135,16 @@ pub fn update_scooter_stunts(
                     } else {
                         String::new()
                     };
+                    let grav_txt = if grav_dropped {
+                        format!("  GRAV {}%", sc.gravity_pct())
+                    } else {
+                        String::new()
+                    };
                     stats.hint_text = format!(
-                        "{}AIR {:.1}s  +{}  +{} TW  COMBO x{}",
-                        flip_txt, sc.air_t, pts, tw, st.combo
+                        "{}AIR {:.1}s  +{}  +{} TW  COMBO x{}{}",
+                        flip_txt, sc.air_t, pts, tw, st.combo, grav_txt
                     );
+                    stats.hint_bump = stats.hint_bump.wrapping_add(1);
                 } else {
                     st.combo = 0;
                     st.combo_t = 0.0;

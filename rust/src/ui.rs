@@ -566,7 +566,12 @@ fn status_tags(stats: &PlayerStats) -> Vec<String> {
             tags.push(format!("WANTED {}", "*".repeat(stats.wanted_stars as usize)));
         }
         if stats.riding_scooter.is_some() {
-            tags.push("ON SCOOTER".to_string());
+            let g_pct = (stats.scooter_gravity_scale * 100.0).round() as u32;
+            if g_pct < 100 {
+                tags.push(format!("ON SCOOTER  GRAV {}%", g_pct));
+            } else {
+                tags.push("ON SCOOTER".to_string());
+            }
         }
     }
     if stats.audio_muted {

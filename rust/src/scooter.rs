@@ -11,6 +11,10 @@ use crate::ui::HudOverlay;
 
 /// Retained from the original rental gate; scooters are now unlocked via the Veo phone app (`P`).
 pub const SCOOTER_RENT_COST: u32 = 12;
+/// Scooter gravity reduction per successfully landed backflip (10% of normal gravity).
+pub const SCOOTER_GRAVITY_STEP: f32 = 0.10;
+/// Minimum scooter gravity multiplier (10% of normal) so the rider always returns to ground.
+pub const SCOOTER_GRAVITY_MIN: f32 = 0.10;
 
 /// Rideable Veo-style electric scooter. Vertical stunt state (`y`, `vy`, `ground_h`, `flip`,
 /// `boost_t`) is stored directly on the scooter so `stunts.rs` can layer ramp launches and
@@ -69,6 +73,11 @@ pub struct CityScooter {
     /// Yaw spun in the air with A/D (360s). Visual only: the flight path keeps `yaw`. Scored
     /// and cleared on touchdown.
     pub air_spin: f32,
+    /// Gravity multiplier while riding this scooter (`1.0` = normal, -10% per landed backflip
+    /// down to `SCOOTER_GRAVITY_MIN`, reset to `1.0` on dismount).
+    pub gravity_scale: f32,
+    /// Successful backflips landed during the current scooter ride.
+    pub backflips_landed: u32,
 }
 
 impl CityScooter {
@@ -103,7 +112,32 @@ impl CityScooter {
             turbo_t: 0.0,
             turbo_on: false,
             air_spin: 0.0,
+            gravity_scale: 1.0,
+            backflips_landed: 0,
         }
+    }
+
+    /// Lowers scooter gravity by `SCOOTER_GRAVITY_STEP` (10%) per landed backflip, clamped to
+    /// `SCOOTER_GRAVITY_MIN`. Returns `true` when `flips > 0`.
+    pub fn apply_landed_backflips(&mut self, flips: u32) -> bool {
+        if flips == 0 {
+            return false;
+        }
+        self.backflips_landed = self.backflips_landed.saturating_add(flips);
+        let tenths = 10u32.saturating_sub(self.backflips_landed).max(1);
+        self.gravity_scale = (tenths as f32 * SCOOTER_GRAVITY_STEP).max(SCOOTER_GRAVITY_MIN);
+        true
+    }
+
+    /// Restores normal scooter gravity (`1.0`).
+    pub fn reset_gravity(&mut self) {
+        self.backflips_landed = 0;
+        self.gravity_scale = 1.0;
+    }
+
+    /// Current scooter gravity as an integer percentage (`100`, `90`, ..., `10`).
+    pub fn gravity_pct(&self) -> u32 {
+        (self.gravity_scale * 100.0).round() as u32
     }
 
     /// Clears hop state and arms the post-mount jump lock.
@@ -124,6 +158,7 @@ impl CityScooter {
         self.turbo_t = 0.0;
         self.turbo_on = false;
         self.air_spin = 0.0;
+        self.reset_gravity();
     }
 }
 
@@ -875,6 +910,7 @@ pub fn update_city_scooter_and_phone(
                             sc.occupied = true;
                             sc.reset_hop();
                             stats.riding_scooter = Some(se);
+                            stats.scooter_gravity_scale = 1.0;
                             p_tf.translation = stf.translation + Vec3::Y * 0.25;
                             player.velocity = Vec3::ZERO;
                             play_scooter_music();
@@ -964,6 +1000,12 @@ pub fn update_city_scooter_and_phone(
 
     // On foot: check nearby scooter
     if stats.riding_scooter.is_none() {
+        stats.scooter_gravity_scale = 1.0;
+        for (_, _, mut sc) in &mut scooter_q {
+            if sc.gravity_scale < 0.999 || sc.backflips_landed > 0 {
+                sc.reset_gravity();
+            }
+        }
         if stats.driving_car.is_some() || stats.player_scale >= 6.0 {
             for e in &scoot_ui.ui_q {
                 commands.entity(e).despawn_recursive();
@@ -1010,6 +1052,7 @@ pub fn update_city_scooter_and_phone(
                     sc.occupied = true;
                     sc.reset_hop();
                     stats.riding_scooter = Some(se);
+                    stats.scooter_gravity_scale = 1.0;
                     p_tf.translation = stf.translation + Vec3::Y * 0.25;
                     player.velocity = Vec3::ZERO;
                     play_sfx("hack_success");
@@ -1036,7 +1079,9 @@ pub fn update_city_scooter_and_phone(
     };
 
     if interact {
+        let mut had_low_grav = false;
         if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
+            had_low_grav = sc.gravity_scale < 0.999;
             sc.occupied = false;
             sc.speed = 0.0;
             sc.y = 0.0;
@@ -1057,17 +1102,24 @@ pub fn update_city_scooter_and_phone(
         player.velocity = Vec3::ZERO;
         player.grounded = true;
         stats.riding_scooter = None;
+        stats.scooter_gravity_scale = 1.0;
         play_sfx("car_door");
         if stats.in_city {
             play_viking_chant_music();
         } else {
             play_bgm();
         }
-        stats.hint_text = "HOPPED OFF SCOOTER!".to_string();
+        stats.hint_text = if had_low_grav {
+            "HOPPED OFF SCOOTER! Gravity back to normal!".to_string()
+        } else {
+            "HOPPED OFF SCOOTER!".to_string()
+        };
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
         return;
     }
 
     if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
+        stats.scooter_gravity_scale = sc.gravity_scale;
         if sc.park {
             // The skate park drives it (`skatepark::update_park_ride`).
             sc.air_spin = 0.0;
@@ -1818,6 +1870,50 @@ pub fn exit_mike_cutscene(
         play_viking_chant_music();
     } else {
         play_bgm();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backflip_reduces_gravity_10_pct_per_flip_and_resets() {
+        let mut sc = CityScooter::new(0.0);
+        assert!((sc.gravity_scale - 1.0).abs() < 1e-6);
+        assert_eq!(sc.backflips_landed, 0);
+
+        // Zero flips makes no change
+        assert!(!sc.apply_landed_backflips(0));
+        assert!((sc.gravity_scale - 1.0).abs() < 1e-6);
+
+        // Sequential single backflips step down 10% per flip down to 10% min
+        for step in 1..=12 {
+            assert!(sc.apply_landed_backflips(1));
+            assert_eq!(sc.backflips_landed, step);
+            let expected = if step >= 9 { 0.10 } else { (10 - step) as f32 * 0.10 };
+            assert!(
+                (sc.gravity_scale - expected).abs() < 1e-6,
+                "step {}: expected {}, got {}",
+                step,
+                expected,
+                sc.gravity_scale
+            );
+        }
+
+        // Dismount/hop reset brings gravity back to 100%
+        sc.reset_gravity();
+        assert!((sc.gravity_scale - 1.0).abs() < 1e-6);
+        assert_eq!(sc.backflips_landed, 0);
+
+        // Double backflip cuts gravity by 20%
+        assert!(sc.apply_landed_backflips(2));
+        assert!((sc.gravity_scale - 0.80).abs() < 1e-6);
+        assert_eq!(sc.gravity_pct(), 80);
+
+        sc.reset_hop();
+        assert!((sc.gravity_scale - 1.0).abs() < 1e-6);
+        assert_eq!(sc.backflips_landed, 0);
     }
 }
 

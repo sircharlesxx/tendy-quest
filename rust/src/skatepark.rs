@@ -2837,7 +2837,7 @@ impl ParkRide {
         }
     }
 
-    fn start_air(&mut self, s0: Surf, kind: Launch) {
+    fn start_air(&mut self, s0: Surf, kind: Launch, grav_scale: f32) {
         self.mode = RideMode::Air;
         self.air_t = 0.0;
         self.flip = 0.0;
@@ -2873,14 +2873,14 @@ impl ParkRide {
             if turn.abs() > PI - 0.08 {
                 turn = PI;
             }
-            let air_time = 2.0 * self.vel.y.max(0.5) / PARK_G;
+            let air_time = 2.0 * self.vel.y.max(0.5) / (PARK_G * grav_scale);
             self.auto_turn = turn;
             self.auto_rate = turn.abs() / (air_time * 0.6).max(0.16);
         }
     }
 
-    /// Air quality at touchdown or rail lock: (judged, clean, name, points).
-    fn judge_air(&self, facing_ok: bool) -> (bool, bool, String, String, u32) {
+    /// Air quality at touchdown or rail lock: (judged, clean, name, key, points, flips).
+    fn judge_air(&self, facing_ok: bool) -> (bool, bool, String, String, u32, u32) {
         let nearest = (self.flip / TAU).round();
         let off = (self.flip - nearest * TAU).abs();
         let flips = nearest.max(0.0) as u32;
@@ -2926,7 +2926,7 @@ impl ParkRide {
             + (spin / 180) * 350
             + self.whips * 900
             + if self.vert { (height.max(0.0) * 300.0) as u32 } else { 0 };
-        (judged, clean, name, key, pts)
+        (judged, clean, name, key, pts, flips)
     }
 
     fn land(&mut self, s: Surf, cx: &mut Ctx) {
@@ -2952,7 +2952,7 @@ impl ParkRide {
             }
             None => true,
         };
-        let (judged, clean, mut name, key, pts) = self.judge_air(facing_ok);
+        let (judged, clean, mut name, key, pts, flips) = self.judge_air(facing_ok);
         let impact = (-vn).max(0.0);
         if self.air_t > 0.15 {
             let k = (impact / 12.0).clamp(0.3, 1.3);
@@ -2967,6 +2967,10 @@ impl ParkRide {
             if judged {
                 if fakie {
                     name.push_str(" TO FAKIE");
+                }
+                if cx.sc.apply_landed_backflips(flips) {
+                    cx.stats.scooter_gravity_scale = cx.sc.gravity_scale;
+                    name.push_str(&format!(" [GRAV {}%]", cx.sc.gravity_pct()));
                 }
                 self.award(cx, name, key, pts.max(100));
             } else if self.air_t > 0.15 {
@@ -3033,7 +3037,7 @@ impl ParkRide {
         self.cool = (self.rail, 0.35);
         self.vel = vel;
         let s = Surf { h: self.pos.y, grad: Vec2::ZERO, piece: None, region: Region::Ground };
-        self.start_air(s, kind);
+        self.start_air(s, kind, cx.sc.gravity_scale);
         self.flat_hop = false;
         self.ramp = false;
     }
@@ -3081,7 +3085,8 @@ impl ParkRide {
             self.vel = Quat::from_axis_angle(n0, ang) * self.vel;
         }
         self.face = wrap(self.face + ang);
-        let g = Vec3::new(0.0, -PARK_G, 0.0);
+        let eff_g = PARK_G * cx.sc.gravity_scale;
+        let g = Vec3::new(0.0, -eff_g, 0.0);
         let mut a = g - n0 * g.dot(n0);
         let dirv = if speed > 0.05 { self.vel / speed } else { ft };
         if cx.inp.throttle > 0.05 {
@@ -3114,7 +3119,7 @@ impl ParkRide {
 
         let np = (p2 + Vec2::new(self.vel.x, self.vel.z) * h).clamp(Vec2::splat(-EDGE_CLAMP), Vec2::splat(EDGE_CLAMP));
         let s1 = surface(np);
-        let ball_y = self.pos.y + self.vel.y * h - 0.5 * PARK_G * h * h;
+        let ball_y = self.pos.y + self.vel.y * h - 0.5 * eff_g * h * h;
         let fence = fence_hit(p2, np, self.pos.y + 0.1, 0.32);
         let step_up = s1.piece != s0.piece && (s1.h - ball_y > WALL_STEP || s1.h - self.pos.y > WALL_STEP);
         if fence.is_some() || step_up {
@@ -3140,8 +3145,8 @@ impl ParkRide {
         if (s1.h < ball_y - LEAVE_EPS || self.vel.dot(n1) > 1.0) && speed > 1.2 {
             let at = if s1.h > ball_y { p2 } else { np };
             self.pos = Vec3::new(at.x, ball_y.max(s0.h), at.y);
-            self.vel.y -= PARK_G * h;
-            self.start_air(s0, Launch::Edge);
+            self.vel.y -= eff_g * h;
+            self.start_air(s0, Launch::Edge, cx.sc.gravity_scale);
             if self.log {
                 crate::audio::park_log(&format!(
                     "EVENT LAUNCH {} vert={} slope={:.2} v=({:.2},{:.2},{:.2})",
@@ -3185,7 +3190,8 @@ impl ParkRide {
 
     fn air_step(&mut self, h: f32, cx: &mut Ctx) {
         let p_prev = self.pos;
-        self.vel.y -= PARK_G * h;
+        let eff_g = PARK_G * cx.sc.gravity_scale;
+        self.vel.y -= eff_g * h;
         self.pos += self.vel * h;
         self.pos.x = self.pos.x.clamp(-EDGE_CLAMP, EDGE_CLAMP);
         self.pos.z = self.pos.z.clamp(-EDGE_CLAMP, EDGE_CLAMP);
@@ -3195,9 +3201,13 @@ impl ParkRide {
             self.grind_assist(h);
         }
         if let Some(lk) = find_lock(p_prev.y, self.pos, self.vel, self.cool) {
-            let (judged, clean, name, key, pts) = self.judge_air(true);
+            let (judged, clean, mut name, key, pts, flips) = self.judge_air(true);
             if clean {
                 if judged {
+                    if cx.sc.apply_landed_backflips(flips) {
+                        cx.stats.scooter_gravity_scale = cx.sc.gravity_scale;
+                        name.push_str(&format!(" [GRAV {}%]", cx.sc.gravity_pct()));
+                    }
                     self.award(cx, name, key, pts.max(100));
                 }
                 self.enter_grind(lk, cx);
@@ -3234,7 +3244,8 @@ impl ParkRide {
         let rail = &layout().rails[self.rail];
         let (_, d) = rail.point(self.gs);
         let dir3 = d * self.gdir;
-        self.gspeed = (self.gspeed + (-PARK_G * dir3.y - GRIND_FRICTION) * h).min(GRIND_MAX);
+        let eff_g = PARK_G * cx.sc.gravity_scale;
+        self.gspeed = (self.gspeed + (-eff_g * dir3.y - GRIND_FRICTION) * h).min(GRIND_MAX);
         if self.gspeed < 0.6 {
             let side = Vec3::new(dir3.z, 0.0, -dir3.x).normalize_or_zero();
             let v = dir3 * 0.6 + side * 1.2 + Vec3::Y * 0.5;
@@ -3287,7 +3298,7 @@ impl ParkRide {
                     let pop = (n + Vec3::Y).normalize();
                     self.vel += pop * hop_v * if s0.slope() < 0.1 { 1.0 } else { 0.8 };
                     self.pos.y += 0.02;
-                    self.start_air(s0, Launch::Hop);
+                    self.start_air(s0, Launch::Hop, cx.sc.gravity_scale);
                     cx.sc.squash_vel -= 5.0;
                     cx.rider.squash_vel -= 5.0;
                     play_sfx("jump");
@@ -3443,9 +3454,13 @@ impl ParkRide {
         self.hold_t = if cx.inp.jump_held { 0.3 } else { 0.0 };
         claim(cx.sc);
         if let Some(lk) = lock {
-            let (judged, clean, name, key, pts) = self.judge_air(true);
+            let (judged, clean, mut name, key, pts, flips) = self.judge_air(true);
             if clean {
                 if judged {
+                    if cx.sc.apply_landed_backflips(flips) {
+                        cx.stats.scooter_gravity_scale = cx.sc.gravity_scale;
+                        name.push_str(&format!(" [GRAV {}%]", cx.sc.gravity_pct()));
+                    }
                     self.award(cx, name, key, pts.max(100));
                 }
                 self.enter_grind(lk, cx);
@@ -3601,8 +3616,8 @@ fn update_park_ride(
             }
             if ride.log && near_park(xz(stf.translation), 20.0) {
                 crate::audio::park_log(&format!(
-                    "N t={:.2} p=({:.2},{:.2},{:.2}) y={:.2} vy={:.2} gr={} spd={:.2} yaw={:.2} boost={:.2} | {}",
-                    t, stf.translation.x, stf.translation.y, stf.translation.z, cx.sc.y, cx.sc.vy, cx.sc.grounded, cx.sc.speed, cx.sc.yaw, cx.sc.boost_t, cx.stats.hint_text
+                    "N t={:.2} p=({:.2},{:.2},{:.2}) y={:.2} vy={:.2} gr={} spd={:.2} yaw={:.2} boost={:.2} grav={:.2} | {}",
+                    t, stf.translation.x, stf.translation.y, stf.translation.z, cx.sc.y, cx.sc.vy, cx.sc.grounded, cx.sc.speed, cx.sc.yaw, cx.sc.boost_t, cx.sc.gravity_scale, cx.stats.hint_text
                 ));
             }
             p_tf.translation = stf.translation + Vec3::Y * 0.25;
@@ -3670,7 +3685,7 @@ fn update_park_ride(
     ride.prev_y = ride.pos.y;
     if ride.log {
         crate::audio::park_log(&format!(
-            "F t={:.2} m={:?} p=({:.2},{:.2},{:.2}) v=({:.2},{:.2},{:.2}) spd={:.2} face={:.2} slope={:.2} air={:.2} vert={} flip={:.2} whip={:.2} spin={:.2} rail={} gs={:.2} bal={:.2} combo={} score={}",
+            "F t={:.2} m={:?} p=({:.2},{:.2},{:.2}) v=({:.2},{:.2},{:.2}) spd={:.2} face={:.2} slope={:.2} air={:.2} vert={} flip={:.2} whip={:.2} spin={:.2} rail={} gs={:.2} bal={:.2} grav={:.2} combo={} score={}",
             t,
             ride.mode,
             ride.pos.x,
@@ -3690,6 +3705,7 @@ fn update_park_ride(
             if ride.mode == RideMode::Grind { layout().rails[ride.rail].name } else { "-" },
             ride.gs,
             ride.bal,
+            cx.sc.gravity_scale,
             cx.st.combo,
             cx.stats.score
         ));
@@ -4084,7 +4100,15 @@ struct ParkDemo {
     hold_t: f32,
 }
 
-const DEMO_KEYS: [KeyCode; 6] = [KeyCode::KeyW, KeyCode::KeyS, KeyCode::KeyA, KeyCode::KeyD, KeyCode::Space, KeyCode::ShiftLeft];
+const DEMO_KEYS: [KeyCode; 7] = [
+    KeyCode::KeyW,
+    KeyCode::KeyS,
+    KeyCode::KeyA,
+    KeyCode::KeyD,
+    KeyCode::Space,
+    KeyCode::ShiftLeft,
+    KeyCode::KeyF,
+];
 
 /// Grind demo targets: (rail index, approach distance).
 fn demo_rails() -> Vec<usize> {
@@ -4279,11 +4303,121 @@ fn park_demo_driver(
                 want.push(KeyCode::KeyW);
                 if let Some((_, tf, sc)) = stats.riding_scooter.and_then(|e| scooter_q.get(e).ok()) {
                     crate::audio::park_log(&format!(
-                        "C t={:.2} x={:.2} y={:.2} vy={:.2} gr={} spd={:.2} boost={:.2} park={} air={:.2} | {}",
-                        demo.phase_t, tf.translation.x, sc.y, sc.vy, sc.grounded, sc.speed, sc.boost_t, sc.park, sc.air_t, stats.hint_text
+                        "C t={:.2} x={:.2} y={:.2} vy={:.2} gr={} spd={:.2} boost={:.2} park={} air={:.2} grav={:.2} | {}",
+                        demo.phase_t, tf.translation.x, sc.y, sc.vy, sc.grounded, sc.speed, sc.boost_t, sc.park, sc.air_t, sc.gravity_scale, stats.hint_text
                     ));
                 }
                 if demo.phase_t > 7.0 {
+                    next(&mut demo);
+                }
+            }
+            _ => done = true,
+        },
+        "backflipgrav" => match demo.phase {
+            0 => {
+                place = Some((Vec3::new(0.0, 0.0, -18.0), 0.0, 22.0));
+                next(&mut demo);
+            }
+            1 => {
+                want.push(KeyCode::KeyW);
+                let mut landed_first = false;
+                let mut log_line = None;
+                if let Some((_, tf, sc)) = stats.riding_scooter.and_then(|e| scooter_q.get(e).ok()) {
+                    crate::audio::park_log(&format!(
+                        "C t={:.2} x={:.2} z={:.2} y={:.2} vy={:.2} gr={} spd={:.2} flip={:.2} grav={:.2} flips={} | {}",
+                        demo.phase_t, tf.translation.x, tf.translation.z, sc.y, sc.vy, sc.grounded, sc.speed, sc.flip, sc.gravity_scale, sc.backflips_landed, stats.hint_text
+                    ));
+                    if !sc.grounded && !sc.park {
+                        demo.flag = true;
+                        if sc.air_t > 0.14 && sc.flip < TAU - 0.55 {
+                            want.push(KeyCode::Space);
+                        }
+                    }
+                    if demo.flag && sc.grounded && sc.backflips_landed >= 1 {
+                        landed_first = true;
+                        log_line = Some(format!(
+                            "DEMO STREET_FLIP_1 grav={:.2} flips={} | {}",
+                            sc.gravity_scale, sc.backflips_landed, stats.hint_text
+                        ));
+                    }
+                }
+                if let Some(line) = log_line {
+                    crate::audio::park_log(&line);
+                }
+                if landed_first {
+                    if let Some(se) = stats.riding_scooter {
+                        if let Ok((_, mut stf, mut sc)) = scooter_q.get_mut(se) {
+                            let pos = Vec3::new(0.0, 0.0, -18.0);
+                            sc.grounded = true;
+                            sc.y = 0.0;
+                            sc.vy = 0.0;
+                            sc.air_t = 0.0;
+                            sc.flip = 0.0;
+                            sc.boost_t = 0.0;
+                            sc.jump_lock = 0.0;
+                            sc.yaw = 0.0;
+                            sc.speed = 22.0;
+                            stf.translation = pos;
+                            stf.rotation = Quat::from_rotation_y(0.0);
+                            stf.scale = Vec3::ONE;
+                            if let Ok((mut tf, mut pl)) = player_q.get_single_mut() {
+                                tf.translation = pos + Vec3::Y * 0.25;
+                                pl.velocity = Vec3::ZERO;
+                            }
+                            orbit.yaw = PI;
+                            orbit.snap_follow = true;
+                            orbit.since_look = 99.0;
+                        }
+                    }
+                    next(&mut demo);
+                } else if demo.phase_t > 12.0 {
+                    next(&mut demo);
+                }
+            }
+            2 => {
+                want.push(KeyCode::KeyW);
+                let mut landed_second = false;
+                if let Some((_, tf, sc)) = stats.riding_scooter.and_then(|e| scooter_q.get(e).ok()) {
+                    crate::audio::park_log(&format!(
+                        "C t={:.2} x={:.2} z={:.2} y={:.2} vy={:.2} gr={} spd={:.2} flip={:.2} grav={:.2} flips={} | {}",
+                        demo.phase_t, tf.translation.x, tf.translation.z, sc.y, sc.vy, sc.grounded, sc.speed, sc.flip, sc.gravity_scale, sc.backflips_landed, stats.hint_text
+                    ));
+                    if !sc.grounded && !sc.park {
+                        demo.flag = true;
+                        if sc.air_t > 0.14 && sc.flip < TAU - 0.55 {
+                            want.push(KeyCode::Space);
+                        }
+                    }
+                    if demo.flag && sc.grounded && sc.backflips_landed >= 2 {
+                        crate::audio::park_log(&format!(
+                            "DEMO STREET_FLIP_2 grav={:.2} flips={} | {}",
+                            sc.gravity_scale, sc.backflips_landed, stats.hint_text
+                        ));
+                        landed_second = true;
+                    }
+                }
+                if landed_second || demo.phase_t > 12.0 {
+                    next(&mut demo);
+                }
+            }
+            3 => {
+                if !demo.flag {
+                    want.push(KeyCode::KeyF);
+                    demo.flag = true;
+                } else if stats.riding_scooter.is_none() || demo.phase_t > 2.0 {
+                    let (sc_grav, sc_flips) = scooter_q
+                        .iter()
+                        .next()
+                        .map(|(_, _, sc)| (sc.gravity_scale, sc.backflips_landed))
+                        .unwrap_or((-1.0, 999));
+                    crate::audio::park_log(&format!(
+                        "DEMO DISMOUNT riding={} stats_grav={:.2} sc_grav={:.2} sc_flips={} | {}",
+                        stats.riding_scooter.is_some(),
+                        stats.scooter_gravity_scale,
+                        sc_grav,
+                        sc_flips,
+                        stats.hint_text
+                    ));
                     next(&mut demo);
                 }
             }

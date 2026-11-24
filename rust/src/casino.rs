@@ -1114,6 +1114,7 @@ fn enter_casino_play(
     stats.bartender_open = false;
     stats.driving_car = None;
     stats.riding_scooter = None;
+    stats.scooter_gravity_scale = 1.0;
     stats.riding_wheel = false;
     stats.phone_open = false;
     *sync = Casino3dSync::default();

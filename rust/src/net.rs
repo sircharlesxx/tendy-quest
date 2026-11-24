@@ -1101,6 +1101,7 @@ fn receive_remote_states(
                             stats.phone_open = false;
                             stats.driving_car = None;
                             stats.riding_scooter = None;
+                            stats.scooter_gravity_scale = 1.0;
                             stats.riding_wheel = false;
                             if value == 2 {
                                 next_state.set(GameState::CasinoPlay);
@@ -1118,6 +1119,7 @@ fn receive_remote_states(
                                 stats.saved_casino_city_scale = stats.player_scale;
                                 stats.driving_car = None;
                                 stats.riding_scooter = None;
+                                stats.scooter_gravity_scale = 1.0;
                                 stats.riding_wheel = false;
                             }
                             stats.casino_open = false;
@@ -1156,6 +1158,7 @@ fn receive_remote_states(
                             stats.club_fentanyl_death = false;
                             stats.driving_car = None;
                             stats.riding_scooter = None;
+                            stats.scooter_gravity_scale = 1.0;
                             stats.riding_wheel = false;
                             next_state.set(GameState::LexieBattle);
                         }

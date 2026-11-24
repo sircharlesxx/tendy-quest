@@ -3251,6 +3251,7 @@ fn enter_club_play(
     stats.club_psychedelic_timer = 0.0;
     stats.driving_car = None;
     stats.riding_scooter = None;
+    stats.scooter_gravity_scale = 1.0;
     stats.riding_wheel = false;
     stats.phone_open = false;
     *club = ClubState {
