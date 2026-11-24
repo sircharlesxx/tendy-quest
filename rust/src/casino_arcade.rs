@@ -78,7 +78,7 @@ pub enum ArcadeKind {
 impl ArcadeKind {
     fn prompt(self) -> &'static str {
         match self {
-            Self::CoinPusher => "TENDY COIN PUSHER (1 TW) [F/E]",
+            Self::CoinPusher => "TENDY COIN PUSHER (1 TW - HOLD/SPAM FOR TSUNAMI!) [F/E]",
             Self::ClawMachine => "TENDY CLAW MACHINE (5 TW) [F/E]",
             Self::Plinko => "PLINKO TOWER (5 TW) [F/E]",
             Self::Skeeball => "SKEEBALL ALLEY (5 TW / 3 BALLS) [F/E]",
@@ -128,6 +128,14 @@ struct ArcadeState {
     pusher_phase: f32,
     pusher_aim_x: f32,
     pusher_cooldown: f32,
+    pusher_heat: f32,
+    pusher_park_cursor: usize,
+    pusher_session_coins: u32,
+    pusher_session_tw: u32,
+    pusher_last_chute_tw: u32,
+    pusher_sfx_cd: f32,
+    pusher_jackpot_sfx_cd: f32,
+    pusher_neon_phase: f32,
     // Claw Machine
     claw_phase: ClawPhase,
     claw_timer: f32,
@@ -158,6 +166,14 @@ impl Default for ArcadeState {
             pusher_phase: 0.0,
             pusher_aim_x: 0.0,
             pusher_cooldown: 0.0,
+            pusher_heat: 0.0,
+            pusher_park_cursor: 0,
+            pusher_session_coins: 0,
+            pusher_session_tw: 0,
+            pusher_last_chute_tw: 0,
+            pusher_sfx_cd: 0.0,
+            pusher_jackpot_sfx_cd: 0.0,
+            pusher_neon_phase: 0.0,
             claw_phase: ClawPhase::Aiming,
             claw_timer: 0.0,
             claw_pos: Vec2::ZERO,
@@ -222,21 +238,26 @@ struct PusherShelf;
 struct PusherDropper;
 
 #[derive(Component)]
+struct PusherNeonMat;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PusherCoinPhase {
+    Upper,
+    Lower,
+    Dropping,
+    ChuteTumble,
+    Parked,
+}
+
+#[derive(Component)]
 struct PusherCoin {
     local: Vec3,
     vel: Vec3,
     radius: f32,
     value: u32,
-    falling: bool,
-}
-
-#[derive(Resource)]
-struct PusherAssets {
-    coin_mesh: Handle<Mesh>,
-    bar_mesh: Handle<Mesh>,
-    gold_mat: Handle<StandardMaterial>,
-    ruby_mat: Handle<StandardMaterial>,
-    bar_mat: Handle<StandardMaterial>,
+    phase: PusherCoinPhase,
+    spin: f32,
+    is_bar: bool,
 }
 
 // ---- Claw Machine Entities ----
@@ -502,20 +523,27 @@ fn spawn_casino_arcade_machines(
     });
 
     // ---- 1. TENDY COIN PUSHER ----
-    let coin_mesh = meshes.add(Cylinder::new(0.11, 0.036));
-    let bar_mesh = meshes.add(Cuboid::new(0.26, 0.07, 0.14));
+    let coin_mesh = meshes.add(Cylinder::new(0.068, 0.030));
+    let bar_mesh = meshes.add(Cuboid::new(0.15, 0.044, 0.095));
     let ruby_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.18, 0.34),
         emissive: LinearRgba::rgb(1.8, 0.2, 0.4),
-        metallic: 0.6,
+        metallic: 0.65,
+        perceptual_roughness: 0.2,
         ..default()
     });
-    commands.insert_resource(PusherAssets {
-        coin_mesh: coin_mesh.clone(),
-        bar_mesh: bar_mesh.clone(),
-        gold_mat: trim_gold.clone(),
-        ruby_mat: ruby_mat.clone(),
-        bar_mat: neon_gold.clone(),
+    let diamond_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.28, 0.96, 1.0),
+        emissive: LinearRgba::rgb(0.5, 2.4, 3.2),
+        metallic: 0.9,
+        perceptual_roughness: 0.1,
+        ..default()
+    });
+    let pusher_neon_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.84, 0.22),
+        emissive: LinearRgba::rgb(2.4, 1.8, 0.3),
+        unlit: true,
+        ..default()
     });
 
     let (cp_pos, cp_yaw) = ArcadeKind::CoinPusher.pose();
@@ -536,11 +564,11 @@ fn spawn_casino_arcade_machines(
             Visibility::default(),
         ))
         .with_children(|p| {
-            // Base cabinet + deck + backboard
+            // Base cabinet set slightly back so coins cascade cleanly in front of deck z=0.74
             p.spawn((
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(cab_blue.clone()),
-                Transform::from_xyz(0.0, 0.50, 0.0).with_scale(Vec3::new(1.8, 1.0, 1.7)),
+                Transform::from_xyz(0.0, 0.50, -0.06).with_scale(Vec3::new(1.8, 1.0, 1.56)),
             ));
             p.spawn((
                 Mesh3d(box_mesh.clone()),
@@ -552,11 +580,47 @@ fn spawn_casino_arcade_machines(
                 MeshMaterial3d(cab_blue.clone()),
                 Transform::from_xyz(0.0, 1.95, -0.74).with_scale(Vec3::new(1.8, 2.0, 0.16)),
             ));
+            // Header crown + neon rails pulsing during Fever / Coin Tsunami
             p.spawn((
+                PusherNeonMat,
                 Mesh3d(box_mesh.clone()),
-                MeshMaterial3d(neon_gold.clone()),
+                MeshMaterial3d(pusher_neon_mat.clone()),
                 Transform::from_xyz(0.0, 2.98, 0.0).with_scale(Vec3::new(1.84, 0.24, 1.65)),
             ));
+            for sx in [-0.89_f32, 0.89] {
+                p.spawn((
+                    PusherNeonMat,
+                    Mesh3d(box_mesh.clone()),
+                    MeshMaterial3d(pusher_neon_mat.clone()),
+                    Transform::from_xyz(sx, 1.95, 0.76).with_scale(Vec3::new(0.06, 1.85, 0.06)),
+                ));
+            }
+            // Visible front waterfall prize chute / payout hopper
+            p.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(trim_gold.clone()),
+                Transform::from_xyz(0.0, 0.30, 0.88)
+                    .with_rotation(Quat::from_rotation_x(0.24))
+                    .with_scale(Vec3::new(1.74, 0.06, 0.42)),
+            ));
+            p.spawn((
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(glass_mat.clone()),
+                Transform::from_xyz(0.0, 0.40, 1.08).with_scale(Vec3::new(1.74, 0.24, 0.04)),
+            ));
+            p.spawn((
+                PusherNeonMat,
+                Mesh3d(box_mesh.clone()),
+                MeshMaterial3d(pusher_neon_mat.clone()),
+                Transform::from_xyz(0.0, 0.52, 1.08).with_scale(Vec3::new(1.76, 0.04, 0.05)),
+            ));
+            for sx in [-0.86_f32, 0.86] {
+                p.spawn((
+                    Mesh3d(box_mesh.clone()),
+                    MeshMaterial3d(cab_blue.clone()),
+                    Transform::from_xyz(sx, 0.56, 0.90).with_scale(Vec3::new(0.06, 0.62, 0.36)),
+                ));
+            }
             // Side glass panels
             for sx in [-0.88_f32, 0.88] {
                 p.spawn((
@@ -570,44 +634,128 @@ fn spawn_casino_arcade_machines(
                 PusherShelf,
                 Mesh3d(box_mesh.clone()),
                 MeshMaterial3d(trim_gold.clone()),
-                Transform::from_xyz(0.0, 1.16, -0.35).with_scale(Vec3::new(1.56, 0.22, 0.72)),
+                Transform::from_xyz(0.0, 1.16, -0.54).with_scale(Vec3::new(1.56, 0.22, 0.72)),
             ));
-            // Dropper nozzle at top
+            // Primary movable dropper nozzle + flanking fever ceiling chutes
             p.spawn((
                 PusherDropper,
                 Mesh3d(cyl_mesh.clone()),
                 MeshMaterial3d(neon_cyan.clone()),
-                Transform::from_xyz(0.0, 2.68, -0.58).with_scale(Vec3::new(0.12, 0.22, 0.12)),
+                Transform::from_xyz(0.0, 2.68, -0.22).with_scale(Vec3::new(0.14, 0.24, 0.14)),
             ));
+            for fx in [-0.46_f32, 0.46] {
+                p.spawn((
+                    PusherNeonMat,
+                    Mesh3d(cyl_mesh.clone()),
+                    MeshMaterial3d(pusher_neon_mat.clone()),
+                    Transform::from_xyz(fx, 2.70, -0.20).with_scale(Vec3::new(0.11, 0.20, 0.11)),
+                ));
+            }
 
-            // Initial 72 physical 3D coins + 4 ruby tokens + 2 gold bars stacked on the shelf & deck
-            for i in 0..78_u32 {
-                let row = i / 13;
-                let col = i % 13;
-                let lx = -0.66 + col as f32 * 0.11 + ((i % 2) as f32 - 0.5) * 0.03;
-                let (ly, lz) = if row < 2 {
-                    (1.29, -0.45 + row as f32 * 0.22)
-                } else {
-                    (1.07, 0.08 + (row - 2) as f32 * 0.17)
+            // Pre-pooled 320 physical 3D coins, ruby tokens, gold bullion bars & diamond mega bars!
+            let mut pool_specs: Vec<(Vec3, PusherCoinPhase, u32, f32, bool)> = Vec::with_capacity(320);
+            let mut idx: usize = 0;
+            // Lower deck layer 0 (48)
+            for r in 0..5_usize {
+                for c in 0..10_usize {
+                    let x = -0.68 + c as f32 * 0.15 + if r % 2 == 1 { 0.04 } else { 0.0 };
+                    let z = 0.08 + r as f32 * 0.145;
+                    if x.abs() <= 0.72 && z <= 0.68 {
+                        let val = if idx == 12 || idx == 33 {
+                            35
+                        } else if idx % 6 == 2 {
+                            15
+                        } else {
+                            1
+                        };
+                        pool_specs.push((Vec3::new(x, 1.07, z), PusherCoinPhase::Lower, val, if val >= 35 { 0.072 } else { 0.068 }, val >= 35));
+                        idx += 1;
+                    }
+                }
+            }
+            // Lower deck layer 1 (36)
+            for r in 0..4_usize {
+                for c in 0..9_usize {
+                    let x = -0.62 + c as f32 * 0.155;
+                    let z = 0.12 + r as f32 * 0.145;
+                    let val = if idx == 58 || idx == 74 {
+                        35
+                    } else if idx % 6 == 1 {
+                        15
+                    } else {
+                        1
+                    };
+                    pool_specs.push((Vec3::new(x, 1.11, z), PusherCoinPhase::Lower, val, if val >= 35 { 0.072 } else { 0.068 }, val >= 35));
+                    idx += 1;
+                }
+            }
+            // Upper shelf layer 0 (30)
+            for r in 0..3_usize {
+                for c in 0..10_usize {
+                    let x = -0.68 + c as f32 * 0.15;
+                    let z = -0.22 + r as f32 * 0.10;
+                    let val = if idx % 5 == 0 { 15 } else { 1 };
+                    pool_specs.push((Vec3::new(x, 1.29, z), PusherCoinPhase::Upper, val, 0.068, false));
+                    idx += 1;
+                }
+            }
+            // Upper shelf layer 1 (16)
+            for r in 0..2_usize {
+                for c in 0..8_usize {
+                    let x = -0.56 + c as f32 * 0.16;
+                    let z = -0.18 + r as f32 * 0.12;
+                    let val = if c == 3 && r == 0 {
+                        35
+                    } else if c % 4 == 1 {
+                        15
+                    } else {
+                        1
+                    };
+                    pool_specs.push((Vec3::new(x, 1.325, z), PusherCoinPhase::Upper, val, if val >= 35 { 0.072 } else { 0.068 }, val >= 35));
+                }
+            }
+            // Parked reserve coins/bars up to 320 total
+            let rem = 320_usize.saturating_sub(pool_specs.len());
+            let gold_reserve = rem.saturating_sub(110);
+            for _ in 0..gold_reserve {
+                pool_specs.push((Vec3::new(0.0, -10.0, 0.0), PusherCoinPhase::Parked, 2, 0.068, false));
+            }
+            for _ in 0..50 {
+                pool_specs.push((Vec3::new(0.0, -10.0, 0.0), PusherCoinPhase::Parked, 15, 0.068, false));
+            }
+            for _ in 0..40 {
+                pool_specs.push((Vec3::new(0.0, -10.0, 0.0), PusherCoinPhase::Parked, 35, 0.072, true));
+            }
+            while pool_specs.len() < 320 {
+                pool_specs.push((Vec3::new(0.0, -10.0, 0.0), PusherCoinPhase::Parked, 125, 0.072, true));
+            }
+
+            for (pos, phase, val, rad, is_bar) in pool_specs {
+                let (mesh, mat) = match val {
+                    125 => (bar_mesh.clone(), diamond_mat.clone()),
+                    35 => (bar_mesh.clone(), neon_gold.clone()),
+                    15 => (coin_mesh.clone(), ruby_mat.clone()),
+                    _ => (coin_mesh.clone(), trim_gold.clone()),
                 };
-                let (mesh, mat, val, rad) = if i == 70 || i == 75 {
-                    (bar_mesh.clone(), neon_gold.clone(), 15, 0.13)
-                } else if i % 18 == 7 {
-                    (coin_mesh.clone(), ruby_mat.clone(), 5, 0.11)
+                let vis = if phase == PusherCoinPhase::Parked {
+                    Visibility::Hidden
                 } else {
-                    (coin_mesh.clone(), trim_gold.clone(), 1, 0.11)
+                    Visibility::Inherited
                 };
                 p.spawn((
                     PusherCoin {
-                        local: Vec3::new(lx, ly, lz),
+                        local: pos,
                         vel: Vec3::ZERO,
                         radius: rad,
                         value: val,
-                        falling: false,
+                        phase,
+                        spin: 0.0,
+                        is_bar,
                     },
                     Mesh3d(mesh),
                     MeshMaterial3d(mat),
-                    Transform::from_xyz(lx, ly, lz),
+                    Transform::from_translation(pos),
+                    vis,
                 ));
             }
         });
@@ -1736,8 +1884,13 @@ fn update_arcade_proximity(
 
     stats.arcade_open = true;
     arcade.active = Some(kind);
+    if kind == ArcadeKind::CoinPusher {
+        arcade.pusher_session_coins = 0;
+        arcade.pusher_session_tw = 0;
+        arcade.pusher_last_chute_tw = 0;
+    }
     arcade.status_msg = match kind {
-        ArcadeKind::CoinPusher => "Aim [A/D] | Drop 1 TW [SPACE] | Rapid 3 TW [B]".to_string(),
+        ArcadeKind::CoinPusher => "Aim [A/D] | MASH/HOLD [SPACE] (1 TW) | FEVER RAIN [B] (3 TW)".to_string(),
         ArcadeKind::ClawMachine => "Move Claw [WASD] | Drop Claw (5 TW) [SPACE]".to_string(),
         ArcadeKind::Plinko => "Slide Puck [A/D] | Drop Plinko (5 TW) [SPACE]".to_string(),
         ArcadeKind::Skeeball => "Aim [A/D] | Launch Ball (5 TW / 3 Balls) [SPACE]".to_string(),
@@ -1812,7 +1965,7 @@ fn spawn_arcade_hud(commands: &mut Commands) {
                 ));
                 for (btn_kind, label, bg) in [
                     (ArcadeHudBtn::Action, "PLAY [SPACE]", Color::srgb(0.16, 0.56, 0.28)),
-                    (ArcadeHudBtn::Extra, "3x DROP [B]", Color::srgb(0.56, 0.34, 0.12)),
+                    (ArcadeHudBtn::Extra, "FEVER RAIN [B]", Color::srgb(0.56, 0.34, 0.12)),
                     (ArcadeHudBtn::Leave, "LEAVE [ESC]", Color::srgb(0.52, 0.14, 0.18)),
                 ] {
                     bar.spawn((
@@ -1846,31 +1999,40 @@ fn handle_arcade_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
     mut arcade: ResMut<ArcadeState>,
-    pusher_assets: Option<Res<PusherAssets>>,
     plinko_assets: Option<Res<PlinkoAssets>>,
     skee_assets: Option<Res<SkeeballAssets>>,
     cab_q: Query<(Entity, &Transform), Without<PusherCoin>>,
     hud_q: Query<Entity, With<ArcadeHudRoot>>,
-    btn_q: Query<(&ArcadeHudBtn, &Interaction), Changed<Interaction>>,
+    btn_q: Query<(&ArcadeHudBtn, &Interaction)>,
+    mut prev_hud: Local<(bool, bool, bool)>,
+    mut pusher_coin_q: Query<(Entity, &mut PusherCoin, &mut Transform, &mut Visibility), Without<ArcadeHudBtn>>,
 ) {
     let Some(kind) = arcade.active else {
+        *prev_hud = (false, false, false);
         return;
     };
     let dt = time.delta_secs().min(0.05);
 
-    let mut leave = keys.just_pressed(KeyCode::Escape);
-    let mut act = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter);
-    let mut extra = keys.just_pressed(KeyCode::KeyB);
+    let mut cur_hud = (false, false, false);
     for (bk, inter) in &btn_q {
         if *inter != Interaction::Pressed {
             continue;
         }
         match bk {
-            ArcadeHudBtn::Action => act = true,
-            ArcadeHudBtn::Extra => extra = true,
-            ArcadeHudBtn::Leave => leave = true,
+            ArcadeHudBtn::Action => cur_hud.0 = true,
+            ArcadeHudBtn::Extra => cur_hud.1 = true,
+            ArcadeHudBtn::Leave => cur_hud.2 = true,
         }
     }
+    let btn_tap_act = cur_hud.0 && !prev_hud.0;
+    let btn_tap_extra = cur_hud.1 && !prev_hud.1;
+    let btn_tap_leave = cur_hud.2 && !prev_hud.2;
+    let btn_hold_act = cur_hud.0;
+    let btn_hold_extra = cur_hud.1;
+    *prev_hud = cur_hud;
+
+    let leave = keys.just_pressed(KeyCode::Escape) || btn_tap_leave;
+    let act = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) || btn_tap_act;
     if leave {
         stats.arcade_open = false;
         stats.casino_esc_grace = true;
@@ -1890,37 +2052,114 @@ fn handle_arcade_input(
 
     match kind {
         ArcadeKind::CoinPusher => {
-            arcade.pusher_aim_x = (arcade.pusher_aim_x + ax * 1.15 * dt).clamp(-0.62, 0.62);
-            let count = if extra { 3 } else if act { 1 } else { 0 };
-            if count > 0 && arcade.pusher_cooldown <= 0.0 {
-                if stats.spend_tendy_wendies(count) {
-                    arcade.pusher_cooldown = 0.25;
-                    play_sfx("chip_bet");
-                    if let Some(pa) = pusher_assets {
-                        let (cp, _) = ArcadeKind::CoinPusher.pose();
-                        let target_w = CASINO_LEVEL_ORIGIN + cp;
-                        if let Some((parent, _)) = cab_q.iter().find(|(_, tf)| (tf.translation - target_w).length() < 0.2) {
-                            for k in 0..count {
-                                let ox = arcade.pusher_aim_x + (k as f32 - 1.0) * 0.08;
-                                let local = Vec3::new(ox.clamp(-0.66, 0.66), 2.55 + k as f32 * 0.12, -0.58);
-                                commands.entity(parent).with_children(|p| {
-                                    p.spawn((
-                                        PusherCoin {
-                                            local,
-                                            vel: Vec3::new(0.0, -0.6, 0.25),
-                                            radius: 0.11,
-                                            value: 1,
-                                            falling: true,
-                                        },
-                                        Mesh3d(pa.coin_mesh.clone()),
-                                        MeshMaterial3d(pa.gold_mat.clone()),
-                                        Transform::from_translation(local),
-                                    ));
-                                });
+            arcade.pusher_aim_x = (arcade.pusher_aim_x + ax * 1.25 * dt).clamp(-0.62, 0.62);
+            let tap_act = keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) || btn_tap_act;
+            let tap_extra = keys.just_pressed(KeyCode::KeyB) || btn_tap_extra;
+            let hold_act = keys.pressed(KeyCode::Space) || keys.pressed(KeyCode::Enter) || btn_hold_act;
+            let hold_extra = keys.pressed(KeyCode::KeyB) || btn_hold_extra;
+            let want_extra = tap_extra || hold_extra;
+            let want_drop = want_extra || tap_act || hold_act;
+            let is_fresh_tap = tap_act || tap_extra;
+            if want_drop && (arcade.pusher_cooldown <= 0.0 || (is_fresh_tap && arcade.pusher_cooldown <= 0.045)) {
+                let mut cost = if want_extra { 3 } else { 1 };
+                if !stats.spend_tendy_wendies(cost) {
+                    if cost > 1 && stats.spend_tendy_wendies(1) {
+                        cost = 1;
+                    } else {
+                        cost = 0;
+                    }
+                }
+                if cost > 0 {
+                    arcade.pusher_cooldown = 0.075;
+                    let rapid_b = want_extra;
+                    arcade.pusher_heat = (arcade.pusher_heat + if rapid_b { 0.068 } else { 0.050 }).min(1.0);
+                    let spawn_n: usize = (if rapid_b { 5 } else { 3 }) + (arcade.pusher_heat * 5.0) as usize;
+                    if arcade.pusher_sfx_cd <= 0.0 {
+                        play_sfx("chip_bet");
+                        arcade.pusher_sfx_cd = 0.09;
+                    }
+
+                    let want_high = arcade.pusher_heat >= 0.30;
+                    let mut pool: Vec<(Entity, u32)> = Vec::new();
+                    for (e, c, _, _) in &pusher_coin_q {
+                        if c.phase == PusherCoinPhase::Parked {
+                            pool.push((e, c.value));
+                        }
+                    }
+                    let total_parked = pool.len();
+                    let mut dropped_now = 0_usize;
+                    if total_parked > 0 {
+                        let start = arcade.pusher_park_cursor % total_parked;
+                        arcade.pusher_park_cursor = arcade.pusher_park_cursor.wrapping_add(spawn_n);
+                        let mut chosen: Vec<Entity> = Vec::with_capacity(spawn_n);
+                        for pass in 0..2 {
+                            for k in 0..total_parked {
+                                let (e, val) = pool[(start + k) % total_parked];
+                                if chosen.contains(&e) {
+                                    continue;
+                                }
+                                if pass == 0 {
+                                    if !want_high && val > 15 {
+                                        continue;
+                                    }
+                                    if arcade.pusher_heat >= 0.65 && arcade.next_f32() < 0.45 && val < 15 {
+                                        continue;
+                                    }
+                                }
+                                chosen.push(e);
+                                if chosen.len() >= spawn_n {
+                                    break;
+                                }
+                            }
+                            if chosen.len() >= spawn_n {
+                                break;
+                            }
+                        }
+                        let fever_spread = 0.35 + arcade.pusher_heat * 1.05;
+                        for (ci, target_e) in chosen.into_iter().enumerate() {
+                            let jx = (arcade.next_f32() - 0.5) * fever_spread;
+                            let ly = 2.45 + arcade.next_f32() * 0.25 + (ci as f32) * 0.03;
+                            let lz = -0.26 + arcade.next_f32() * 0.20;
+                            let vx = (arcade.next_f32() - 0.5) * 0.40;
+                            let vy = -1.6 - arcade.next_f32() * 0.80;
+                            let vz = 0.40 + arcade.next_f32() * 0.30;
+                            let spin = (arcade.next_f32() - 0.5) * 10.0;
+                            let yaw = (arcade.next_f32() - 0.5) * 0.6;
+                            if let Ok((_, mut c, mut tf, mut vis)) = pusher_coin_q.get_mut(target_e) {
+                                let chute_x = if arcade.pusher_heat > 0.35 && ci % 3 == 1 {
+                                    -0.46
+                                } else if arcade.pusher_heat > 0.35 && ci % 3 == 2 {
+                                    0.46
+                                } else {
+                                    arcade.pusher_aim_x
+                                };
+                                let lx = (chute_x + jx).clamp(-0.70, 0.70);
+                                c.local = Vec3::new(lx, ly, lz);
+                                c.vel = Vec3::new(vx, vy, vz);
+                                c.phase = PusherCoinPhase::Dropping;
+                                c.spin = spin;
+                                tf.translation = c.local;
+                                tf.rotation = if c.is_bar {
+                                    Quat::from_rotation_y(yaw)
+                                } else {
+                                    Quat::IDENTITY
+                                };
+                                *vis = Visibility::Inherited;
+                                dropped_now += 1;
                             }
                         }
                     }
-                    arcade.status_msg = format!("Dropped {} TW coin(s)! Watch the edge!", count);
+                    let tier = if arcade.pusher_heat >= 0.75 {
+                        "TSUNAMI 4X!"
+                    } else if arcade.pusher_heat >= 0.35 {
+                        "FEVER 2X!"
+                    } else {
+                        "PUSHING!"
+                    };
+                    arcade.status_msg = format!(
+                        "{} Dropped {} | Session: +{} TW ({} pushed)",
+                        tier, dropped_now, arcade.pusher_session_tw, arcade.pusher_session_coins
+                    );
                 } else {
                     arcade.status_msg = "Need at least 1 TW! (Cashier gives +25 TW below 25 TW)".to_string();
                 }
@@ -2022,22 +2261,31 @@ fn handle_arcade_input(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_coin_pusher_physics(
     time: Res<Time<Real>>,
     mut stats: ResMut<PlayerStats>,
     mut arcade: ResMut<ArcadeState>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut shelf_q: Query<&mut Transform, (With<PusherShelf>, Without<PusherDropper>, Without<PusherCoin>)>,
     mut drop_q: Query<&mut Transform, (With<PusherDropper>, Without<PusherShelf>, Without<PusherCoin>)>,
-    mut coin_q: Query<(Entity, &mut PusherCoin, &mut Transform), (Without<PusherShelf>, Without<PusherDropper>)>,
+    neon_q: Query<&MeshMaterial3d<StandardMaterial>, With<PusherNeonMat>>,
+    mut coin_q: Query<(Entity, &mut PusherCoin, &mut Transform, &mut Visibility), (Without<PusherShelf>, Without<PusherDropper>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
-    arcade.pusher_phase += dt * 1.45;
-    if arcade.pusher_cooldown > 0.0 {
-        arcade.pusher_cooldown = (arcade.pusher_cooldown - dt).max(0.0);
-    }
+    arcade.pusher_heat = (arcade.pusher_heat - 0.18 * dt).max(0.0);
+    arcade.pusher_cooldown = (arcade.pusher_cooldown - dt).max(0.0);
+    arcade.pusher_sfx_cd = (arcade.pusher_sfx_cd - dt).max(0.0);
+    arcade.pusher_jackpot_sfx_cd = (arcade.pusher_jackpot_sfx_cd - dt).max(0.0);
 
-    let prev_z = -0.35 + ((arcade.pusher_phase - dt * 1.45).sin() * 0.24);
-    let cur_z = -0.35 + (arcade.pusher_phase.sin() * 0.24);
+    let heat = arcade.pusher_heat;
+    let omega = 2.4 + heat * 5.4;
+    let prev_phase = arcade.pusher_phase;
+    arcade.pusher_phase += dt * omega;
+    arcade.pusher_neon_phase += dt * (2.5 + heat * 18.0);
+
+    let prev_z = -0.54 + prev_phase.sin() * 0.18;
+    let cur_z = -0.54 + arcade.pusher_phase.sin() * 0.18;
     let dz = (cur_z - prev_z).max(0.0);
     let pusher_front_z = cur_z + 0.36;
 
@@ -2047,88 +2295,204 @@ fn step_coin_pusher_physics(
     for mut tf in &mut drop_q {
         tf.translation.x = arcade.pusher_aim_x;
     }
+    if let Some(mat_h) = neon_q.iter().next() {
+        if let Some(mat) = materials.get_mut(&mat_h.0) {
+            if heat > 0.35 {
+                let hue = ((arcade.pusher_neon_phase * 55.0) % 360.0 + 360.0) % 360.0;
+                let col = Color::hsl(hue, 1.0, 0.58);
+                let l = col.to_linear();
+                let boost = 2.8 + heat * 3.0 * (arcade.pusher_neon_phase.sin() * 0.5 + 0.5);
+                mat.base_color = col;
+                mat.emissive = LinearRgba::new(l.red * boost, l.green * boost, l.blue * boost, 1.0);
+            } else {
+                mat.base_color = Color::srgb(1.0, 0.84, 0.22);
+                mat.emissive = LinearRgba::rgb(2.4, 1.8, 0.3);
+            }
+        }
+    }
 
-    let mut coins: Vec<(Entity, PusherCoin)> = Vec::new();
-    for (e, c, _) in &coin_q {
-        coins.push((e, PusherCoin {
+    #[derive(Clone, Copy)]
+    struct SimCoin {
+        entity: Entity,
+        local: Vec3,
+        vel: Vec3,
+        radius: f32,
+        phase: PusherCoinPhase,
+        spin: f32,
+    }
+
+    let mut coins: Vec<SimCoin> = Vec::with_capacity(320);
+    for (e, c, _, _) in &coin_q {
+        if c.phase == PusherCoinPhase::Parked {
+            continue;
+        }
+        coins.push(SimCoin {
+            entity: e,
             local: c.local,
             vel: c.vel,
             radius: c.radius,
-            value: c.value,
-            falling: c.falling,
-        }));
+            phase: c.phase,
+            spin: c.spin,
+        });
     }
 
-    // 1. Gravity & pusher shelf advancement
-    for (_, c) in &mut coins {
-        if c.falling {
-            c.vel.y -= 9.5 * dt;
-            c.local += c.vel * dt;
-            let floor_y = if c.local.z < 0.02 { 1.29 } else { 1.07 };
-            if c.local.y <= floor_y {
-                c.local.y = floor_y;
-                c.vel = Vec3::ZERO;
-                c.falling = false;
+    // 1. Gravity, upper shelf sweep, step cascade, and front chute waterfall
+    for c in &mut coins {
+        match c.phase {
+            PusherCoinPhase::Parked => {}
+            PusherCoinPhase::Dropping => {
+                c.vel.y -= 11.5 * dt;
+                c.local += c.vel * dt;
+                c.local.x = c.local.x.clamp(-0.72, 0.72);
+                c.local.z = c.local.z.max(-0.52);
+                let layer_off = if (c.entity.index() % 5) < 2 { 0.035 } else { 0.0 };
+                if c.local.z < 0.02 && c.local.y <= 1.29 + layer_off && c.local.y >= 1.10 {
+                    c.local.y = 1.29 + layer_off;
+                    c.vel = Vec3::ZERO;
+                    c.phase = PusherCoinPhase::Upper;
+                } else if c.local.z >= 0.02 && c.local.y <= 1.07 + layer_off {
+                    c.local.y = 1.07 + layer_off;
+                    c.vel = Vec3::ZERO;
+                    c.phase = PusherCoinPhase::Lower;
+                }
             }
-        } else if c.local.y > 1.18 && c.local.z < pusher_front_z + c.radius {
-            c.local.z = (pusher_front_z + c.radius).min(0.05);
-        } else if c.local.y > 1.18 && c.local.z >= 0.02 {
-            // Drop from upper tier to lower deck
-            c.falling = true;
-            c.vel = Vec3::new(0.0, -0.4, 0.35);
-        } else if c.local.y <= 1.18 && c.local.z < 0.05 + dz + 0.02 && dz > 0.0 {
-            c.local.z += dz * 0.65;
+            PusherCoinPhase::ChuteTumble => {
+                c.vel.y -= 9.5 * dt;
+                c.local += c.vel * dt;
+                c.local.x = c.local.x.clamp(-0.76, 0.76);
+                c.local.z = c.local.z.clamp(0.75, 1.00);
+            }
+            PusherCoinPhase::Upper => {
+                if c.local.z < pusher_front_z + c.radius {
+                    c.local.z = pusher_front_z + c.radius;
+                }
+                if c.local.z >= 0.02 {
+                    let jitter = ((c.entity.index() % 7) as f32 - 3.0) * 0.04;
+                    c.phase = PusherCoinPhase::Dropping;
+                    c.vel = Vec3::new(jitter, -0.25, 0.55 + heat * 0.50);
+                }
+                c.local.x = c.local.x.clamp(-0.72, 0.72);
+            }
+            PusherCoinPhase::Lower => {
+                if dz > 0.0 && c.local.z < 0.02 + c.radius * 2.0 + dz {
+                    c.local.z += dz * (0.95 + heat * 0.45);
+                }
+                if c.local.z > 0.74 {
+                    let jx = ((c.entity.index() % 9) as f32 - 4.0) * 0.05;
+                    let vz = 0.65 + ((c.entity.index() % 5) as f32) * 0.08;
+                    c.phase = PusherCoinPhase::ChuteTumble;
+                    c.vel = Vec3::new(jx, -0.30, vz);
+                    c.spin = (((c.entity.index() % 7) as f32) - 3.0) * 4.5;
+                }
+                c.local.x = c.local.x.clamp(-0.72, 0.72);
+            }
         }
-        c.local.x = c.local.x.clamp(-0.70, 0.70);
     }
 
-    // 2. Pairwise coin collision pushing on each tier
+    // 2. Multi-pass planar separation with fast AABB skip for dense non-stalling cascades
     let n = coins.len();
-    for i in 0..n {
-        for j in (i + 1)..n {
-            if coins[i].1.falling || coins[j].1.falling {
+    for _ in 0..3 {
+        for i in 0..n {
+            if !matches!(coins[i].phase, PusherCoinPhase::Upper | PusherCoinPhase::Lower) {
                 continue;
             }
-            if (coins[i].1.local.y - coins[j].1.local.y).abs() > 0.08 {
-                continue;
-            }
-            let diff = Vec2::new(
-                coins[j].1.local.x - coins[i].1.local.x,
-                coins[j].1.local.z - coins[i].1.local.z,
-            );
-            let min_d = coins[i].1.radius + coins[j].1.radius;
-            let len = diff.length();
-            if len > 0.0001 && len < min_d {
-                let push = diff / len * (min_d - len) * 0.5;
-                coins[i].1.local.x -= push.x;
-                coins[i].1.local.z -= push.y;
-                coins[j].1.local.x += push.x;
-                coins[j].1.local.z += push.y;
+            for j in (i + 1)..n {
+                if coins[j].phase != coins[i].phase || (coins[i].local.y - coins[j].local.y).abs() > 0.025 {
+                    continue;
+                }
+                let dx = coins[j].local.x - coins[i].local.x;
+                let ddz = coins[j].local.z - coins[i].local.z;
+                let md = (coins[i].radius + coins[j].radius) * 1.02;
+                if dx.abs() >= md || ddz.abs() >= md {
+                    continue;
+                }
+                let d2 = dx * dx + ddz * ddz;
+                if d2 > 1e-8 && d2 < md * md {
+                    let len = d2.sqrt();
+                    let push = (md - len) * 0.60 / len;
+                    coins[i].local.x -= dx * push;
+                    coins[i].local.z -= ddz * push;
+                    coins[j].local.x += dx * push;
+                    coins[j].local.z += ddz * push;
+                    if coins[i].phase == PusherCoinPhase::Lower && coins[i].local.z > 0.74 {
+                        coins[i].phase = PusherCoinPhase::ChuteTumble;
+                        coins[i].vel = Vec3::new(0.0, -0.30, 0.65);
+                    }
+                    if coins[j].phase == PusherCoinPhase::Lower && coins[j].local.z > 0.74 {
+                        coins[j].phase = PusherCoinPhase::ChuteTumble;
+                        coins[j].vel = Vec3::new(0.0, -0.30, 0.65);
+                    }
+                }
             }
         }
     }
 
-    // 3. Apply transforms & award coins pushed over the front lip!
-    for (e, mut c, mut tf) in &mut coin_q {
-        if let Some((_, sim)) = coins.iter().find(|(ce, _)| *ce == e) {
+    // 3. Apply transforms, recycle tumbled coins & pay Fever/Tsunami batch rewards
+    let mut batch_coins = 0_u32;
+    let mut batch_tw = 0_u32;
+    let mut max_single_payout = 0_u32;
+    let fever_mult = if heat >= 0.75 {
+        4
+    } else if heat >= 0.35 {
+        2
+    } else {
+        1
+    };
+
+    for sim in coins {
+        if let Ok((_, mut c, mut tf, mut vis)) = coin_q.get_mut(sim.entity) {
             c.local = sim.local;
             c.vel = sim.vel;
-            c.falling = sim.falling;
-        }
-        if c.local.z > 0.74 {
-            let val = c.value;
-            if arcade.active == Some(ArcadeKind::CoinPusher) {
-                stats.add_tendy_wendies(val);
-                arcade.status_msg = format!("COIN CASCADE! +{} TW pushed off the ledge!", val);
-                play_sfx(if val >= 5 { "slot_jackpot" } else { "tendy" });
+            c.phase = sim.phase;
+            c.spin = sim.spin;
+
+            if c.phase == PusherCoinPhase::ChuteTumble && c.local.y <= 0.32 {
+                let payout = c.value * fever_mult;
+                batch_coins += 1;
+                batch_tw += payout;
+                max_single_payout = max_single_payout.max(payout);
+
+                c.phase = PusherCoinPhase::Parked;
+                c.local = Vec3::new(0.0, -10.0, 0.0);
+                c.vel = Vec3::ZERO;
+                tf.translation = c.local;
+                tf.rotation = Quat::IDENTITY;
+                *vis = Visibility::Hidden;
+            } else {
+                tf.translation = c.local;
+                if matches!(c.phase, PusherCoinPhase::Dropping | PusherCoinPhase::ChuteTumble) {
+                    let t = arcade.pusher_neon_phase + c.spin;
+                    tf.rotation = Quat::from_rotation_x(t * 1.3) * Quat::from_rotation_z(t * 0.7);
+                } else if !c.is_bar {
+                    tf.rotation = Quat::IDENTITY;
+                }
             }
-            // Recycle coin onto the back of the upper pusher shelf so the machine stays stocked!
-            let rx = (arcade.next_f32() - 0.5) * 1.24;
-            c.local = Vec3::new(rx, 1.32, -0.52);
-            c.vel = Vec3::ZERO;
-            c.falling = false;
         }
-        tf.translation = c.local;
+    }
+
+    if batch_coins > 0 && arcade.active == Some(ArcadeKind::CoinPusher) {
+        stats.add_tendy_wendies(batch_tw);
+        arcade.pusher_session_coins += batch_coins;
+        arcade.pusher_session_tw += batch_tw;
+        arcade.pusher_last_chute_tw = batch_tw;
+        let mode_tag = if fever_mult >= 4 {
+            "COIN TSUNAMI 4X!"
+        } else if fever_mult >= 2 {
+            "FEVER CASCADE 2X!"
+        } else {
+            "COIN CASCADE!"
+        };
+        arcade.status_msg = format!(
+            "{} +{} TW ({} coins) | Total: +{} TW ({} pushed)",
+            mode_tag, batch_tw, batch_coins, arcade.pusher_session_tw, arcade.pusher_session_coins
+        );
+        if max_single_payout >= 30 && arcade.pusher_jackpot_sfx_cd <= 0.0 {
+            play_sfx("slot_jackpot");
+            arcade.pusher_jackpot_sfx_cd = 0.22;
+        } else if arcade.pusher_sfx_cd <= 0.0 {
+            play_sfx("tendy");
+            arcade.pusher_sfx_cd = 0.06;
+        }
     }
 }
 
@@ -2514,7 +2878,7 @@ fn update_arcade_camera(
     }
 
     let (cam_off, look_off) = match kind {
-        ArcadeKind::CoinPusher => (Vec3::new(0.85, 2.25, 2.75), Vec3::new(0.0, 1.48, 0.0)),
+        ArcadeKind::CoinPusher => (Vec3::new(0.92, 2.22, 2.90), Vec3::new(0.0, 1.36, 0.12)),
         ArcadeKind::ClawMachine => (Vec3::new(1.10, 2.38, 2.95), Vec3::new(0.0, 1.55, 0.0)),
         ArcadeKind::Plinko => (Vec3::new(0.95, 2.25, 3.35), Vec3::new(0.0, 1.68, 0.0)),
         ArcadeKind::Skeeball | ArcadeKind::JazzBand | ArcadeKind::RollerCoaster => {
@@ -2550,7 +2914,7 @@ fn refresh_arcade_hud(
     }
     if let Ok(mut t) = ctrl_q.get_single_mut() {
         t.0 = match kind {
-            ArcadeKind::CoinPusher => "AIM: A/D".to_string(),
+            ArcadeKind::CoinPusher => "AIM: A/D  |  MASH/HOLD: SPACE  |  RAIN: B".to_string(),
             ArcadeKind::ClawMachine => "MOVE: WASD".to_string(),
             ArcadeKind::Plinko => "AIM: A/D".to_string(),
             ArcadeKind::RollerCoaster => "STARGATE TRIP: ESC TO EXIT".to_string(),
