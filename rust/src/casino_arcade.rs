@@ -1776,7 +1776,9 @@ fn update_arcade_proximity(
         return;
     };
 
-    let online_players = net.online_player_count();
+    let sq = crate::audio::net_squad_info();
+    let in_club_peers = sq[5];
+    let online_players = net.online_player_count().saturating_sub(in_club_peers).max(1);
     let coaster_cost = coaster_ride_cost(online_players);
     let label: String = if kind == ArcadeKind::RollerCoaster {
         if online_players > 1 {

@@ -166,7 +166,7 @@ impl Plugin for NetPlugin {
 }
 
 fn char_name(char_id: u8, slot: u8) -> String {
-    if slot <= 4 {
+    if slot <= 5 {
         match char_id {
             CHAR_STAN => "STAN".to_string(),
             CHAR_NATE => "NATE".to_string(),
@@ -181,7 +181,7 @@ fn char_name(char_id: u8, slot: u8) -> String {
 }
 
 fn char_color(char_id: u8, slot: u8) -> Color {
-    if slot <= 4 {
+    if slot <= 5 {
         match char_id {
             CHAR_STAN => Color::srgb(0.18, 0.96, 1.0),
             CHAR_NATE => Color::srgb(0.30, 0.65, 1.0),
@@ -288,6 +288,20 @@ impl NetState {
         } else {
             1
         }
+    }
+
+    /// Bitmask of character IDs currently claimed by local player or active same-scene peers.
+    pub fn claimed_char_mask(&self) -> u8 {
+        let mut mask = if self.local_char <= 4 { 1 << self.local_char } else { 0 };
+        for r in &self.remotes {
+            let active_here = r
+                .shown
+                .is_some_and(|s| s.mode != MODE_AWAY && s.scene_id == self.local_scene_id);
+            if active_here && r.slot <= 5 && r.char_id <= 4 {
+                mask |= 1 << r.char_id;
+            }
+        }
+        mask
     }
 }
 
@@ -478,7 +492,7 @@ fn spawn_remote_avatar_entity(
     let tint = char_color(char_id, slot);
     let glow = glow_material(materials, tint);
 
-    if char_id == CHAR_STAN || slot > 4 {
+    if char_id == CHAR_STAN || slot > 5 {
         commands
             .spawn((
                 NetEntity,
@@ -699,7 +713,7 @@ fn on_remote_scene_ready(
     let Ok(avatar) = avatar_q.get(root) else {
         return;
     };
-    let apply_tint = avatar.slot > 4;
+    let apply_tint = avatar.slot > 5;
     let tint = slot_color(avatar.slot).to_linear();
     let mut found: [Option<Entity>; 6] = [None; 6];
     let mut body = None;
@@ -1019,14 +1033,31 @@ fn receive_remote_states(
                         format!("{} TELEPORTED SQUAD TO CASINO!", label)
                     }
                     EVENT_COASTER_WARP_ALL => {
-                        if *state.get() == GameState::CasinoPlay {
+                        if matches!(*state.get(), GameState::CasinoPlay | GameState::CityPlay) {
+                            if *state.get() == GameState::CityPlay {
+                                stats.saved_city_pos = crate::city::PUB217_ANCHOR
+                                    + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
+                                stats.saved_casino_city_scale = stats.player_scale;
+                                stats.driving_car = None;
+                                stats.riding_scooter = None;
+                                stats.riding_wheel = false;
+                            }
                             stats.casino_open = false;
                             stats.arcade_open = false;
                             stats.bartender_open = false;
                             stats.phone_open = false;
-                            next_state.set(GameState::CoasterCutscene);
+                            if value == 2 {
+                                next_state.set(GameState::ClubPlay);
+                                format!("{} PULLED SQUAD TO STRIP CLUB!", label)
+                            } else {
+                                next_state.set(GameState::CoasterCutscene);
+                                format!("{} LAUNCHED STARGATE COASTER!", label)
+                            }
+                        } else if value == 2 {
+                            format!("{} PULLED SQUAD TO STRIP CLUB!", label)
+                        } else {
+                            format!("{} LAUNCHED STARGATE COASTER!", label)
                         }
-                        format!("{} LAUNCHED STARGATE COASTER!", label)
                     }
                     EVENT_LEXIE_BATTLE => {
                         if *state.get() == GameState::CityPlay && !stats.free_roam {
@@ -1243,7 +1274,7 @@ fn sync_claimed_pub_crew(
         }
         for r in &net.remotes {
             let away = r.shown.map(|s| s.mode == MODE_AWAY).unwrap_or(false);
-            if !away && r.char_id <= 4 && r.slot <= 4 {
+            if !away && r.char_id <= 4 && r.slot <= 5 {
                 mask |= 1 << r.char_id;
             }
         }
@@ -1774,7 +1805,7 @@ fn spawn_net_hud(
         .with_children(|p| {
             p.spawn((
                 NetPlayersText,
-                Text::new("ONLINE (STAN) | 1/4"),
+                Text::new("ONLINE (STAN) | 1/5"),
                 TextFont {
                     font_size: 12.0,
                     ..default()
@@ -1905,20 +1936,20 @@ fn update_net_overlay(
         let sq = crate::audio::net_squad_info();
         if net.avg_rtt_ms >= 0 && net.peers > 0 {
             format!(
-                "ONLINE: {}/4 | LVL1 READY {}/{} | {}ms",
-                total.min(4), sq[1], sq[2], net.avg_rtt_ms
+                "ONLINE: {}/5 | LVL1 READY {}/{} | {}ms",
+                total.min(5), sq[1], sq[2], net.avg_rtt_ms
             )
         } else {
-            format!("ONLINE: {}/4 | LVL1 READY {}/{}", total.min(4), sq[1], sq[2])
+            format!("ONLINE: {}/5 | LVL1 READY {}/{}", total.min(5), sq[1], sq[2])
         }
     } else if !net.online_active {
         "FREE ROAM: SOLO".to_string()
     } else if net.avg_rtt_ms >= 0 && net.peers > 0 {
-        format!("ONLINE ({}) | {}/4 | {}ms", my_name, total.min(4), net.avg_rtt_ms)
-    } else if total > 4 {
+        format!("ONLINE ({}) | {}/5 | {}ms", my_name, total.min(5), net.avg_rtt_ms)
+    } else if total > 5 {
         format!("ONLINE ({}) | {}/6", my_name, total)
     } else {
-        format!("ONLINE ({}) | {}/4", my_name, total)
+        format!("ONLINE ({}) | {}/5", my_name, total)
     };
     for mut text in &mut players_text_q {
         if text.0 != status_line {

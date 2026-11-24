@@ -172,15 +172,24 @@
 
       let lastEnsureCheckMs = 0;
       let ensureCheckPromise = null;
+      function isActiveGameplayScene() {
+        try {
+          return !!(window.tendyNet && typeof window.tendyNet.debugState === "function" && window.tendyNet.debugState().sceneId > 0);
+        } catch (_) {
+          return false;
+        }
+      }
       // Called when entering Free Mode or when a peer joins in Free Mode so everyone runs
-      // the latest deployed build while preserving all localStorage save data.
+      // the latest deployed build while preserving all localStorage save data, without kicking
+      // players who are already inside an active gameplay scene.
       window.tqEnsureLatestBuild = function (preserveFreeRoam) {
         if (!BUILD_ID || BUILD_ID === "__TQ_" + "BUILD_ID__") return Promise.resolve();
         const now = performance.now();
         if (ensureCheckPromise) return ensureCheckPromise;
         if (now - lastEnsureCheckMs < 10000) return Promise.resolve();
         lastEnsureCheckMs = now;
-        ensureCheckPromise = checkVersion(true, !!preserveFreeRoam).finally(() => {
+        const activeScene = isActiveGameplayScene();
+        ensureCheckPromise = checkVersion(!activeScene, !!preserveFreeRoam).finally(() => {
           ensureCheckPromise = null;
         });
         return ensureCheckPromise;
@@ -188,12 +197,14 @@
 
       void checkVersion(true, false);
       window.addEventListener("pageshow", (e) => {
-        if (e.persisted) void checkVersion(true, !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam()));
+        const activeScene = isActiveGameplayScene();
+        if (e.persisted) void checkVersion(!activeScene, !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam()));
       });
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
           const inFree = !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam());
-          void checkVersion(inFree, inFree);
+          const activeScene = isActiveGameplayScene();
+          void checkVersion(inFree && !activeScene, inFree);
         }
       });
     })();
@@ -3288,7 +3299,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-49ba2ae68de3e365.js" crossorigin="anonymous" integrity="sha384-OGlzV/3GqhOKmG+yVLzKD4i7Qp64VzOfCpc/175CClzKu6ja6PEBl6TRi/5Xhr4k"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-49ba2ae68de3e365_bg.wasm" crossorigin="anonymous" integrity="sha384-4iGgwGtzC7vnf0/C9qdQxEVUxxQcXbXDxurDRIw320bF3uyqLSD9SVu2uimwqb2K" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-543d6abc364dc593.js" crossorigin="anonymous" integrity="sha384-UKZrx73dOJORYxnc0we6sjmQIee2SwXn4cMi0VQP9IOBzRo1FilGycUqju9ubcoJ"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-543d6abc364dc593_bg.wasm" crossorigin="anonymous" integrity="sha384-qLQ/sxo1LtwsvQCZrfwif3DTGQd0xQTcEdQNjjMKW9gG9BTyHFVLPLc18ytJ8l54" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4223,13 +4234,14 @@
       const VER = 1;
       const VER_BRIDGED = 129; // VER | 0x80: 1-hop bridged packet via lowest-RTT mutual neighbor (never re-relayed)
       const T_STATE = 1, T_HELLO = 2, T_BYE = 3, T_EVENT = 4, T_PING = 5, T_PONG = 6, T_META = 7, T_FULL = 8;
-      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20, 5: 16, 6: 16, 7: 36, 8: 12 };
+      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20, 5: 16, 6: 16, 7: 42, 8: 12 };
       const MAX_MSG = 64;          // bytes; anything bigger is dropped unread
-      const MESH_MAX_REMOTES = 3;  // 4-player squad: Stan, Nate, Glenn, TJ
+      const MESH_MAX_REMOTES = 4;  // 5-player squad: Stan, Nate, Glenn, TJ, Derek
       const LEGACY_MAX_REMOTES = 5;
       const HEADER_W = 7;          // drain() header width
       const REC_W = 20;            // drain() record width
-      const INBOX_CAP = 600;       // records queued for the game (drops oldest)
+      const STATE_INBOX_CAP = 360; // movement state samples queued for the game
+      const EVENT_INBOX_CAP = 240; // reliable events & leaves queued separately so state never evicts events
       const PEER_TIMEOUT_MS = 10000;
       const KEEPALIVE_MS = 1000;
       const PROBE_INTERVAL_MS = 2500;
@@ -4303,7 +4315,8 @@
         charSelectNotice: "",
         joinedAt: performance.now(),
         peers: new Map(),    // sender id (u32) -> { slot, charId, last, tokens, fill, conn, directOpen, rttMs, rttSamples, avgRttMs, directCount, directMap, mobile, veteran, full, bridgedVia, connectedAt }
-        inbox: [],           // Float64Array records for drain()
+        stateInbox: [],      // Float64Array T_STATE records for drain()
+        eventInbox: [],      // Float64Array T_EVENT / peer-leave records for drain()
         seq: 0,
         lastState: null,
         lastBuf: null,
@@ -4379,13 +4392,13 @@
         v.setUint8(13, mflags);
         const avg = computeOwnAvgRtt();
         v.setUint16(14, avg >= 0 ? clamp(avg, 0, 65534) : 65535, true);
-        const directPeers = [...net.peers.entries()].filter(([, p]) => p.directOpen).slice(0, 3);
+        const directPeers = [...net.peers.entries()].filter(([, p]) => p.directOpen).slice(0, 4);
         v.setUint8(16, directPeers.length);
         const claimAgeSec = net.charLocked
           ? clamp(Math.floor((performance.now() - net.charClaimedAt) / 1000), 0, 255)
           : 0;
         v.setUint8(17, claimAgeSec);
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
           const off = 18 + i * 6;
           if (i < directPeers.length) {
             const [pid, p] = directPeers[i];
@@ -4539,8 +4552,17 @@
       // ---- Receiving: every message is untrusted ----
       function drop() { net.stats.dropped++; }
       function pushRecord(rec) {
-        net.inbox.push(rec);
-        if (net.inbox.length > INBOX_CAP) net.inbox.splice(0, net.inbox.length - INBOX_CAP);
+        if (rec[0] === 1) {
+          net.stateInbox.push(rec);
+          if (net.stateInbox.length > STATE_INBOX_CAP) {
+            net.stateInbox.splice(0, net.stateInbox.length - STATE_INBOX_CAP);
+          }
+        } else {
+          net.eventInbox.push(rec);
+          if (net.eventInbox.length > EVENT_INBOX_CAP) {
+            net.eventInbox.splice(0, net.eventInbox.length - EVENT_INBOX_CAP);
+          }
+        }
       }
       function freeSlot() {
         const used = new Set([...net.peers.values()].map((p) => p.slot));
@@ -4687,7 +4709,7 @@
           const avgRtt = v.getUint16(14, true);
           const dCount = v.getUint8(16);
           const claimAgeSec = v.getUint8(17);
-          if (dCount > 3) return drop();
+          if (dCount > 4) return drop();
           const dMap = new Map();
           for (let i = 0; i < dCount; i++) {
             const off = 18 + i * 6;
@@ -4762,7 +4784,7 @@
           if (net.inFreeRoam && typeof window.tqEnsureLatestBuild === "function") {
             void window.tqEnsureLatestBuild(true);
           }
-          if (isMesh) setStatus("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (net.shard + 1) + ")");
+          if (isMesh) setStatus("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (net.shard + 1) + ")");
           sendHello();
           sendMeta();
           if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
@@ -5507,7 +5529,7 @@
             sendMeta();
             if (net.charLocked && net.lastBuf) sendBuf(net.lastBuf, false);
             setTimeout(() => sendPingToConn(c), 150);
-            setStatus("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")");
+            setStatus("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (shard + 1) + ")");
             refreshCharSelect();
             refreshPanel();
             updateTelemetry();
@@ -5523,7 +5545,7 @@
               if (p && p.conn === c) removePeer(c.boundId);
             }
             if (!closed && net.transport === t) {
-              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
+              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
               refreshPanel();
               updateTelemetry();
             }
@@ -5572,7 +5594,7 @@
             if (closed || signalingSuspended) return;
           }
           const readyOffers = [...pendingOffers.values()].filter((c) => !!c.sdp).length;
-          const needed = Math.max(0, Math.min(3, targetCount) - readyOffers);
+          const needed = Math.max(0, Math.min(4, targetCount) - readyOffers);
           if (needed === 0) return;
           offerPoolPromise = (async () => {
             const jobs = [];
@@ -5630,7 +5652,7 @@
             }
             if (ready.length === 0) return;
             const rot = (stEntry.idx || 0) % ready.length;
-            const limit = Math.min(3, ready.length);
+            const limit = Math.min(4, ready.length);
             for (let k = 0; k < limit; k++) {
               const [oid, c] = ready[(rot + k) % ready.length];
               offersPayload.push({ offer_id: oid, offer: { type: "offer", sdp: c.sdp } });
@@ -5840,8 +5862,8 @@
               stEntry.lastReadyAt = now;
               if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = now; }
               updateTrackersUp();
-              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
-              if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(isCellularOrMobile() ? 2 : 3);
+              setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
+              if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(isCellularOrMobile() ? 3 : 4);
               if (closed || signalingSuspended || stEntry.ws !== ws) return;
               sendAnnounce(stEntry, true);
               refreshPanel();
@@ -5860,8 +5882,8 @@
                     if (!sawFirstSignal) { sawFirstSignal = true; shardJoinedAt = now; }
                     updateTrackersUp();
                     try { ws.send(mqttSubscribePkt(1, "tendy-quest/v1/" + infoHash)); } catch (_) {}
-                    setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
-                    if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(isCellularOrMobile() ? 2 : 3);
+                    setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ", Signal " + trackersUp + "/" + trackerStates.length + ")..."));
+                    if (openConnCount() < MESH_MAX_REMOTES) await prepareOfferPool(isCellularOrMobile() ? 3 : 4);
                     if (closed || signalingSuspended || stEntry.ws !== ws) return;
                     sendAnnounce(stEntry, true);
                     refreshPanel();
@@ -5905,7 +5927,7 @@
           shardJoinedAt = performance.now();
           for (const c of pendingOffers.values()) closePeerConn(c);
           pendingOffers.clear();
-          prepareOfferPool(isCellularOrMobile() ? 2 : 3).then(() => {
+          prepareOfferPool(isCellularOrMobile() ? 3 : 4).then(() => {
             if (closed || signalingSuspended) return;
             for (const stEntry of trackerStates) {
               if (!stEntry.ready) continue;
@@ -5933,7 +5955,7 @@
           if (closed || net.transport !== t || signalingSuspended || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
           const now = performance.now();
           const mobile = isCellularOrMobile();
-          const offerTarget = mobile ? 2 : 3;
+          const offerTarget = mobile ? 3 : 4;
           const offerTtlMs = mobile ? 75000 : 45000;
           for (const [oid, c] of [...pendingOffers]) {
             if (now - c.createdAt > offerTtlMs) {
@@ -6013,7 +6035,7 @@
         const t = {
           kind: "mesh",
           isHost: false,
-          shard,
+          get shard() { return shard; },
           onShardFull() {
             if (!closed && net.peers.size === 0) bumpShard();
           },
@@ -6065,9 +6087,9 @@
               }
             }
             if (openConnCount() < MESH_MAX_REMOTES) {
-              void prepareOfferPool(isCellularOrMobile() ? 2 : 3);
+              void prepareOfferPool(isCellularOrMobile() ? 3 : 4);
             }
-            setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/4 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
+            setStatus(openConnCount() ? ("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (shard + 1) + ")") : ("Searching Cedar Rapids squad (Shard " + (shard + 1) + ")..."));
             refreshPanel();
             updateTelemetry();
           },
@@ -6409,7 +6431,7 @@
         const taken = getTakenChars();
         const sigUp = net.transport && typeof net.transport.trackersUp === "number" ? net.transport.trackersUp : 0;
         const squadCount = net.peers.size + 1;
-        ui.charSub.textContent = "Room: " + net.room + "  |  Squad: " + squadCount + "/4"
+        ui.charSub.textContent = "Room: " + net.room + "  |  Squad: " + squadCount + "/5"
           + (net.transportKind === "mesh" ? ("  |  Signal: " + sigUp + "/4") : "")
           + "  |  " + net.status;
         if (net.charSelectNotice) {
@@ -6460,8 +6482,8 @@
         }));
         for (const [id, p] of [...net.peers.entries()].sort((a, b) => a[1].slot - b[1].slot)) {
           const cMeta = CHARS[p.charId];
-          const label = !p.charLocked ? ("P" + p.slot + " PICKING") : ((p.slot <= 4 && cMeta) ? cMeta.name : ("P" + p.slot));
-          const color = !p.charLocked ? "#8a99b8" : ((p.slot <= 4 && cMeta) ? cMeta.color : (SLOT_COLORS[p.slot] || "#aaa"));
+          const label = !p.charLocked ? ("P" + p.slot + " PICKING") : ((p.slot <= 5 && cMeta) ? cMeta.name : ("P" + p.slot));
+          const color = !p.charLocked ? "#8a99b8" : ((p.slot <= 5 && cMeta) ? cMeta.color : (SLOT_COLORS[p.slot] || "#aaa"));
           const suffix = p.directOpen ? (p.rttMs >= 0 ? (" " + p.rttMs + "ms") : "") : " (bridged)";
           const aMark = net.anchorId === id ? " *" : "";
           ui.peers.appendChild(el("span", { class: "mp-chip", style: "border-color:" + color, text: label + suffix + aMark }));
@@ -6538,7 +6560,7 @@
             el("span", { text: "Room" }), ui.meshRoom,
             el("button", { id: "mp-mesh-join", type: "button", text: "Join", onclick: () => { joinMesh(ui.meshRoom.value); } }),
           ]),
-          el("div", { class: "mp-note", text: "Zero-server P2P Free Mode: public WebTorrent trackers + MQTT WSS signaling pair up to 4 browsers (Stan, Nate, Glenn, TJ) over direct WebRTC DataChannels, with lowest-latency 1-hop bridging. Use the same Room (default MAIN), or use Invite Code if on a strict firewall." }),
+          el("div", { class: "mp-note", text: "Zero-server P2P Free Mode: public WebTorrent trackers + MQTT WSS signaling pair up to 5 browsers (Stan, Nate, Glenn, TJ, Derek) over direct WebRTC DataChannels, with lowest-latency 1-hop bridging. Use the same Room (default MAIN), or use Invite Code if on a strict firewall." }),
         ]);
         ui.room = el("input", { id: "mp-room", type: "text", maxlength: "12", size: "8", autocomplete: "off", "aria-label": "Room code", value: roomFromUrl || "MAIN" });
         ui.tabsBox = el("div", {}, [
@@ -6740,6 +6762,7 @@
         let readyLvl1 = (net.sceneId === 1 && net.level1Ready) ? 1 : 0;
         let inCityPeers = 0;
         let inCasinoPeers = 0;
+        let inClubPeers = 0;
         for (const p of net.peers.values()) {
           const ps = p.sceneId || 0;
           if (ps === 1) {
@@ -6749,9 +6772,11 @@
             inCityPeers++;
           } else if (ps === 4) {
             inCasinoPeers++;
+          } else if (ps === 5) {
+            inClubPeers++;
           }
         }
-        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1, inCityPeers, inCasinoPeers]);
+        return new Uint32Array([net.peers.size + 1, readyLvl1, inLvl1, inCityPeers, inCasinoPeers, inClubPeers]);
       }
 
       if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", buildPanel);
@@ -6824,7 +6849,9 @@
         },
         // [now_ms, peers, n, local_char, flags_mask, avg_rtt_ms, shard_idx, ... n * REC_W]
         drain() {
-          const n = net.inbox.length;
+          const sLen = net.stateInbox.length;
+          const eLen = net.eventInbox.length;
+          const n = sLen + eLen;
           const out = new Float64Array(HEADER_W + n * REC_W);
           let flagsMask = 0;
           if (net.onlinePref || mpParam === "tabs" || mpParam === "rtc") flagsMask |= 1;
@@ -6838,8 +6865,10 @@
           out[4] = flagsMask;
           out[5] = computeOwnAvgRtt();
           out[6] = net.shard;
-          for (let i = 0; i < n; i++) out.set(net.inbox[i], HEADER_W + i * REC_W);
-          net.inbox.length = 0;
+          for (let i = 0; i < sLen; i++) out.set(net.stateInbox[i], HEADER_W + i * REC_W);
+          for (let i = 0; i < eLen; i++) out.set(net.eventInbox[i], HEADER_W + (sLen + i) * REC_W);
+          net.stateInbox.length = 0;
+          net.eventInbox.length = 0;
           return out;
         },
         telemetry(json) {
@@ -6853,8 +6882,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-49ba2ae68de3e365.js';
-const wasm = await init({ module_or_path: './tendy-quest-49ba2ae68de3e365_bg.wasm' });
+import init, * as bindings from './tendy-quest-543d6abc364dc593.js';
+const wasm = await init({ module_or_path: './tendy-quest-543d6abc364dc593_bg.wasm' });
 
 
 window.wasmBindings = bindings;

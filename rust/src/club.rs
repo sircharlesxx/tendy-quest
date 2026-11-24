@@ -27,7 +27,7 @@ use crate::nate::{make_nate_materials, spawn_nate_rig};
 use crate::net::{CHAR_DEREK, CHAR_GLENN, CHAR_NATE, CHAR_STAN, CHAR_TJ, NetState};
 use crate::player::Player;
 use crate::shapes as sh;
-use crate::state::{CameraOrbit, GameState, PlatformBox, PlayerStats};
+use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
 use crate::tj::spawn_tj_rig;
 use crate::transition::{SceneTransition, sim_running};
 use crate::ui::{HelpPause, HudOverlay, gameplay_running};
@@ -71,6 +71,7 @@ impl Plugin for ClubPlugin {
                     update_club_seating.run_if(gameplay_running),
                     update_club_stations.run_if(gameplay_running),
                     update_club_dance_and_broke_warp,
+                    update_club_summon_squad,
                     update_club_mirror_and_hair,
                     emit_club_debug_telemetry,
                 )
@@ -2310,6 +2311,15 @@ struct ClubBrokeBanner;
 struct ClubWishBanner;
 
 #[derive(Component)]
+struct ClubSummonUi;
+
+#[derive(Component)]
+struct ClubSummonBtn;
+
+#[derive(Component)]
+struct ClubSummonText;
+
+#[derive(Component)]
 struct ClubDiscoBall;
 
 #[derive(Component)]
@@ -3179,6 +3189,47 @@ fn enter_club_play(
         node.display = Display::Flex;
         *vis = Visibility::Inherited;
     }
+
+    // Persistent top-right "Teleport Outside Players to Club [T]" control in ClubPlay
+    commands
+        .spawn((
+            LevelEntity,
+            ClubLevelEntity,
+            ClubSummonUi,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(134.0),
+                right: Val::Px(12.0),
+                display: Display::Flex,
+                ..default()
+            },
+            GlobalZIndex(10),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                ClubSummonBtn,
+                Button,
+                Node {
+                    padding: UiRect::axes(Val::Px(11.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(1.5)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.18, 0.12, 0.28, 0.86)),
+                BorderColor(Color::srgba(0.65, 0.55, 0.85, 0.65)),
+                BorderRadius::all(Val::Px(8.0)),
+            ))
+            .with_children(|btn| {
+                btn.spawn((
+                    ClubSummonText,
+                    Text::new("TELEPORT SQUAD TO CLUB [T]"),
+                    TextFont {
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
+        });
 
     commands.insert_resource(ClearColor(Color::srgb(0.02, 0.005, 0.05)));
     commands.insert_resource(AmbientLight {
@@ -4823,9 +4874,10 @@ fn animate_club_disco_and_dancers(
             * Quat::from_rotation_x(-0.7 + 0.4 * (t * 3.1 + arm.phase).cos());
     }
 
-    let local_char = net.local_char();
+    let claimed = net.claimed_char_mask();
     for (crew, mut tf, mut vis) in &mut crew_q {
-        *vis = if crew.char_id == local_char {
+        let is_claimed = crew.char_id <= 4 && (claimed & (1 << crew.char_id)) != 0;
+        *vis = if is_claimed {
             Visibility::Hidden
         } else {
             Visibility::Visible
@@ -6705,6 +6757,70 @@ fn emit_club_debug_telemetry(
         r_states.join(",")
     );
     set_club_telemetry(&json);
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn update_club_summon_squad(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut stats: ResMut<PlayerStats>,
+    help: Res<HelpPause>,
+    mut root_q: Query<&mut Node, With<ClubSummonUi>>,
+    mut btn_q: Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<ClubSummonBtn>>,
+    mut text_q: Query<&mut Text, With<ClubSummonText>>,
+    mut btn_was_pressed: Local<bool>,
+) {
+    let hidden = stats.club_modal_open || stats.club_dance_open || help.open;
+    for mut node in &mut root_q {
+        let want = if hidden { Display::None } else { Display::Flex };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    let sq = crate::audio::net_squad_info();
+    let outside_peers = sq[3].saturating_add(sq[4]);
+    let label = if outside_peers > 0 {
+        format!(
+            "TELEPORT {} PLAYER{} TO CLUB [T]",
+            outside_peers,
+            if outside_peers == 1 { "" } else { "S" }
+        )
+    } else {
+        "TELEPORT SQUAD TO CLUB (0 OUTSIDE) [T]".to_string()
+    };
+    for mut txt in &mut text_q {
+        if txt.0 != label {
+            txt.0 = label.clone();
+        }
+    }
+    let (want_bg, want_border) = if outside_peers > 0 {
+        (Color::srgb(0.76, 0.44, 0.08), Color::srgb(1.0, 0.88, 0.34))
+    } else {
+        (
+            Color::srgba(0.18, 0.12, 0.28, 0.86),
+            Color::srgba(0.65, 0.55, 0.85, 0.65),
+        )
+    };
+    let mut btn_down = false;
+    for (inter, mut bg, mut border) in &mut btn_q {
+        bg.0 = want_bg;
+        border.0 = want_border;
+        if !hidden && *inter == Interaction::Pressed {
+            btn_down = true;
+        }
+    }
+    let btn_tapped = btn_down && !*btn_was_pressed;
+    *btn_was_pressed = btn_down;
+    let pressed = !hidden && (keys.just_pressed(KeyCode::KeyT) || btn_tapped);
+    if pressed {
+        crate::audio::net_event(crate::net::EVENT_COASTER_WARP_ALL, 2);
+        play_sfx("portal_suck");
+        stats.hint_text = if outside_peers > 0 {
+            "PULLED OUTSIDE SQUAD PLAYERS INTO THE VELVET DISCO CLUB!".to_string()
+        } else {
+            "SENT CLUB TELEPORT TO CEDAR RAPIDS & CASINO!".to_string()
+        };
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    }
 }
 
 fn exit_club_play(
