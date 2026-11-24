@@ -671,6 +671,19 @@
           mkOsc("sawtooth", 390, 210, 0.32, 0.18);
           return true;
         }
+        if (name === "toilet_flush") {
+          mkNoise(1.4, 0.28, 900);
+          mkNoise(1.8, 0.22, 420);
+          mkOsc("sine", 320, 68, 1.35, 0.22);
+          mkOsc("triangle", 190, 52, 1.55, 0.16);
+          mkOsc("sine", 540, 140, 0.75, 0.10);
+          return true;
+        }
+        if (name === "powder_sniff") {
+          mkNoise(0.14, 0.14, 2400);
+          mkOsc("sine", 260, 480, 0.10, 0.08);
+          return true;
+        }
         if (name === "beer_sip") {
           mkOsc("sine", 340, 620, 0.14, 0.16);
           mkOsc("triangle", 980, 1420, 0.08, 0.12);
@@ -3304,7 +3317,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-f9a2e307cefcc20e.js" crossorigin="anonymous" integrity="sha384-hM9SyUcDCn1IxmdiKSxIADVs/d01k/cLvrePDUyj1bhAtWuEaZS/bmnuXiveLTFX"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-f9a2e307cefcc20e_bg.wasm" crossorigin="anonymous" integrity="sha384-JGN/4V6Jz9CcehQWKSu7BuNVgo+UWrZx8uRTaD3x6Ljhbt5yo3dKmYXplJzuMWxO" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-76c5b4ba2b463b5d.js" crossorigin="anonymous" integrity="sha384-wMjGx+mPe3PmEdbTZZed9okCo7kKRMfokrh1EUzOTEA2lr9UPMZnMqydfO77PKVq"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-76c5b4ba2b463b5d_bg.wasm" crossorigin="anonymous" integrity="sha384-3yA8SbXuMrdJZP7H5qTlpdw63D85nI4Wj39QoIdwY2BaEfatDjF/TYA1bchvXiqA" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -6894,8 +6907,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-f9a2e307cefcc20e.js';
-const wasm = await init({ module_or_path: './tendy-quest-f9a2e307cefcc20e_bg.wasm' });
+import init, * as bindings from './tendy-quest-76c5b4ba2b463b5d.js';
+const wasm = await init({ module_or_path: './tendy-quest-76c5b4ba2b463b5d_bg.wasm' });
 
 
 window.wasmBindings = bindings;

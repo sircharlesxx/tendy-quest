@@ -620,7 +620,7 @@ pub fn camera_mouse_look(
         }
         return;
     }
-    if stats.casino_open || stats.arcade_open || stats.bartender_open || stats.char_select_open || stats.club_dance_open {
+    if stats.casino_open || stats.arcade_open || stats.bartender_open || stats.char_select_open || stats.club_dance_open || stats.club_cutscene_open {
         return;
     }
     if let Ok(mut window) = window_q.get_single_mut() {
@@ -848,6 +848,7 @@ pub fn player_movement(
         || stats.bartender_open
         || stats.char_select_open
         || stats.club_dance_open
+        || stats.club_cutscene_open
         || stats.club_modal_open
         || stats.club_seated
     {
@@ -1595,7 +1596,7 @@ pub fn update_camera(
     mut cam_q: Query<(&mut Transform, &mut Projection), (With<Camera3d>, Without<Player>, Without<PlatformBox>)>,
 ) {
     // When seated at a Tendy Palace Casino game station, casino.rs drives the live 3D station cam.
-    if stats.casino_open || stats.arcade_open || stats.club_dance_open {
+    if stats.casino_open || stats.arcade_open || stats.club_dance_open || stats.club_cutscene_open {
         return;
     }
     // The camera frames the drawn body (smaller than the gameplay scale at human size in the

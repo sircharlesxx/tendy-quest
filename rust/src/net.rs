@@ -1090,6 +1090,7 @@ fn receive_remote_states(
                             stats.phone_open = false;
                             stats.club_modal_open = false;
                             stats.club_dance_open = false;
+                            stats.club_cutscene_open = false;
                             stats.driving_car = None;
                             stats.riding_scooter = None;
                             stats.riding_wheel = false;

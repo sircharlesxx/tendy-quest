@@ -71,6 +71,7 @@ impl Plugin for ClubPlugin {
                     update_club_seating.run_if(gameplay_running),
                     update_club_stations.run_if(gameplay_running),
                     update_club_dance_and_broke_warp,
+                    update_club_flush_cutscene,
                     update_club_summon_squad,
                     update_club_mirror_and_hair,
                     emit_club_debug_telemetry,
@@ -2089,7 +2090,46 @@ const CLUB_POWDER_COST: u32 = 100_000;
 const BACK_ROOM_X: [(f32, f32); 3] = [(-14.0, -3.5), (-3.5, 7.0), (7.0, 17.5)];
 const BACK_ROOM_NAMES: [&str; 3] = ["ROOM 1 - AMETHYST", "ROOM 2 - RUBY", "ROOM 3 - EMERALD"];
 const MENS_SAGE_LOCAL: Vec3 = Vec3::new(-20.0, 0.0, -27.2);
+const MENS_NORTH_TOILET_LOCAL: Vec3 = Vec3::new(-28.7, 0.42, -26.4);
+const SAGE_VISION_RANGE: f32 = 12.2;
+const SAGE_VISION_HALF_ANGLE: f32 = 0.56;
 const LOBBY_SEAT_LOCAL: Vec3 = Vec3::new(0.5, 0.14, 6.5);
+
+fn club_char_profile(char_id: u8) -> (&'static str, &'static str) {
+    match char_id {
+        CHAR_STAN => ("Stan", "stan"),
+        CHAR_NATE => ("Nate", "nate"),
+        CHAR_GLENN => ("Glenn", "glenn"),
+        CHAR_TJ => ("TJ", "tj"),
+        _ => ("Derek", "derek"),
+    }
+}
+
+fn lerp_angle(a: f32, b: f32, t: f32) -> f32 {
+    let diff = (b - a + PI).rem_euclid(TAU) - PI;
+    a + diff * t.clamp(0.0, 1.0)
+}
+
+fn segments_intersect_2d(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+    let cross = |p: Vec2, q: Vec2, r: Vec2| (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    let d1 = cross(c, d, a);
+    let d2 = cross(c, d, b);
+    let d3 = cross(a, b, c);
+    let d4 = cross(a, b, d);
+    ((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0))
+        && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))
+}
+
+fn stall_divider_blocks_los(sage_xz: Vec2, p_local: Vec2) -> bool {
+    [-28.2_f32, -24.6, -21.0].into_iter().any(|sz| {
+        segments_intersect_2d(
+            sage_xz,
+            p_local,
+            Vec2::new(-29.7, sz),
+            Vec2::new(-27.0, sz),
+        )
+    })
+}
 
 fn back_room_center_x(ri: usize) -> f32 {
     let (x0, x1) = BACK_ROOM_X[ri.min(2)];
@@ -2114,10 +2154,6 @@ fn room_at_local(local: Vec2) -> Option<usize> {
 
 fn in_mens_room_local(local: Vec2) -> bool {
     local.x <= -18.2 && local.y <= -15.2
-}
-
-fn in_stall_cover_local(local: Vec2) -> bool {
-    local.x < -27.2 && local.y > -28.6 && local.y < -20.6
 }
 
 fn make_vision_cone_mesh(range: f32, half_angle: f32, segments: usize) -> Mesh {
@@ -2217,7 +2253,16 @@ enum DerekQuestPhase {
         dancer_idx: usize,
         room_idx: usize,
         suspicion: f32,
-        caught_cd: f32,
+        ingest_progress: f32,
+        sniff_sfx_cd: f32,
+        ingesting_now: bool,
+    },
+    CaughtFlushCutscene {
+        dancer_idx: usize,
+        stage: u8,
+        stage_t: f32,
+        total_t: f32,
+        voice_fired: bool,
     },
     PsychedelicRace {
         dancer_idx: usize,
@@ -2256,8 +2301,11 @@ struct ClubState {
     modal: Option<ClubModalKind>,
     modal_cd: f32,
     derek_quest: DerekQuestPhase,
+    sage_pos: Vec2,
     sage_yaw: f32,
     sage_sees_derek: bool,
+    sage_invade_phase: f32,
+    sage_taunt_cd: f32,
     escort_dancer: Option<usize>,
 }
 
@@ -2390,6 +2438,26 @@ struct ClubSageVisionCone {
 
 #[derive(Component)]
 struct ClubEscortBeacon;
+
+#[derive(Component)]
+struct ClubFlushProp;
+
+#[derive(Component)]
+struct ClubFlushBaggy;
+
+#[derive(Component)]
+struct ClubFlushVortex;
+
+#[derive(Component)]
+struct ClubFlushSplash {
+    idx: usize,
+}
+
+#[derive(Component)]
+struct ClubFlushBanner;
+
+#[derive(Component)]
+struct ClubFlushBannerText;
 
 #[derive(Component)]
 struct ClubHairStrand {
@@ -3131,7 +3199,7 @@ fn spawn_wise_attendant(
         ClubSageVisionCone {
             mat: cone_mat.clone(),
         },
-        Mesh3d(meshes.add(make_vision_cone_mesh(10.5, 0.44, 16))),
+        Mesh3d(meshes.add(make_vision_cone_mesh(SAGE_VISION_RANGE, SAGE_VISION_HALF_ANGLE, 20))),
         MeshMaterial3d(cone_mat),
         Transform::from_translation(world_pos + Vec3::new(0.0, 0.09, 0.0))
             .with_rotation(Quat::from_rotation_y(yaw)),
@@ -3171,6 +3239,7 @@ fn enter_club_play(
     stats.arcade_open = false;
     stats.bartender_open = false;
     stats.club_dance_open = false;
+    stats.club_cutscene_open = false;
     stats.club_modal_open = false;
     stats.club_seated = false;
     stats.club_psychedelic_timer = 0.0;
@@ -3179,6 +3248,7 @@ fn enter_club_play(
     stats.riding_wheel = false;
     stats.phone_open = false;
     *club = ClubState {
+        sage_pos: Vec2::new(MENS_SAGE_LOCAL.x, MENS_SAGE_LOCAL.z),
         sage_yaw: -0.92,
         ..default()
     };
@@ -4234,9 +4304,9 @@ fn enter_club_play(
             ClubLevelEntity,
             Mesh3d(box_m.clone()),
             MeshMaterial3d(stall_mat.clone()),
-            Transform::from_translation(orig + Vec3::new(-28.6, 1.4, sz)).with_scale(Vec3::new(2.2, 2.8, 0.14)),
+            Transform::from_translation(orig + Vec3::new(-28.35, 1.4, sz)).with_scale(Vec3::new(2.7, 2.8, 0.14)),
             PlatformBox {
-                half_extents: Vec3::new(1.1, 1.4, 0.07),
+                half_extents: Vec3::new(1.35, 1.4, 0.07),
             },
         ));
     }
@@ -4891,7 +4961,7 @@ fn animate_club_bathrooms_and_sage(
     time: Res<Time<Real>>,
     mut club: ResMut<ClubState>,
     mut sage_q: Query<(&ClubWiseAttendant, &mut Transform)>,
-    mut orb_q: Query<(&ClubWishOrb, &mut Transform), Without<ClubWiseAttendant>>,
+    mut orb_q: Query<(&ClubWishOrb, &mut Transform, &mut Visibility), Without<ClubWiseAttendant>>,
     mut water_q: Query<
         (&ClubSinkWater, &mut Transform, &mut Visibility),
         (Without<ClubWiseAttendant>, Without<ClubWishOrb>),
@@ -4933,20 +5003,36 @@ fn animate_club_bathrooms_and_sage(
     >,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let dt = time.delta_secs().min(0.10);
     let t = time.elapsed_secs();
+    let orig = CLUB_LEVEL_ORIGIN;
+    let in_flush_cutscene = matches!(club.derek_quest, DerekQuestPhase::CaughtFlushCutscene { .. });
     let derek_stealth = matches!(club.derek_quest, DerekQuestPhase::SneakToMensRoom { .. });
-    club.sage_yaw = if derek_stealth {
-        -0.98 + (t * 0.78).sin() * 1.12
-    } else {
-        -0.92 + (t * 1.4).sin() * 0.14
-    };
 
-    // Kind Wise Attendant gentle bow & joyful bob when granting a wish (or sweeping look during Derek stealth)
-    let wish_boost = if club.wish_timer > 0.0 { 1.0 } else { 0.0 };
-    for (sage, mut tf) in &mut sage_q {
-        let bob = (t * (2.4 + wish_boost * 6.0)).sin().abs() * (0.04 + wish_boost * 0.09);
-        tf.translation = sage.base + Vec3::new(0.0, bob, 0.0);
-        tf.rotation = Quat::from_rotation_y(club.sage_yaw);
+    if !in_flush_cutscene {
+        if !derek_stealth {
+            let home_xz = Vec2::new(MENS_SAGE_LOCAL.x, MENS_SAGE_LOCAL.z);
+            let to_home = home_xz - club.sage_pos;
+            if to_home.length() > 0.04 {
+                club.sage_pos += to_home.normalize() * (3.2 * dt).min(to_home.length());
+            } else {
+                club.sage_pos = home_xz;
+            }
+            club.sage_yaw = lerp_angle(club.sage_yaw, -0.92 + (t * 1.4).sin() * 0.14, dt * 6.0);
+        }
+
+        let wish_boost = if club.wish_timer > 0.0 { 1.0 } else { 0.0 };
+        let shuffle_boost = if derek_stealth { 1.8 } else { 1.0 };
+        for (sage, mut tf) in &mut sage_q {
+            let bob = (t * (2.4 + wish_boost * 6.0) * shuffle_boost).sin().abs()
+                * (0.04 + wish_boost * 0.09);
+            tf.translation = Vec3::new(
+                orig.x + club.sage_pos.x,
+                sage.base.y + bob,
+                orig.z + club.sage_pos.y,
+            );
+            tf.rotation = Quat::from_rotation_y(club.sage_yaw);
+        }
     }
 
     for (cone, mut tf, mut vis) in &mut cone_q {
@@ -4955,23 +5041,37 @@ fn animate_club_bathrooms_and_sage(
         } else {
             Visibility::Hidden
         };
+        tf.translation = Vec3::new(
+            orig.x + club.sage_pos.x,
+            orig.y + 0.09,
+            orig.z + club.sage_pos.y,
+        );
         tf.rotation = Quat::from_rotation_y(club.sage_yaw);
         if derek_stealth {
             if let Some(mat) = materials.get_mut(&cone.mat) {
                 if club.sage_sees_derek {
-                    mat.base_color = Color::srgba(1.0, 0.14, 0.18, 0.50);
-                    mat.emissive = LinearRgba::new(2.6, 0.15, 0.15, 1.0);
+                    mat.base_color = Color::srgba(1.0, 0.14, 0.18, 0.56);
+                    mat.emissive = LinearRgba::new(2.8, 0.15, 0.15, 1.0);
                 } else {
-                    mat.base_color = Color::srgba(0.20, 0.95, 0.78, 0.28);
-                    mat.emissive = LinearRgba::new(0.25, 1.35, 1.05, 1.0);
+                    mat.base_color = Color::srgba(0.20, 0.95, 0.78, 0.30);
+                    mat.emissive = LinearRgba::new(0.25, 1.45, 1.15, 1.0);
                 }
             }
         }
     }
 
-    for (orb, mut tf) in &mut orb_q {
+    let show_wish_orb = matches!(club.derek_quest, DerekQuestPhase::None);
+    let wish_boost = if club.wish_timer > 0.0 { 1.0 } else { 0.0 };
+    for (orb, mut tf, mut vis) in &mut orb_q {
+        *vis = if show_wish_orb {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
         let spin_rad = if club.wish_timer > 0.0 { 0.26 } else { 0.08 };
+        let off = Vec3::new(club.sage_pos.x - MENS_SAGE_LOCAL.x, 0.0, club.sage_pos.y - MENS_SAGE_LOCAL.z);
         tf.translation = orb.base
+            + off
             + Vec3::new(
                 (t * 3.0 + orb.phase).cos() * spin_rad,
                 (t * 3.6 + orb.phase).sin() * 0.14 + wish_boost * 0.22,
@@ -5057,6 +5157,7 @@ fn spawn_club_modal_ui(
     modal: ClubModalKind,
     dancer_name: &str,
     assigned_room: usize,
+    char_name: &str,
 ) {
 
     let (title, body, border_col, buttons): (String, String, Color, Vec<(String, Color, ClubModalAction)>) =
@@ -5103,31 +5204,39 @@ fn spawn_club_modal_ui(
                     }.to_string()
                 } else {
                     format!(
-                        "\"Hey TJ! Have you got 50 Tendy Wendies? Come into {} with me!\"",
+                        "\"Hey TJ! Have you got 50 Tendy Wendies? Come into {} with me... or do you want the secret stuff?\"",
                         BACK_ROOM_NAMES[assigned_room]
                     )
                 };
+                let mut btns = vec![(
+                    "NO! I JUST WANT TO DRINK MY BEER AND WATCH! [ENTER / E]".to_string(),
+                    Color::srgb(0.58, 0.16, 0.22),
+                    ClubModalAction::TjRefuse,
+                )];
+                if !seated {
+                    btns.push((
+                        "WAIT... GOT MYSTERIOUS WHITE POWDER? (100,000 TW) [2 / Y]".to_string(),
+                        Color::srgb(0.62, 0.18, 0.78),
+                        ClubModalAction::DerekBuyPowder,
+                    ));
+                }
                 (
                     format!("{} BUGS TJ FOR A DANCE!", dancer_name),
                     ask,
                     Color::srgb(0.36, 0.96, 0.48),
-                    vec![(
-                        "NO! I JUST WANT TO DRINK MY BEER AND WATCH! [ENTER / E]".to_string(),
-                        Color::srgb(0.58, 0.16, 0.22),
-                        ClubModalAction::TjRefuse,
-                    )],
+                    btns,
                 )
             }
             ClubModalKind::DerekPowderOffer { room_idx, .. } => (
                 format!("{} ({}): SECRET BACK ROOM OFFER", dancer_name, BACK_ROOM_NAMES[room_idx]),
                 format!(
-                    "\"Wait a second, Derek... before your dance, want some Mysterious Powder for 100,000 Tendy Wendies? You have to ingest it in the Men's Room WITHOUT letting that wise little attendant make eye contact with you, then make it back to {} within ONE MINUTE!\"",
-                    BACK_ROOM_NAMES[room_idx]
+                    "\"Wait a second, {}... before your dance, want some Mysterious White Powder for 100,000 Tendy Wendies? You have to sneak into the Men's Room, HOLD [F/E] to use it without that nosy little attendant catching you, then make it back to {} within ONE MINUTE!\"",
+                    char_name, BACK_ROOM_NAMES[room_idx]
                 ),
                 Color::srgb(1.0, 0.84, 0.22),
                 vec![
                     (
-                        "BUY MYSTERIOUS POWDER (100,000 TW) [1 / Y]".to_string(),
+                        "BUY MYSTERIOUS WHITE POWDER (100,000 TW) [1 / Y]".to_string(),
                         Color::srgb(0.62, 0.18, 0.78),
                         ClubModalAction::DerekBuyPowder,
                     ),
@@ -5221,6 +5330,7 @@ fn spawn_club_modal_ui(
 fn update_club_modals(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    net: Res<NetState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
     mut roamer_q: Query<(&mut ClubRoamingDancer, &Transform)>,
@@ -5230,6 +5340,7 @@ fn update_club_modals(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let (char_name, char_voice) = club_char_profile(net.local_char());
     let Some(modal) = club.modal else {
         if stats.club_modal_open {
             set_touch_playing(true);
@@ -5257,7 +5368,7 @@ fn update_club_modals(
             .find(|(r, _)| r.idx == d_idx)
             .map(|(r, _)| (r.name, r.assigned_room))
             .unwrap_or(("DESTINY", 0));
-        spawn_club_modal_ui(&mut commands, modal, d_name, d_room);
+        spawn_club_modal_ui(&mut commands, modal, d_name, d_room, char_name);
     }
 
     let mut chosen: Option<ClubModalAction> = None;
@@ -5285,7 +5396,15 @@ fn update_club_modals(
                     None
                 }
             }
-            ClubModalKind::TjRefusal { .. } => (enter_fe || esc).then_some(ClubModalAction::TjRefuse),
+            ClubModalKind::TjRefusal { seated, .. } => {
+                if !seated && (keys.just_pressed(KeyCode::Digit2) || keys.just_pressed(KeyCode::KeyY)) {
+                    Some(ClubModalAction::DerekBuyPowder)
+                } else if enter_fe || esc {
+                    Some(ClubModalAction::TjRefuse)
+                } else {
+                    None
+                }
+            }
             ClubModalKind::DerekPowderOffer { .. } => {
                 if keys.just_pressed(KeyCode::Digit1) || keys.just_pressed(KeyCode::KeyY) {
                     Some(ClubModalAction::DerekBuyPowder)
@@ -5423,20 +5542,29 @@ fn update_club_modals(
         }
         ClubModalAction::DerekBuyPowder => {
             if stats.spend_tendy_wendies(CLUB_POWDER_COST) {
+                let fallback_room = roamer_q
+                    .iter()
+                    .find(|(r, _)| r.idx == d_idx)
+                    .map(|(r, _)| r.assigned_room)
+                    .unwrap_or(0);
                 let room_idx = match modal {
                     ClubModalKind::DerekPowderOffer { room_idx, .. } => room_idx,
-                    _ => 0,
+                    _ => fallback_room,
                 };
                 play_sfx("chip_bet");
                 play_sfx("powerup");
                 club.modal = None;
                 club.modal_cd = 0.30;
                 stats.club_modal_open = false;
+                club.sage_invade_phase = 0.0;
+                club.sage_taunt_cd = 1.5;
                 club.derek_quest = DerekQuestPhase::SneakToMensRoom {
                     dancer_idx: d_idx,
                     room_idx,
                     suspicion: 0.0,
-                    caught_cd: 0.0,
+                    ingest_progress: 0.0,
+                    sniff_sfx_cd: 0.0,
+                    ingesting_now: false,
                 };
                 for (mut r, _) in &mut roamer_q {
                     if r.idx == d_idx {
@@ -5444,18 +5572,19 @@ fn update_club_modals(
                     }
                 }
                 speak_voice(
-                    "Heh... got the mysterious powder. Gotta use it in the Men's Room without the wise little guy making eye contact!",
-                    "derek",
+                    "Heh... got the mysterious white powder. Gotta hold it in the Men's Room without that nosy little attendant catching me!",
+                    char_voice,
                 );
                 stats.hint_text = format!(
-                    "GO TO MEN'S ROOM (FRONT-LEFT), AVOID ATTENDANT EYE CONTACT, INGEST POWDER & RETURN TO {} WITHIN 60s!",
+                    "{}: SNEAK INTO MEN'S ROOM, HOLD [F/E] IN STALL COVER AWAY FROM ATTENDANT, THEN RACE TO {} (60s)!",
+                    char_name.to_uppercase(),
                     BACK_ROOM_NAMES[room_idx]
                 );
                 stats.hint_bump = stats.hint_bump.wrapping_add(1);
             } else {
                 play_sfx("hit");
                 stats.hint_text = format!(
-                    "Need 100,000 TW for Mysterious Powder! (You have {} TW -- choose Normal Dance or hit the Casino!)",
+                    "Need 100,000 TW for Mysterious White Powder! (You have {} TW -- choose Normal Dance or hit the Casino!)",
                     stats.tendy_wendies
                 );
                 stats.hint_bump = stats.hint_bump.wrapping_add(1);
@@ -5493,25 +5622,152 @@ fn update_club_modals(
     }
 }
 
-fn catch_derek_stealth(
-    p_tf: &mut Transform,
-    orbit: &mut CameraOrbit,
+#[allow(clippy::too_many_arguments)]
+fn trigger_caught_flush_cutscene(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    club: &mut ClubState,
     stats: &mut PlayerStats,
-    suspicion: &mut f32,
-    caught_cd: &mut f32,
+    p_tf: &mut Transform,
+    dancer_idx: usize,
+    local_char: u8,
 ) {
-    *suspicion = 0.0;
-    *caught_cd = 1.8;
+    let orig = CLUB_LEVEL_ORIGIN;
+    let (char_name, _) = club_char_profile(local_char);
+    stats.club_cutscene_open = true;
+    stats.club_psychedelic_timer = 0.0;
+    stats.shake_request = stats.shake_request.max(0.35);
+    club.sage_sees_derek = false;
+    club.modal = None;
+    stats.club_modal_open = false;
     play_sfx("caught_alarm");
-    stats.shake_request = stats.shake_request.max(0.32);
-    speak_voice(
-        "Aha! Young Derek, my wise eyes see everything! No mysterious powder under my watch -- wait until I look away or step into a stall!",
-        "wise_midget",
+    set_touch_playing(false);
+
+    club.sage_pos = Vec2::new(-26.4, -26.1);
+    club.sage_yaw = 1.6_f32.atan2(0.5); // Face ESE toward player
+    p_tf.translation = orig + Vec3::new(-24.8, 0.0, -25.6);
+    p_tf.look_at(orig + Vec3::new(-26.4, 0.0, -26.1), Vec3::Y);
+
+    let baggy_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.99, 1.0),
+        emissive: LinearRgba::new(0.85, 0.88, 1.0, 1.0),
+        ..default()
+    });
+    let tie_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.25),
+        emissive: LinearRgba::new(1.2, 0.9, 0.2, 1.0),
+        ..default()
+    });
+    let vortex_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.18, 0.88, 1.0, 0.85),
+        emissive: LinearRgba::new(0.35, 1.95, 2.4, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let splash_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.65, 0.96, 1.0),
+        emissive: LinearRgba::new(0.45, 1.4, 1.8, 1.0),
+        ..default()
+    });
+
+    // Confiscated Mysterious White Powder Baggy
+    commands
+        .spawn((
+            ClubLevelEntity,
+            ClubFlushProp,
+            ClubFlushBaggy,
+            Mesh3d(meshes.add(Cuboid::new(0.24, 0.28, 0.11))),
+            MeshMaterial3d(baggy_mat),
+            Transform::from_translation(orig + Vec3::new(-26.12, 0.88, -26.02)),
+            Visibility::Visible,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.06, 0.06))),
+                MeshMaterial3d(tie_mat),
+                Transform::from_xyz(0.0, 0.16, 0.0),
+            ));
+        });
+
+    // Swirling Toilet Vortex inside North Toilet bowl (hidden until Stage 2 flush)
+    let toilet_top = orig + MENS_NORTH_TOILET_LOCAL + Vec3::new(0.0, 0.30, 0.0);
+    commands.spawn((
+        ClubLevelEntity,
+        ClubFlushProp,
+        ClubFlushVortex,
+        Mesh3d(meshes.add(Cylinder::new(0.27, 0.06))),
+        MeshMaterial3d(vortex_mat),
+        Transform::from_translation(toilet_top),
+        Visibility::Hidden,
+    ));
+
+    let splash_mesh = meshes.add(Sphere::new(0.045));
+    for si in 0..8_usize {
+        commands.spawn((
+            ClubLevelEntity,
+            ClubFlushProp,
+            ClubFlushSplash { idx: si },
+            Mesh3d(splash_mesh.clone()),
+            MeshMaterial3d(splash_mat.clone()),
+            Transform::from_translation(toilet_top),
+            Visibility::Hidden,
+        ));
+    }
+
+    // Bottom Cutscene Subtitle Banner
+    commands
+        .spawn((
+            ClubLevelEntity,
+            ClubFlushBanner,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(28.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            GlobalZIndex(28),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    max_width: Val::Px(640.0),
+                    padding: UiRect::axes(Val::Px(20.0), Val::Px(12.0)),
+                    border: UiRect::all(Val::Px(2.5)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.04, 0.02, 0.10, 0.94)),
+                BorderColor(Color::srgb(0.25, 0.92, 1.0)),
+                BorderRadius::all(Val::Px(10.0)),
+            ))
+            .with_children(|box_node| {
+                box_node.spawn((
+                    ClubFlushBannerText,
+                    Text::new(format!(
+                        "WISE ATTENDANT: \"{}... hand over that mysterious white powder right now!\"",
+                        char_name
+                    )),
+                    TextFont {
+                        font_size: 17.0,
+                        ..default()
+                    },
+                    TextColor(Color::srgb(1.0, 0.95, 0.85)),
+                ));
+            });
+        });
+
+    club.derek_quest = DerekQuestPhase::CaughtFlushCutscene {
+        dancer_idx,
+        stage: 0,
+        stage_t: 0.0,
+        total_t: 0.0,
+        voice_fired: false,
+    };
+    stats.hint_text = format!(
+        "CAUGHT RED-HANDED! The Wise Attendant is flushing {}'s powder down the toilet!",
+        char_name
     );
-    p_tf.translation = CLUB_LEVEL_ORIGIN + Vec3::new(-22.6, 0.0, -13.0);
-    orbit.snap_follow = true;
-    stats.hint_text =
-        "CAUGHT! The Wise Attendant saw your eyes! Wait until his cone turns away or hide inside a West stall!".to_string();
     stats.hint_bump = stats.hint_bump.wrapping_add(1);
 }
 
@@ -5522,7 +5778,6 @@ fn update_club_roamers_and_quests(
     net: Res<NetState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
-    mut orbit: ResMut<CameraOrbit>,
     mut player_q: Query<&mut Transform, With<Player>>,
     mut roamer_q: Query<(&mut ClubRoamingDancer, &mut Transform), Without<Player>>,
     mut beacon_q: Query<(&mut Transform, &mut Visibility), (With<ClubEscortBeacon>, Without<Player>, Without<ClubRoamingDancer>)>,
@@ -5544,8 +5799,10 @@ fn update_club_roamers_and_quests(
     };
     let p_local = Vec2::new(p_tf.translation.x - orig.x, p_tf.translation.z - orig.z);
     let local_char = net.local_char();
+    let (char_name, char_voice) = club_char_profile(local_char);
     let busy = stats.club_modal_open
         || stats.club_dance_open
+        || stats.club_cutscene_open
         || club.modal_cd > 0.0
         || club.escort_dancer.is_some();
 
@@ -5584,7 +5841,8 @@ fn update_club_roamers_and_quests(
         }
     }
 
-    // 3. Derek Quest State Machine (Men's Room Stealth & 1-Minute Psychedelic Race)
+    // 3. White Powder Stealth & Flush Cutscene State Machine (available to all characters)
+    let t = time.elapsed_secs();
     let quest_snapshot = club.derek_quest;
     match quest_snapshot {
         DerekQuestPhase::None => {
@@ -5595,46 +5853,119 @@ fn update_club_roamers_and_quests(
             dancer_idx,
             room_idx,
             mut suspicion,
-            mut caught_cd,
+            ingest_progress,
+            sniff_sfx_cd,
+            ingesting_now,
         } => {
-            caught_cd = (caught_cd - dt).max(0.0);
-            let sage_xz = Vec2::new(MENS_SAGE_LOCAL.x, MENS_SAGE_LOCAL.z);
             let in_mens = in_mens_room_local(p_local);
-            let in_cover = in_stall_cover_local(p_local);
-            let to_p = p_local - sage_xz;
-            let dist = to_p.length();
+            club.sage_invade_phase += dt;
+            club.sage_taunt_cd = (club.sage_taunt_cd - dt).max(0.0);
+
+            let cycle = club.sage_invade_phase % 16.0;
+            let in_stall_cover = in_mens && p_local.x <= -27.05 && p_local.y <= -21.1 && p_local.y >= -28.1;
+            let (base_target, base_yaw) = if cycle < 4.0 {
+                if in_mens && !in_stall_cover {
+                    let stalk = Vec2::new(
+                        (p_local.x + 2.4).clamp(-25.2, -19.5),
+                        p_local.y.clamp(-27.2, -17.0),
+                    );
+                    let to_me = p_local - club.sage_pos;
+                    let aim = if to_me.length_squared() > 0.04 {
+                        to_me.x.atan2(to_me.y)
+                    } else {
+                        -FRAC_PI_2
+                    };
+                    (stalk, aim + (t * 2.2).sin() * 0.55)
+                } else if in_mens {
+                    // Watches doorway & urinals without X-ray camping North Stall
+                    (Vec2::new(-22.8, -19.0), 0.72 + (t * 1.6).sin() * 0.42)
+                } else {
+                    (Vec2::new(-23.0, -21.5), (t * 1.4).sin() * 0.75)
+                }
+            } else if cycle < 7.0 {
+                // North Stall intrusive peek straight West
+                (Vec2::new(-26.15, -26.4), -FRAC_PI_2 + (t * 2.4).sin() * 0.28)
+            } else if cycle < 10.0 {
+                // South Stall intrusive peek straight West
+                (Vec2::new(-26.15, -22.8), -FRAC_PI_2 + (t * 2.4).sin() * 0.28)
+            } else {
+                // Sink / Towel turnaround (facing NE toward mirror/sink away from stalls)
+                (Vec2::new(-21.2, -27.6), PI - 0.35 + (t * 1.4).sin() * 0.14)
+            };
+
+            let to_player = p_local - club.sage_pos;
+            let dist = to_player.length();
+            let sound_alert = in_mens && ingesting_now && dist < 5.2;
+            let want_yaw = if sound_alert && to_player.length_squared() > 0.04 {
+                to_player.x.atan2(to_player.y)
+            } else {
+                base_yaw
+            };
+            let move_spd = if sound_alert { 4.4 } else { 3.5 };
+            let to_target = base_target - club.sage_pos;
+            if to_target.length() > 0.06 {
+                club.sage_pos += to_target.normalize() * (move_spd * dt).min(to_target.length());
+            }
+            club.sage_pos = club.sage_pos.clamp(Vec2::new(-26.7, -28.2), Vec2::new(-19.0, -16.0));
+            club.sage_yaw = lerp_angle(club.sage_yaw, want_yaw, dt * if sound_alert { 7.5 } else { 4.5 });
+
+            if in_mens && club.sage_taunt_cd <= 0.0 {
+                club.sage_taunt_cd = 5.2;
+                let line = match ((club.sage_invade_phase / 5.2) as usize) % 4 {
+                    0 => format!("Hmm... what are you doing lurking in my bathroom, {}?", char_name),
+                    1 => "Excuse me! Do I hear rustling in those stalls? No powder in my restroom!".to_string(),
+                    2 => format!("Keep both hands where I can see them, {}!", char_name),
+                    _ => "Just checking the stalls... checking the mirror... always watching!".to_string(),
+                };
+                speak_voice(&line, "wise_midget");
+            }
+
+            let to_p = p_local - club.sage_pos;
+            let cur_dist = to_p.length();
             let sage_fwd = Vec2::new(club.sage_yaw.sin(), club.sage_yaw.cos());
-            let ang_cos = if dist > 0.2 {
-                (to_p / dist).dot(sage_fwd)
+            let ang_cos = if cur_dist > 0.2 {
+                (to_p / cur_dist).dot(sage_fwd)
             } else {
                 1.0
             };
-            let sees = in_mens
-                && caught_cd <= 0.0
-                && !in_cover
-                && dist < 10.5
-                && ang_cos > 0.44_f32.cos();
+            let blocked = stall_divider_blocks_los(club.sage_pos, p_local);
+            let in_cone = cur_dist < SAGE_VISION_RANGE && ang_cos > SAGE_VISION_HALF_ANGLE.cos();
+            let too_close = cur_dist < 1.45;
+            let sees = in_mens && !blocked && (in_cone || too_close);
             club.sage_sees_derek = sees;
+
             if sees {
-                suspicion = (suspicion + dt * 0.85).min(1.0);
-                if suspicion >= 1.0 {
-                    catch_derek_stealth(
-                        &mut p_tf,
-                        &mut orbit,
-                        &mut stats,
-                        &mut suspicion,
-                        &mut caught_cd,
-                    );
-                }
+                let rate = if ingesting_now { 3.0 } else { 0.95 };
+                suspicion = (suspicion + dt * rate).min(1.0);
             } else {
-                suspicion = (suspicion - dt * 0.65).max(0.0);
+                suspicion = (suspicion - dt * 0.30).max(0.0);
             }
-            club.derek_quest = DerekQuestPhase::SneakToMensRoom {
-                dancer_idx,
-                room_idx,
-                suspicion,
-                caught_cd,
-            };
+
+            if suspicion >= 1.0 {
+                trigger_caught_flush_cutscene(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    &mut club,
+                    &mut stats,
+                    &mut p_tf,
+                    dancer_idx,
+                    local_char,
+                );
+            } else {
+                club.derek_quest = DerekQuestPhase::SneakToMensRoom {
+                    dancer_idx,
+                    room_idx,
+                    suspicion,
+                    ingest_progress,
+                    sniff_sfx_cd,
+                    ingesting_now,
+                };
+            }
+        }
+        DerekQuestPhase::CaughtFlushCutscene { .. } => {
+            club.sage_sees_derek = false;
+            stats.club_psychedelic_timer = 0.0;
         }
         DerekQuestPhase::PsychedelicRace {
             dancer_idx,
@@ -5651,7 +5982,7 @@ fn update_club_roamers_and_quests(
                 if entered == room_idx {
                     club.derek_quest = DerekQuestPhase::None;
                     stats.club_psychedelic_timer = 0.0;
-                    speak_voice("Made it back to the right room! Worth every Tendy Wendy!", "derek");
+                    speak_voice("Made it back to the right room! Worth every Tendy Wendy!", char_voice);
                     start_back_room_private_dance(
                         &mut commands,
                         &mut stats,
@@ -5684,8 +6015,8 @@ fn update_club_roamers_and_quests(
                         }
                     }
                     stats.hint_text = format!(
-                        "TIME'S UP! The powder wore off before Derek reached {}!",
-                        BACK_ROOM_NAMES[room_idx]
+                        "TIME'S UP! The powder wore off before {} reached {}!",
+                        char_name, BACK_ROOM_NAMES[room_idx]
                     );
                     stats.hint_bump = stats.hint_bump.wrapping_add(1);
                 } else {
@@ -5949,15 +6280,16 @@ fn update_club_roamers_and_quests(
                 r.state = RoamerState::WaitingInRoom;
             }
         }
-        if local_char == CHAR_DEREK && matches!(club.derek_quest, DerekQuestPhase::None) {
+        if matches!(club.derek_quest, DerekQuestPhase::None) {
             club.modal = Some(ClubModalKind::DerekPowderOffer {
                 dancer_idx: d_idx,
                 room_idx,
             });
-            speak_voice(
-                "Hey Derek... before our dance, want some mysterious powder for 100,000 Tendy Wendies?",
-                "stripper",
+            let line = format!(
+                "Hey {}... before our dance, want some mysterious white powder for 100,000 Tendy Wendies?",
+                char_name
             );
+            speak_voice(&line, "stripper");
         } else {
             start_back_room_private_dance(
                 &mut commands,
@@ -6005,6 +6337,7 @@ fn animate_roaming_dancer_limbs(
 fn update_club_quest_overlays(
     mut commands: Commands,
     time: Res<Time<Real>>,
+    net: Res<NetState>,
     club: Res<ClubState>,
     roamer_q: Query<&ClubRoamingDancer>,
     banner_q: Query<Entity, With<ClubQuestBanner>>,
@@ -6012,6 +6345,8 @@ fn update_club_quest_overlays(
     mut overlay_q: Query<(Entity, &mut BackgroundColor), With<ClubPsychedelicOverlay>>,
 ) {
     let t = time.elapsed_secs();
+    let (char_name, _) = club_char_profile(net.local_char());
+    let char_upper = char_name.to_uppercase();
     let psych_active = matches!(club.derek_quest, DerekQuestPhase::PsychedelicRace { .. });
 
     if psych_active {
@@ -6045,12 +6380,15 @@ fn update_club_quest_overlays(
 
     let banner_msg: Option<(String, Color)> = match club.derek_quest {
         DerekQuestPhase::SneakToMensRoom {
-            room_idx, suspicion, ..
+            room_idx,
+            suspicion,
+            ingest_progress,
+            ..
         } => {
             if club.sage_sees_derek {
                 Some((
                     format!(
-                        "EYE CONTACT! WISE ATTENDANT SEES YOU ({:.0}%) -- HIDE BEHIND A STALL! (Return to {})",
+                        "EYE CONTACT! ATTENDANT SEES YOU ({:.0}%) -- HIDE BEHIND A STALL! (Return to {})",
                         suspicion * 100.0,
                         BACK_ROOM_NAMES[room_idx]
                     ),
@@ -6059,21 +6397,24 @@ fn update_club_quest_overlays(
             } else {
                 Some((
                     format!(
-                        "DEREK: SNEAK INTO MEN'S ROOM (OUT OF ATTENDANT CONE OR IN A STALL), PRESS [F/E] TO INGEST POWDER! (Then -> {})",
+                        "{}: SNEAK INTO MEN'S ROOM, HOLD [F/E] BEHIND STALLS ({:.0}%) WITHOUT BEING SEEN! (-> {})",
+                        char_upper,
+                        ingest_progress * 100.0,
                         BACK_ROOM_NAMES[room_idx]
                     ),
                     Color::srgb(0.28, 1.0, 0.82),
                 ))
             }
         }
+        DerekQuestPhase::CaughtFlushCutscene { .. } => None,
         DerekQuestPhase::PsychedelicRace {
             room_idx,
             time_left,
             ..
         } => Some((
             format!(
-                "PSYCHEDELIC TRIP! RETURN TO {} BEFORE TIME RUNS OUT: {:.1}s",
-                BACK_ROOM_NAMES[room_idx], time_left
+                "{} PSYCHEDELIC TRIP! RETURN TO {} BEFORE TIME RUNS OUT: {:.1}s",
+                char_upper, BACK_ROOM_NAMES[room_idx], time_left
             ),
             Color::srgb(1.0, 0.42, 0.96),
         )),
@@ -6255,7 +6596,12 @@ fn update_club_seating(
 #[derive(bevy::ecs::system::SystemParam)]
 struct ClubStationUi<'w, 's> {
     prompt_q: Query<'w, 's, Entity, With<ClubPromptUi>>,
-    btn_q: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<ClubPromptButton>)>,
+    btn_q: Query<
+        'w,
+        's,
+        (&'static Interaction, &'static mut BackgroundColor, &'static mut BorderColor),
+        With<ClubPromptButton>,
+    >,
     text_q: Query<'w, 's, &'static mut Text, With<ClubPromptText>>,
     broke_q: Query<'w, 's, Entity, With<ClubBrokeBanner>>,
     wish_q: Query<'w, 's, Entity, With<ClubWishBanner>>,
@@ -6264,6 +6610,7 @@ struct ClubStationUi<'w, 's> {
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_club_stations(
     mut commands: Commands,
+    time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     net: Res<NetState>,
     mut stats: ResMut<PlayerStats>,
@@ -6275,9 +6622,16 @@ fn update_club_stations(
     mut ui: ClubStationUi,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut btn_was_pressed: Local<bool>,
 ) {
+    let dt = time.delta_secs().min(0.15);
+    let btn_down = ui.btn_q.iter().any(|(i, _, _)| *i == Interaction::Pressed);
+    let btn_tapped = btn_down && !*btn_was_pressed;
+    *btn_was_pressed = btn_down;
+
     if !stats.in_club_level
         || stats.club_dance_open
+        || stats.club_cutscene_open
         || stats.club_modal_open
         || stats.club_seated
         || club.modal_cd > 0.0
@@ -6296,20 +6650,44 @@ fn update_club_stations(
         p_tf.translation.x - CLUB_LEVEL_ORIGIN.x,
         p_tf.translation.z - CLUB_LEVEL_ORIGIN.z,
     );
+    let local_char = net.local_char();
+    let (_, char_voice) = club_char_profile(local_char);
 
-    // Special Priority Station: Derek ingesting Mysterious Powder inside Men's Room!
+    // Special Priority Station: Holding [F/E] to ingest Mysterious White Powder inside Men's Room!
     if let DerekQuestPhase::SneakToMensRoom {
         dancer_idx,
         room_idx,
         suspicion,
-        caught_cd,
+        mut ingest_progress,
+        mut sniff_sfx_cd,
+        ..
     } = club.derek_quest
     {
         if in_mens_room_local(p_local) {
+            let holding = btn_down
+                || keys.pressed(KeyCode::KeyF)
+                || keys.pressed(KeyCode::KeyE);
             let label = if club.sage_sees_derek {
-                "ATTENDANT SEES YOU! HIDE IN STALL BEFORE USING [F/E]"
+                "DANGER! ATTENDANT SEES YOU! HIDE BEHIND A STALL OR WAIT!".to_string()
+            } else if holding {
+                format!(
+                    "USING MYSTERIOUS POWDER... {:.0}% (HOLD [F/E]!)",
+                    ingest_progress * 100.0
+                )
+            } else if ingest_progress > 0.01 {
+                format!(
+                    "HOLD [F/E] TO FINISH POWDER ({:.0}%) -- DON'T GET SEEN!",
+                    ingest_progress * 100.0
+                )
             } else {
-                "INGEST MYSTERIOUS POWDER (HIDDEN - SAFE!) [F/E]"
+                "HOLD [F/E] TO INGEST MYSTERIOUS POWDER (HIDDEN - SAFE!)".to_string()
+            };
+            let (want_bg, want_border) = if club.sage_sees_derek {
+                (Color::srgb(0.62, 0.12, 0.16), Color::srgb(1.0, 0.25, 0.30))
+            } else if holding {
+                (Color::srgb(0.45, 0.12, 0.56), Color::srgb(0.95, 0.45, 1.0))
+            } else {
+                (Color::srgb(0.18, 0.42, 0.36), Color::srgb(0.35, 1.0, 0.85))
             };
             if ui.prompt_q.is_empty() {
                 commands
@@ -6334,14 +6712,14 @@ fn update_club_stations(
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgb(0.18, 0.42, 0.36)),
-                            BorderColor(Color::srgb(0.35, 1.0, 0.85)),
+                            BackgroundColor(want_bg),
+                            BorderColor(want_border),
                             BorderRadius::all(Val::Px(10.0)),
                         ))
                         .with_children(|btn| {
                             btn.spawn((
                                 ClubPromptText,
-                                Text::new(label),
+                                Text::new(label.clone()),
                                 TextFont {
                                     font_size: 16.0,
                                     ..default()
@@ -6350,37 +6728,47 @@ fn update_club_stations(
                             ));
                         });
                     });
-            } else if let Ok(mut t) = ui.text_q.get_single_mut() {
-                if t.0 != label {
-                    t.0 = label.to_string();
+            } else {
+                for (_, mut bg, mut border) in &mut ui.btn_q {
+                    bg.0 = want_bg;
+                    border.0 = want_border;
+                }
+                if let Ok(mut t) = ui.text_q.get_single_mut() {
+                    if t.0 != label {
+                        t.0 = label.clone();
+                    }
                 }
             }
 
-            let pressed = ui.btn_q.iter().any(|i| *i == Interaction::Pressed)
-                || keys.just_pressed(KeyCode::KeyF)
-                || keys.just_pressed(KeyCode::KeyE);
-            if pressed {
-                for e in &ui.prompt_q {
-                    commands.entity(e).despawn_recursive();
-                }
+            if holding {
                 if club.sage_sees_derek {
-                    let mut sus = suspicion;
-                    let mut cd = caught_cd;
-                    catch_derek_stealth(&mut p_tf, &mut orbit, &mut stats, &mut sus, &mut cd);
                     club.derek_quest = DerekQuestPhase::SneakToMensRoom {
                         dancer_idx,
                         room_idx,
-                        suspicion: sus,
-                        caught_cd: cd,
+                        suspicion,
+                        ingest_progress,
+                        sniff_sfx_cd,
+                        ingesting_now: true,
                     };
-                } else {
+                    return;
+                }
+                ingest_progress = (ingest_progress + dt / 2.6).min(1.0);
+                sniff_sfx_cd = (sniff_sfx_cd - dt).max(0.0);
+                if sniff_sfx_cd <= 0.0 {
+                    sniff_sfx_cd = 0.85;
+                    play_sfx("powder_sniff");
+                }
+                if ingest_progress >= 1.0 {
+                    for e in &ui.prompt_q {
+                        commands.entity(e).despawn_recursive();
+                    }
                     play_sfx("powder_trip");
                     speak_voice(
                         &format!(
                             "Whoa... WHOA!! Everything is melting! Gotta make it back to Room {} in one minute!",
                             room_idx + 1
                         ),
-                        "derek",
+                        char_voice,
                     );
                     club.derek_quest = DerekQuestPhase::PsychedelicRace {
                         dancer_idx,
@@ -6394,9 +6782,40 @@ fn update_club_stations(
                         BACK_ROOM_NAMES[room_idx]
                     );
                     stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                } else {
+                    club.derek_quest = DerekQuestPhase::SneakToMensRoom {
+                        dancer_idx,
+                        room_idx,
+                        suspicion,
+                        ingest_progress,
+                        sniff_sfx_cd,
+                        ingesting_now: true,
+                    };
                 }
+            } else {
+                ingest_progress = (ingest_progress - dt * 0.28).max(0.0);
+                sniff_sfx_cd = (sniff_sfx_cd - dt).max(0.0);
+                club.derek_quest = DerekQuestPhase::SneakToMensRoom {
+                    dancer_idx,
+                    room_idx,
+                    suspicion,
+                    ingest_progress,
+                    sniff_sfx_cd,
+                    ingesting_now: false,
+                };
             }
             return;
+        } else {
+            ingest_progress = (ingest_progress - dt * 0.28).max(0.0);
+            sniff_sfx_cd = (sniff_sfx_cd - dt).max(0.0);
+            club.derek_quest = DerekQuestPhase::SneakToMensRoom {
+                dancer_idx,
+                room_idx,
+                suspicion,
+                ingest_progress,
+                sniff_sfx_cd,
+                ingesting_now: false,
+            };
         }
     }
 
@@ -6461,7 +6880,7 @@ fn update_club_stations(
         }
     }
 
-    let pressed = ui.btn_q.iter().any(|i| *i == Interaction::Pressed)
+    let pressed = btn_tapped
         || keys.just_pressed(KeyCode::KeyF)
         || keys.just_pressed(KeyCode::KeyE);
     if !pressed {
@@ -6653,6 +7072,280 @@ fn update_club_dance_and_broke_warp(
     }
 }
 
+#[derive(bevy::ecs::system::SystemParam)]
+#[allow(clippy::type_complexity)]
+struct ClubFlushScene<'w, 's> {
+    player_q: Query<'w, 's, &'static mut Transform, With<Player>>,
+    cam_q: Query<'w, 's, (&'static mut Transform, &'static mut Projection), (With<Camera3d>, Without<Player>)>,
+    sage_q: Query<'w, 's, &'static mut Transform, (With<ClubWiseAttendant>, Without<Player>, Without<Camera3d>)>,
+    baggy_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility),
+        (With<ClubFlushBaggy>, Without<Player>, Without<Camera3d>, Without<ClubWiseAttendant>),
+    >,
+    vortex_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility),
+        (
+            With<ClubFlushVortex>,
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubWiseAttendant>,
+            Without<ClubFlushBaggy>,
+        ),
+    >,
+    splash_q: Query<
+        'w,
+        's,
+        (&'static ClubFlushSplash, &'static mut Transform, &'static mut Visibility),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubWiseAttendant>,
+            Without<ClubFlushBaggy>,
+            Without<ClubFlushVortex>,
+        ),
+    >,
+    banner_text_q: Query<'w, 's, &'static mut Text, With<ClubFlushBannerText>>,
+    roamer_q: Query<'w, 's, &'static mut ClubRoamingDancer>,
+    cleanup_q: Query<'w, 's, Entity, Or<(With<ClubFlushProp>, With<ClubFlushBanner>)>>,
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn update_club_flush_cutscene(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    net: Res<NetState>,
+    mut stats: ResMut<PlayerStats>,
+    mut club: ResMut<ClubState>,
+    mut orbit: ResMut<CameraOrbit>,
+    mut scene: ClubFlushScene,
+    broke_q: Query<Entity, With<ClubBrokeBanner>>,
+) {
+    let DerekQuestPhase::CaughtFlushCutscene {
+        dancer_idx,
+        mut stage,
+        mut stage_t,
+        mut total_t,
+        mut voice_fired,
+    } = club.derek_quest
+    else {
+        return;
+    };
+
+    let dt = time.delta_secs().min(0.08);
+    stage_t += dt;
+    total_t += dt;
+    let orig = CLUB_LEVEL_ORIGIN;
+    let (char_name, _) = club_char_profile(net.local_char());
+    let toilet_bowl = orig + MENS_NORTH_TOILET_LOCAL + Vec3::new(0.0, 0.30, 0.0);
+
+    let (subtitle, cam_pos, cam_look) = match stage {
+        0 => {
+            if !voice_fired {
+                voice_fired = true;
+                let line = format!(
+                    "{}... I am so, so disappointed in you. Hand over that mysterious white powder right now. This does not belong in my bathroom!",
+                    char_name
+                );
+                speak_voice(&line, "wise_midget");
+            }
+            club.sage_pos = Vec2::new(-26.4, -26.1);
+            let lecture_yaw = 1.6_f32.atan2(0.5);
+            let head_shake = (stage_t * 5.2).sin() * 0.28;
+            club.sage_yaw = lecture_yaw + head_shake;
+            for mut stf in &mut scene.sage_q {
+                stf.translation = Vec3::new(orig.x + club.sage_pos.x, orig.y, orig.z + club.sage_pos.y);
+                stf.rotation = Quat::from_rotation_y(club.sage_yaw);
+            }
+            for (mut btf, mut vis) in &mut scene.baggy_q {
+                *vis = Visibility::Visible;
+                btf.translation = orig + Vec3::new(-26.12, 0.86 + (stage_t * 4.0).sin() * 0.03, -26.02);
+                btf.rotation = Quat::from_rotation_y(stage_t * 0.9);
+                btf.scale = Vec3::ONE;
+            }
+            if stage_t >= 7.2 || (stage_t >= 3.4 && !is_voice_speaking()) {
+                stage = 1;
+                stage_t = 0.0;
+                voice_fired = false;
+            }
+            (
+                format!(
+                    "WISE ATTENDANT: \"{}... I am so, so disappointed in you. Hand over that mysterious white powder right now!\"",
+                    char_name
+                ),
+                orig + Vec3::new(-24.2, 1.55, -23.9),
+                orig + Vec3::new(-26.4, 1.0, -26.1),
+            )
+        }
+        1 => {
+            if !voice_fired {
+                voice_fired = true;
+                let line = format!(
+                    "I expected much better from you, {}. Down the toilet it goes!",
+                    char_name
+                );
+                speak_voice(&line, "wise_midget");
+            }
+            let u = (stage_t / 1.45).clamp(0.0, 1.0);
+            club.sage_pos = Vec2::new(-26.4, -26.1).lerp(Vec2::new(-27.75, -26.4), u);
+            club.sage_yaw = lerp_angle(club.sage_yaw, -FRAC_PI_2, dt * 8.0);
+            let walk_bob = if u < 1.0 { (stage_t * 14.0).sin().abs() * 0.06 } else { 0.0 };
+            for mut stf in &mut scene.sage_q {
+                stf.translation = Vec3::new(orig.x + club.sage_pos.x, orig.y + walk_bob, orig.z + club.sage_pos.y);
+                stf.rotation = Quat::from_rotation_y(club.sage_yaw);
+            }
+            for (mut btf, mut vis) in &mut scene.baggy_q {
+                *vis = Visibility::Visible;
+                btf.translation = Vec3::new(
+                    orig.x + club.sage_pos.x - 0.34,
+                    orig.y + 0.88 + walk_bob,
+                    orig.z + club.sage_pos.y,
+                );
+                btf.rotation = Quat::from_rotation_y(club.sage_yaw);
+                btf.scale = Vec3::ONE;
+            }
+            if stage_t >= 5.5 || (stage_t >= 2.2 && !is_voice_speaking()) {
+                stage = 2;
+                stage_t = 0.0;
+                voice_fired = false;
+            }
+            (
+                format!(
+                    "WISE ATTENDANT: \"I expected much better from you, {}. Down the toilet it goes!\"",
+                    char_name
+                ),
+                orig + Vec3::new(-25.6, 1.65, -25.6),
+                orig + Vec3::new(-28.3, 0.78, -26.4),
+            )
+        }
+        _ => {
+            if !voice_fired {
+                voice_fired = true;
+                play_sfx("toilet_flush");
+            }
+            club.sage_pos = Vec2::new(-27.75, -26.4);
+            club.sage_yaw = -FRAC_PI_2;
+            for mut stf in &mut scene.sage_q {
+                stf.translation = Vec3::new(orig.x + club.sage_pos.x, orig.y, orig.z + club.sage_pos.y);
+                stf.rotation = Quat::from_rotation_y(club.sage_yaw);
+            }
+            if stage_t < 0.7 {
+                let du = (stage_t / 0.7).clamp(0.0, 1.0);
+                let start = orig + Vec3::new(-28.10, 0.92, -26.4);
+                let end = toilet_bowl + Vec3::new(0.0, 0.04, 0.0);
+                let mut pos = start.lerp(end, du);
+                pos.y += (du * PI).sin() * 0.22;
+                for (mut btf, mut vis) in &mut scene.baggy_q {
+                    *vis = Visibility::Visible;
+                    btf.translation = pos;
+                    btf.rotation = Quat::from_rotation_z(du * 1.4);
+                    btf.scale = Vec3::ONE;
+                }
+            } else {
+                let sw = ((stage_t - 0.7) / 2.1).clamp(0.0, 1.0);
+                for (mut vtf, mut vis) in &mut scene.vortex_q {
+                    *vis = if sw < 1.0 { Visibility::Visible } else { Visibility::Hidden };
+                    vtf.rotation = Quat::from_rotation_y(-stage_t * 15.0);
+                    let pulse = 0.85 + (stage_t * 16.0).sin().abs() * 0.25;
+                    vtf.scale = Vec3::new(pulse, 1.0, pulse);
+                }
+                for (sp, mut stf, mut vis) in &mut scene.splash_q {
+                    *vis = if sw < 1.0 { Visibility::Visible } else { Visibility::Hidden };
+                    let ang = stage_t * 13.0 + (sp.idx as f32) * (TAU / 8.0);
+                    let rad = 0.24 * (1.0 - sw * 0.7);
+                    let lift = ((stage_t * 9.0 + sp.idx as f32).sin().abs()) * 0.14 * (1.0 - sw);
+                    stf.translation = toilet_bowl + Vec3::new(ang.cos() * rad, lift, ang.sin() * rad);
+                }
+                for (mut btf, mut vis) in &mut scene.baggy_q {
+                    if sw >= 0.96 {
+                        *vis = Visibility::Hidden;
+                    } else {
+                        *vis = Visibility::Visible;
+                        let ang = -stage_t * 14.0;
+                        let r = 0.22 * (1.0 - sw);
+                        btf.translation = orig
+                            + MENS_NORTH_TOILET_LOCAL
+                            + Vec3::new(ang.cos() * r, 0.32 - sw * 0.32, ang.sin() * r);
+                        btf.rotation = Quat::from_rotation_y(ang * 1.5) * Quat::from_rotation_x(sw * 2.2);
+                        btf.scale = Vec3::splat((1.0 - sw * 0.95).max(0.05));
+                    }
+                }
+            }
+            let z = ((stage_t - 0.3) / 1.8).clamp(0.0, 1.0);
+            (
+                "*FWOOOOSH-GURGLE!* Your 100,000 TW Mysterious White Powder has been flushed down the toilet!".to_string(),
+                (orig + Vec3::new(-25.6, 1.65, -25.6)).lerp(orig + Vec3::new(-26.9, 1.85, -25.9), z),
+                orig + Vec3::new(-28.65, 0.62, -26.4),
+            )
+        }
+    };
+
+    for mut t in &mut scene.banner_text_q {
+        if t.0 != subtitle {
+            t.0 = subtitle.clone();
+        }
+    }
+
+    if let Ok((mut ctf, mut proj)) = scene.cam_q.get_single_mut() {
+        let k = 1.0 - (-6.5 * dt).exp();
+        ctf.translation = ctf.translation.lerp(cam_pos, k);
+        let goal = Transform::from_translation(ctf.translation).looking_at(cam_look, Vec3::Y).rotation;
+        ctf.rotation = ctf.rotation.slerp(goal, k);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov += (0.76 - p.fov) * k;
+        }
+    }
+
+    let skipped = stage == 2
+        && stage_t >= 1.2
+        && (keys.just_pressed(KeyCode::Space)
+            || keys.just_pressed(KeyCode::Enter)
+            || keys.just_pressed(KeyCode::Escape));
+    let done = stage == 2 && (stage_t >= 3.4 || skipped);
+    if done {
+        stop_voice();
+        for e in &scene.cleanup_q {
+            commands.entity(e).despawn_recursive();
+        }
+        club.derek_quest = DerekQuestPhase::None;
+        stats.club_cutscene_open = false;
+        club.modal_cd = 0.6;
+        club.sage_pos = Vec2::new(MENS_SAGE_LOCAL.x, MENS_SAGE_LOCAL.z);
+        club.sage_yaw = -0.92;
+        if let Ok(mut p_tf) = scene.player_q.get_single_mut() {
+            p_tf.translation = orig + Vec3::new(-22.6, 0.0, -13.0);
+            p_tf.look_at(orig + Vec3::new(-22.6, 0.0, -5.0), Vec3::Y);
+        }
+        orbit.blend_request = true;
+        orbit.snap_follow = true;
+        for mut r in &mut scene.roamer_q {
+            if r.idx == dancer_idx {
+                r.state = RoamerState::Patrol;
+                r.cooldown = 14.0;
+            }
+        }
+        set_touch_playing(true);
+        stats.hint_text =
+            "FLUSHED! Your 100,000 TW Mysterious White Powder went straight down the toilet!".to_string();
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        if stats.tendy_wendies < CLUB_MIN_DANCE_COST {
+            trigger_broke_teleport(&mut commands, &mut club, &broke_q);
+        }
+    } else {
+        club.derek_quest = DerekQuestPhase::CaughtFlushCutscene {
+            dancer_idx,
+            stage,
+            stage_t,
+            total_t,
+            voice_fired,
+        };
+    }
+}
+
 fn update_club_mirror_and_hair(
     time: Res<Time<Real>>,
     player_q: Query<(&Transform, &Player)>,
@@ -6700,14 +7393,27 @@ fn emit_club_debug_telemetry(
         Some(ClubModalKind::DerekPowderOffer { .. }) => "DerekPowderOffer",
         None => "None",
     };
-    let (dq_s, dq_room, dq_sus, dq_t) = match club.derek_quest {
-        DerekQuestPhase::None => ("None", -1_i32, 0.0_f32, 0.0_f32),
+    let (dq_s, dq_room, dq_sus, dq_t, dq_prog, dq_fstage) = match club.derek_quest {
+        DerekQuestPhase::None => ("None", -1_i32, 0.0_f32, 0.0_f32, 0.0_f32, -1_i32),
         DerekQuestPhase::SneakToMensRoom {
-            room_idx, suspicion, ..
-        } => ("SneakToMensRoom", room_idx as i32, suspicion, 0.0),
+            room_idx,
+            suspicion,
+            ingest_progress,
+            ..
+        } => (
+            "SneakToMensRoom",
+            room_idx as i32,
+            suspicion,
+            0.0,
+            ingest_progress,
+            -1,
+        ),
+        DerekQuestPhase::CaughtFlushCutscene { stage, .. } => {
+            ("CaughtFlushCutscene", -1_i32, 1.0, 0.0, 0.0, stage as i32)
+        }
         DerekQuestPhase::PsychedelicRace {
             room_idx, time_left, ..
-        } => ("PsychedelicRace", room_idx as i32, 0.0, time_left),
+        } => ("PsychedelicRace", room_idx as i32, 0.0, time_left, 1.0, -1),
     };
     let (px, pz) = player_q
         .get_single()
@@ -6735,7 +7441,7 @@ fn emit_club_debug_telemetry(
         r_states.push(format!("\"{}\"", st));
     }
     let json = format!(
-        "{{\"char\":{},\"tw\":{},\"entryT\":{:.2},\"modal\":\"{}\",\"seated\":{},\"beers\":{},\"tjRefusals\":{},\"derekQuest\":\"{}\",\"derekRoom\":{},\"suspicion\":{:.2},\"seesDerek\":{},\"timeLeft\":{:.2},\"psychedelic\":{:.2},\"danceActive\":{},\"px\":{:.2},\"pz\":{:.2},\"r0x\":{:.2},\"r0z\":{:.2},\"roamers\":[{}]}}",
+        "{{\"char\":{},\"tw\":{},\"entryT\":{:.2},\"modal\":\"{}\",\"seated\":{},\"beers\":{},\"tjRefusals\":{},\"derekQuest\":\"{}\",\"derekRoom\":{},\"suspicion\":{:.2},\"seesDerek\":{},\"ingestProgress\":{:.2},\"flushCutscene\":{},\"flushStage\":{},\"sageX\":{:.2},\"sageZ\":{:.2},\"timeLeft\":{:.2},\"psychedelic\":{:.2},\"danceActive\":{},\"px\":{:.2},\"pz\":{:.2},\"r0x\":{:.2},\"r0z\":{:.2},\"roamers\":[{}]}}",
         net.local_char(),
         stats.tendy_wendies,
         club.entry_t,
@@ -6747,6 +7453,11 @@ fn emit_club_debug_telemetry(
         dq_room,
         dq_sus,
         club.sage_sees_derek,
+        dq_prog,
+        stats.club_cutscene_open,
+        dq_fstage,
+        club.sage_pos.x,
+        club.sage_pos.y,
         dq_t,
         stats.club_psychedelic_timer,
         stats.club_dance_open,
@@ -6769,7 +7480,7 @@ fn update_club_summon_squad(
     mut text_q: Query<&mut Text, With<ClubSummonText>>,
     mut btn_was_pressed: Local<bool>,
 ) {
-    let hidden = stats.club_modal_open || stats.club_dance_open || help.open;
+    let hidden = stats.club_modal_open || stats.club_dance_open || stats.club_cutscene_open || help.open;
     for mut node in &mut root_q {
         let want = if hidden { Display::None } else { Display::Flex };
         if node.display != want {
@@ -6835,6 +7546,7 @@ fn exit_club_play(
     }
     stats.in_club_level = false;
     stats.club_dance_open = false;
+    stats.club_cutscene_open = false;
     stats.club_modal_open = false;
     stats.club_seated = false;
     stats.club_psychedelic_timer = 0.0;

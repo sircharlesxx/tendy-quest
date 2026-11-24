@@ -127,6 +127,8 @@ pub struct PlayerStats {
     pub in_club_level: bool,
     /// True while a VIP disco dance camera sequence is active inside `ClubPlay`.
     pub club_dance_open: bool,
+    /// True while the Men's Room toilet flush caught cutscene is active inside `ClubPlay`.
+    pub club_cutscene_open: bool,
     /// True while a Velvet Disco Club modal dialog is open (locks movement & unlocks cursor).
     pub club_modal_open: bool,
     /// True while seated in the Public Lobby stage-side seats drinking beer.
@@ -247,6 +249,7 @@ impl Default for PlayerStats {
             in_casino_level: false,
             in_club_level: false,
             club_dance_open: false,
+            club_cutscene_open: false,
             club_modal_open: false,
             club_seated: false,
             club_psychedelic_timer: 0.0,

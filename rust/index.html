@@ -671,6 +671,19 @@
           mkOsc("sawtooth", 390, 210, 0.32, 0.18);
           return true;
         }
+        if (name === "toilet_flush") {
+          mkNoise(1.4, 0.28, 900);
+          mkNoise(1.8, 0.22, 420);
+          mkOsc("sine", 320, 68, 1.35, 0.22);
+          mkOsc("triangle", 190, 52, 1.55, 0.16);
+          mkOsc("sine", 540, 140, 0.75, 0.10);
+          return true;
+        }
+        if (name === "powder_sniff") {
+          mkNoise(0.14, 0.14, 2400);
+          mkOsc("sine", 260, 480, 0.10, 0.08);
+          return true;
+        }
         if (name === "beer_sip") {
           mkOsc("sine", 340, 620, 0.14, 0.16);
           mkOsc("triangle", 980, 1420, 0.08, 0.12);
