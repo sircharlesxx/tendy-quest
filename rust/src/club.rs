@@ -75,6 +75,7 @@ impl Plugin for ClubPlugin {
                     crate::fentanyl::update_fentanyl_overdose,
                     update_club_stations.run_if(gameplay_running),
                     update_club_dance_and_broke_warp,
+                    update_club_ultimate_dance,
                     update_club_flush_cutscene,
                     update_club_summon_squad,
                     update_club_mirror_and_hair,
@@ -2091,6 +2092,7 @@ fn exit_coaster_cutscene(
 
 const CLUB_ROAM_DANCE_COST: u32 = 50;
 const CLUB_POWDER_COST: u32 = 100_000;
+const ULTIMATE_DANCE_SECS: f32 = 28.0;
 const BACK_ROOM_X: [(f32, f32); 3] = [(-14.0, -3.5), (-3.5, 7.0), (7.0, 17.5)];
 const BACK_ROOM_NAMES: [&str; 3] = ["ROOM 1 - AMETHYST", "ROOM 2 - RUBY", "ROOM 3 - EMERALD"];
 const MENS_SAGE_LOCAL: Vec3 = Vec3::new(-20.0, 0.0, -27.2);
@@ -2293,6 +2295,13 @@ struct ClubState {
     active_stage: Option<ClubStationKind>,
     active_back_room: Option<usize>,
     dance_timer: f32,
+    dance_ultimate: bool,
+    dance_dancer_idx: Option<usize>,
+    dance_elapsed: f32,
+    dance_stage: u8,
+    dance_strip_mask: u8,
+    dance_voice_mask: u8,
+    dance_confetti_spawned: bool,
     broke_timer: f32,
     wish_timer: f32,
     wish_count: u32,
@@ -2421,6 +2430,7 @@ struct ClubRoamingDancer {
     move_speed: f32,
     pitch_idx: usize,
     moving: bool,
+    dress_col: Color,
 }
 
 #[derive(Component)]
@@ -2472,6 +2482,60 @@ struct ClubHairStrand {
     vel_z: f32,
     phase: f32,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GarmentPiece {
+    Boa,
+    Skirt,
+    Corset,
+}
+
+#[derive(Component)]
+struct ClubRemovableGarment {
+    dancer_idx: usize,
+    piece: GarmentPiece,
+}
+
+#[derive(Component)]
+struct ClubBurlesqueAccent {
+    dancer_idx: usize,
+    phase: f32,
+    spin: bool,
+}
+
+#[derive(Component)]
+struct ClubUltimateProp;
+
+#[derive(Component)]
+struct ClubTossedGarment {
+    start: Vec3,
+    end: Vec3,
+    arc_h: f32,
+    t: f32,
+    dur: f32,
+    spin_axis: Vec3,
+    spin_rate: f32,
+}
+
+#[derive(Component)]
+struct ClubDanceConfetti {
+    base: Vec3,
+    fall_speed: f32,
+    sway_phase: f32,
+    spin_rate: f32,
+}
+
+#[derive(Component)]
+struct ClubDanceSpotlight {
+    idx: usize,
+    center: Vec3,
+}
+
+#[derive(Component)]
+struct ClubDanceBanner;
+
+#[derive(Component)]
+struct ClubDanceBannerText;
 
 #[derive(Component)]
 struct ClubHeartOrb {
@@ -2582,6 +2646,75 @@ fn spawn_roaming_dancer(
     );
 }
 
+fn dancer_skirt_mesh(meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+    sh::add(
+        meshes,
+        sh::loft(
+            &[
+                sh::ring(0.76, 0.34, 0.30),
+                sh::ring(0.84, 0.29, 0.25),
+                sh::ring(0.95, 0.23, 0.18),
+                sh::ring(1.05, 0.145, 0.125),
+                sh::ring(1.06, 0.0, 0.0),
+            ],
+            2,
+            28,
+            0.95,
+        ),
+    )
+}
+
+fn dancer_corset_mesh(meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+    sh::add(
+        meshes,
+        sh::loft(
+            &[
+                sh::ring(1.18, 0.0, 0.0),
+                sh::ring(1.19, 0.135, 0.112),
+                sh::ring(1.34, 0.195, 0.155).dz(0.026),
+                sh::ring(1.42, 0.175, 0.132).dz(0.012),
+                sh::ring(1.43, 0.0, 0.0),
+            ],
+            2,
+            26,
+            0.94,
+        ),
+    )
+}
+
+fn boa_color_for(dress_col: Color) -> Color {
+    let l = dress_col.to_linear();
+    if l.red > 0.55 && l.green < 0.25 {
+        Color::srgb(0.98, 0.92, 1.0)
+    } else {
+        Color::srgb(1.0, 0.22, 0.72)
+    }
+}
+
+fn spawn_boa_puffs(
+    parent: &mut ChildBuilder,
+    sph_m: &Handle<Mesh>,
+    boa_mat: &Handle<StandardMaterial>,
+) {
+    for (x, y, z, s) in [
+        (-0.14_f32, -0.09_f32, 0.105_f32, 0.115_f32),
+        (0.14, -0.09, 0.105, 0.115),
+        (-0.17, -0.02, 0.075, 0.125),
+        (0.17, -0.02, 0.075, 0.125),
+        (-0.20, 0.02, 0.005, 0.130),
+        (0.20, 0.02, 0.005, 0.130),
+        (-0.12, 0.03, -0.105, 0.130),
+        (0.12, 0.03, -0.105, 0.130),
+        (0.0, 0.04, -0.130, 0.135),
+    ] {
+        parent.spawn((
+            Mesh3d(sph_m.clone()),
+            MeshMaterial3d(boa_mat.clone()),
+            Transform::from_xyz(x, y, z).with_scale(Vec3::splat(s)),
+        ));
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn spawn_club_dancer_ex(
     commands: &mut Commands,
@@ -2596,7 +2729,8 @@ fn spawn_club_dancer_ex(
     hair_col: Color,
     skin_col: Color,
 ) {
-    let is_roamer = roamer.is_some();
+    let roamer_idx = roamer.as_ref().map(|r| r.idx);
+    let is_roamer = roamer_idx.is_some();
     let sph_m = meshes.add(Sphere::new(0.5));
     let cyl_m = meshes.add(Cylinder::new(0.5, 1.0));
     let ring_m = meshes.add(Torus::new(0.14, 0.19));
@@ -2616,11 +2750,27 @@ fn spawn_club_dancer_ex(
         clearcoat: 1.0,
         ..default()
     });
+    let boa_col = boa_color_for(dress_col);
+    let bl = boa_col.to_linear();
+    let boa_mat = materials.add(StandardMaterial {
+        base_color: boa_col,
+        emissive: LinearRgba::new(bl.red * 0.55, bl.green * 0.55, bl.blue * 0.55, 1.0),
+        perceptual_roughness: 0.45,
+        clearcoat: 0.35,
+        ..default()
+    });
     let trim_gold = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.88, 0.35),
         emissive: LinearRgba::new(1.4, 1.1, 0.25, 1.0),
         metallic: 0.96,
         perceptual_roughness: 0.10,
+        ..default()
+    });
+    let star_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.92, 0.45),
+        emissive: LinearRgba::new(2.2, 1.75, 0.35, 1.0),
+        metallic: 0.98,
+        perceptual_roughness: 0.08,
         ..default()
     });
     let hair = materials.add(StandardMaterial {
@@ -2696,36 +2846,24 @@ fn spawn_club_dancer_ex(
     );
     let torso_m = sh::add(meshes, torso_geo);
 
-    let skirt_m = sh::add(
+    let skirt_m = dancer_skirt_mesh(meshes);
+    let corset_m = dancer_corset_mesh(meshes);
+    let bikini_bot_m = sh::add(
         meshes,
         sh::loft(
             &[
-                sh::ring(0.76, 0.34, 0.30),
-                sh::ring(0.84, 0.29, 0.25),
-                sh::ring(0.95, 0.23, 0.18),
-                sh::ring(1.05, 0.145, 0.125),
-                sh::ring(1.06, 0.0, 0.0),
+                sh::ring(0.84, 0.0, 0.0),
+                sh::ring(0.86, 0.193, 0.143),
+                sh::ring(0.94, 0.225, 0.164).dz(-0.01),
+                sh::ring(0.99, 0.186, 0.143).dz(-0.005),
+                sh::ring(1.00, 0.0, 0.0),
             ],
             2,
             28,
-            0.95,
-        ),
-    );
-    let corset_m = sh::add(
-        meshes,
-        sh::loft(
-            &[
-                sh::ring(1.18, 0.0, 0.0),
-                sh::ring(1.19, 0.135, 0.112),
-                sh::ring(1.34, 0.195, 0.155).dz(0.026),
-                sh::ring(1.42, 0.175, 0.132).dz(0.012),
-                sh::ring(1.43, 0.0, 0.0),
-            ],
-            2,
-            26,
             0.94,
         ),
     );
+    let star_bar_m = meshes.add(Cuboid::new(0.086, 0.022, 0.014));
     let head_m = sh::add(meshes, sh::head(0.178, 0.13));
     let hair_cap_m = sh::add(meshes, sh::hair_cap(0.182, 0.13, 0.38, -0.34, 0.09, 0.09));
     let hair_lock_m = sh::add(meshes, sh::limb_profile(0.68, &[0.064, 0.056, 0.044, 0.020], 0.85));
@@ -2814,21 +2952,102 @@ fn spawn_club_dancer_ex(
             });
         }
 
-            // Hourglass Sculpted Torso, Flared Metallic Mini-Skirt & Halter Corset
+            // Hourglass Sculpted Torso, Sparkly Bikini Bottom Underlayer, Mini-Skirt, Halter Corset & Shoulder Boa
             g.spawn((Mesh3d(torso_m), MeshMaterial3d(skin.clone())));
-            g.spawn((Mesh3d(skirt_m), MeshMaterial3d(dress.clone())));
-            g.spawn((
+            if let Some(d_idx) = roamer_idx {
+                g.spawn((Mesh3d(bikini_bot_m), MeshMaterial3d(trim_gold.clone())));
+                let mut boa_cmd = g.spawn((
+                    ClubRemovableGarment {
+                        dancer_idx: d_idx,
+                        piece: GarmentPiece::Boa,
+                    },
+                    Transform::from_xyz(0.0, 1.48, 0.0),
+                    Visibility::Inherited,
+                ));
+                boa_cmd.with_children(|boa| {
+                    spawn_boa_puffs(boa, &sph_m, &boa_mat);
+                });
+            }
+            let mut skirt_cmd = g.spawn((Mesh3d(skirt_m), MeshMaterial3d(dress.clone())));
+            if let Some(d_idx) = roamer_idx {
+                skirt_cmd.insert(ClubRemovableGarment {
+                    dancer_idx: d_idx,
+                    piece: GarmentPiece::Skirt,
+                });
+            }
+            let mut belt_cmd = g.spawn((
                 Mesh3d(ring_m.clone()),
                 MeshMaterial3d(trim_gold.clone()),
                 Transform::from_xyz(0.0, 1.04, 0.0).with_scale(Vec3::new(0.84, 0.30, 0.72)),
             ));
-            g.spawn((Mesh3d(corset_m), MeshMaterial3d(dress.clone())));
-            for bx in [-0.082_f32, 0.082] {
-                g.spawn((
+            if let Some(d_idx) = roamer_idx {
+                belt_cmd.insert(ClubRemovableGarment {
+                    dancer_idx: d_idx,
+                    piece: GarmentPiece::Skirt,
+                });
+            }
+            let mut corset_cmd = g.spawn((Mesh3d(corset_m), MeshMaterial3d(dress.clone())));
+            if let Some(d_idx) = roamer_idx {
+                corset_cmd.insert(ClubRemovableGarment {
+                    dancer_idx: d_idx,
+                    piece: GarmentPiece::Corset,
+                });
+            }
+            for (bi, bx) in [-0.082_f32, 0.082].into_iter().enumerate() {
+                let mut cup_cmd = g.spawn((
                     Mesh3d(sph_m.clone()),
                     MeshMaterial3d(dress.clone()),
                     Transform::from_xyz(bx, 1.35, 0.115).with_scale(Vec3::new(0.145, 0.135, 0.125)),
                 ));
+                if let Some(d_idx) = roamer_idx {
+                    cup_cmd.insert(ClubRemovableGarment {
+                        dancer_idx: d_idx,
+                        piece: GarmentPiece::Corset,
+                    });
+                }
+                if let Some(d_idx) = roamer_idx {
+                    g.spawn((
+                        ClubBurlesqueAccent {
+                            dancer_idx: d_idx,
+                            phase: phase + bi as f32 * 0.9,
+                            spin: false,
+                        },
+                        Mesh3d(sph_m.clone()),
+                        MeshMaterial3d(skin.clone()),
+                        Transform::from_xyz(bx * 0.98, 1.35, 0.112).with_scale(Vec3::new(0.135, 0.125, 0.115)),
+                        Visibility::Hidden,
+                    ));
+                    g.spawn((
+                        ClubBurlesqueAccent {
+                            dancer_idx: d_idx,
+                            phase: phase + bi as f32 * 0.9,
+                            spin: true,
+                        },
+                        Transform::from_xyz(bx, 1.35, 0.175),
+                        Visibility::Hidden,
+                    ))
+                    .with_children(|star| {
+                        for rot in [
+                            0.0_f32,
+                            std::f32::consts::FRAC_PI_4,
+                            FRAC_PI_2,
+                            -std::f32::consts::FRAC_PI_4,
+                        ] {
+                            star.spawn((
+                                Mesh3d(star_bar_m.clone()),
+                                MeshMaterial3d(star_gold.clone()),
+                                Transform::from_rotation(Quat::from_rotation_z(rot)),
+                                Visibility::Inherited,
+                            ));
+                        }
+                        star.spawn((
+                            Mesh3d(sph_m.clone()),
+                            MeshMaterial3d(eye_white.clone()),
+                            Transform::from_xyz(0.0, 0.0, 0.008).with_scale(Vec3::splat(0.022)),
+                            Visibility::Inherited,
+                        ));
+                    });
+                }
             }
             // Sparkly disco choker
             g.spawn((
@@ -4201,6 +4420,7 @@ fn enter_club_play(
                 move_speed: 4.6,
                 pitch_idx: idx,
                 moving: false,
+                dress_col,
             },
             dress_col,
             hair_col,
@@ -4827,10 +5047,17 @@ fn spawn_back_room_dance_orbs(
     center: Vec3,
     count: usize,
 ) {
-    let sph_m = meshes.add(Sphere::new(0.24));
+    let sph_m = meshes.add(Sphere::new(0.22));
     for hi in 0..count {
         let a = (hi as f32 / count.max(1) as f32) * TAU;
-        let base = center + Vec3::new(a.cos() * 2.0, 1.4 + (hi % 3) as f32 * 0.42, a.sin() * 2.0);
+        let r = if count > 20 { 2.6 + (hi % 2) as f32 * 0.45 } else { 2.0 };
+        let mut ox = a.cos() * r;
+        let oz = a.sin() * r;
+        // Keep the camera-to-dancer foreground corridor clear during close-up acts
+        if count > 20 && oz > 0.6 && ox.abs() < 1.85 {
+            ox = if ox >= 0.0 { 2.35 } else { -2.35 };
+        }
+        let base = center + Vec3::new(ox, 1.3 + (hi % 3) as f32 * 0.48, oz);
         let mat = materials.add(StandardMaterial {
             base_color: Color::hsl((hi as f32 * 24.0) % 360.0, 1.0, 0.62),
             emissive: LinearRgba::new(2.4, 0.7, 2.2, 1.0),
@@ -4850,6 +5077,137 @@ fn spawn_back_room_dance_orbs(
     }
 }
 
+fn spawn_tossed_garment(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    piece: GarmentPiece,
+    dress_col: Color,
+    start: Vec3,
+    end: Vec3,
+    arc_h: f32,
+    dur: f32,
+    spin_axis: Vec3,
+) {
+    let dl = dress_col.to_linear();
+    let dress_mat = materials.add(StandardMaterial {
+        base_color: dress_col,
+        emissive: LinearRgba::new(dl.red * 0.55, dl.green * 0.55, dl.blue * 0.55, 1.0),
+        metallic: 0.72,
+        perceptual_roughness: 0.14,
+        clearcoat: 1.0,
+        ..default()
+    });
+    let trim_gold = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.88, 0.35),
+        emissive: LinearRgba::new(1.5, 1.15, 0.25, 1.0),
+        metallic: 0.96,
+        perceptual_roughness: 0.10,
+        ..default()
+    });
+    let mut cmd = commands.spawn((
+        ClubLevelEntity,
+        ClubUltimateProp,
+        ClubTossedGarment {
+            start,
+            end,
+            arc_h,
+            t: 0.0,
+            dur,
+            spin_axis: spin_axis.normalize_or_zero(),
+            spin_rate: 8.5,
+        },
+        Transform::from_translation(start).with_scale(Vec3::splat(1.42)),
+        Visibility::Inherited,
+    ));
+    match piece {
+        GarmentPiece::Boa => {
+            let sph_m = meshes.add(Sphere::new(0.5));
+            let boa_col = boa_color_for(dress_col);
+            let bl = boa_col.to_linear();
+            let boa_mat = materials.add(StandardMaterial {
+                base_color: boa_col,
+                emissive: LinearRgba::new(bl.red * 0.65, bl.green * 0.65, bl.blue * 0.65, 1.0),
+                perceptual_roughness: 0.42,
+                clearcoat: 0.4,
+                ..default()
+            });
+            cmd.with_children(|g| {
+                spawn_boa_puffs(g, &sph_m, &boa_mat);
+            });
+        }
+        GarmentPiece::Skirt => {
+            let skirt_m = dancer_skirt_mesh(meshes);
+            let ring_m = meshes.add(Torus::new(0.14, 0.19));
+            cmd.with_children(|g| {
+                g.spawn((
+                    Mesh3d(skirt_m),
+                    MeshMaterial3d(dress_mat),
+                    Transform::from_xyz(0.0, -0.90, 0.0),
+                ));
+                g.spawn((
+                    Mesh3d(ring_m),
+                    MeshMaterial3d(trim_gold),
+                    Transform::from_xyz(0.0, 0.14, 0.0).with_scale(Vec3::new(0.84, 0.30, 0.72)),
+                ));
+            });
+        }
+        GarmentPiece::Corset => {
+            let corset_m = dancer_corset_mesh(meshes);
+            let sph_m = meshes.add(Sphere::new(0.5));
+            cmd.with_children(|g| {
+                g.spawn((
+                    Mesh3d(corset_m),
+                    MeshMaterial3d(dress_mat.clone()),
+                    Transform::from_xyz(0.0, -1.32, 0.0),
+                ));
+                for bx in [-0.082_f32, 0.082] {
+                    g.spawn((
+                        Mesh3d(sph_m.clone()),
+                        MeshMaterial3d(dress_mat.clone()),
+                        Transform::from_xyz(bx, 0.03, 0.115).with_scale(Vec3::new(0.145, 0.135, 0.125)),
+                    ));
+                }
+            });
+        }
+    }
+}
+
+fn spawn_ultimate_confetti_and_spotlights(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    center: Vec3,
+) {
+    let tile_m = meshes.add(Cuboid::new(0.16, 0.03, 0.24));
+    for i in 0..36_usize {
+        let a = (i as f32 / 36.0) * TAU * 3.0;
+        let r = 0.8 + (i % 6) as f32 * 0.55;
+        let base = center + Vec3::new(a.cos() * r, 3.2 + (i % 5) as f32 * 0.45, a.sin() * r);
+        let col = Color::hsl((i as f32 * 29.0) % 360.0, 1.0, 0.60);
+        let cl = col.to_linear();
+        let mat = materials.add(StandardMaterial {
+            base_color: col,
+            emissive: LinearRgba::new(cl.red * 2.2, cl.green * 2.2, cl.blue * 2.2, 1.0),
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            ClubLevelEntity,
+            ClubUltimateProp,
+            ClubDanceConfetti {
+                base,
+                fall_speed: 1.35 + (i % 4) as f32 * 0.35,
+                sway_phase: i as f32 * 0.71,
+                spin_rate: 4.5 + (i % 5) as f32 * 1.1,
+            },
+            Mesh3d(tile_m.clone()),
+            MeshMaterial3d(mat),
+            Transform::from_translation(base),
+        ));
+    }
+}
+
 fn start_back_room_private_dance(
     commands: &mut Commands,
     stats: &mut PlayerStats,
@@ -4857,30 +5215,99 @@ fn start_back_room_private_dance(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     room_idx: usize,
+    dancer_idx: usize,
     ultimate: bool,
 ) {
     stats.club_dance_open = true;
     club.active_stage = None;
     club.active_back_room = Some(room_idx);
-    club.dance_timer = if ultimate { 6.5 } else { 5.2 };
+    club.dance_ultimate = ultimate;
+    club.dance_dancer_idx = if ultimate { Some(dancer_idx) } else { None };
+    club.dance_elapsed = 0.0;
+    club.dance_stage = 0;
+    club.dance_strip_mask = 0;
+    club.dance_voice_mask = 0;
+    club.dance_confetti_spawned = false;
+    club.dance_timer = if ultimate { ULTIMATE_DANCE_SECS } else { 5.2 };
+    if ultimate {
+        stop_voice();
+    }
     play_sfx("powerup");
     play_sfx("chip_bet");
     stats.hint_text = if ultimate {
-        format!(
-            "ULTIMATE PRIVATE DANCE IN {}! MADE IT IN TIME!",
-            BACK_ROOM_NAMES[room_idx]
-        )
+        String::new()
     } else {
         format!("PRIVATE DANCE IN {}!", BACK_ROOM_NAMES[room_idx])
     };
     stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    let center = back_room_stage_center(room_idx);
     spawn_back_room_dance_orbs(
         commands,
         meshes,
         materials,
-        back_room_stage_center(room_idx),
-        if ultimate { 26 } else { 16 },
+        center,
+        if ultimate { 40 } else { 16 },
     );
+    if ultimate {
+        for idx in 0..2_usize {
+            commands.spawn((
+                ClubLevelEntity,
+                ClubUltimateProp,
+                ClubDanceSpotlight { idx, center },
+                PointLight {
+                    color: if idx == 0 {
+                        Color::srgb(1.0, 0.28, 0.85)
+                    } else {
+                        Color::srgb(0.25, 0.92, 1.0)
+                    },
+                    intensity: 750_000.0,
+                    range: 18.0,
+                    shadows_enabled: false,
+                    ..default()
+                },
+                Transform::from_translation(center + Vec3::new(if idx == 0 { -2.2 } else { 2.2 }, 4.6, 1.6)),
+            ));
+        }
+        commands
+            .spawn((
+                ClubLevelEntity,
+                ClubUltimateProp,
+                ClubDanceBanner,
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(14.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                PickingBehavior::IGNORE,
+                GlobalZIndex(28),
+            ))
+            .with_children(|root| {
+                root.spawn((
+                    Node {
+                        max_width: Val::Px(700.0),
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.01, 0.12, 0.92)),
+                    BorderColor(Color::srgb(1.0, 0.78, 0.25)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|box_node| {
+                    box_node.spawn((
+                        ClubDanceBannerText,
+                        Text::new("ACT 1/5 - VIP SHOWTIME! Sit back and enjoy the 100,000 TW show! [ESC] Skip"),
+                        TextFont {
+                            font_size: 14.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(1.0, 0.94, 0.84)),
+                    ));
+                });
+            });
+    }
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -5648,6 +6075,7 @@ fn update_club_modals(
                 &mut meshes,
                 &mut materials,
                 room_idx,
+                d_idx,
                 false,
             );
         }
@@ -5837,7 +6265,7 @@ fn update_club_roamers_and_quests(
     };
     let p_local = Vec2::new(p_tf.translation.x - orig.x, p_tf.translation.z - orig.z);
     let local_char = net.local_char();
-    let (char_name, char_voice) = club_char_profile(local_char);
+    let (char_name, _char_voice) = club_char_profile(local_char);
     let busy = stats.club_modal_open
         || stats.club_dance_open
         || stats.club_cutscene_open
@@ -6020,7 +6448,6 @@ fn update_club_roamers_and_quests(
                 if entered == room_idx {
                     club.derek_quest = DerekQuestPhase::None;
                     stats.club_psychedelic_timer = 0.0;
-                    speak_voice("Made it back to the right room! Worth every Tendy Wendy!", char_voice);
                     start_back_room_private_dance(
                         &mut commands,
                         &mut stats,
@@ -6028,6 +6455,7 @@ fn update_club_roamers_and_quests(
                         &mut meshes,
                         &mut materials,
                         room_idx,
+                        dancer_idx,
                         true,
                     );
                 } else if wrong_room_cd <= 0.0 {
@@ -6101,6 +6529,9 @@ fn update_club_roamers_and_quests(
     for (mut r, mut rtf) in &mut roamer_q {
         if r.cooldown > 0.0 {
             r.cooldown = (r.cooldown - dt).max(0.0);
+        }
+        if club.dance_ultimate && club.dance_dancer_idx == Some(r.idx) {
+            continue;
         }
         let cur = Vec2::new(rtf.translation.x - orig.x, rtf.translation.z - orig.z);
         r.moving = false;
@@ -6336,6 +6767,7 @@ fn update_club_roamers_and_quests(
                 &mut meshes,
                 &mut materials,
                 room_idx,
+                d_idx,
                 false,
             );
         }
@@ -6344,14 +6776,24 @@ fn update_club_roamers_and_quests(
 
 fn animate_roaming_dancer_limbs(
     time: Res<Time<Real>>,
+    club: Res<ClubState>,
     roamer_q: Query<&ClubRoamingDancer>,
     mut leg_q: Query<(&ClubRoamingLeg, &Parent, &mut Transform)>,
     mut arm_q: Query<(&ClubRoamingArm, &Parent, &mut Transform), Without<ClubRoamingLeg>>,
 ) {
     let t = time.elapsed_secs();
     for (leg, parent, mut tf) in &mut leg_q {
-        let moving = roamer_q.get(parent.get()).is_ok_and(|r| r.moving);
-        let swing = if moving {
+        let roamer = roamer_q.get(parent.get()).ok();
+        let ult = roamer.is_some_and(|r| club.dance_ultimate && club.dance_dancer_idx == Some(r.idx));
+        let moving = roamer.is_some_and(|r| r.moving);
+        let swing = if ult {
+            let s = if leg.is_left { 1.0 } else { -1.0 };
+            if club.dance_stage >= 4 {
+                0.35 + (t * 6.5).sin() * 0.22 * s
+            } else {
+                (t * 5.2 + leg.phase).sin() * 0.18 * s
+            }
+        } else if moving {
             let s = if leg.is_left { 1.0 } else { -1.0 };
             (t * 7.8 + leg.phase).sin() * 0.42 * s
         } else {
@@ -6361,14 +6803,27 @@ fn animate_roaming_dancer_limbs(
     }
     for (arm, parent, mut tf) in &mut arm_q {
         let sign = if arm.is_left { 1.0 } else { -1.0 };
-        let moving = roamer_q.get(parent.get()).is_ok_and(|r| r.moving);
+        let roamer = roamer_q.get(parent.get()).ok();
+        let ult = roamer.is_some_and(|r| club.dance_ultimate && club.dance_dancer_idx == Some(r.idx));
+        let moving = roamer.is_some_and(|r| r.moving);
         let wave = (t * if moving { 6.5 } else { 4.2 } + arm.phase).sin();
-        tf.rotation = Quat::from_rotation_z(sign * (0.42 + 0.35 * wave))
-            * Quat::from_rotation_x(if moving {
-                -wave * sign * 0.42
+        if ult {
+            if club.dance_stage >= 4 {
+                tf.rotation = Quat::from_rotation_z(sign * (1.25 + 0.35 * (t * 6.0).sin()))
+                    * Quat::from_rotation_x(-1.65 + 0.25 * (t * 5.0 + arm.phase).cos());
             } else {
-                -0.65 + 0.35 * (t * 3.0 + arm.phase).cos()
-            });
+                let excite = (t * 6.8 + arm.phase).sin();
+                tf.rotation = Quat::from_rotation_z(sign * (0.75 + 0.45 * excite))
+                    * Quat::from_rotation_x(-1.15 + 0.45 * (t * 4.5 + arm.phase).cos());
+            }
+        } else {
+            tf.rotation = Quat::from_rotation_z(sign * (0.42 + 0.35 * wave))
+                * Quat::from_rotation_x(if moving {
+                    -wave * sign * 0.42
+                } else {
+                    -0.65 + 0.35 * (t * 3.0 + arm.phase).cos()
+                });
+        }
     }
 }
 
@@ -6396,10 +6851,15 @@ fn update_club_quest_overlays(
     let (char_name, _) = club_char_profile(net.local_char());
     let char_upper = char_name.to_uppercase();
     let psych_active = matches!(club.derek_quest, DerekQuestPhase::PsychedelicRace { .. });
+    let ult_active = club.dance_ultimate && club.dance_timer > 0.0;
 
-    if psych_active {
-        let hue = ((t * 170.0) % 360.0 + 360.0) % 360.0;
-        let alpha = 0.16 + 0.08 * (t * 4.5).sin().abs();
+    if psych_active || ult_active {
+        let hue = ((t * if ult_active { 125.0 } else { 170.0 }) % 360.0 + 360.0) % 360.0;
+        let alpha = if ult_active {
+            0.06 + 0.04 * (t * 5.2).sin().abs()
+        } else {
+            0.16 + 0.08 * (t * 4.5).sin().abs()
+        };
         let col = Color::hsl(hue, 1.0, 0.54).with_alpha(alpha);
         if overlay_q.is_empty() {
             commands.spawn((
@@ -7078,7 +7538,7 @@ fn update_club_dance_and_broke_warp(
         return;
     }
 
-    if club.dance_timer > 0.0 {
+    if club.dance_timer > 0.0 && !club.dance_ultimate {
         club.dance_timer = (club.dance_timer - dt).max(0.0);
         if keys.just_pressed(KeyCode::Escape) {
             club.dance_timer = 0.0;
@@ -7137,6 +7597,501 @@ fn update_club_dance_and_broke_warp(
             if stats.tendy_wendies < CLUB_MIN_DANCE_COST {
                 trigger_broke_teleport(&mut commands, &mut club, &broke_q);
             }
+        }
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+#[allow(clippy::type_complexity)]
+struct ClubUltimateScene<'w, 's> {
+    player_q: Query<'w, 's, &'static mut Transform, With<Player>>,
+    cam_q: Query<'w, 's, (&'static mut Transform, &'static mut Projection), (With<Camera3d>, Without<Player>)>,
+    roamer_q: Query<
+        'w,
+        's,
+        (&'static mut ClubRoamingDancer, &'static mut Transform),
+        (Without<Player>, Without<Camera3d>),
+    >,
+    garment_q: Query<
+        'w,
+        's,
+        (&'static ClubRemovableGarment, &'static mut Visibility),
+        Without<ClubBurlesqueAccent>,
+    >,
+    accent_q: Query<
+        'w,
+        's,
+        (&'static ClubBurlesqueAccent, &'static mut Transform, &'static mut Visibility),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubRoamingDancer>,
+            Without<ClubRemovableGarment>,
+        ),
+    >,
+    tossed_q: Query<
+        'w,
+        's,
+        (&'static mut ClubTossedGarment, &'static mut Transform),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubRoamingDancer>,
+            Without<ClubBurlesqueAccent>,
+        ),
+    >,
+    confetti_q: Query<
+        'w,
+        's,
+        (&'static ClubDanceConfetti, &'static mut Transform),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubRoamingDancer>,
+            Without<ClubBurlesqueAccent>,
+            Without<ClubTossedGarment>,
+        ),
+    >,
+    spot_q: Query<
+        'w,
+        's,
+        (&'static ClubDanceSpotlight, &'static mut Transform, &'static mut PointLight),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubRoamingDancer>,
+            Without<ClubBurlesqueAccent>,
+            Without<ClubTossedGarment>,
+            Without<ClubDanceConfetti>,
+        ),
+    >,
+    heart_q: Query<
+        'w,
+        's,
+        (Entity, &'static ClubHeartOrb, &'static mut Transform),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<ClubRoamingDancer>,
+            Without<ClubBurlesqueAccent>,
+            Without<ClubTossedGarment>,
+            Without<ClubDanceConfetti>,
+            Without<ClubDanceSpotlight>,
+        ),
+    >,
+    banner_text_q: Query<'w, 's, &'static mut Text, With<ClubDanceBannerText>>,
+    cleanup_q: Query<'w, 's, Entity, With<ClubUltimateProp>>,
+    broke_q: Query<'w, 's, Entity, With<ClubBrokeBanner>>,
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn update_club_ultimate_dance(
+    mut commands: Commands,
+    time: Res<Time<Real>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    net: Res<NetState>,
+    mut stats: ResMut<PlayerStats>,
+    mut club: ResMut<ClubState>,
+    mut orbit: ResMut<CameraOrbit>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut scene: ClubUltimateScene,
+) {
+    if !club.dance_ultimate || club.dance_timer <= 0.0 {
+        return;
+    }
+    let (Some(room_idx), Some(d_idx)) = (club.active_back_room, club.dance_dancer_idx) else {
+        return;
+    };
+
+    let dt = time.delta_secs().min(0.10);
+    let t = time.elapsed_secs();
+    club.dance_elapsed += dt;
+    club.dance_timer = (club.dance_timer - dt).max(0.0);
+    if keys.just_pressed(KeyCode::Escape) {
+        club.dance_timer = 0.0;
+    }
+
+    let el = club.dance_elapsed;
+    let stage: u8 = if el < 5.5 {
+        0
+    } else if el < 11.0 {
+        1
+    } else if el < 17.0 {
+        2
+    } else if el < 23.0 {
+        3
+    } else {
+        4
+    };
+    club.dance_stage = stage;
+
+    let orig = CLUB_LEVEL_ORIGIN;
+    let cx = back_room_center_x(room_idx);
+    let st_center = back_room_stage_center(room_idx);
+    let player_spot = st_center + Vec3::new(-1.65, 0.25, 2.05);
+
+    let mut dancer_pos = st_center + Vec3::new(0.0, 0.26, 0.44);
+    let mut dress_col = Color::srgb(1.0, 0.24, 0.72);
+    let mut dancer_name: &'static str = "DESTINY";
+
+    for (mut r, mut rtf) in &mut scene.roamer_q {
+        if r.idx != d_idx {
+            continue;
+        }
+        r.moving = false;
+        dress_col = r.dress_col;
+        dancer_name = r.name;
+        match stage {
+            0 => {
+                let sway_x = (el * 2.2).sin() * 0.26;
+                let bob_y = (el * 4.4).sin().abs() * 0.08;
+                dancer_pos = st_center + Vec3::new(sway_x, 0.26 + bob_y, 0.46);
+                rtf.translation = dancer_pos;
+                rtf.rotation = Quat::from_rotation_y(-0.52 + (el * 1.8).sin() * 0.25);
+            }
+            1 => {
+                let twirl = if el >= 6.8 && el < 8.1 {
+                    ((el - 6.8) / 1.3) * TAU
+                } else {
+                    (el * 2.4).sin() * 0.30
+                };
+                let bob_y = (el * 5.0).sin().abs() * 0.09;
+                dancer_pos = st_center + Vec3::new((el * 2.0).sin() * 0.20, 0.26 + bob_y, 0.50);
+                rtf.translation = dancer_pos;
+                rtf.rotation = Quat::from_rotation_y(-0.42 + twirl);
+            }
+            2 => {
+                let spin = if el >= 12.4 && el < 14.0 {
+                    ((el - 12.4) / 1.6) * TAU * 1.5
+                } else {
+                    (el * 3.1).sin() * 0.45
+                };
+                let shimmy = (el * 7.5).sin() * 0.14;
+                dancer_pos = st_center + Vec3::new(shimmy, 0.26 + (el * 5.5).sin().abs() * 0.10, 0.52);
+                rtf.translation = dancer_pos;
+                rtf.rotation = Quat::from_rotation_y(-0.35 + spin)
+                    * Quat::from_rotation_z((el * 6.0).sin() * 0.09);
+            }
+            3 => {
+                let reveal_spin = if el >= 18.6 && el < 20.4 {
+                    ((el - 18.6) / 1.8) * TAU
+                } else {
+                    0.0
+                };
+                let step_fwd = ((el - 17.0) / 3.0).clamp(0.0, 1.0) * 0.16;
+                dancer_pos = st_center + Vec3::new((el * 2.6).sin() * 0.18, 0.26 + (el * 6.0).sin().abs() * 0.11, 0.48 + step_fwd);
+                rtf.translation = dancer_pos;
+                rtf.rotation = Quat::from_rotation_y(-0.45 + reveal_spin + (el * 2.0).sin() * 0.22)
+                    * Quat::from_rotation_x(-0.06);
+            }
+            _ => {
+                let orbit_ang = (el - 23.0) * 3.1;
+                let r_pole = 0.56;
+                let ox = orbit_ang.sin() * r_pole;
+                let oz = orbit_ang.cos() * r_pole;
+                dancer_pos = st_center + Vec3::new(ox, 0.34 + (el * 5.2).sin().abs() * 0.14, oz);
+                rtf.translation = dancer_pos;
+                rtf.rotation = Quat::from_rotation_y(orbit_ang + 0.55)
+                    * Quat::from_rotation_z(-0.18);
+            }
+        }
+    }
+
+    if let Ok(mut p_tf) = scene.player_q.get_single_mut() {
+        let cheer_hop = if stage >= 4 {
+            (el * 8.5).sin().abs() * 0.36
+        } else if stage >= 3 {
+            (el * 6.0).sin().abs() * 0.14
+        } else {
+            (el * 4.5).sin().abs() * 0.04
+        };
+        p_tf.translation = player_spot + Vec3::new(0.0, cheer_hop, 0.0);
+        p_tf.rotation = Quat::from_rotation_y(-0.55 + (el * 3.5).sin() * if stage >= 4 { 0.18 } else { 0.05 });
+    }
+
+    if (club.dance_voice_mask & (1 << stage)) == 0 {
+        club.dance_voice_mask |= 1 << stage;
+        let (_, char_voice) = club_char_profile(net.local_char());
+        match stage {
+            0 => speak_voice(
+                "Oh baby, you actually made it past that creepy bathroom attendant! Sit back and enjoy the 100,000 Tendy Wendy VIP show!",
+                "stripper",
+            ),
+            1 => speak_voice(
+                "First things first... let's lose this velvet wrap! Catch!",
+                "stripper",
+            ),
+            2 => speak_voice(
+                "Getting warm in here, isn't it? Say goodbye to the skirt!",
+                "stripper",
+            ),
+            3 => speak_voice(
+                "You survived the powder AND the restroom... here is the grand reveal, big spender!",
+                "stripper",
+            ),
+            _ => speak_voice("Whoa! Worth every single Tendy Wendy!!", char_voice),
+        }
+    }
+
+    if el >= 7.1 && (club.dance_strip_mask & 1) == 0 {
+        club.dance_strip_mask |= 1;
+        for (g, mut vis) in &mut scene.garment_q {
+            if g.dancer_idx == d_idx && g.piece == GarmentPiece::Boa {
+                *vis = Visibility::Hidden;
+            }
+        }
+        spawn_tossed_garment(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            GarmentPiece::Boa,
+            dress_col,
+            dancer_pos + Vec3::Y * 2.10,
+            st_center + Vec3::new(-0.95, 0.16, 1.85),
+            1.05,
+            1.10,
+            Vec3::new(0.4, 1.0, 0.3),
+        );
+        play_sfx("dash");
+        play_sfx("powerup");
+        stats.shake_request = stats.shake_request.max(0.12);
+    }
+
+    if el >= 12.8 && (club.dance_strip_mask & 2) == 0 {
+        club.dance_strip_mask |= 2;
+        for (g, mut vis) in &mut scene.garment_q {
+            if g.dancer_idx == d_idx && g.piece == GarmentPiece::Skirt {
+                *vis = Visibility::Hidden;
+            }
+        }
+        spawn_tossed_garment(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            GarmentPiece::Skirt,
+            dress_col,
+            dancer_pos + Vec3::Y * 1.35,
+            orig + Vec3::new(cx + 1.15, 0.96, -28.45),
+            1.35,
+            1.15,
+            Vec3::new(0.7, 0.9, 0.2),
+        );
+        play_sfx("powerup");
+        play_sfx("chip_bet");
+        stats.shake_request = stats.shake_request.max(0.16);
+    }
+
+    if el >= 19.0 && (club.dance_strip_mask & 4) == 0 {
+        club.dance_strip_mask |= 4;
+        for (g, mut vis) in &mut scene.garment_q {
+            if g.dancer_idx == d_idx && g.piece == GarmentPiece::Corset {
+                *vis = Visibility::Hidden;
+            }
+        }
+        for (acc, _, mut vis) in &mut scene.accent_q {
+            if acc.dancer_idx == d_idx {
+                *vis = Visibility::Inherited;
+            }
+        }
+        spawn_tossed_garment(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            GarmentPiece::Corset,
+            dress_col,
+            dancer_pos + Vec3::Y * 1.85,
+            orig + Vec3::new(cx - 1.10, 0.96, -28.45),
+            1.65,
+            1.20,
+            Vec3::new(1.0, 0.7, 0.4),
+        );
+        if !club.dance_confetti_spawned {
+            club.dance_confetti_spawned = true;
+            spawn_ultimate_confetti_and_spotlights(&mut commands, &mut meshes, &mut materials, st_center);
+        }
+        play_sfx("powerup");
+        play_sfx("tendy");
+        play_sfx("hack_success");
+        stats.shake_request = stats.shake_request.max(0.24);
+    }
+
+    for (acc, mut tf, _) in &mut scene.accent_q {
+        if acc.dancer_idx == d_idx && acc.spin {
+            tf.rotation = Quat::from_rotation_z(t * 2.6 + acc.phase);
+        }
+    }
+
+    for (mut tg, mut tf) in &mut scene.tossed_q {
+        tg.t = (tg.t + dt).min(tg.dur);
+        let u = (tg.t / tg.dur).clamp(0.0, 1.0);
+        let mut p = tg.start.lerp(tg.end, u);
+        p.y += (u * PI).sin() * tg.arc_h;
+        tf.translation = p;
+        if u < 1.0 {
+            tf.rotation = Quat::from_axis_angle(tg.spin_axis, tg.t * tg.spin_rate);
+        } else {
+            tf.rotation = Quat::from_rotation_x(FRAC_PI_2 * 0.75)
+                * Quat::from_rotation_z(tg.dur * 1.4);
+        }
+    }
+
+    for (cf, mut tf) in &mut scene.confetti_q {
+        let fall = (t * cf.fall_speed + cf.sway_phase) % 4.0;
+        tf.translation = cf.base
+            + Vec3::new(
+                (t * 3.1 + cf.sway_phase).sin() * 0.35,
+                -fall,
+                (t * 2.7 + cf.sway_phase).cos() * 0.35,
+            );
+        tf.rotation = Quat::from_rotation_y(t * cf.spin_rate)
+            * Quat::from_rotation_x((t * 3.8 + cf.sway_phase).sin() * 1.2);
+    }
+
+    for (sp, mut tf, mut light) in &mut scene.spot_q {
+        let spd = if stage >= 3 { 2.9 } else { 1.4 };
+        let ang = t * spd + sp.idx as f32 * PI;
+        tf.translation = sp.center + Vec3::new(ang.cos() * 2.3, 4.4, ang.sin() * 2.3);
+        let hue = ((t * if stage >= 3 { 190.0 } else { 90.0 } + sp.idx as f32 * 180.0) % 360.0 + 360.0) % 360.0;
+        light.color = Color::hsl(hue, 1.0, 0.58);
+        light.intensity = if stage >= 3 { 1_150_000.0 } else { 780_000.0 };
+    }
+
+    for (_, h, mut tf) in &mut scene.heart_q {
+        let cyc = (t * 1.4 + h.phase) % 2.5;
+        tf.translation = h.base + Vec3::new((t * 3.0 + h.phase).sin() * 0.45, cyc * 1.35, 0.0);
+        tf.scale = Vec3::splat(0.92 * (1.0 - cyc / 2.6));
+    }
+
+    if let Ok((mut c_tf, mut proj)) = scene.cam_q.get_single_mut() {
+        let (raw_pos, look) = match stage {
+            0 => {
+                let u = (el / 5.5).clamp(0.0, 1.0);
+                (
+                    orig + Vec3::new(cx + 2.25 - u * 0.75, 2.35 - u * 0.15, -20.8 - u * 0.9),
+                    st_center + Vec3::new(-0.10, 1.95, 0.25),
+                )
+            }
+            1 => {
+                let u = ((el - 5.5) / 5.5).clamp(0.0, 1.0);
+                let wide = ((el - 7.3) / 1.8).clamp(0.0, 1.0);
+                (
+                    orig + Vec3::new(cx + 0.75 + wide * 0.45, 2.35 - u * 0.15, -22.2 + wide * 0.8),
+                    st_center + Vec3::new(0.0, 2.15 - wide * 0.35, 0.25 + wide * 0.35),
+                )
+            }
+            2 => {
+                let u = ((el - 11.0) / 6.0).clamp(0.0, 1.0);
+                (
+                    orig + Vec3::new(cx - 1.15 + u * 2.65, 2.15 - u * 0.10, -21.9 - u * 0.45),
+                    st_center + Vec3::new(0.0, 1.72, 0.25),
+                )
+            }
+            3 => {
+                let u = ((el - 17.0) / 6.0).clamp(0.0, 1.0);
+                let sweep = (u * 1.6).sin() * 0.85;
+                (
+                    orig + Vec3::new(cx + 1.25 - sweep, 1.45 + u * 0.85, -22.1 + u * 0.5),
+                    st_center + Vec3::new(0.0, 2.10 - u * 0.15, 0.25),
+                )
+            }
+            _ => {
+                let u = ((el - 23.0) / 5.0).clamp(0.0, 1.0);
+                let orbit_c = -0.7 + u * 1.4;
+                (
+                    orig + Vec3::new(cx + orbit_c.sin() * 2.95, 2.45, -21.35 + orbit_c.cos() * 0.45),
+                    st_center + Vec3::new(-0.20, 1.95, 0.25),
+                )
+            }
+        };
+        let clamped_pos = Vec3::new(
+            raw_pos.x.clamp(orig.x + cx - 4.1, orig.x + cx + 4.1),
+            raw_pos.y.clamp(1.15, 4.8),
+            raw_pos.z.clamp(orig.z - 27.6, orig.z - 20.6),
+        );
+        let k = 1.0 - (-5.0 * dt).exp();
+        c_tf.translation = c_tf.translation.lerp(clamped_pos, k);
+        let goal = Transform::from_translation(c_tf.translation).looking_at(look, Vec3::Y).rotation;
+        c_tf.rotation = c_tf.rotation.slerp(goal, k);
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov += (0.78 - p.fov) * k;
+        }
+    }
+
+    let rem = club.dance_timer.ceil().max(1.0) as u32;
+    let subtitle = match stage {
+        0 => format!(
+            "ACT 1/5 - VIP SHOWTIME ({}s): {}: \"Enjoy the 100,000 TW VIP show, baby!\"  [ESC] Skip",
+            rem, dancer_name
+        ),
+        1 => format!(
+            "ACT 2/5 - VELVET BOA TOSS ({}s): {}: \"First... let's lose this velvet wrap!\"  [ESC] Skip",
+            rem, dancer_name
+        ),
+        2 => format!(
+            "ACT 3/5 - MINI-SKIRT DROP ({}s): {}: \"Getting warm! Say goodbye to the skirt!\"  [ESC] Skip",
+            rem, dancer_name
+        ),
+        3 => format!(
+            "ACT 4/5 - GRAND REVEAL ({}s): {}: \"Corset OFF! Worth every Tendy Wendy!\"  [ESC] Skip",
+            rem, dancer_name
+        ),
+        _ => format!(
+            "ACT 5/5 - POLE FINALE ({}s): \"WHOA! 100,000 TW WELL SPENT!!\"  [ESC] Skip",
+            rem
+        ),
+    };
+    for mut t_node in &mut scene.banner_text_q {
+        if t_node.0 != subtitle {
+            t_node.0 = subtitle.clone();
+        }
+    }
+
+    if club.dance_timer <= 0.0 {
+        stats.score += 10_000;
+        stats.dash_energy = 100.0;
+        for (g, mut vis) in &mut scene.garment_q {
+            if g.dancer_idx == d_idx {
+                *vis = Visibility::Inherited;
+            }
+        }
+        for (acc, _, mut vis) in &mut scene.accent_q {
+            if acc.dancer_idx == d_idx {
+                *vis = Visibility::Hidden;
+            }
+        }
+        for (mut r, mut rtf) in &mut scene.roamer_q {
+            if r.idx == d_idx {
+                rtf.translation = orig + Vec3::new(cx, 0.0, -25.2);
+                rtf.rotation = Quat::IDENTITY;
+                r.state = RoamerState::Patrol;
+                r.cooldown = 16.0;
+            }
+        }
+        for e in &scene.cleanup_q {
+            commands.entity(e).despawn_recursive();
+        }
+        for (he, _, _) in &scene.heart_q {
+            commands.entity(he).despawn_recursive();
+        }
+        stats.club_dance_open = false;
+        club.active_stage = None;
+        club.active_back_room = None;
+        club.dance_ultimate = false;
+        club.dance_dancer_idx = None;
+        club.dance_elapsed = 0.0;
+        club.dance_stage = 0;
+        club.dance_strip_mask = 0;
+        club.dance_voice_mask = 0;
+        club.dance_confetti_spawned = false;
+        orbit.blend_request = true;
+        stats.hint_text = format!(
+            "ULTIMATE {} VIP SHOW COMPLETE! +10,000 SCORE -- 100,000 TW WELL SPENT!",
+            dancer_name
+        );
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        if stats.tendy_wendies < CLUB_MIN_DANCE_COST {
+            trigger_broke_teleport(&mut commands, &mut club, &scene.broke_q);
         }
     }
 }
@@ -7513,7 +8468,7 @@ fn emit_club_debug_telemetry(
     let (_, narcan_rel) = crate::fentanyl::NARCAN_SPOTS
         [(overdose.narcan_spot as usize).min(crate::fentanyl::NARCAN_SPOTS.len() - 1)];
     let json = format!(
-        "{{\"char\":{},\"tw\":{},\"entryT\":{:.2},\"modal\":\"{}\",\"seated\":{},\"beers\":{},\"tjRefusals\":{},\"derekQuest\":\"{}\",\"derekRoom\":{},\"suspicion\":{:.2},\"seesDerek\":{},\"ingestProgress\":{:.2},\"flushCutscene\":{},\"flushStage\":{},\"sageX\":{:.2},\"sageZ\":{:.2},\"timeLeft\":{:.2},\"psychedelic\":{:.2},\"danceActive\":{},\"overdosePhase\":\"{}\",\"overdoseTimeLeft\":{:.2},\"overdoseVictim\":{},\"narcanSpot\":{},\"narcanX\":{:.2},\"narcanZ\":{:.2},\"hasNarcan\":{},\"sirensActive\":{},\"etherealChants\":{},\"px\":{:.2},\"pz\":{:.2},\"r0x\":{:.2},\"r0z\":{:.2},\"roamers\":[{}]}}",
+        "{{\"char\":{},\"tw\":{},\"entryT\":{:.2},\"modal\":\"{}\",\"seated\":{},\"beers\":{},\"tjRefusals\":{},\"derekQuest\":\"{}\",\"derekRoom\":{},\"suspicion\":{:.2},\"seesDerek\":{},\"ingestProgress\":{:.2},\"flushCutscene\":{},\"flushStage\":{},\"sageX\":{:.2},\"sageZ\":{:.2},\"timeLeft\":{:.2},\"psychedelic\":{:.2},\"danceActive\":{},\"danceUltimate\":{},\"danceTimer\":{:.2},\"danceElapsed\":{:.2},\"danceStage\":{},\"stripMask\":{},\"overdosePhase\":\"{}\",\"overdoseTimeLeft\":{:.2},\"overdoseVictim\":{},\"narcanSpot\":{},\"narcanX\":{:.2},\"narcanZ\":{:.2},\"hasNarcan\":{},\"sirensActive\":{},\"etherealChants\":{},\"px\":{:.2},\"pz\":{:.2},\"r0x\":{:.2},\"r0z\":{:.2},\"roamers\":[{}]}}",
         net.local_char(),
         stats.tendy_wendies,
         club.entry_t,
@@ -7533,6 +8488,11 @@ fn emit_club_debug_telemetry(
         dq_t,
         stats.club_psychedelic_timer,
         stats.club_dance_open,
+        club.dance_ultimate,
+        club.dance_timer,
+        club.dance_elapsed,
+        club.dance_stage,
+        club.dance_strip_mask,
         overdose.phase_label(),
         overdose.time_left,
         overdose.victim_char,
