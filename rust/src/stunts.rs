@@ -1376,7 +1376,9 @@ const CAR_RAMP_GRAVITY: f32 = 24.0;
 #[allow(clippy::type_complexity)]
 pub fn update_ramp_cars(
     time: Res<Time>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
+    mut st: ResMut<StuntState>,
     ramp_q: Query<(&Transform, &StuntRamp), (Without<CityCar>, Without<Player>)>,
     mut car_q: Query<(Entity, &mut Transform, &mut CityCar), (Without<StuntRamp>, Without<Player>)>,
     mut player_q: Query<&mut Transform, (With<Player>, Without<CityCar>, Without<StuntRamp>)>,
@@ -1385,6 +1387,7 @@ pub fn update_ramp_cars(
     if dt <= 0.0 {
         return;
     }
+    let space_down = keys.pressed(KeyCode::Space) || crate::audio::touch_jump_held();
     let ramps: Vec<(Transform, StuntRamp)> = ramp_q.iter().map(|(t, r)| (*t, *r)).collect();
     for (e, mut tf, mut car) in &mut car_q {
         let driven = stats.driving_car == Some(e);
@@ -1394,7 +1397,7 @@ pub fn update_ramp_cars(
             Vec2::new(pos.x - rtf.translation.x, pos.z - rtf.translation.z).length() < r.half_l + r.half_w + 3.0
         });
         let mut ride = car.ride;
-        if !near && ride.y == 0.0 && !ride.air && ride.pitch == 0.0 && ride.roll == 0.0 {
+        if !near && ride.y == 0.0 && !ride.air && ride.pitch == 0.0 && ride.roll == 0.0 && ride.flip == 0.0 {
             continue;
         }
         let yaw_q = Quat::from_rotation_y(car.yaw);
@@ -1451,7 +1454,18 @@ pub fn update_ramp_cars(
             if ride.y - ground > allowance {
                 // Rolled off the lip (or a side): launch with the speed it was climbing at.
                 ride.air = true;
-                ride.vy = (ride.vy.max(0.0) * 1.1).min(14.0);
+                ride.air_t = 0.0;
+                ride.flip = 0.0;
+                if driven {
+                    ride.vy = (ride.vy.max(0.0) * 1.45)
+                        .max(car.velocity.length() * 0.48)
+                        .min(21.0);
+                    play_sfx("dash");
+                    stats.hint_text = "CAR AIRBORNE! Hold [SPACE] to BACKFLIP!".to_string();
+                    stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                } else {
+                    ride.vy = (ride.vy.max(0.0) * 1.1).min(14.0);
+                }
             } else if traffic && ground - ride.y > CAR_RAMP_STEP {
                 // Shoved into a ramp: climb onto it quickly rather than pop.
                 ride.y += (ground - ride.y).min(10.0 * dt);
@@ -1463,8 +1477,18 @@ pub fn update_ramp_cars(
             }
         }
         if ride.air {
-            ride.vy -= CAR_RAMP_GRAVITY * dt;
+            let g_scale = if driven { car.gravity_scale } else { 1.0 };
+            ride.vy -= CAR_RAMP_GRAVITY * g_scale * dt;
             ride.y += ride.vy * dt;
+            ride.air_t += dt;
+            if driven {
+                if space_down && ride.air_t > 0.12 {
+                    ride.flip += 7.2 * dt;
+                } else {
+                    let target = (ride.flip / TAU).round() * TAU;
+                    ride.flip += (target - ride.flip) * (dt * 9.0).min(1.0);
+                }
+            }
             if ride.y <= ground && ride.vy <= 0.0 {
                 let impact = -ride.vy;
                 ride.y = ground;
@@ -1473,10 +1497,50 @@ pub fn update_ramp_cars(
                 if !traffic {
                     car.pitch_lean = (car.pitch_lean + 0.02 * impact.min(12.0)).min(0.2);
                 }
-                if driven && impact > 4.0 {
-                    stats.shake_request = stats.shake_request.max(0.05 + 0.012 * impact.min(16.0));
-                    play_sfx(if impact > 10.0 { "car_crash" } else { "step" });
+                if driven {
+                    let nearest = (ride.flip / TAU).round();
+                    let off = (ride.flip - nearest * TAU).abs();
+                    let flips = nearest.max(0.0) as u32;
+                    if ride.air_t > 0.35 && flips > 0 && off < 1.0 {
+                        car.apply_landed_backflips(flips);
+                        stats.car_gravity_scale = car.gravity_scale;
+                        st.combo += 1;
+                        st.combo_t = 4.0;
+                        let base = (ride.air_t * 400.0) as u32 + flips * 1500;
+                        let pts = base * st.combo.max(1);
+                        stats.score += pts;
+                        stats.dash_energy = (stats.dash_energy + 15.0).min(100.0);
+                        stats.tendy_credits += 1 + flips;
+                        let tw = (1 + flips * 3 + (st.combo / 3)).min(15);
+                        stats.add_tendy_wendies(tw);
+                        play_sfx("powerup");
+                        stats.hint_text = format!(
+                            "{}x CAR BACKFLIP! AIR {:.1}s  +{}  +{} TW  COMBO x{}  GRAV {}%",
+                            flips,
+                            ride.air_t,
+                            pts,
+                            tw,
+                            st.combo,
+                            car.gravity_pct()
+                        );
+                        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                    } else if ride.air_t > 0.35 && off >= 1.0 {
+                        st.combo = 0;
+                        st.combo_t = 0.0;
+                        car.velocity *= 0.45;
+                        play_sfx("car_crash");
+                        stats.hint_text =
+                            "SKETCHY CAR LANDING! Level out before you touch down!".to_string();
+                        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                    } else if impact > 4.0 {
+                        play_sfx(if impact > 10.0 { "car_crash" } else { "step" });
+                    }
+                    if impact > 4.0 {
+                        stats.shake_request = stats.shake_request.max(0.05 + 0.012 * impact.min(16.0));
+                    }
                 }
+                ride.air_t = 0.0;
+                ride.flip = 0.0;
             }
         }
         let (tp, tr, rate) = if ride.air {
@@ -1487,14 +1551,14 @@ pub fn update_ramp_cars(
         let k = (dt * rate).min(1.0);
         ride.pitch += (tp - ride.pitch) * k;
         ride.roll += (tr - ride.roll) * k;
-        if !ride.air && ground == 0.0 && ride.y.abs() < 1e-3 && ride.pitch.abs() < 1e-3 && ride.roll.abs() < 1e-3 {
+        if !ride.air && ground == 0.0 && ride.y.abs() < 1e-3 && ride.pitch.abs() < 1e-3 && ride.roll.abs() < 1e-3 && ride.flip.abs() < 1e-3 {
             ride = CarRide::default();
         }
         car.ride = ride;
 
         tf.translation = Vec3::new(pos.x, ride.y, pos.z);
         let (lean_x, lean_z) = if traffic { (0.0, 0.0) } else { (car.pitch_lean, car.roll_lean) };
-        tf.rotation = yaw_q * Quat::from_rotation_x(lean_x - ride.pitch) * Quat::from_rotation_z(lean_z + ride.roll);
+        tf.rotation = yaw_q * Quat::from_rotation_x(lean_x - ride.pitch - ride.flip) * Quat::from_rotation_z(lean_z + ride.roll);
         if driven {
             if let Ok(mut p_tf) = player_q.get_single_mut() {
                 p_tf.translation = tf.translation;

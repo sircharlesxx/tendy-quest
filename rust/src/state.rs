@@ -153,6 +153,8 @@ pub struct PlayerStats {
     pub riding_scooter: Option<Entity>,
     /// Current ridden scooter gravity multiplier (`1.0` = normal, -10% per landed backflip).
     pub scooter_gravity_scale: f32,
+    /// Current driven car gravity multiplier (`1.0` = normal, -10% per landed backflip).
+    pub car_gravity_scale: f32,
     /// On the riverfront Ferris wheel (boarding, riding or stepping out; see ferris.rs).
     pub riding_wheel: bool,
     pub phone_open: bool,
@@ -267,6 +269,7 @@ impl Default for PlayerStats {
             scooter_app_unlocked: false,
             riding_scooter: None,
             scooter_gravity_scale: 1.0,
+            car_gravity_scale: 1.0,
             riding_wheel: false,
             phone_open: false,
             high_timer: 0.0,

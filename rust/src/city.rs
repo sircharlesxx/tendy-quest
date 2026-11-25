@@ -409,6 +409,32 @@ pub struct CityCar {
     /// Wedge ramp ride state (`stunts::update_ramp_cars`): body height, vertical speed, airborne,
     /// and the ground's nose-up pitch / right-up roll under the wheels.
     pub ride: CarRide,
+    /// Gravity multiplier while driving this car (`1.0` = normal, -10% per landed backflip).
+    pub gravity_scale: f32,
+    /// Successful backflips landed during the current car drive.
+    pub backflips_landed: u32,
+}
+
+impl CityCar {
+    /// Lowers car gravity by 10% per cleanly landed backflip, down to 10% min.
+    pub fn apply_landed_backflips(&mut self, flips: u32) -> bool {
+        crate::scooter::step_backflip_gravity(
+            &mut self.backflips_landed,
+            &mut self.gravity_scale,
+            flips,
+        )
+    }
+
+    /// Restores normal car gravity (`1.0`).
+    pub fn reset_gravity(&mut self) {
+        self.backflips_landed = 0;
+        self.gravity_scale = 1.0;
+    }
+
+    /// Current car gravity as an integer percentage (`100`, `90`, ..., `10`).
+    pub fn gravity_pct(&self) -> u32 {
+        (self.gravity_scale * 100.0).round() as u32
+    }
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -418,6 +444,8 @@ pub struct CarRide {
     pub air: bool,
     pub pitch: f32,
     pub roll: f32,
+    pub air_t: f32,
+    pub flip: f32,
 }
 
 // Car dimensions as built by `car_meshes` (cars spawn at scale 1, origin on the road):
@@ -2590,6 +2618,8 @@ fn spawn_city_traffic(
                     car_hp: 100.0,
                     roof_h: if i % body_colors.len() < 2 { CAR_CAB_SIGN_TOP } else { CAR_ROOF_TOP },
                     ride: CarRide::default(),
+                    gravity_scale: 1.0,
+                    backflips_landed: 0,
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
@@ -3667,6 +3697,7 @@ pub fn exit_city_play(
         commands.entity(e).despawn_recursive();
     }
     stats.driving_car = None;
+    stats.car_gravity_scale = 1.0;
     stats.riding_scooter = None;
     stats.scooter_gravity_scale = 1.0;
     stats.riding_wheel = false;
@@ -3782,7 +3813,15 @@ pub fn update_city_driving(
         || keys.just_pressed(KeyCode::KeyE)
         || std::mem::take(&mut stats.car_prompt_tap);
 
-    // 1. If currently on foot, check for nearby hijackable car
+    // 1. If not driving, ensure unoccupied cars reset to normal gravity and check nearby hijack
+    if stats.driving_car.is_none() {
+        stats.car_gravity_scale = 1.0;
+        for (_, _, mut car, _) in &mut car_q {
+            if !car.occupied && (car.gravity_scale < 0.999 || car.backflips_landed > 0) {
+                car.reset_gravity();
+            }
+        }
+    }
     if stats.driving_car.is_none() && stats.riding_scooter.is_none() && !stats.riding_wheel && !stats.char_select_open {
         if stats.player_scale >= 6.0 {
             return;
@@ -3806,12 +3845,16 @@ pub fn update_city_driving(
                 if let Ok((_, mut car_tf, mut car, _)) = car_q.get_mut(car_e) {
                     car.occupied = true;
                     car.parked = false;
+                    car.reset_gravity();
+                    car.ride.air_t = 0.0;
+                    car.ride.flip = 0.0;
                     car.car_hp = car.car_hp.max(40.0);
                     let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
                     if !car.parked && car.velocity.length_squared() < 1.0 {
                         car.velocity = fwd * (car.speed * 0.45);
                     }
                     stats.driving_car = Some(car_e);
+                    stats.car_gravity_scale = 1.0;
                     *p_vis = Visibility::Hidden;
                     p_tf.translation = car_tf.translation;
                     player.velocity = Vec3::ZERO;
@@ -3823,7 +3866,7 @@ pub fn update_city_driving(
                     stats.wanted_stars = (stats.wanted_stars + 1).min(5);
                     stats.wanted_decay_timer = 14.0;
                     stats.hint_text =
-                        "GRAND THEFT TENDY! (Uber rating: 0 stars) [WASD] Drive | [SPACE] Drift | [SHIFT] Nitro | [F/E] Exit"
+                        "GRAND THEFT TENDY! [WASD] Drive | [SPACE] Drift (Hold in air: Backflip!) | [SHIFT] Nitro | [F/E] Exit"
                             .to_string();
                 }
             } else if stats.hint_text.starts_with("Collect 50")
@@ -3848,8 +3891,12 @@ pub fn update_city_driving(
     // 2. Handle exit / GTA IV high-speed bail-out
     if interact {
         if let Ok((_, car_tf, mut car, _)) = car_q.get_mut(driven_e) {
+            let had_low_grav = car.gravity_scale < 0.999;
             car.occupied = false;
             car.parked = true;
+            car.reset_gravity();
+            car.ride.air_t = 0.0;
+            car.ride.flip = 0.0;
             let right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
             let speed = car.velocity.length();
             p_tf.translation = Vec3::new(
@@ -3862,14 +3909,24 @@ pub fn update_city_driving(
                 player.roll_timer = 0.55;
                 player.invuln_timer = 0.8;
                 play_sfx("dash");
-                stats.hint_text = "GTA BAIL-OUT! Find another car or collect Tendies!".to_string();
+                stats.hint_text = if had_low_grav {
+                    "GTA BAIL-OUT! Gravity back to normal!".to_string()
+                } else {
+                    "GTA BAIL-OUT! Find another car or collect Tendies!".to_string()
+                };
             } else {
                 player.velocity = Vec3::ZERO;
                 play_sfx("car_door");
-                stats.hint_text = "EXITED CAR! Press [F / E] near any car to drive.".to_string();
+                stats.hint_text = if had_low_grav {
+                    "EXITED CAR! Gravity back to normal!".to_string()
+                } else {
+                    "EXITED CAR! Press [F / E] near any car to drive.".to_string()
+                };
             }
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
         }
         stats.driving_car = None;
+        stats.car_gravity_scale = 1.0;
         *p_vis = Visibility::Visible;
         return;
     }
@@ -3881,6 +3938,7 @@ pub fn update_city_driving(
     let honking = keys.just_pressed(KeyCode::KeyG) || mouse_buttons.just_pressed(MouseButton::Left);
 
     if let Ok((_, mut car_tf, mut car, children)) = car_q.get_mut(driven_e) {
+        stats.car_gravity_scale = car.gravity_scale;
         if car.horn_cooldown > 0.0 {
             car.horn_cooldown = (car.horn_cooldown - dt).max(0.0);
         }
@@ -3908,7 +3966,7 @@ pub fn update_city_driving(
         steer_cmd -= crate::audio::touch_move_x();
         steer_cmd = steer_cmd.clamp(-1.0, 1.0);
 
-        let handbrake = keys.pressed(KeyCode::Space) || crate::audio::take_touch_jump();
+        let handbrake = !car.ride.air && (keys.pressed(KeyCode::Space) || crate::audio::take_touch_jump());
         let nitro_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         let nitro_active = nitro_held && throttle > 0.1 && stats.dash_energy > 2.0;
         if nitro_active {
@@ -5336,6 +5394,8 @@ fn spawn_parked_car(
                 car_hp: 100.0,
                 roof_h: CAR_ROOF_TOP,
                 ride: CarRide::default(),
+                gravity_scale: 1.0,
+                backflips_landed: 0,
             },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             Visibility::default(),

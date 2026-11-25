@@ -1113,6 +1113,7 @@ fn enter_casino_play(
     stats.casino_esc_grace = false;
     stats.bartender_open = false;
     stats.driving_car = None;
+    stats.car_gravity_scale = 1.0;
     stats.riding_scooter = None;
     stats.scooter_gravity_scale = 1.0;
     stats.riding_wheel = false;

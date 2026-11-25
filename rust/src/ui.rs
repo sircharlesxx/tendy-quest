@@ -573,6 +573,12 @@ fn status_tags(stats: &PlayerStats) -> Vec<String> {
                 tags.push("ON SCOOTER".to_string());
             }
         }
+        if stats.driving_car.is_some() {
+            let g_pct = (stats.car_gravity_scale * 100.0).round() as u32;
+            if g_pct < 100 {
+                tags.push(format!("IN CAR  GRAV {}%", g_pct));
+            }
+        }
     }
     if stats.audio_muted {
         tags.push("MUTED".to_string());

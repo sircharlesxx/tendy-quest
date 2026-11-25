@@ -1100,6 +1100,7 @@ fn receive_remote_states(
                             stats.bartender_open = false;
                             stats.phone_open = false;
                             stats.driving_car = None;
+                            stats.car_gravity_scale = 1.0;
                             stats.riding_scooter = None;
                             stats.scooter_gravity_scale = 1.0;
                             stats.riding_wheel = false;
@@ -1118,6 +1119,7 @@ fn receive_remote_states(
                                     + Vec3::new(-5.8, 0.0, -0.8) * crate::city::PUB217_SCALE;
                                 stats.saved_casino_city_scale = stats.player_scale;
                                 stats.driving_car = None;
+                                stats.car_gravity_scale = 1.0;
                                 stats.riding_scooter = None;
                                 stats.scooter_gravity_scale = 1.0;
                                 stats.riding_wheel = false;
@@ -1157,6 +1159,7 @@ fn receive_remote_states(
                             stats.club_cutscene_open = false;
                             stats.club_fentanyl_death = false;
                             stats.driving_car = None;
+                            stats.car_gravity_scale = 1.0;
                             stats.riding_scooter = None;
                             stats.scooter_gravity_scale = 1.0;
                             stats.riding_wheel = false;

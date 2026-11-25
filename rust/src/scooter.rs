@@ -9,6 +9,17 @@ use crate::player::Player;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
 use crate::ui::HudOverlay;
 
+/// Shared 10% gravity reduction helper per cleanly landed backflip (`1.0 -> 0.9 -> ... -> 0.1`).
+pub fn step_backflip_gravity(backflips_landed: &mut u32, gravity_scale: &mut f32, flips: u32) -> bool {
+    if flips == 0 {
+        return false;
+    }
+    *backflips_landed = backflips_landed.saturating_add(flips);
+    let tenths = 10u32.saturating_sub(*backflips_landed).max(1);
+    *gravity_scale = (tenths as f32 * SCOOTER_GRAVITY_STEP).max(SCOOTER_GRAVITY_MIN);
+    true
+}
+
 /// Retained from the original rental gate; scooters are now unlocked via the Veo phone app (`P`).
 pub const SCOOTER_RENT_COST: u32 = 12;
 /// Scooter gravity reduction per successfully landed backflip (10% of normal gravity).
@@ -120,13 +131,7 @@ impl CityScooter {
     /// Lowers scooter gravity by `SCOOTER_GRAVITY_STEP` (10%) per landed backflip, clamped to
     /// `SCOOTER_GRAVITY_MIN`. Returns `true` when `flips > 0`.
     pub fn apply_landed_backflips(&mut self, flips: u32) -> bool {
-        if flips == 0 {
-            return false;
-        }
-        self.backflips_landed = self.backflips_landed.saturating_add(flips);
-        let tenths = 10u32.saturating_sub(self.backflips_landed).max(1);
-        self.gravity_scale = (tenths as f32 * SCOOTER_GRAVITY_STEP).max(SCOOTER_GRAVITY_MIN);
-        true
+        step_backflip_gravity(&mut self.backflips_landed, &mut self.gravity_scale, flips)
     }
 
     /// Restores normal scooter gravity (`1.0`).

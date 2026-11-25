@@ -3476,6 +3476,7 @@ fn enter_club_play(
     stats.club_seated = false;
     stats.club_psychedelic_timer = 0.0;
     stats.driving_car = None;
+    stats.car_gravity_scale = 1.0;
     stats.riding_scooter = None;
     stats.scooter_gravity_scale = 1.0;
     stats.riding_wheel = false;
