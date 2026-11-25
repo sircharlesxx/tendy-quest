@@ -413,6 +413,15 @@ pub struct CityCar {
     pub gravity_scale: f32,
     /// Successful backflips landed during the current car drive.
     pub backflips_landed: u32,
+    /// `skatepark::update_park_ride` currently owns this car.
+    pub park: bool,
+    /// Hop / landing vertical squash deformation and velocity (park riding).
+    pub squash: f32,
+    pub squash_vel: f32,
+    /// Cooldown preventing instant re-jump right after hijacking / dismounting.
+    pub jump_lock: f32,
+    /// Shift / Nitro active flag (shared with `skatepark`).
+    pub turbo_on: bool,
 }
 
 impl CityCar {
@@ -446,6 +455,11 @@ pub struct CarRide {
     pub roll: f32,
     pub air_t: f32,
     pub flip: f32,
+    pub air_spin: f32,
+    pub boost_t: f32,
+    pub boost_top: f32,
+    pub last_slope: f32,
+    pub hopped: bool,
 }
 
 // Car dimensions as built by `car_meshes` (cars spawn at scale 1, origin on the road):
@@ -2620,6 +2634,11 @@ fn spawn_city_traffic(
                     ride: CarRide::default(),
                     gravity_scale: 1.0,
                     backflips_landed: 0,
+                    park: false,
+                    squash: 0.0,
+                    squash_vel: 0.0,
+                    jump_lock: 0.0,
+                    turbo_on: false,
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
@@ -3821,8 +3840,11 @@ pub fn update_city_driving(
     if stats.driving_car.is_none() {
         stats.car_gravity_scale = 1.0;
         for (_, _, mut car, _) in &mut car_q {
-            if !car.occupied && (car.gravity_scale < 0.999 || car.backflips_landed > 0) {
-                car.reset_gravity();
+            if !car.occupied {
+                car.park = false;
+                if car.gravity_scale < 0.999 || car.backflips_landed > 0 {
+                    car.reset_gravity();
+                }
             }
         }
     }
@@ -3849,9 +3871,13 @@ pub fn update_city_driving(
                 if let Ok((_, mut car_tf, mut car, _)) = car_q.get_mut(car_e) {
                     car.occupied = true;
                     car.parked = false;
+                    car.park = false;
+                    car.squash = 0.0;
+                    car.squash_vel = 0.0;
+                    car.jump_lock = 0.0;
+                    car.turbo_on = false;
                     car.reset_gravity();
-                    car.ride.air_t = 0.0;
-                    car.ride.flip = 0.0;
+                    car.ride = CarRide::default();
                     car.car_hp = car.car_hp.max(40.0);
                     let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
                     if !car.parked && car.velocity.length_squared() < 1.0 {
@@ -3870,7 +3896,7 @@ pub fn update_city_driving(
                     stats.wanted_stars = (stats.wanted_stars + 1).min(5);
                     stats.wanted_decay_timer = 14.0;
                     stats.hint_text =
-                        "GRAND THEFT TENDY! [WASD] Drive | [SPACE] Drift (Hold in air: Backflip!) | [SHIFT] Nitro | [F/E] Exit"
+                        "GRAND THEFT TENDY! [WASD] Drive | [SPACE] Drift / Ramp Hop (Hold in air: Backflip!) | [SHIFT] Nitro | [F/E] Exit"
                             .to_string();
                 }
             } else if stats.hint_text.starts_with("Collect 50")
@@ -3894,20 +3920,33 @@ pub fn update_city_driving(
 
     // 2. Handle exit / GTA IV high-speed bail-out
     if interact {
-        if let Ok((_, car_tf, mut car, _)) = car_q.get_mut(driven_e) {
+        if let Ok((_, mut car_tf, mut car, _)) = car_q.get_mut(driven_e) {
             let had_low_grav = car.gravity_scale < 0.999;
+            let was_park = car.park;
             car.occupied = false;
             car.parked = true;
+            car.park = false;
+            car.squash = 0.0;
+            car.squash_vel = 0.0;
+            car.jump_lock = 0.0;
+            car.turbo_on = false;
             car.reset_gravity();
-            car.ride.air_t = 0.0;
-            car.ride.flip = 0.0;
+            car.ride = CarRide::default();
+            car_tf.scale = Vec3::ONE;
+            car_tf.rotation = Quat::from_rotation_y(car.yaw);
             let right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
             let speed = car.velocity.length();
             p_tf.translation = Vec3::new(
                 car_tf.translation.x - right.x * 2.35,
-                0.0,
+                car_tf.translation.y,
                 car_tf.translation.z - right.y * 2.35,
             );
+            if was_park {
+                crate::skatepark::settle_car_dismount(&mut car_tf, &mut car, &mut p_tf.translation);
+            } else {
+                car_tf.translation.y = 0.0;
+                p_tf.translation.y = 0.0;
+            }
             if speed > 14.0 {
                 player.velocity = Vec3::new(car.velocity.x * 0.55, 5.2, car.velocity.y * 0.55);
                 player.roll_timer = 0.55;
@@ -3949,6 +3988,15 @@ pub fn update_city_driving(
         if car.drift_sfx_cooldown > 0.0 {
             car.drift_sfx_cooldown = (car.drift_sfx_cooldown - dt).max(0.0);
         }
+        if car.park {
+            if honking && car.horn_cooldown <= 0.0 {
+                play_sfx("car_horn");
+                car.horn_cooldown = 0.32;
+            }
+            return;
+        }
+
+        car.ride.boost_t = (car.ride.boost_t - dt).max(0.0);
 
         let mut throttle = 0.0_f32;
         if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
@@ -3970,84 +4018,108 @@ pub fn update_city_driving(
         steer_cmd -= crate::audio::touch_move_x();
         steer_cmd = steer_cmd.clamp(-1.0, 1.0);
 
-        let handbrake = !car.ride.air && (keys.pressed(KeyCode::Space) || crate::audio::take_touch_jump());
+        let on_ramp = car.ride.y > 0.08;
+        let handbrake = !car.ride.air && !on_ramp && keys.pressed(KeyCode::Space);
         let nitro_held = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         let nitro_active = nitro_held && throttle > 0.1 && stats.dash_energy > 2.0;
         if nitro_active {
             stats.dash_energy = (stats.dash_energy - 38.0 * dt).max(0.0);
         }
+        if car.ride.boost_t > 0.0 || nitro_active {
+            orbit.speed_kick_t = 0.15;
+        }
 
-        // Smooth steering input
-        car.steer_input += (steer_cmd - car.steer_input) * (dt * 9.0).min(1.0);
-
-        let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
-        let right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
-        let mut fwd_speed = car.velocity.dot(fwd);
-        let mut lat_speed = car.velocity.dot(right);
-
-        // Longitudinal acceleration / braking / reverse
-        let max_fwd = if nitro_active { 52.0 } else { 36.0 };
-        let accel_force = if nitro_active { 46.0 } else { 29.0 };
-        let mut pitch_target = 0.0_f32;
-
-        if throttle > 0.05 {
-            if fwd_speed < -1.0 {
-                // Braking from reverse
-                fwd_speed += 44.0 * dt;
-                pitch_target = 0.085;
-            } else {
-                fwd_speed = (fwd_speed + accel_force * throttle * dt).min(max_fwd);
-                pitch_target = if nitro_active { -0.095 } else { -0.055 };
-            }
-        } else if throttle < -0.05 {
-            if fwd_speed > 1.5 {
-                // Heavy GTA IV brake nose-dive
-                fwd_speed = (fwd_speed - 48.0 * (-throttle) * dt).max(0.0);
-                pitch_target = 0.105;
-            } else {
-                fwd_speed = (fwd_speed - 17.5 * (-throttle) * dt).max(-15.5);
-                pitch_target = 0.04;
-            }
+        if car.ride.air {
+            car.ride.air_spin += steer_cmd * 7.0 * dt;
+            car.steer_input = 0.0;
+            car.roll_lean *= (1.0 - 6.0 * dt).max(0.0);
+            car.pitch_lean *= (1.0 - 6.0 * dt).max(0.0);
         } else {
-            // Rolling coast resistance
-            fwd_speed *= (1.0 - 1.35 * dt).max(0.0);
+            // Smooth steering input
+            car.steer_input += (steer_cmd - car.steer_input) * (dt * 9.0).min(1.0);
+
+            let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
+            let right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
+            let mut fwd_speed = car.velocity.dot(fwd);
+            let mut lat_speed = car.velocity.dot(right);
+
+            // Longitudinal acceleration / braking / reverse
+            let mega_boost = car.ride.boost_t > 0.0 && car.ride.boost_top > 45.0;
+            let boost_throttle = if mega_boost && throttle > -0.05 { 1.0 } else { throttle };
+            let boost_max = if car.ride.boost_t > 0.0 {
+                car.ride.boost_top.max(44.0)
+            } else {
+                0.0
+            };
+            let max_fwd = if nitro_active { 52.0_f32 } else { 36.0_f32 }.max(boost_max);
+            let accel_force = if mega_boost {
+                95.0
+            } else if nitro_active || car.ride.boost_t > 0.0 {
+                46.0
+            } else {
+                29.0
+            };
+            let mut pitch_target = 0.0_f32;
+
+            if boost_throttle > 0.05 {
+                if fwd_speed < -1.0 {
+                    // Braking from reverse
+                    fwd_speed += 44.0 * dt;
+                    pitch_target = 0.085;
+                } else {
+                    fwd_speed = (fwd_speed + accel_force * boost_throttle * dt).min(max_fwd);
+                    pitch_target = if nitro_active || car.ride.boost_t > 0.0 { -0.095 } else { -0.055 };
+                }
+            } else if throttle < -0.05 {
+                if fwd_speed > 1.5 {
+                    // Heavy GTA IV brake nose-dive
+                    fwd_speed = (fwd_speed - 48.0 * (-throttle) * dt).max(0.0);
+                    pitch_target = 0.105;
+                } else {
+                    fwd_speed = (fwd_speed - 17.5 * (-throttle) * dt).max(-15.5);
+                    pitch_target = 0.04;
+                }
+            } else {
+                // Rolling coast resistance
+                fwd_speed *= (1.0 - 1.35 * dt).max(0.0);
+            }
+
+            if handbrake {
+                fwd_speed *= (1.0 - 2.6 * dt).max(0.0);
+                pitch_target += 0.05;
+            }
+
+            // Speed-sensitive steering (reverse flips steering direction)
+            let speed_factor = (fwd_speed.abs() / 11.0).clamp(0.0, 1.0);
+            let high_speed_damp = 1.0 - (fwd_speed.abs() / 65.0).clamp(0.0, 0.35);
+            let dir_sign = if fwd_speed >= -0.4 { 1.0 } else { -1.0 };
+            let drift_turn_mul = if handbrake { 1.48 } else { 1.0 };
+            let turn_rate = 2.45 * speed_factor * high_speed_damp * drift_turn_mul * dir_sign;
+            car.yaw = wrap_angle(car.yaw + car.steer_input * turn_rate * dt);
+
+            // Recompute basis after yaw update, then damp lateral slip (handbrake = drift!)
+            let new_fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
+            let new_right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
+            let lat_grip = if handbrake { 1.65 } else { 7.8 };
+            lat_speed *= (1.0 - lat_grip * dt).max(0.0);
+
+            if (handbrake || lat_speed.abs() > 7.5) && fwd_speed.abs() > 8.0 && car.drift_sfx_cooldown <= 0.0
+            {
+                play_sfx("car_drift");
+                car.drift_sfx_cooldown = 0.28;
+            }
+
+            car.velocity = new_fwd * fwd_speed + new_right * lat_speed;
+
+            // GTA IV heavy body roll & pitch squat/dive
+            let roll_target = (-lat_speed * 0.017).clamp(-0.18, 0.18);
+            car.roll_lean += (roll_target - car.roll_lean) * (dt * 8.5).min(1.0);
+            car.pitch_lean += (pitch_target - car.pitch_lean) * (dt * 9.0).min(1.0);
         }
-
-        if handbrake {
-            fwd_speed *= (1.0 - 2.6 * dt).max(0.0);
-            pitch_target += 0.05;
-        }
-
-        // Speed-sensitive steering (reverse flips steering direction)
-        let speed_factor = (fwd_speed.abs() / 11.0).clamp(0.0, 1.0);
-        let high_speed_damp = 1.0 - (fwd_speed.abs() / 65.0).clamp(0.0, 0.35);
-        let dir_sign = if fwd_speed >= -0.4 { 1.0 } else { -1.0 };
-        let drift_turn_mul = if handbrake { 1.48 } else { 1.0 };
-        let turn_rate = 2.45 * speed_factor * high_speed_damp * drift_turn_mul * dir_sign;
-        car.yaw = wrap_angle(car.yaw + car.steer_input * turn_rate * dt);
-
-        // Recompute basis after yaw update, then damp lateral slip (handbrake = drift!)
-        let new_fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
-        let new_right = Vec2::new(car.yaw.cos(), -car.yaw.sin());
-        let lat_grip = if handbrake { 1.65 } else { 7.8 };
-        lat_speed *= (1.0 - lat_grip * dt).max(0.0);
-
-        if (handbrake || lat_speed.abs() > 7.5) && fwd_speed.abs() > 8.0 && car.drift_sfx_cooldown <= 0.0
-        {
-            play_sfx("car_drift");
-            car.drift_sfx_cooldown = 0.28;
-        }
-
-        car.velocity = new_fwd * fwd_speed + new_right * lat_speed;
-
-        // GTA IV heavy body roll & pitch squat/dive
-        let roll_target = (-lat_speed * 0.017).clamp(-0.18, 0.18);
-        car.roll_lean += (roll_target - car.roll_lean) * (dt * 8.5).min(1.0);
-        car.pitch_lean += (pitch_target - car.pitch_lean) * (dt * 9.0).min(1.0);
 
         car_tf.translation.x = (car_tf.translation.x + car.velocity.x * dt).clamp(-128.0, 128.0);
         car_tf.translation.z = (car_tf.translation.z + car.velocity.y * dt).clamp(-128.0, 128.0);
-        car_tf.translation.y = 0.0;
+        car_tf.translation.y = car.ride.y;
 
         // Building AABB collisions (bounce + scrape cleanly along skyscrapers)
         let wall_r = 1.95;
@@ -4108,7 +4180,7 @@ pub fn update_city_driving(
             car.velocity -= n * into * 1.28;
         }
 
-        car_tf.rotation = Quat::from_rotation_y(car.yaw)
+        car_tf.rotation = Quat::from_rotation_y(car.yaw + car.ride.air_spin)
             * Quat::from_rotation_x(car.pitch_lean)
             * Quat::from_rotation_z(car.roll_lean);
 
@@ -4128,7 +4200,7 @@ pub fn update_city_driving(
 
         // Sync Stan's position to car for Tendy pickups, radar, and TJ trigger
         p_tf.translation = car_tf.translation;
-        p_tf.rotation = Quat::from_rotation_y(car.yaw);
+        p_tf.rotation = Quat::from_rotation_y(car.yaw + car.ride.air_spin);
 
         // Smooth GTA IV chase camera auto-align while steering/driving
         if car.velocity.length() > 2.5 && !mouse_buttons.pressed(MouseButton::Right) {
@@ -5416,6 +5488,11 @@ fn spawn_parked_car(
                 ride: CarRide::default(),
                 gravity_scale: 1.0,
                 backflips_landed: 0,
+                park: false,
+                squash: 0.0,
+                squash_vel: 0.0,
+                jump_lock: 0.0,
+                turbo_on: false,
             },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             Visibility::default(),

@@ -25,7 +25,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::OnceLock;
 
 use crate::audio::play_sfx;
-use crate::city::{CityCar, CityWorldMarker};
+use crate::city::{CarRide, CityCar, CityWorldMarker};
 use crate::player::Player;
 use crate::scooter::CityScooter;
 use crate::state::{CameraOrbit, GameState, LevelEntity, PlayerStats};
@@ -2510,10 +2510,11 @@ pub enum RideMode {
     Grind,
 }
 
-/// Park riding state for the ridden scooter (one rider at a time).
+/// Park riding state for the active vehicle (scooter or car, one at a time).
 #[derive(Resource)]
 pub struct ParkRide {
     pub mode: RideMode,
+    active_entity: Option<Entity>,
     pos: Vec3,
     vel: Vec3,
     /// Facing yaw (rider and scooter), independent of the velocity in the air.
@@ -2570,6 +2571,7 @@ impl Default for ParkRide {
     fn default() -> Self {
         Self {
             mode: RideMode::Off,
+            active_entity: None,
             pos: Vec3::ZERO,
             vel: Vec3::ZERO,
             face: 0.0,
@@ -2655,11 +2657,270 @@ fn read_input(keys: &ButtonInput<KeyCode>, stats: &PlayerStats, t: f32, touch_ju
     }
 }
 
+/// Borrowed vehicle currently being driven in the park (`CityScooter` or `CityCar`).
+enum ParkVehicle<'a> {
+    Scooter(&'a mut CityScooter),
+    Car(&'a mut CityCar),
+}
+
+impl ParkVehicle<'_> {
+    fn is_car(&self) -> bool {
+        matches!(self, ParkVehicle::Car(_))
+    }
+
+    fn park(&self) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.park,
+            ParkVehicle::Car(car) => car.park,
+        }
+    }
+
+    fn gravity_scale(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.gravity_scale,
+            ParkVehicle::Car(car) => car.gravity_scale,
+        }
+    }
+
+    fn gravity_pct(&self) -> u32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.gravity_pct(),
+            ParkVehicle::Car(car) => car.gravity_pct(),
+        }
+    }
+
+    fn apply_landed_backflips(&mut self, flips: u32, stats: &mut PlayerStats) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => {
+                let changed = sc.apply_landed_backflips(flips);
+                if changed {
+                    stats.scooter_gravity_scale = sc.gravity_scale;
+                }
+                changed
+            }
+            ParkVehicle::Car(car) => {
+                let changed = car.apply_landed_backflips(flips);
+                if changed {
+                    stats.car_gravity_scale = car.gravity_scale;
+                }
+                changed
+            }
+        }
+    }
+
+    fn jump_lock(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.jump_lock,
+            ParkVehicle::Car(car) => car.jump_lock,
+        }
+    }
+
+    fn set_jump_lock(&mut self, v: f32) {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.jump_lock = v,
+            ParkVehicle::Car(car) => car.jump_lock = v,
+        }
+    }
+
+    fn add_squash_vel(&mut self, dv: f32) {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.squash_vel += dv,
+            ParkVehicle::Car(car) => car.squash_vel += dv,
+        }
+    }
+
+    fn step_squash(&mut self, dt: f32) -> Vec3 {
+        let (sq, sq_v) = match self {
+            ParkVehicle::Scooter(sc) => (&mut sc.squash, &mut sc.squash_vel),
+            ParkVehicle::Car(car) => (&mut car.squash, &mut car.squash_vel),
+        };
+        let accel = -320.0 * *sq - 20.0 * *sq_v;
+        *sq_v += accel * dt;
+        *sq = (*sq + *sq_v * dt).clamp(-0.3, 0.3);
+        Vec3::new(1.0 + 0.3 * *sq, 1.0 - 0.5 * *sq, 1.0 + 0.3 * *sq)
+    }
+
+    fn yaw(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.yaw,
+            ParkVehicle::Car(car) => car.yaw,
+        }
+    }
+
+    fn speed(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.speed,
+            ParkVehicle::Car(car) => {
+                let fwd = Vec2::new(car.yaw.sin(), car.yaw.cos());
+                car.velocity.dot(fwd)
+            }
+        }
+    }
+
+    fn y(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.y,
+            ParkVehicle::Car(car) => car.ride.y,
+        }
+    }
+
+    fn vy(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.vy,
+            ParkVehicle::Car(car) => car.ride.vy,
+        }
+    }
+
+    fn grounded(&self) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.grounded,
+            ParkVehicle::Car(car) => !car.ride.air,
+        }
+    }
+
+    fn air_t(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.air_t,
+            ParkVehicle::Car(car) => car.ride.air_t,
+        }
+    }
+
+    fn flip(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.flip,
+            ParkVehicle::Car(car) => car.ride.flip,
+        }
+    }
+
+    fn air_spin(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.air_spin,
+            ParkVehicle::Car(car) => car.ride.air_spin,
+        }
+    }
+
+    fn flat_hop(&self) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.flat_hop,
+            ParkVehicle::Car(_) => false,
+        }
+    }
+
+    fn hopped(&self) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.hopped,
+            ParkVehicle::Car(car) => car.ride.hopped,
+        }
+    }
+
+    fn boost_t(&self) -> f32 {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.boost_t,
+            ParkVehicle::Car(car) => car.ride.boost_t,
+        }
+    }
+
+    fn has_jump_intent(&self) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.jump_buf > 0.0 || sc.crouch_t > 0.0,
+            ParkVehicle::Car(_) => false,
+        }
+    }
+
+    fn turbo_on(&self) -> bool {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.turbo_on,
+            ParkVehicle::Car(car) => car.turbo_on,
+        }
+    }
+
+    fn set_turbo_on(&mut self, v: bool) {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.turbo_on = v,
+            ParkVehicle::Car(car) => car.turbo_on = v,
+        }
+    }
+
+    fn scale_street_speed(&mut self, factor: f32) {
+        match self {
+            ParkVehicle::Scooter(sc) => sc.speed *= factor,
+            ParkVehicle::Car(car) => car.velocity *= factor,
+        }
+    }
+
+    fn street_vel_3d(&self) -> Vec3 {
+        match self {
+            ParkVehicle::Scooter(sc) => {
+                let yaw_dir = Vec3::new(sc.yaw.sin(), 0.0, sc.yaw.cos());
+                yaw_dir * sc.speed + Vec3::Y * sc.vy
+            }
+            ParkVehicle::Car(car) => Vec3::new(car.velocity.x, car.ride.vy, car.velocity.y),
+        }
+    }
+
+    fn claim(&mut self) {
+        match self {
+            ParkVehicle::Scooter(sc) => claim(sc),
+            ParkVehicle::Car(car) => {
+                car.park = true;
+                car.ride = CarRide::default();
+                car.pitch_lean = 0.0;
+                car.roll_lean = 0.0;
+            }
+        }
+    }
+
+    fn handback(&mut self, face: f32, vel: Vec3) {
+        let f = Vec3::new(face.sin(), 0.0, face.cos());
+        match self {
+            ParkVehicle::Scooter(sc) => {
+                sc.park = false;
+                sc.grounded = true;
+                sc.y = 0.0;
+                sc.vy = 0.0;
+                sc.air_t = 0.0;
+                sc.flip = 0.0;
+                sc.hopped = false;
+                sc.flat_hop = false;
+                sc.yaw = face;
+                sc.speed = vel.dot(f);
+                sc.ground_h = 0.0;
+            }
+            ParkVehicle::Car(car) => {
+                car.park = false;
+                car.yaw = face;
+                car.velocity = Vec2::new(vel.x, vel.z);
+                car.ride = CarRide::default();
+                car.pitch_lean = 0.0;
+                car.roll_lean = 0.0;
+            }
+        }
+    }
+
+    fn sync_from_park(&mut self, pos: Vec3, vel: Vec3, face: f32, grounded: bool) {
+        match self {
+            ParkVehicle::Scooter(sc) => {
+                sc.y = pos.y;
+                sc.yaw = face;
+                sc.speed = Vec2::new(vel.x, vel.z).length();
+                sc.grounded = grounded;
+            }
+            ParkVehicle::Car(car) => {
+                car.ride.y = pos.y;
+                car.ride.vy = vel.y;
+                car.ride.air = !grounded;
+                car.yaw = face;
+                car.velocity = Vec2::new(vel.x, vel.z);
+            }
+        }
+    }
+}
+
 /// Everything a physics step may touch besides the ride state.
 struct Ctx<'a> {
     stats: &'a mut PlayerStats,
     st: &'a mut StuntState,
-    sc: &'a mut CityScooter,
+    veh: ParkVehicle<'a>,
     rider: &'a mut Player,
     inp: &'a RideInput,
     rag: &'a mut crate::ragdoll::Ragdoll,
@@ -2967,7 +3228,7 @@ impl ParkRide {
         let impact = (-vn).max(0.0);
         if self.air_t > 0.15 {
             let k = (impact / 12.0).clamp(0.3, 1.3);
-            cx.sc.squash_vel += 6.0 * k;
+            cx.veh.add_squash_vel(6.0 * k);
             cx.rider.squash_vel += 5.0 * k;
             cx.stats.shake_request = cx.stats.shake_request.max(0.04 + 0.08 * k);
         }
@@ -2983,9 +3244,8 @@ impl ParkRide {
                 if fakie {
                     name.push_str(" TO FAKIE");
                 }
-                if cx.sc.apply_landed_backflips(flips) {
-                    cx.stats.scooter_gravity_scale = cx.sc.gravity_scale;
-                    name.push_str(&format!(" [GRAV {}%]", cx.sc.gravity_pct()));
+                if cx.veh.apply_landed_backflips(flips, cx.stats) {
+                    name.push_str(&format!(" [GRAV {}%]", cx.veh.gravity_pct()));
                 }
                 self.award(cx, name, key, pts.max(100));
             } else if self.air_t > 0.15 {
@@ -3028,7 +3288,7 @@ impl ParkRide {
         self.pos = p + Vec3::Y * rail_offset(rail.kind);
         self.vel = d * self.gdir * self.gspeed;
         self.face = yaw_of(Vec2::new(self.vel.x, self.vel.z));
-        cx.sc.squash_vel += 3.0;
+        cx.veh.add_squash_vel(3.0);
         cx.rider.squash_vel += 3.0;
         play_sfx("grind_lock");
         if self.log {
@@ -3052,24 +3312,13 @@ impl ParkRide {
         self.cool = (self.rail, 0.35);
         self.vel = vel;
         let s = Surf { h: self.pos.y, grad: Vec2::ZERO, piece: None, region: Region::Ground };
-        self.start_air(s, kind, cx.sc.gravity_scale);
+        self.start_air(s, kind, cx.veh.gravity_scale());
         self.flat_hop = false;
         self.ramp = false;
     }
 
     fn handback(&mut self, cx: &mut Ctx) {
-        let f = Vec3::new(self.face.sin(), 0.0, self.face.cos());
-        cx.sc.park = false;
-        cx.sc.grounded = true;
-        cx.sc.y = 0.0;
-        cx.sc.vy = 0.0;
-        cx.sc.air_t = 0.0;
-        cx.sc.flip = 0.0;
-        cx.sc.hopped = false;
-        cx.sc.flat_hop = false;
-        cx.sc.yaw = self.face;
-        cx.sc.speed = self.vel.dot(f);
-        cx.sc.ground_h = 0.0;
+        cx.veh.handback(self.face, self.vel);
         cx.rider.grounded = true;
         self.pos.y = 0.0;
         self.mode = RideMode::Off;
@@ -3100,7 +3349,7 @@ impl ParkRide {
             self.vel = Quat::from_axis_angle(n0, ang) * self.vel;
         }
         self.face = wrap(self.face + ang);
-        let eff_g = PARK_G * cx.sc.gravity_scale;
+        let eff_g = PARK_G * cx.veh.gravity_scale();
         let g = Vec3::new(0.0, -eff_g, 0.0);
         let mut a = g - n0 * g.dot(n0);
         let dirv = if speed > 0.05 { self.vel / speed } else { ft };
@@ -3161,7 +3410,7 @@ impl ParkRide {
             let at = if s1.h > ball_y { p2 } else { np };
             self.pos = Vec3::new(at.x, ball_y.max(s0.h), at.y);
             self.vel.y -= eff_g * h;
-            self.start_air(s0, Launch::Edge, cx.sc.gravity_scale);
+            self.start_air(s0, Launch::Edge, cx.veh.gravity_scale());
             if self.log {
                 crate::audio::park_log(&format!(
                     "EVENT LAUNCH {} vert={} slope={:.2} v=({:.2},{:.2},{:.2})",
@@ -3182,7 +3431,12 @@ impl ParkRide {
             let fwd = if self.vel.dot(face_t(self.face)) >= 0.0 { hv } else { -hv };
             self.face = yaw_of(fwd);
         }
-        if s1.piece.is_none() && !in_lot(np) && s1.h <= 0.001 {
+        let in_area = if cx.veh.is_car() {
+            in_lot(np) || near_park(np, 0.0) || in_bigpark(np.x, np.y, 0.0)
+        } else {
+            in_lot(np)
+        };
+        if s1.piece.is_none() && !in_area && s1.h <= 0.001 {
             self.handback(cx);
         }
     }
@@ -3205,7 +3459,7 @@ impl ParkRide {
 
     fn air_step(&mut self, h: f32, cx: &mut Ctx) {
         let p_prev = self.pos;
-        let eff_g = PARK_G * cx.sc.gravity_scale;
+        let eff_g = PARK_G * cx.veh.gravity_scale();
         self.vel.y -= eff_g * h;
         self.pos += self.vel * h;
         self.pos.x = self.pos.x.clamp(-EDGE_CLAMP, EDGE_CLAMP);
@@ -3219,9 +3473,8 @@ impl ParkRide {
             let (judged, clean, mut name, key, pts, flips) = self.judge_air(true);
             if clean {
                 if judged {
-                    if cx.sc.apply_landed_backflips(flips) {
-                        cx.stats.scooter_gravity_scale = cx.sc.gravity_scale;
-                        name.push_str(&format!(" [GRAV {}%]", cx.sc.gravity_pct()));
+                    if cx.veh.apply_landed_backflips(flips, cx.stats) {
+                        name.push_str(&format!(" [GRAV {}%]", cx.veh.gravity_pct()));
                     }
                     self.award(cx, name, key, pts.max(100));
                 }
@@ -3259,7 +3512,7 @@ impl ParkRide {
         let rail = &layout().rails[self.rail];
         let (_, d) = rail.point(self.gs);
         let dir3 = d * self.gdir;
-        let eff_g = PARK_G * cx.sc.gravity_scale;
+        let eff_g = PARK_G * cx.veh.gravity_scale();
         self.gspeed = (self.gspeed + (-eff_g * dir3.y - GRIND_FRICTION) * h).min(GRIND_MAX);
         if self.gspeed < 0.6 {
             let side = Vec3::new(dir3.z, 0.0, -dir3.x).normalize_or_zero();
@@ -3302,19 +3555,20 @@ impl ParkRide {
         if !cx.inp.jump_held {
             self.press_air = false;
         }
-        cx.sc.jump_lock = (cx.sc.jump_lock - dt).max(0.0);
+        let jl = (cx.veh.jump_lock() - dt).max(0.0);
+        cx.veh.set_jump_lock(jl);
         let hop_v = hop_speed(cx.stats.player_scale);
         match self.mode {
             RideMode::Surface => {
-                if self.jump_buf > 0.0 && cx.sc.jump_lock <= 0.0 {
+                if self.jump_buf > 0.0 && cx.veh.jump_lock() <= 0.0 {
                     self.jump_buf = 0.0;
                     let s0 = surface(xz(self.pos));
                     let n = s0.normal();
                     let pop = (n + Vec3::Y).normalize();
                     self.vel += pop * hop_v * if s0.slope() < 0.1 { 1.0 } else { 0.8 };
                     self.pos.y += 0.02;
-                    self.start_air(s0, Launch::Hop, cx.sc.gravity_scale);
-                    cx.sc.squash_vel -= 5.0;
+                    self.start_air(s0, Launch::Hop, cx.veh.gravity_scale());
+                    cx.veh.add_squash_vel(-5.0);
                     cx.rider.squash_vel -= 5.0;
                     play_sfx("jump");
                 }
@@ -3334,7 +3588,7 @@ impl ParkRide {
                         v.x += (PIPE_C.x - self.pos.x).signum() * 2.6;
                     }
                     self.exit_grind(v, Launch::Hop, cx, "");
-                    cx.sc.squash_vel -= 5.0;
+                    cx.veh.add_squash_vel(-5.0);
                     cx.rider.squash_vel -= 5.0;
                     play_sfx("jump");
                 } else if self.bal.abs() > 1.0 {
@@ -3386,61 +3640,78 @@ fn rail_offset(kind: RailKind) -> f32 {
 
 impl ParkRide {
     /// Street riding near the park: walls, rails and the hand-over to park physics. Returns
-    /// true once the park owns the scooter (`pos` may be pushed back out of a wall either way).
+    /// true once the park owns the vehicle (`pos` may be pushed back out of a wall either way).
     fn try_take_over(&mut self, pos: &mut Vec3, cx: &mut Ctx) -> bool {
         let p2 = xz(*pos);
         if !near_pieces(p2, 2.0) {
             return false;
         }
+        let is_car = cx.veh.is_car();
+        let in_area = if is_car {
+            in_lot(p2) || near_park(p2, 0.0) || in_bigpark(p2.x, p2.y, 0.0)
+        } else {
+            in_lot(p2)
+        };
         let valid_prev = self.prev.filter(|q| xz(*q).distance(p2) < 4.0);
         let has_prev = valid_prev.is_some();
         let prev = valid_prev.unwrap_or(*pos);
         let s = surface(p2);
-        let yaw_dir = Vec3::new(cx.sc.yaw.sin(), 0.0, cx.sc.yaw.cos());
-        if cx.sc.grounded {
+        let yaw = cx.veh.yaw();
+        let yaw_dir = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+        let vy_cur = cx.veh.y();
+        let speed_cur = cx.veh.speed();
+        if cx.veh.grounded() {
             if has_prev {
-                if fence_hit(xz(prev), p2, cx.sc.y + 0.1, 0.4).is_some() {
+                if fence_hit(xz(prev), p2, vy_cur + 0.1, 0.4).is_some() {
                     pos.x = prev.x;
                     pos.z = prev.z;
-                    cx.sc.speed *= 0.4;
+                    cx.veh.scale_street_speed(0.4);
                     play_sfx("hit");
                     return false;
                 }
-                if s.h > cx.sc.y + WALL_STEP && surface(xz(prev)).h <= prev.y + WALL_STEP {
+                let wall_step = if is_car && s.piece.is_some() { 0.95 } else { WALL_STEP };
+                if s.h > vy_cur + wall_step && surface(xz(prev)).h <= prev.y + wall_step {
                     pos.x = prev.x;
                     pos.z = prev.z;
-                    cx.sc.speed *= 0.35;
+                    cx.veh.scale_street_speed(0.35);
                     return false;
                 }
             }
-            if (s.piece.is_some() && s.h > 0.015) || in_lot(p2) {
+            if (s.piece.is_some() && s.h > 0.015) || in_area {
+                let keep_ent = self.active_entity;
                 self.reset_motion();
+                self.active_entity = keep_ent;
                 self.pos = Vec3::new(p2.x, s.h, p2.y);
                 let n = s.normal();
-                let v = yaw_dir * cx.sc.speed;
-                self.vel = (v - n * v.dot(n)).normalize_or_zero() * cx.sc.speed.abs().min(ride_caps(p2).2);
-                self.face = cx.sc.yaw;
+                let v = if is_car {
+                    let sv = cx.veh.street_vel_3d();
+                    Vec3::new(sv.x, 0.0, sv.z)
+                } else {
+                    yaw_dir * speed_cur
+                };
+                self.vel = (v - n * v.dot(n)).normalize_or_zero() * v.length().min(ride_caps(p2).2);
+                self.face = yaw;
                 self.vis_face = self.face;
                 self.vis_up = n;
                 self.mode = RideMode::Surface;
-                if cx.sc.jump_buf > 0.0 || cx.sc.crouch_t > 0.0 {
+                if cx.veh.has_jump_intent() {
                     self.jump_buf = JUMP_BUFFER;
                 }
-                claim(cx.sc);
+                cx.veh.claim();
                 pos.y = s.h;
                 return true;
             }
             return false;
         }
         // Airborne under the street code (hop, circuit ramp): rails, landings on pieces, the lot.
-        let vel = yaw_dir * cx.sc.speed + Vec3::Y * cx.sc.vy;
-        let at = Vec3::new(p2.x, cx.sc.y, p2.y);
+        let vel = cx.veh.street_vel_3d();
+        let at = Vec3::new(p2.x, vy_cur, p2.y);
         let lock = find_lock(self.prev_y, at, vel, self.cool);
-        let landing = s.h > 0.0 && cx.sc.y <= s.h;
+        let landing = s.h > 0.0 && vy_cur <= s.h;
         if landing && has_prev && s.piece != surface(xz(prev)).piece && self.prev_y < s.h - 0.25 {
             pos.x = prev.x;
             pos.z = prev.z;
-            cx.sc.speed *= 0.35;
+            cx.veh.scale_street_speed(0.35);
             return false;
         }
         // Street grind lines: hand over as soon as the grind assist would act (within `ASSIST_R`,
@@ -3449,32 +3720,38 @@ impl ParkRide {
         let assist = lock.is_none()
             && !landing
             && assist_pick(at, vel, self.cool).is_some_and(|a| a.rail >= layout().park_rails);
-        if lock.is_none() && !landing && !assist && !in_lot(p2) {
+        if lock.is_none() && !landing && !assist && !in_area {
             return false;
         }
+        let air_t = cx.veh.air_t();
+        let flip = cx.veh.flip();
+        let air_spin = cx.veh.air_spin();
+        let flat_hop = cx.veh.flat_hop();
+        let hopped = cx.veh.hopped();
+        let keep_ent = self.active_entity;
         self.reset_motion();
+        self.active_entity = keep_ent;
         self.pos = at;
         self.vel = vel;
         // Keep a street air spin going (the street code drops `air_spin` once the park owns it).
-        self.face = wrap(cx.sc.yaw + cx.sc.air_spin);
-        self.spin = cx.sc.air_spin;
+        self.face = wrap(yaw + air_spin);
+        self.spin = air_spin;
         self.vis_face = self.face;
         self.mode = RideMode::Air;
-        self.air_t = cx.sc.air_t;
-        self.flip = cx.sc.flip;
-        self.flat_hop = cx.sc.flat_hop;
-        self.ramp = !cx.sc.hopped;
-        self.lip_h = cx.sc.y;
-        self.peak = cx.sc.y;
+        self.air_t = air_t;
+        self.flip = flip;
+        self.flat_hop = flat_hop;
+        self.ramp = !hopped;
+        self.lip_h = vy_cur;
+        self.peak = vy_cur;
         self.hold_t = if cx.inp.jump_held { 0.3 } else { 0.0 };
-        claim(cx.sc);
+        cx.veh.claim();
         if let Some(lk) = lock {
             let (judged, clean, mut name, key, pts, flips) = self.judge_air(true);
             if clean {
                 if judged {
-                    if cx.sc.apply_landed_backflips(flips) {
-                        cx.stats.scooter_gravity_scale = cx.sc.gravity_scale;
-                        name.push_str(&format!(" [GRAV {}%]", cx.sc.gravity_pct()));
+                    if cx.veh.apply_landed_backflips(flips, cx.stats) {
+                        name.push_str(&format!(" [GRAV {}%]", cx.veh.gravity_pct()));
                     }
                     self.award(cx, name, key, pts.max(100));
                 }
@@ -3487,9 +3764,9 @@ impl ParkRide {
         true
     }
 
-    /// Scooter + rider transforms for park riding: aligned to the surface (or the rail), leaning
+    /// Vehicle + rider transforms for park riding: aligned to the surface (or the rail), leaning
     /// with steering / balance, flipping and tailwhipping in the air.
-    fn apply_visuals(&mut self, dt: f32, stf: &mut Transform, p_tf: &mut Transform, cx: &mut Ctx) {
+    fn apply_visuals(&mut self, dt: f32, v_tf: &mut Transform, p_tf: &mut Transform, cx: &mut Ctx) {
         let s = surface(xz(self.pos));
         let up_target = match self.mode {
             RideMode::Surface => s.normal(),
@@ -3521,15 +3798,18 @@ impl ParkRide {
             base
         };
         let whip_q = Quat::from_rotation_y(self.whip);
-        let pivot = Vec3::new(0.0, 0.0, 0.56);
-        stf.rotation = body * whip_q;
-        stf.translation = self.pos + body * (pivot - whip_q * pivot);
-        let accel = -320.0 * cx.sc.squash - 20.0 * cx.sc.squash_vel;
-        cx.sc.squash_vel += accel * dt;
-        cx.sc.squash = (cx.sc.squash + cx.sc.squash_vel * dt).clamp(-0.3, 0.3);
-        stf.scale = Vec3::new(1.0 + 0.3 * cx.sc.squash, 1.0 - 0.5 * cx.sc.squash, 1.0 + 0.3 * cx.sc.squash);
-        p_tf.translation = self.pos + up * 0.25;
-        p_tf.rotation = body * Quat::from_rotation_y(PI);
+        let is_car = cx.veh.is_car();
+        let pivot = if is_car { Vec3::ZERO } else { Vec3::new(0.0, 0.0, 0.56) };
+        v_tf.rotation = body * whip_q;
+        v_tf.translation = self.pos + body * (pivot - whip_q * pivot);
+        v_tf.scale = cx.veh.step_squash(dt);
+        if is_car {
+            p_tf.translation = self.pos;
+            p_tf.rotation = Quat::from_rotation_y(self.vis_face);
+        } else {
+            p_tf.translation = self.pos + up * 0.25;
+            p_tf.rotation = body * Quat::from_rotation_y(PI);
+        }
         cx.rider.grounded = !matches!(self.mode, RideMode::Air | RideMode::Grind);
     }
 }
@@ -3557,8 +3837,9 @@ fn update_park_ride(
     mut st: ResMut<StuntState>,
     mut ride: ResMut<ParkRide>,
     mut orbit: ResMut<CameraOrbit>,
-    mut player_q: Query<(&mut Transform, &mut Player), Without<CityScooter>>,
-    mut scooter_q: Query<(&mut Transform, &mut CityScooter), Without<Player>>,
+    mut player_q: Query<(&mut Transform, &mut Player), (Without<CityScooter>, Without<CityCar>)>,
+    mut scooter_q: Query<(&mut Transform, &mut CityScooter), (Without<Player>, Without<CityCar>)>,
+    mut car_q: Query<(&mut Transform, &mut CityCar), (Without<Player>, Without<CityScooter>)>,
     mut ragdoll: ResMut<crate::ragdoll::Ragdoll>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -3570,30 +3851,64 @@ fn update_park_ride(
     ride.cheer = (ride.cheer - dt).max(0.0);
     ride.cool.1 -= dt;
     ride.contact = None;
-    let Some(se) = stats.riding_scooter else {
-        if ride.mode != RideMode::Off || ride.prev.is_some() {
+
+    let Ok((mut p_tf, mut rider)) = player_q.get_single_mut() else {
+        return;
+    };
+    if let Some(se) = stats.riding_scooter {
+        let Ok((mut v_tf, mut sc)) = scooter_q.get_mut(se) else {
+            return;
+        };
+        if ride.active_entity != Some(se) {
             ride.reset_motion();
+            ride.active_entity = Some(se);
         }
-        return;
-    };
-    let (Ok((mut stf, mut sc)), Ok((mut p_tf, mut rider))) = (scooter_q.get_mut(se), player_q.get_single_mut()) else {
-        return;
-    };
-    let touch_jump = if sc.park { crate::audio::take_touch_jump() } else { false };
-    let mut inp = read_input(&keys, &stats, t, touch_jump);
-    if sc.park {
-        if inp.turbo && !sc.turbo_on {
+        run_park_ride(dt, t, &keys, &mut stats, &mut st, ride, &mut orbit, &mut p_tf, &mut rider, &mut v_tf, ParkVehicle::Scooter(&mut sc), &mut ragdoll);
+    } else if let Some(ce) = stats.driving_car {
+        let Ok((mut v_tf, mut car)) = car_q.get_mut(ce) else {
+            return;
+        };
+        if ride.active_entity != Some(ce) {
+            ride.reset_motion();
+            ride.active_entity = Some(ce);
+        }
+        run_park_ride(dt, t, &keys, &mut stats, &mut st, ride, &mut orbit, &mut p_tf, &mut rider, &mut v_tf, ParkVehicle::Car(&mut car), &mut ragdoll);
+    } else if ride.mode != RideMode::Off || ride.prev.is_some() || ride.active_entity.is_some() {
+        ride.reset_motion();
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_park_ride(
+    dt: f32,
+    t: f32,
+    keys: &ButtonInput<KeyCode>,
+    stats: &mut PlayerStats,
+    st: &mut StuntState,
+    ride: &mut ParkRide,
+    orbit: &mut CameraOrbit,
+    p_tf: &mut Transform,
+    rider: &mut Player,
+    v_tf: &mut Transform,
+    mut veh: ParkVehicle<'_>,
+    rag: &mut crate::ragdoll::Ragdoll,
+) {
+    let touch_jump = if veh.park() { crate::audio::take_touch_jump() } else { false };
+    let mut inp = read_input(keys, stats, t, touch_jump);
+    if veh.park() {
+        if inp.turbo && !veh.turbo_on() {
             play_sfx("dash");
         }
-        sc.turbo_on = inp.turbo;
+        veh.set_turbo_on(inp.turbo);
         if inp.turbo {
             orbit.speed_kick_t = 0.15;
         }
     }
+    let is_car = veh.is_car();
     // Aim steering on the park's flat ground (same as the street): no hand steering means the
-    // scooter turns to head where the camera looks. Off on ramps and in the pipe, where the
-    // camera frames the piece instead of sitting behind the rider.
-    if inp.aim
+    // scooter turns to head where the camera looks. Off for cars and on ramps / pipes.
+    if !is_car
+        && inp.aim
         && ride.mode == RideMode::Surface
         && (ride.pos.y < 0.3 || (!near_park(xz(ride.pos), 0.0) && surface(xz(ride.pos)).slope() < 0.05))
         && (inp.throttle > 0.05 || ride.vel.length() > 1.0)
@@ -3601,24 +3916,24 @@ fn update_park_ride(
         let aim = crate::scooter::aim_steer(orbit.yaw, ride.face, orbit.auto_align_weight());
         inp.steer = (inp.steer + aim).clamp(-1.0, 1.0);
     }
-    if !ride.hinted && in_park_zone(stf.translation) && near_park(xz(stf.translation), 5.5) {
+    if !ride.hinted && in_park_zone(v_tf.translation) && near_park(xz(v_tf.translation), 5.5) {
         ride.hinted = true;
         stats.hint_text = "SKATE PARK! Pump the half pipe across the street (hold [W] on the way down) and JUMP onto rails and ledges to GRIND. In the air: hold JUMP to flip, tap it to tailwhip, steer to spin.".to_string();
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
     }
-    let mut cx = Ctx { stats: &mut stats, st: &mut st, sc: &mut sc, rider: &mut rider, inp: &inp, rag: &mut ragdoll };
-    if !cx.sc.park {
-        let mut pos = stf.translation;
+    let mut cx = Ctx { stats, st, veh, rider, inp: &inp, rag };
+    if !cx.veh.park() {
+        let mut pos = v_tf.translation;
         let took = ride.try_take_over(&mut pos, &mut cx);
-        stf.translation = pos;
+        v_tf.translation = pos;
         if !took {
             if ride.mode != RideMode::Off {
                 ride.mode = RideMode::Off;
             }
-            ride.prev = Some(stf.translation);
-            ride.prev_y = cx.sc.y;
-            if !ride.street_hinted && cx.sc.speed > 4.0 {
-                let p = xz(stf.translation);
+            ride.prev = Some(v_tf.translation);
+            ride.prev_y = cx.veh.y();
+            if !ride.street_hinted && cx.veh.speed() > 4.0 {
+                let p = xz(v_tf.translation);
                 let l = layout();
                 let near = l.grid.at(p).rails.iter().any(|&i| {
                     let i = i as usize;
@@ -3630,13 +3945,26 @@ fn update_park_ride(
                     cx.stats.hint_bump = cx.stats.hint_bump.wrapping_add(1);
                 }
             }
-            if ride.log && near_park(xz(stf.translation), 20.0) {
+            if ride.log && near_park(xz(v_tf.translation), 20.0) {
                 crate::audio::park_log(&format!(
                     "N t={:.2} p=({:.2},{:.2},{:.2}) y={:.2} vy={:.2} gr={} spd={:.2} yaw={:.2} boost={:.2} grav={:.2} | {}",
-                    t, stf.translation.x, stf.translation.y, stf.translation.z, cx.sc.y, cx.sc.vy, cx.sc.grounded, cx.sc.speed, cx.sc.yaw, cx.sc.boost_t, cx.sc.gravity_scale, cx.stats.hint_text
+                    t,
+                    v_tf.translation.x,
+                    v_tf.translation.y,
+                    v_tf.translation.z,
+                    cx.veh.y(),
+                    cx.veh.vy(),
+                    cx.veh.grounded(),
+                    cx.veh.speed(),
+                    cx.veh.yaw(),
+                    cx.veh.boost_t(),
+                    cx.veh.gravity_scale(),
+                    cx.stats.hint_text
                 ));
             }
-            p_tf.translation = stf.translation + Vec3::Y * 0.25;
+            if !is_car {
+                p_tf.translation = v_tf.translation + Vec3::Y * 0.25;
+            }
             return;
         }
     } else {
@@ -3655,12 +3983,17 @@ fn update_park_ride(
     }
     if ride.mode == RideMode::Off {
         // Handed back to the street code this frame.
-        stf.translation = Vec3::new(ride.pos.x, 0.0, ride.pos.z);
-        stf.rotation = Quat::from_rotation_y(cx.sc.yaw);
-        stf.scale = Vec3::ONE;
-        p_tf.translation = stf.translation + Vec3::Y * 0.25;
-        p_tf.rotation = Quat::from_rotation_y(cx.sc.yaw + PI);
-        ride.prev = Some(stf.translation);
+        v_tf.translation = Vec3::new(ride.pos.x, 0.0, ride.pos.z);
+        v_tf.rotation = Quat::from_rotation_y(cx.veh.yaw());
+        v_tf.scale = Vec3::ONE;
+        if is_car {
+            p_tf.translation = v_tf.translation;
+            p_tf.rotation = Quat::from_rotation_y(cx.veh.yaw());
+        } else {
+            p_tf.translation = v_tf.translation + Vec3::Y * 0.25;
+            p_tf.rotation = Quat::from_rotation_y(cx.veh.yaw() + PI);
+        }
+        ride.prev = Some(v_tf.translation);
         ride.prev_y = 0.0;
         return;
     }
@@ -3672,11 +4005,9 @@ fn update_park_ride(
         }
     }
     let s = surface(xz(ride.pos));
-    cx.sc.y = ride.pos.y;
-    cx.sc.yaw = ride.face;
-    cx.sc.speed = Vec2::new(ride.vel.x, ride.vel.z).length();
-    cx.sc.grounded = ride.mode == RideMode::Surface && s.slope() < 0.6;
-    ride.apply_visuals(dt, &mut stf, &mut p_tf, &mut cx);
+    let surf_grounded = ride.mode == RideMode::Surface && s.slope() < 0.6;
+    cx.veh.sync_from_park(ride.pos, ride.vel, ride.face, surf_grounded);
+    ride.apply_visuals(dt, v_tf, p_tf, &mut cx);
 
     // Chase camera: behind the rider on gentle ground; in the half pipe it settles on a view down
     // the pipe while the rider goes wall to wall, and it never turns while they are vertical.
@@ -3721,7 +4052,7 @@ fn update_park_ride(
             if ride.mode == RideMode::Grind { layout().rails[ride.rail].name } else { "-" },
             ride.gs,
             ride.bal,
-            cx.sc.gravity_scale,
+            cx.veh.gravity_scale(),
             cx.st.combo,
             cx.stats.score
         ));
@@ -3827,33 +4158,6 @@ fn update_park_walking(
     }
     tf.translation = p;
     *prev = Some(p);
-}
-
-/// A car being driven into the park stops at the pieces like at a wall.
-fn block_driven_car(stats: Res<PlayerStats>, mut car_q: Query<(&mut Transform, &mut CityCar)>, mut prev: Local<Option<Vec3>>) {
-    let Some(ce) = stats.driving_car else {
-        *prev = None;
-        return;
-    };
-    let Ok((mut tf, mut car)) = car_q.get_mut(ce) else {
-        return;
-    };
-    if !near_pieces(xz(tf.translation), 4.0) {
-        *prev = Some(tf.translation);
-        return;
-    }
-    let pv = prev.unwrap_or(tf.translation);
-    let hit = [(-1.0, -2.2), (1.0, -2.2), (-1.0, 2.2), (1.0, 2.2), (0.0, 0.0)].iter().any(|&(x, z)| {
-        let w = tf.transform_point(Vec3::new(x, 0.0, z));
-        surface(xz(w)).h > 0.45 || in_bigpark(w.x, w.z, 0.0)
-    }) || fence_hit(xz(pv), xz(tf.translation), 0.4, 1.0).is_some();
-    if hit && prev.is_some() {
-        tf.translation.x = pv.x;
-        tf.translation.z = pv.z;
-        car.velocity *= -0.2;
-    } else {
-        *prev = Some(tf.translation);
-    }
 }
 
 /// Keeps the follow camera out of the pieces (it only knows about `PlatformBox` walls).
@@ -4023,13 +4327,10 @@ pub fn zone_speed_cap(pos: Vec3, max_spd: f32, boosting: bool) -> f32 {
     max_spd.min(if max_spd > crate::scooter::STREET_TOP_SPEED + 0.5 { turbo } else { flat })
 }
 
-/// Hopping off in the park: the scooter is left resting on the surface (slid down to a gentle
-/// spot if it was on a transition) and the hero stands on a walkable spot beside it.
-pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec3) {
-    sc.park = false;
-    let mut p = xz(stf.translation);
+fn settle_park_spot(pos: &mut Vec3, hero: &mut Vec3, side_offset: f32) -> f32 {
+    let mut p = xz(*pos);
     if !near_pieces(p, 1.0) {
-        return;
+        return pos.y;
     }
     for _ in 0..80 {
         let s = surface(p);
@@ -4039,10 +4340,14 @@ pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec
         p -= s.grad.normalize_or_zero() * 0.2;
     }
     let s = surface(p);
-    stf.translation = Vec3::new(p.x, s.h, p.y);
-    sc.y = s.h;
-    let mut spot = Vec3::new(p.x, s.h, p.y);
-    for o in [Vec2::new(1.4, 0.0), Vec2::new(-1.4, 0.0), Vec2::new(0.0, 1.4), Vec2::new(0.0, -1.4)] {
+    *pos = Vec3::new(p.x, s.h, p.y);
+    let mut spot = *pos;
+    for o in [
+        Vec2::new(side_offset, 0.0),
+        Vec2::new(-side_offset, 0.0),
+        Vec2::new(0.0, side_offset),
+        Vec2::new(0.0, -side_offset),
+    ] {
         let q = p + o;
         let sq = surface(q);
         if (sq.h - s.h).abs() <= 0.45 && sq.slope() < 0.6 && fence_hit(p, q, s.h + 0.1, 0.2).is_none() {
@@ -4051,6 +4356,19 @@ pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec
         }
     }
     *hero = spot;
+    s.h
+}
+
+/// Hopping off a scooter in the park: leaves it resting on the surface and the hero beside it.
+pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec3) {
+    sc.park = false;
+    sc.y = settle_park_spot(&mut stf.translation, hero, 1.4);
+}
+
+/// Exiting a car in the park: leaves the car on the surface and the hero on a walkable spot beside it.
+pub fn settle_car_dismount(ctf: &mut Transform, car: &mut CityCar, hero: &mut Vec3) {
+    car.park = false;
+    car.ride.y = settle_park_spot(&mut ctf.translation, hero, 2.2);
 }
 
 /// Ragdoll points (`ragdoll.rs`): a sphere of radius `r` that moved from `prev` to `p` against
@@ -4594,11 +4912,9 @@ impl Plugin for SkateParkPlugin {
                 (
                     update_park_ride
                         .after(crate::stunts::update_scooter_stunts)
+                        .after(crate::stunts::update_ramp_cars)
                         .in_set(crate::player::CameraSet::Motion),
                     update_park_walking.in_set(ParkWalkSet),
-                    block_driven_car
-                        .after(crate::city::update_city_driving)
-                        .in_set(crate::player::CameraSet::Motion),
                     park_camera_clearance.after(crate::player::CameraSet::Follow),
                     (update_park_sparks, update_park_scoreboard, update_spectators, add_park_radar_icon),
                 )
