@@ -3279,7 +3279,11 @@ pub fn enter_city_play(
             )
         };
         stats.hint_text = if from_mike {
-            format!("SMOKE BREAK WITH MIKE DONE! +3 Hearts, Extra Woozy. {}", crew_line)
+            if stats.free_roam {
+                "SMOKE BREAK WITH MIKE DONE! Full Hearts, Extra Woozy.".to_string()
+            } else {
+                format!("SMOKE BREAK WITH MIKE DONE! Full Hearts, Extra Woozy. {}", crew_line)
+            }
         } else if from_derek {
             format!("DEREK JOINED YOUR SQUAD! +2 Hearts, +25 Credits. {}", crew_line)
         } else if from_nate {
@@ -5634,9 +5638,9 @@ pub fn update_city_props(
         && !stats.char_select_open
         && p.y < 4.0;
 
-    // Open from the start; only shut while Stan stands where Mike's own [F / E] could fire
-    // (Mike is about 9 m from the tower, so in practice never).
-    let near_mike = !stats.free_roam && !stats.mike_smoked && flat(mike_pub_spot()) < 4.8;
+    // Open from the start; only shut while standing right next to Mike so his [F / E] doesn't
+    // conflict with the beer tower (Mike is about 9 m from the tower, so in practice never).
+    let near_mike = flat(mike_pub_spot()) < 4.8;
     let beer_open = !near_mike;
     let beer_size_ok = stats.player_scale <= BEER_MAX_SCALE;
     let tower = beer_tower_world_pos();

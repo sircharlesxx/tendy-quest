@@ -975,30 +975,26 @@ pub fn update_city_scooter_and_phone(
             mike.was_inside = false;
         }
         let on_ground = p_tf.translation.y < 4.0;
-        if stats.free_roam {
-            // Post-game free roam: Mike just hangs out (no smoke-break replay), says hi once.
-            if on_ground && d < trigger_r && !mike.was_inside {
-                mike.was_inside = true;
-                stats.hint_text = "MIKE: \"Smoke break's over, legend. Go ride.\"".to_string();
-                stats.hint_bump = stats.hint_bump.wrapping_add(1);
-            }
-            continue;
-        }
-        if on_ground && d < trigger_r && !mike.was_inside && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+        let can_mike = on_ground
+            && stats.driving_car.is_none()
+            && stats.riding_scooter.is_none()
+            && !stats.bartender_open
+            && !stats.char_select_open;
+        if can_mike && d < trigger_r && !mike.was_inside {
             mike.was_inside = true;
             stats.saved_city_pos = p_tf.translation;
             stats.mike_return_city = true;
             next_state.set(GameState::MikeCutscene);
             return;
-        } else if on_ground && d < 4.2 && stats.driving_car.is_none() && stats.riding_scooter.is_none() {
+        } else if can_mike && d < 4.2 {
             if interact {
                 mike.was_inside = true;
                 stats.saved_city_pos = p_tf.translation;
                 stats.mike_return_city = true;
                 next_state.set(GameState::MikeCutscene);
                 return;
-            } else {
-                stats.hint_text = "Bump Mike or press [F / E] for Uzumaki Alley Wisdom!".to_string();
+            } else if !mike.was_inside {
+                stats.hint_text = "Bump Mike or press [F / E] to smoke weed & heal!".to_string();
             }
         }
     }
@@ -1868,7 +1864,7 @@ pub fn exit_mike_cutscene(
         // Last step of the Level 2 gate (see `PlayerStats::gate_open`).
         stats.mike_smoked = true;
     }
-    stats.hearts = (stats.hearts + 3).min(stats.max_hearts);
+    stats.hearts = stats.max_hearts;
     stats.dash_energy = 100.0;
     stats.high_timer = 30.0;
     if stats.in_city {
