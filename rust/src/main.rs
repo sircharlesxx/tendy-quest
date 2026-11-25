@@ -20,6 +20,7 @@ mod nate;
 mod net;
 mod player;
 mod pub_portal;
+mod ragdoll;
 mod scooter;
 mod shapes;
 mod skatepark;
@@ -129,6 +130,8 @@ fn main() {
         .add_plugins(net::NetPlugin)
         // Skate park on Greene Square + the lot south of it: pieces, ride physics, grinds (skatepark.rs).
         .add_plugins(skatepark::SkateParkPlugin)
+        // Hero ragdoll: car hits, failed trick landings, head-on scooter wall hits (ragdoll.rs).
+        .add_plugins(ragdoll::RagdollPlugin)
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
@@ -335,7 +338,9 @@ fn main() {
                     player_movement,
                     update_city_driving,
                     // No phone or scooter while riding the Ferris wheel.
-                    update_city_scooter_and_phone.run_if(ferris::not_riding_wheel),
+                    update_city_scooter_and_phone
+                        .run_if(ferris::not_riding_wheel)
+                        .run_if(ragdoll::hero_free),
                 )
                     .in_set(CameraSet::Motion),
                 // After the skate park's on-foot pass so the hero's grounded pose is final.

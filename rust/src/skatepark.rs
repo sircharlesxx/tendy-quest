@@ -2662,6 +2662,7 @@ struct Ctx<'a> {
     sc: &'a mut CityScooter,
     rider: &'a mut Player,
     inp: &'a RideInput,
+    rag: &'a mut crate::ragdoll::Ragdoll,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2944,15 +2945,25 @@ impl ParkRide {
             None
         };
         let mut fakie = false;
+        let mut sideways = false;
         let facing_ok = match ref_dir {
             Some(d) => {
                 let diff = wrap(self.face - yaw_of(d)).abs();
                 fakie = diff > 1.83;
+                sideways = (diff - FRAC_PI_2).abs() < crate::ragdoll::SPIN_FAIL_SIDEWAYS_RAD;
                 diff < 1.31 || fakie
             }
             None => true,
         };
         let (judged, clean, mut name, key, pts, flips) = self.judge_air(facing_ok);
+        // Failed landing (`ragdoll.rs`): far off a whole flip, or an air spin of at least a quarter
+        // turn put down sideways. Scores nothing, breaks the combo, and throws the rider.
+        let flip_off = {
+            let nearest = (self.flip / TAU).round();
+            (self.flip - nearest * TAU).abs()
+        };
+        let flip_fail = self.air_t > 0.35 && flip_off > crate::ragdoll::FLIP_FAIL_RAD;
+        let spin_fail = self.air_t > 0.15 && sideways && self.spin.abs() >= crate::ragdoll::SPIN_FAIL_MIN_RAD;
         let impact = (-vn).max(0.0);
         if self.air_t > 0.15 {
             let k = (impact / 12.0).clamp(0.3, 1.3);
@@ -2960,7 +2971,11 @@ impl ParkRide {
             cx.rider.squash_vel += 5.0 * k;
             cx.stats.shake_request = cx.stats.shake_request.max(0.04 + 0.08 * k);
         }
-        if judged && !clean {
+        if (flip_fail || spin_fail) && crate::ragdoll::can_ragdoll(cx.stats) {
+            self.bail(cx, if flip_fail { "BAILED! Let go of the flip before you land!" } else { "BAILED! Landed sideways out of the spin!" });
+            let spin = if flip_fail { -6.0 } else { 5.0 };
+            cx.rag.request(Some(self.vel), Vec3::Y * 2.5, spin);
+        } else if judged && !clean {
             vt *= 0.45;
             self.bail(cx, "SKETCHY LANDING! Line up with the ramp before you touch down!");
         } else {
@@ -3544,6 +3559,7 @@ fn update_park_ride(
     mut orbit: ResMut<CameraOrbit>,
     mut player_q: Query<(&mut Transform, &mut Player), Without<CityScooter>>,
     mut scooter_q: Query<(&mut Transform, &mut CityScooter), Without<Player>>,
+    mut ragdoll: ResMut<crate::ragdoll::Ragdoll>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
@@ -3590,7 +3606,7 @@ fn update_park_ride(
         stats.hint_text = "SKATE PARK! Pump the half pipe across the street (hold [W] on the way down) and JUMP onto rails and ledges to GRIND. In the air: hold JUMP to flip, tap it to tailwhip, steer to spin.".to_string();
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
     }
-    let mut cx = Ctx { stats: &mut stats, st: &mut st, sc: &mut sc, rider: &mut rider, inp: &inp };
+    let mut cx = Ctx { stats: &mut stats, st: &mut st, sc: &mut sc, rider: &mut rider, inp: &inp, rag: &mut ragdoll };
     if !cx.sc.park {
         let mut pos = stf.translation;
         let took = ride.try_take_over(&mut pos, &mut cx);
@@ -4035,6 +4051,42 @@ pub fn settle_dismount(stf: &mut Transform, sc: &mut CityScooter, hero: &mut Vec
         }
     }
     *hero = spot;
+}
+
+/// Ragdoll points (`ragdoll.rs`): a sphere of radius `r` that moved from `prev` to `p` against
+/// the park / street-piece / Five Seasons Park surfaces. Pops it up out of a surface, or, when it
+/// came from much lower ground into a raised face (a deck or ledge side), pushes it back out
+/// horizontally. Guard-rail fences are not solid for it. Returns (centre, normal).
+pub fn ragdoll_contact(prev: Vec3, p: Vec3, r: f32) -> Option<(Vec3, Vec3)> {
+    let q = xz(p);
+    if !near_pieces(q, 1.0) {
+        return None;
+    }
+    let s = surface(q);
+    s.piece?;
+    let n = s.normal();
+    let d = (p.y - s.h) * n.y;
+    if d >= r {
+        return None;
+    }
+    let sp = surface(xz(prev));
+    if s.h - sp.h > 0.6 && prev.y < s.h - 0.1 {
+        let back = (xz(prev) - q).normalize_or_zero();
+        return Some((Vec3::new(prev.x, p.y, prev.z), Vec3::new(back.x, 0.0, back.y)));
+    }
+    Some((p + n * (r - d), n))
+}
+
+/// Ground height of a park piece under `p` for the ragdoll get-up (None on the plain street).
+pub fn ragdoll_ground(p: Vec2) -> Option<f32> {
+    if !near_pieces(p, 1.0) {
+        return None;
+    }
+    let mut s = surface_ex(p, true);
+    if let Some(h) = s.piece.and_then(|i| layout().pieces[i].step_h(p)) {
+        s.h = h;
+    }
+    s.piece.map(|_| s.h)
 }
 
 /// `?debug=1&city_start=park|parksky|lot|pipe|plaza|stairs|curb`: (hero position, facing,

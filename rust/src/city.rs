@@ -4243,6 +4243,7 @@ pub fn update_city_traffic(
     mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut car_q: Query<(&mut Transform, &mut CityCar), Without<Player>>,
+    mut ragdoll: ResMut<crate::ragdoll::Ragdoll>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
@@ -4381,6 +4382,21 @@ pub fn update_city_traffic(
                 stats.has_ranch_shield = false;
                 stats.hint_text = "Ranch Shield blocked a speeding NYC Taxi!".to_string();
             } else {
+                // A heart-costing hit at human size throws Stan as a ragdoll (on foot: legs swept
+                // out from under him; on the scooter: thrown off over it). The shield and the
+                // saber block above keep their old reactions.
+                if crate::ragdoll::can_ragdoll(&stats) {
+                    let car_v = if car.axis_x {
+                        Vec3::new(car.dir * car.speed, 0.0, 0.0)
+                    } else {
+                        Vec3::new(0.0, 0.0, car.dir * car.speed)
+                    } + Vec3::new(car.knock_vel.x, 0.0, car.knock_vel.y);
+                    if stats.riding_scooter.is_some() {
+                        ragdoll.request(None, knock * 5.0 + car_v * 0.5 + Vec3::Y * 4.5, 5.0);
+                    } else {
+                        ragdoll.request(Some(player.velocity.with_y(0.0)), knock * 6.0 + car_v * 0.6 + Vec3::Y * 5.0, -7.0);
+                    }
+                }
                 stats.hearts -= 1;
                 play_sfx("hit");
                 stats.hint_text =
