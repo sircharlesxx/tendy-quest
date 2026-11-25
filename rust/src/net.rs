@@ -1184,23 +1184,31 @@ fn receive_remote_states(
                     }
                     EVENT_CLUB_OVERDOSE => {
                         let (vc, spot, lx, lz, inc) = unpack_club_overdose(value);
-                        coop.club_overdoses.push((vc, spot, lx, lz, inc));
-                        format!("UH OH! {} OVERDOSED — FIND NARCAN IN CLUB!", label)
+                        if *state.get() == GameState::ClubPlay {
+                            coop.club_overdoses.push((vc, spot, lx, lz, inc));
+                        }
+                        format!("UH OH! {} OVERDOSED -- FIND NARCAN IN CLUB!", label)
                     }
                     EVENT_CLUB_NARCAN_PICKUP => {
                         let (inc, rc) = unpack_narcan_pickup(value);
-                        coop.club_narcan_pickups.push((inc, rc));
+                        if *state.get() == GameState::ClubPlay {
+                            coop.club_narcan_pickups.push((inc, rc));
+                        }
                         format!("{} FOUND THE HIDDEN NARCAN!", label)
                     }
                     EVENT_CLUB_OVERDOSE_REVIVE => {
                         let (inc, vc, rc) = unpack_overdose_revive(value);
-                        coop.club_overdose_revives.push((inc, vc, rc));
+                        if *state.get() == GameState::ClubPlay {
+                            coop.club_overdose_revives.push((inc, vc, rc));
+                        }
                         format!("{} REVIVED SQUADMATE WITH NARCAN!", label)
                     }
                     EVENT_CLUB_OVERDOSE_DEATH => {
                         let (inc, vc) = unpack_overdose_death(value);
-                        coop.club_overdose_deaths.push((inc, vc));
-                        format!("{} OVERDOSE — FLATLINE!", label)
+                        if *state.get() == GameState::ClubPlay {
+                            coop.club_overdose_deaths.push((inc, vc));
+                        }
+                        format!("{} OVERDOSE -- FLATLINE!", label)
                     }
                     _ => continue,
                 };

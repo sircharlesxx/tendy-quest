@@ -3438,6 +3438,7 @@ fn enter_club_play(
     mut orbit: ResMut<CameraOrbit>,
     mut club: ResMut<ClubState>,
     mut overdose: ResMut<crate::fentanyl::ClubOverdoseState>,
+    mut coop: Option<ResMut<crate::net::NetCoopEvents>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     old_club_q: Query<Entity, With<ClubLevelEntity>>,
@@ -3449,6 +3450,12 @@ fn enter_club_play(
         commands.entity(e).despawn_recursive();
     }
     crate::fentanyl::clear_overdose_state(&mut overdose);
+    if let Some(ref mut ce) = coop {
+        ce.club_overdoses.clear();
+        ce.club_narcan_pickups.clear();
+        ce.club_overdose_revives.clear();
+        ce.club_overdose_deaths.clear();
+    }
 
     if !stats.club_skip_tw_sync {
         stats.sync_tendy_wendies_from_save();
@@ -5796,6 +5803,7 @@ fn update_club_modals(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     net: Res<NetState>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
     mut roamer_q: Query<(&mut ClubRoamingDancer, &Transform)>,
@@ -5805,6 +5813,18 @@ fn update_club_modals(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    if overdose.is_active() {
+        let was_open = club.modal.is_some() || stats.club_modal_open;
+        club.modal = None;
+        stats.club_modal_open = false;
+        for e in &modal_q {
+            commands.entity(e).despawn_recursive();
+        }
+        if was_open && overdose.emergency_active() {
+            set_touch_playing(true);
+        }
+        return;
+    }
     let (char_name, char_voice) = club_char_profile(net.local_char());
     let Some(modal) = club.modal else {
         if stats.club_modal_open {
@@ -6242,6 +6262,7 @@ fn update_club_roamers_and_quests(
     mut commands: Commands,
     time: Res<Time<Real>>,
     net: Res<NetState>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
     mut player_q: Query<&mut Transform, With<Player>>,
@@ -6270,7 +6291,8 @@ fn update_club_roamers_and_quests(
         || stats.club_dance_open
         || stats.club_cutscene_open
         || club.modal_cd > 0.0
-        || club.escort_dancer.is_some();
+        || club.escort_dancer.is_some()
+        || overdose.is_active();
 
     // 1. Stan: immediately rushed upon entering Velvet Disco Club!
     if local_char == CHAR_STAN
@@ -6995,6 +7017,7 @@ fn update_club_quest_overlays(
 fn update_club_seating(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
     help: Res<HelpPause>,
@@ -7002,6 +7025,16 @@ fn update_club_seating(
     seat_ui_q: Query<Entity, With<ClubSeatUi>>,
     btn_q: Query<(&Interaction, &ClubSeatButton), Changed<Interaction>>,
 ) {
+    if overdose.emergency_active() && stats.club_seated {
+        stats.club_seated = false;
+        for e in &seat_ui_q {
+            commands.entity(e).despawn_recursive();
+        }
+        if let Ok(mut p_tf) = player_q.get_single_mut() {
+            p_tf.translation = CLUB_LEVEL_ORIGIN + Vec3::new(LOBBY_SEAT_LOCAL.x, 0.0, LOBBY_SEAT_LOCAL.z + 1.5);
+        }
+        return;
+    }
     if !stats.in_club_level || !stats.club_seated || stats.club_dance_open || help.open {
         for e in &seat_ui_q {
             commands.entity(e).despawn_recursive();
@@ -7508,6 +7541,7 @@ fn update_club_dance_and_broke_warp(
     mut commands: Commands,
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
     mut orbit: ResMut<CameraOrbit>,
@@ -7540,7 +7574,7 @@ fn update_club_dance_and_broke_warp(
 
     if club.dance_timer > 0.0 && !club.dance_ultimate {
         club.dance_timer = (club.dance_timer - dt).max(0.0);
-        if keys.just_pressed(KeyCode::Escape) {
+        if keys.just_pressed(KeyCode::Escape) || overdose.is_active() {
             club.dance_timer = 0.0;
         }
         let back_room_center = club.active_back_room.map(back_room_stage_center);
@@ -7690,6 +7724,7 @@ fn update_club_ultimate_dance(
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     net: Res<NetState>,
+    overdose: Res<crate::fentanyl::ClubOverdoseState>,
     mut stats: ResMut<PlayerStats>,
     mut club: ResMut<ClubState>,
     mut orbit: ResMut<CameraOrbit>,
@@ -7708,7 +7743,7 @@ fn update_club_ultimate_dance(
     let t = time.elapsed_secs();
     club.dance_elapsed += dt;
     club.dance_timer = (club.dance_timer - dt).max(0.0);
-    if keys.just_pressed(KeyCode::Escape) {
+    if keys.just_pressed(KeyCode::Escape) || overdose.is_active() {
         club.dance_timer = 0.0;
     }
 
