@@ -700,6 +700,7 @@ pub fn player_movement(
     mut demo: Local<CombatDemo>,
     frames: Res<bevy::core::FrameCount>,
     mut last_frame: Local<u32>,
+    ragdoll: Res<crate::ragdoll::Ragdoll>,
 ) {
     let Ok((mut tf, mut player, mut vis)) = player_q.get_single_mut() else {
         return;
@@ -851,6 +852,8 @@ pub fn player_movement(
         || stats.club_cutscene_open
         || stats.club_modal_open
         || stats.club_seated
+        // Limp or getting up: `ragdoll::update_ragdoll` owns Stan's position and pose.
+        || ragdoll.active()
     {
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
@@ -2435,7 +2438,13 @@ pub fn animate_player_limbs(
     mut unnamed_q: Query<&mut Transform, (Without<Player>, Without<Name>)>,
     saber_q: Query<Entity, With<crate::boss::HeroSaberBlade>>,
     mut anim: ResMut<LimbAnimState>,
+    ragdoll: Res<crate::ragdoll::Ragdoll>,
 ) {
+    // Ragdolled (or getting up): the ragdoll writes the parts. Nothing here runs, so the
+    // authored-pose cache (`anim.base`) never sees a limp pose.
+    if ragdoll.active() {
+        return;
+    }
     let Ok((player, root_children)) = player_q.get_single() else {
         return;
     };

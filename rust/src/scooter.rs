@@ -813,6 +813,7 @@ pub fn update_city_scooter_and_phone(
     >,
     mut veo_ui: VeoUiParams,
     mut scoot_ui: ScootUiParams,
+    mut ragdoll: ResMut<crate::ragdoll::Ragdoll>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let Ok((mut p_tf, mut player)) = player_q.get_single_mut() else {
@@ -1312,6 +1313,8 @@ pub fn update_city_scooter_and_phone(
         let substeps = ((sc.speed.abs() * dt / (wall_r * 0.5)).ceil() as u32).clamp(1, 16);
         let sub_dt = dt / substeps as f32;
         let mut hard_hit = 0.0_f32;
+        // Fastest head-on wall impact this frame (velocity), for the over-the-bars ragdoll.
+        let mut head_on: Option<Vec2> = None;
         for _ in 0..substeps {
             stf.translation.x = (stf.translation.x + fwd.x * sc.speed * sub_dt).clamp(-126.0, 126.0);
             stf.translation.z = (stf.translation.z + fwd.y * sc.speed * sub_dt).clamp(-126.0, 126.0);
@@ -1356,6 +1359,9 @@ pub fn update_city_scooter_and_phone(
                         if sin_t > HEAD_ON_SIN {
                             // Near head-on: stop with a little bounce back off the wall.
                             hard_hit = hard_hit.max(spd);
+                            if spd >= crate::ragdoll::WALL_RAGDOLL_SPEED && head_on.is_none_or(|h| spd > h.length()) {
+                                head_on = Some(v);
+                            }
                             let bounce = (0.18 * spd).min(3.0);
                             sc.speed = if sc.speed > 0.0 { -bounce } else { bounce };
                         } else {
@@ -1375,6 +1381,16 @@ pub fn update_city_scooter_and_phone(
                     }
                 }
             }
+        }
+        if let Some(v) = head_on.filter(|_| crate::ragdoll::can_ragdoll(&stats)) {
+            // Head-on into a wall above `WALL_RAGDOLL_SPEED`: the scooter stops dead and the rider
+            // carries on over the bars (no heart lost). Slower or glancing hits stay as they were.
+            let base = Vec3::new(v.x, 0.0, v.y) * 0.55 + Vec3::Y * sc.vy.max(0.0);
+            ragdoll.request(Some(base), Vec3::Y * 4.0, 8.0);
+            stats.hint_text = "FACEPLANT! Head-on into a wall. Walk back to the scooter to remount.".to_string();
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            stats.shake_request = stats.shake_request.max(0.3);
+            play_sfx("hit");
         }
         if hard_hit > 7.0 {
             stats.shake_request = stats.shake_request.max((0.04 + hard_hit * 0.006).min(0.14));

@@ -864,6 +864,7 @@ pub fn update_scooter_stunts(
             Without<ScooterBoostFlame>,
         ),
     >,
+    mut ragdoll: ResMut<crate::ragdoll::Ragdoll>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
@@ -1109,7 +1110,30 @@ pub fn update_scooter_stunts(
             sc.flat_hop = false;
             sc.car_hop = false;
             let judged = sc.air_t > 0.35 && !(off < 1.0 && !trick);
-            if !judged && sc.air_t > 0.15 {
+            // Failed landing: way off a whole flip, or an air spin put down sideways. No score,
+            // combo broken, and the rider is thrown (`ragdoll.rs`). Too big to ragdoll: the old
+            // sketchy landing below.
+            let flip_fail = judged && off > crate::ragdoll::FLIP_FAIL_RAD;
+            let spin_fail = sc.air_t > 0.15 && crate::ragdoll::spin_landing_failed(sc.air_spin);
+            let wiped = (flip_fail || spin_fail) && crate::ragdoll::can_ragdoll(&stats);
+            if wiped {
+                st.combo = 0;
+                st.combo_t = 0.0;
+                let fwd = Vec3::new(sc.yaw.sin(), 0.0, sc.yaw.cos());
+                // Flip short / over-rotated: thrown backwards; sideways spin: pitched forward.
+                let spin = if flip_fail { -6.0 } else { 5.0 };
+                ragdoll.request(Some(fwd * sc.speed - Vec3::Y * impact * 0.3), Vec3::Y * 2.5, spin);
+                sc.air_spin = 0.0;
+                play_sfx("hit");
+                stats.hint_text = if flip_fail {
+                    "BAILED! Let go of the flip before you land!".to_string()
+                } else {
+                    "BAILED! Landed sideways out of the spin!".to_string()
+                };
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            }
+            let judged = judged && !wiped;
+            if !judged && !wiped && sc.air_t > 0.15 {
                 play_sfx("step");
             }
             if judged {

@@ -10,7 +10,7 @@
 //! prevents peers in other levels or older cached clients from appearing as floating avatars.
 
 use std::collections::VecDeque;
-use std::f32::consts::PI;
+use std::f32::consts::{FRAC_PI_2, PI};
 
 use bevy::prelude::*;
 use bevy::scene::SceneInstanceReady;
@@ -59,6 +59,8 @@ const FLAG_ATTACK: u8 = 8;
 const FLAG_BLOCK: u8 = 16;
 const FLAG_DRUNK: u8 = 32;
 const FLAG_HIDDEN: u8 = 64;
+/// Hero is a limp ragdoll (`ragdoll.rs`): remotes show a simple lying / tumbling pose.
+const FLAG_RAGDOLL: u8 = 128;
 
 const EVENT_TRICK: u32 = 1;
 const EVENT_BEER: u32 = 2;
@@ -896,7 +898,7 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
         scale: f(15).clamp(SCALE_RANGE.0, SCALE_RANGE.1),
         mode,
         scene_id,
-        flags: (rec[17] as u32 & 0x7f) as u8,
+        flags: (rec[17] as u32 & 0xff) as u8,
         action: f(18).clamp(0.0, 1.0),
     })
 }
@@ -1240,6 +1242,7 @@ fn publish_local_state(
     stats: Res<PlayerStats>,
     player_q: Query<(&Transform, &Player, &Visibility)>,
     tf_q: Query<&Transform, Without<Player>>,
+    ragdoll: Res<crate::ragdoll::Ragdoll>,
 ) {
     let is_casino = *state.get() == GameState::CasinoPlay;
     let is_club = *state.get() == GameState::ClubPlay;
@@ -1299,6 +1302,9 @@ fn publish_local_state(
     }
     if *vis == Visibility::Hidden {
         flags |= FLAG_HIDDEN;
+    }
+    if ragdoll.limp() {
+        flags |= FLAG_RAGDOLL;
     }
     let wire_pos = if is_casino {
         pos - crate::casino::CASINO_LEVEL_ORIGIN
@@ -1570,7 +1576,18 @@ fn remote_pose(p: &RemotePose, t: f32) -> ([Quat; 6], f32, Option<Transform>) {
     let rz = Quat::from_rotation_z;
     let ry = Quat::from_rotation_y;
     let mut tumble = None;
-    let (mut q, bob) = if p.mode == MODE_SCOOTER {
+    let (mut q, bob) = if p.flags & FLAG_RAGDOLL != 0 && p.mode == MODE_WALK {
+        // Limp: lying face down along the facing (the sender's rotation follows the body axis),
+        // hips at the sent position (the sender's pelvis), with a little roll so it reads as a
+        // tumble. Arms and legs splayed.
+        let rot = rx(-FRAC_PI_2) * rz((t * 3.0).sin() * 0.25);
+        tumble = Some(Transform {
+            translation: -(rot * Vec3::new(0.0, 0.72, 0.0)),
+            rotation: rot,
+            scale: Vec3::ONE,
+        });
+        ([rx(0.35) * rz(-0.3), rx(-0.25) * rz(0.3), rz(-1.3), rz(1.3), Quat::IDENTITY, rx(0.3)], 0.0)
+    } else if p.mode == MODE_SCOOTER {
         (
             [
                 rx(0.12),
@@ -1699,7 +1716,10 @@ fn apply_crew_rig_pose(
     } else {
         0.0
     };
-    let (mut root_y, lean_x, mut roll_z) = if pose.mode == MODE_SCOOTER {
+    let (mut root_y, lean_x, mut roll_z) = if pose.flags & FLAG_RAGDOLL != 0 && pose.mode == MODE_WALK {
+        // Limp (`ragdoll.rs`): pitched flat onto the ground with a slow roll.
+        (-0.2, 1.45, (t * 3.0).sin() * 0.25)
+    } else if pose.mode == MODE_SCOOTER {
         (-0.04, 0.14, 0.0)
     } else if pose.flags & FLAG_ROLL != 0 {
         let a = pose.action;
@@ -1721,7 +1741,7 @@ fn apply_crew_rig_pose(
 
     if let Ok(mut root_tf) = tf_q.get_mut(root_ent) {
         let target_rot = Quat::from_rotation_y(PI) * rx(lean_x) * rz(roll_z);
-        let blend = if pose.flags & FLAG_ROLL != 0 {
+        let blend = if pose.flags & (FLAG_ROLL | FLAG_RAGDOLL) != 0 {
             1.0
         } else {
             (dt * 18.0).min(1.0)
@@ -1856,6 +1876,7 @@ fn animate_local_crew_visual(
     stride_leg_q: Query<&CrewStrideLeg>,
     stride_arm_q: Query<&CrewStrideArm>,
     mut part_q: Query<&mut Transform, (Without<RemoteAvatar>, Without<Player>)>,
+    ragdoll: Res<crate::ragdoll::Ragdoll>,
 ) {
     if local_vis_q.is_empty() {
         return;
@@ -1883,6 +1904,9 @@ fn animate_local_crew_visual(
     }
     if stats.drunk_timer > 0.0 {
         flags |= FLAG_DRUNK;
+    }
+    if ragdoll.limp() {
+        flags |= FLAG_RAGDOLL;
     }
     let pose = RemotePose {
         speed: if stats.riding_scooter.is_some() { 0.0 } else { speed },

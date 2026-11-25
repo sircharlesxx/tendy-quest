@@ -322,6 +322,9 @@ const BTN_RESTART: usize = 2;
 const BTN_CLEAR_SAVE: usize = 3;
 const BTN_MULTIPLAYER: usize = 4;
 const BTN_CLEAR_CACHE: usize = 5;
+/// Volume slider row: drag or click along it, or Left / Right while it is selected.
+const BTN_VOLUME: usize = 6;
+const VOLUME_STEP: f32 = 0.1;
 /// Real seconds the "press again to restart" (or "to clear save" / "to clear cache") confirmation stays armed.
 const RESTART_CONFIRM_SECS: f32 = 3.0;
 /// Ignore Esc-to-close this long after opening, so the Esc that dropped pointer lock (which can
@@ -329,7 +332,7 @@ const RESTART_CONFIRM_SECS: f32 = 3.0;
 const ESC_CLOSE_GRACE_SECS: f64 = 0.35;
 
 fn pause_buttons(_state: &GameState, _stats: &PlayerStats) -> Vec<usize> {
-    vec![BTN_RESUME, BTN_SOUND, BTN_RESTART, BTN_CLEAR_CACHE, BTN_CLEAR_SAVE]
+    vec![BTN_RESUME, BTN_SOUND, BTN_VOLUME, BTN_RESTART, BTN_CLEAR_CACHE, BTN_CLEAR_SAVE]
 }
 
 #[derive(Resource, Default)]
@@ -349,6 +352,8 @@ pub struct PauseMenu {
     confirm_clear_cache: f32,
     /// Set once Clear cache is confirmed and a browser reload is in progress.
     cache_reloading: bool,
+    /// Master volume (0..1) shown by the slider; read from the page when the menu opens.
+    volume: f32,
 }
 
 #[derive(Component)]
@@ -356,6 +361,14 @@ struct PauseButton(usize);
 
 #[derive(Component)]
 struct PauseButtonText(usize);
+
+/// Track of the volume slider; its `RelativeCursorPosition` gives the drag position.
+#[derive(Component)]
+struct PauseVolumeTrack;
+
+/// Filled part of the volume slider track.
+#[derive(Component)]
+struct PauseVolumeFill;
 
 fn spawn_pause_menu(
     commands: &mut Commands,
@@ -477,6 +490,9 @@ fn spawn_pause_menu(
                                     Val::Px(if short { 5.0 } else { 9.0 }),
                                 ),
                                 justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                flex_direction: FlexDirection::Column,
+                                row_gap: Val::Px(if short { 3.0 } else { 6.0 }),
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
@@ -494,6 +510,31 @@ fn spawn_pause_menu(
                                 },
                                 TextColor(Color::WHITE),
                             ));
+                            if btn_id == BTN_VOLUME {
+                                btn.spawn((
+                                    PauseVolumeTrack,
+                                    bevy::ui::RelativeCursorPosition::default(),
+                                    Node {
+                                        width: Val::Percent(100.0),
+                                        height: Val::Px(if short { 8.0 } else { 10.0 }),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.22)),
+                                    BorderRadius::all(Val::Px(5.0)),
+                                ))
+                                .with_children(|track| {
+                                    track.spawn((
+                                        PauseVolumeFill,
+                                        Node {
+                                            width: Val::Percent(100.0),
+                                            height: Val::Percent(100.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgb(1.0, 0.84, 0.32)),
+                                        BorderRadius::all(Val::Px(5.0)),
+                                    ));
+                                });
+                            }
                         });
                     }
                 });
@@ -536,6 +577,8 @@ fn update_pause_menu(
     mut virtual_time: ResMut<Time<Virtual>>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
     btn_q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
+    held_q: Query<(&Interaction, &PauseButton)>,
+    track_q: Query<&bevy::ui::RelativeCursorPosition, With<PauseVolumeTrack>>,
     overlay_q: Query<Entity, With<HelpOverlay>>,
     mut next_state: SceneTransition,
 ) {
@@ -575,6 +618,7 @@ fn update_pause_menu(
         *menu = PauseMenu {
             opened_at: now,
             buttons: buttons.clone(),
+            volume: crate::audio::volume(),
             ..default()
         };
         let _ = crate::audio::take_menu_nav();
@@ -634,7 +678,10 @@ fn update_pause_menu(
                 if let Some(idx) = menu.buttons.iter().position(|&b| b == btn.0) {
                     menu.selected = idx;
                 }
-                activate = Some((btn.0, touches.iter().next().is_none()));
+                // The volume row is a slider: the pointer position sets it (below), not a click.
+                if btn.0 != BTN_VOLUME {
+                    activate = Some((btn.0, touches.iter().next().is_none()));
+                }
             }
             Interaction::Hovered => {
                 if let Some(idx) = menu.buttons.iter().position(|&b| b == btn.0) {
@@ -657,6 +704,36 @@ fn update_pause_menu(
     if activate.is_none() && (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space)) {
         // Keyboard (or gamepad A, which arrives as a Space key event).
         activate = Some((selected_id, false));
+    }
+
+    // Volume slider: drag / click along the track, Left / Right (or D-pad) while selected, and
+    // Enter / A steps up 10% and wraps to 0 after 100%.
+    let mut new_volume: Option<f32> = None;
+    let dragging = held_q
+        .iter()
+        .any(|(i, b)| b.0 == BTN_VOLUME && *i == Interaction::Pressed);
+    if dragging {
+        if let Some(pos) = track_q.iter().next().and_then(|r| r.normalized) {
+            new_volume = Some(pos.x.clamp(0.0, 1.0));
+        }
+    }
+    if selected_id == BTN_VOLUME {
+        let left = keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) || nav == -2;
+        let right = keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) || nav == 2;
+        let snapped = (menu.volume / VOLUME_STEP).round() * VOLUME_STEP;
+        if left {
+            new_volume = Some((snapped - VOLUME_STEP).max(0.0));
+        } else if right {
+            new_volume = Some((snapped + VOLUME_STEP).min(1.0));
+        } else if matches!(activate, Some((BTN_VOLUME, _))) {
+            new_volume = Some(if snapped > 0.995 { 0.0 } else { (snapped + VOLUME_STEP).min(1.0) });
+        }
+    }
+    if let Some(v) = new_volume {
+        if (v - menu.volume).abs() > 0.001 {
+            menu.volume = crate::audio::set_volume(v);
+            stats.audio_muted = crate::audio::is_muted();
+        }
     }
 
     let mut resume = close;
@@ -749,10 +826,19 @@ fn refresh_pause_menu(
     stats: Res<PlayerStats>,
     mut btn_q: Query<(&PauseButton, &mut BackgroundColor, &mut BorderColor)>,
     mut txt_q: Query<(&PauseButtonText, &mut Text)>,
+    mut fill_q: Query<&mut Node, With<PauseVolumeFill>>,
 ) {
     if btn_q.is_empty() {
         return;
     }
+    let vol_pct = (menu.volume.clamp(0.0, 1.0) * 100.0).round();
+    for mut node in &mut fill_q {
+        let want = Val::Percent(vol_pct);
+        if node.width != want {
+            node.width = want;
+        }
+    }
+    let vol_label = format!("VOLUME: {}%", vol_pct as u32);
     let armed = menu.confirm_restart > 0.0;
     let armed_clear = menu.confirm_clear > 0.0;
     let armed_cache = menu.confirm_clear_cache > 0.0;
@@ -782,6 +868,7 @@ fn refresh_pause_menu(
     }
     for (t, mut text) in &mut txt_q {
         let want = match t.0 {
+            BTN_VOLUME => vol_label.as_str(),
             BTN_RESUME => "RESUME",
             BTN_SOUND if stats.audio_muted => "SOUND: OFF",
             BTN_SOUND => "SOUND: ON",

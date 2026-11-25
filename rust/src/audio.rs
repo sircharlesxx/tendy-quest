@@ -62,6 +62,12 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = isMuted)]
         fn js_is_muted() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = setVolume)]
+        fn js_set_volume(v: f32) -> f32;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = getVolume)]
+        fn js_get_volume() -> f32;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = moveX)]
         fn js_move_x() -> f32;
 
@@ -355,6 +361,15 @@ mod imp {
 
     pub fn is_muted() -> bool {
         js_is_muted()
+    }
+
+    /// Sets the master volume (0..1, remembered by the page) and returns the applied value.
+    pub fn set_volume(v: f32) -> f32 {
+        js_set_volume(v)
+    }
+
+    pub fn volume() -> f32 {
+        js_get_volume()
     }
 
     pub fn touch_move_x() -> f32 {
@@ -767,6 +782,14 @@ mod imp {
         false
     }
 
+    pub fn set_volume(v: f32) -> f32 {
+        v.clamp(0.0, 1.0)
+    }
+
+    pub fn volume() -> f32 {
+        1.0
+    }
+
     pub fn touch_move_x() -> f32 {
         0.0
     }
@@ -935,7 +958,7 @@ pub use imp::{
     set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
     skip_touch_ui, stop_voice, set_they_live_mode, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
-    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, touch_attack_held, touch_block_held, touch_move_x,
+    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, set_volume, volume, touch_attack_held, touch_block_held, touch_move_x,
     touch_move_y, update_telemetry,
 };
 #[allow(unused_imports)]
