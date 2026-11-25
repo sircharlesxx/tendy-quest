@@ -1032,8 +1032,10 @@ impl Plugin for RagdollPlugin {
                 Update,
                 update_ragdoll
                     .after(crate::skatepark::ParkWalkSet)
-                    .after(crate::city::update_city_traffic)
-                    .before(crate::player::animate_player_limbs)
+                    // No ordering against `update_city_traffic` or `animate_player_limbs`: both are
+                    // registered more than once, and Bevy panics at startup when ordering against
+                    // such a system. A request raised after this system runs is picked up next
+                    // frame, and the limb animator returns early while the ragdoll is active.
                     .before(crate::player::CameraSet::Follow)
                     .run_if(in_state(GameState::CityPlay))
                     .run_if(crate::ui::gameplay_running),
