@@ -845,6 +845,58 @@
           mkOsc("sine", 55, 115, 0.24, 0.26);
           return true;
         }
+        if (name === "gunshot") {
+          mkNoise(0.11, 0.34, 1800);
+          mkOsc("sawtooth", 340, 68, 0.09, 0.26);
+          return true;
+        }
+        if (name === "shotgun") {
+          mkNoise(0.24, 0.44, 1150);
+          mkOsc("sawtooth", 210, 42, 0.22, 0.34);
+          mkOsc("sine", 110, 32, 0.26, 0.32);
+          return true;
+        }
+        if (name === "smg_shot") {
+          mkNoise(0.06, 0.22, 2400);
+          mkOsc("square", 460, 120, 0.055, 0.16);
+          return true;
+        }
+        if (name === "grenade_bounce") {
+          mkOsc("triangle", 620, 410, 0.045, 0.14);
+          return true;
+        }
+        if (name === "explosion") {
+          mkNoise(0.65, 0.50, 420);
+          mkOsc("sawtooth", 145, 24, 0.55, 0.42);
+          mkOsc("sine", 82, 20, 0.62, 0.45);
+          return true;
+        }
+        if (name === "bomb_beep") {
+          mkOsc("sine", 1420, 1380, 0.06, 0.20);
+          return true;
+        }
+        if (name === "bomb_siren") {
+          mkOsc("sawtooth", 540, 880, 0.36, 0.24);
+          setTimeout(() => mkOsc("sawtooth", 880, 480, 0.40, 0.22), 340);
+          return true;
+        }
+        if (name === "toilet_flush") {
+          mkNoise(0.85, 0.26, 950);
+          mkOsc("sine", 340, 115, 0.72, 0.20);
+          return true;
+        }
+        if (name === "fart_splat") {
+          mkOsc("sawtooth", 128, 48, 0.42, 0.32);
+          mkOsc("triangle", 86, 36, 0.48, 0.26);
+          mkNoise(0.32, 0.22, 520);
+          return true;
+        }
+        if (name === "crashout_boom") {
+          mkNoise(0.50, 0.46, 560);
+          mkOsc("sawtooth", 175, 32, 0.52, 0.38);
+          mkOsc("square", 240, 58, 0.30, 0.24);
+          return true;
+        }
         // Why: procedural WebAudio body-horror Foley (`flesh_tear`, `wet_squelch`, `bone_crack`,
         // `thing_shriek`), distant industrial fire roar (`fire_roar`), and optional cutscene camera/
         // glitch SFX (`snap_*`, `they_live_*`, `reptile_hiss`) avoid shipping extra audio assets
@@ -3401,7 +3453,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-4c44a9da9cf07165.js" crossorigin="anonymous" integrity="sha384-8NF4z7sktSB3GWOUC7RBL7yJTXLZl7eQRTeUaPOm8dZ7BCMe++UbMKhnPY8xG8/i"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-4c44a9da9cf07165_bg.wasm" crossorigin="anonymous" integrity="sha384-CIMWVXdCRaautm2hKgcWJXolt8sp3ZvY2HmEHyv+AmhNmQhv/2wzx01Rct97FiPe" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-f21469894628c657.js" crossorigin="anonymous" integrity="sha384-e29udhVw+RhNPZEsuJ13wNNK47TNJR6NqnfxbaUP5tjBSLeFB64oVMmfS2BQJFyE"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-f21469894628c657_bg.wasm" crossorigin="anonymous" integrity="sha384-p050a2QXzzk9dCD6oNYP9EZhK2/FFiT6gxq2EiMzJVqUthDO51KGUZfO1SvSJoHu" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4849,7 +4901,7 @@
           rec[19] = charId;
         } else if (type === T_EVENT) {
           const code = v.getUint8(12), value = v.getUint32(16, true);
-          if (code < 1 || code > 20 || (code <= 10 && value > 1000000)) return drop();
+          if (code < 1 || code > 30 || (code <= 10 && value > 1000000)) return drop();
           rec = new Float64Array(REC_W);
           rec[0] = 3; rec[2] = code; rec[3] = value;
         } else if (type === T_META) {
@@ -7065,8 +7117,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-4c44a9da9cf07165.js';
-const wasm = await init({ module_or_path: './tendy-quest-4c44a9da9cf07165_bg.wasm' });
+import init, * as bindings from './tendy-quest-f21469894628c657.js';
+const wasm = await init({ module_or_path: './tendy-quest-f21469894628c657_bg.wasm' });
 
 
 window.wasmBindings = bindings;

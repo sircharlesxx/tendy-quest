@@ -422,6 +422,12 @@ pub struct CityCar {
     pub jump_lock: f32,
     /// Shift / Nitro active flag (shared with `skatepark`).
     pub turbo_on: bool,
+    /// Home lane coordinate (`z` for `axis_x`, `x` for N/S) so bumped cars steer back on track.
+    pub lane_coord: f32,
+    /// Canonical yaw for the current lane direction.
+    pub base_yaw: f32,
+    /// Seconds spent off-course after a collision (triggers clean snap recovery if wedged).
+    pub off_course_timer: f32,
 }
 
 impl CityCar {
@@ -560,6 +566,32 @@ pub struct CityNpc {
     pub angle: f32,
     pub speed: f32,
     pub walk_phase: f32,
+    /// Remaining ragdoll time (`> 0` = airborne / tumbling / knocked down).
+    pub ragdoll_timer: f32,
+    pub ragdoll_vel: Vec3,
+    pub ragdoll_ang_vel: Vec3,
+    pub ragdoll_rot: Quat,
+    pub hit_cooldown: f32,
+    pub last_saber_swing: u32,
+    pub hp: f32,
+}
+
+/// Launches a street NPC into full 3D ragdoll physics with tumble spin; returns `true` when KO'd.
+pub fn launch_npc_ragdoll(npc: &mut CityNpc, tf: &mut Transform, impulse: Vec3, damage: f32) -> bool {
+    let was_ko = npc.hp <= 0.0;
+    npc.hp = (npc.hp - damage).max(0.0);
+    let ko_now = !was_ko && npc.hp <= 0.0;
+    npc.ragdoll_timer = if npc.hp <= 0.0 { 5.2 } else { 3.8 };
+    npc.hit_cooldown = 0.35;
+    npc.ragdoll_vel = impulse;
+    npc.ragdoll_vel.y = npc.ragdoll_vel.y.max(4.8);
+    let flat = Vec3::new(impulse.x, 0.0, impulse.z).normalize_or(Vec3::Z);
+    let axis = Vec3::Y.cross(flat).normalize_or(Vec3::X);
+    let spin_mag = (impulse.length() * 0.48).clamp(5.0, 18.0);
+    npc.ragdoll_ang_vel = axis * spin_mag + Vec3::new(0.0, 4.5, flat.x * 2.5);
+    npc.ragdoll_rot = tf.rotation;
+    tf.translation.y = tf.translation.y.max(0.45);
+    ko_now
 }
 
 #[derive(Component)]
@@ -2639,6 +2671,9 @@ fn spawn_city_traffic(
                     squash_vel: 0.0,
                     jump_lock: 0.0,
                     turbo_on: false,
+                    lane_coord,
+                    base_yaw: yaw,
+                    off_course_timer: 0.0,
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
@@ -2681,19 +2716,19 @@ fn spawn_city_traffic(
 
 /// Shared car meshes. Footprint matches the old 2.15 x 4.45 box so driving/collision code
 /// (which works from constants, not meshes) is unaffected.
-struct CarMeshes {
-    body: Handle<Mesh>,
-    cabin: Handle<Mesh>,
-    roof: Handle<Mesh>,
-    trim: Handle<Mesh>,
-    headlights: Handle<Mesh>,
-    taillights: Handle<Mesh>,
-    taxi_sign: Handle<Mesh>,
-    tyre: Handle<Mesh>,
-    hub: Handle<Mesh>,
+pub(crate) struct CarMeshes {
+    pub(crate) body: Handle<Mesh>,
+    pub(crate) cabin: Handle<Mesh>,
+    pub(crate) roof: Handle<Mesh>,
+    pub(crate) trim: Handle<Mesh>,
+    pub(crate) headlights: Handle<Mesh>,
+    pub(crate) taillights: Handle<Mesh>,
+    pub(crate) taxi_sign: Handle<Mesh>,
+    pub(crate) tyre: Handle<Mesh>,
+    pub(crate) hub: Handle<Mesh>,
 }
 
-fn car_meshes(meshes: &mut Assets<Mesh>) -> CarMeshes {
+pub(crate) fn car_meshes(meshes: &mut Assets<Mesh>) -> CarMeshes {
     use crate::shapes as sh;
     let body = sh::superellipsoid(Vec3::new(1.075, 0.41, 2.225), 0.28, 0.2, 36, 18).deformed(|p| {
         let end = sh::smoothstep(0.55, 1.0, p.z.abs() / 2.225);
@@ -2778,6 +2813,22 @@ fn spawn_city_npcs(
             base_color: Color::srgb(0.62, 0.30, 0.78),
             ..default()
         }),
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.14, 0.72, 0.74),
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.92, 0.38, 0.62),
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.86, 0.86, 0.88),
+            ..default()
+        }),
+        materials.add(StandardMaterial {
+            base_color: Color::srgb(0.24, 0.24, 0.28),
+            ..default()
+        }),
     ];
     let pants = materials.add(StandardMaterial {
         base_color: Color::srgb(0.18, 0.20, 0.24),
@@ -2798,25 +2849,44 @@ fn spawn_city_npcs(
     });
     let npc = npc_meshes(meshes);
 
-    // Spawn 38 New Yorkers patrolling sidewalks safely outside skyscraper footprints
-    for i in 0..38_usize {
+    // Build ~95 pedestrian patrol homes across Cedar Rapids sidewalks, plazas, Greene Square,
+    // Five Seasons Park, and the 3rd St SE strip outside Pub 217.
+    let mut homes: Vec<(Vec3, f32, f32)> = Vec::new();
+    for i in 0..76_usize {
         let bx = BLOCK_COORDS[i % BLOCK_COORDS.len()];
         let bz = BLOCK_COORDS[(i / 4) % BLOCK_COORDS.len()];
         let side = (i % 4) as f32;
-        let offset = 10.6;
+        let offset = if i < 38 { 10.6 } else { 12.0 };
         let home = match i % 4 {
-            0 => Vec3::new(bx + offset, 0.08, bz),
-            1 => Vec3::new(bx - offset, 0.08, bz),
-            2 => Vec3::new(bx, 0.08, bz + offset),
-            _ => Vec3::new(bx, 0.08, bz - offset),
+            0 => Vec3::new(bx + offset, 0.08, bz + if i >= 38 { 5.0 } else { 0.0 }),
+            1 => Vec3::new(bx - offset, 0.08, bz - if i >= 38 { 5.0 } else { 0.0 }),
+            2 => Vec3::new(bx + if i >= 38 { 5.0 } else { 0.0 }, 0.08, bz + offset),
+            _ => Vec3::new(bx - if i >= 38 { 5.0 } else { 0.0 }, 0.08, bz - offset),
         };
-        // The (-23, 23) block is Pub 217's: every patrol there would walk through its walls.
-        let (pmin_x, pmax_x, pmin_z, pmax_z) = pub217_rect();
-        if home.x + 2.2 + 0.5 > pmin_x
-            && home.x - 2.2 - 0.5 < pmax_x
-            && home.z + 4.8 + 0.5 > pmin_z
-            && home.z - 4.8 - 0.5 < pmax_z
+        homes.push((home, side * 1.57, if i < 38 { 10.5 } else { 9.0 }));
+    }
+    // Greene Square & Five Seasons Park plaza clusters + Pub 217 sidewalk crowd.
+    let plaza_spots: [(f32, f32); 20] = [
+        (60.0, 62.0), (77.0, 62.0), (60.0, 76.0), (78.0, 76.0), (69.0, 56.0),
+        (69.0, 82.0), (54.0, 69.0), (83.0, 69.0), (-8.5, 16.0), (-8.5, 30.0),
+        (10.0, 18.0), (10.0, 29.0), (-69.0, -56.0), (-58.0, -69.0), (-80.0, -69.0),
+        (-23.0, -56.0), (-34.0, -69.0), (-11.0, -69.0), (11.0, 58.0), (11.0, -34.0),
+    ];
+    for (idx, &(px, pz)) in plaza_spots.iter().enumerate() {
+        homes.push((Vec3::new(px, 0.08, pz), idx as f32 * 0.9, 6.5));
+    }
+
+    let (pmin_x, pmax_x, pmin_z, pmax_z) = pub217_rect();
+    for (i, &(home, angle, patrol_radius)) in homes.iter().enumerate() {
+        // Keep interior and walls of Pub 217 completely clear of random street pedestrians.
+        if home.x + 2.4 > pmin_x
+            && home.x - 2.4 < pmax_x
+            && home.z + 4.8 > pmin_z
+            && home.z - 4.8 < pmax_z
         {
+            continue;
+        }
+        if !is_clear_of_skyscrapers(home.x, home.z, 1.0) {
             continue;
         }
         let coat = coats[i % coats.len()].clone();
@@ -2828,10 +2898,17 @@ fn spawn_city_npcs(
                 CityNpc {
                     home_x: home.x,
                     home_z: home.z,
-                    patrol_radius: 10.5,
-                    angle: side * 1.57,
+                    patrol_radius,
+                    angle,
                     speed: 2.2 + (i % 4) as f32 * 0.45,
                     walk_phase: i as f32 * 0.85,
+                    ragdoll_timer: 0.0,
+                    ragdoll_vel: Vec3::ZERO,
+                    ragdoll_ang_vel: Vec3::ZERO,
+                    ragdoll_rot: Quat::IDENTITY,
+                    hit_cooldown: 0.0,
+                    last_saber_swing: 0,
+                    hp: 30.0,
                 },
                 Transform::from_translation(home),
             ))
@@ -3259,13 +3336,15 @@ pub fn enter_city_play(
         || stats.nate_return_city
         || stats.glenn_return_city
         || stats.chillary_return_city
-        || stats.casino_return_city;
+        || stats.casino_return_city
+        || stats.crashout_return_city;
     let from_mike = stats.mike_return_city;
     let from_derek = stats.derek_return_city;
     let from_nate = stats.nate_return_city;
     let from_glenn = stats.glenn_return_city;
     let from_chillary = stats.chillary_return_city;
     let from_casino = stats.casino_return_city;
+    let from_crashout = stats.crashout_return_city;
     stats.tj_return_city = false;
     stats.mike_return_city = false;
     stats.derek_return_city = false;
@@ -3273,8 +3352,13 @@ pub fn enter_city_play(
     stats.glenn_return_city = false;
     stats.chillary_return_city = false;
     stats.casino_return_city = false;
+    stats.crashout_return_city = false;
     if from_casino {
         stats.player_scale = stats.saved_casino_city_scale.clamp(1.8, 18.0);
+    }
+    if from_crashout {
+        stats.speed_boost_timer = stats.speed_boost_timer.max(12.0);
+        stats.dash_energy = 100.0;
     }
     let is_titan_preview = !resuming_from_tj && stats.in_city && stats.tendies >= 50;
     stats.in_city = true;
@@ -3314,6 +3398,8 @@ pub fn enter_city_play(
             "JUST CHILLIN' IN CEDAR RAPIDS! Chillary's Snapchat is live.".to_string()
         } else if from_casino {
             "Back in Pub 217 from Tendy Palace Casino! Your Tendy Wendies (TW) are banked.".to_string()
+        } else if from_crashout {
+            "STAN CRASHED OUT AT PUB 217! Adrenaline rush +20 TW!".to_string()
         } else {
             format!("TJ JOINED YOUR SQUAD! {}", crew_line)
         };
@@ -3734,7 +3820,7 @@ pub fn exit_city_play(
     set_touch_boss_mode(false);
 }
 
-fn wrap_angle(mut a: f32) -> f32 {
+pub fn wrap_angle(mut a: f32) -> f32 {
     while a > std::f32::consts::PI {
         a -= std::f32::consts::TAU;
     }
@@ -4251,15 +4337,32 @@ pub fn update_city_driving(
         }
     }
 
-    // 5. Pedestrians scatter away from speeding/honking driven car
-    if my_speed > 6.0 || honking {
+    // 5. Driven car hits & ragdolls pedestrians cleanly, scatters farther ones
+    if my_speed > 3.5 || honking {
         for (mut npc_tf, mut npc) in &mut npc_q {
+            if npc.ragdoll_timer > 0.0 {
+                continue;
+            }
             let diff = Vec2::new(
                 npc_tf.translation.x - driven_pos.x,
                 npc_tf.translation.z - driven_pos.z,
             );
             let dist = diff.length();
-            if dist < 9.5 && dist > 0.01 {
+            if my_speed > 3.5 && dist < 3.1 && (npc_tf.translation.y - driven_pos.y).abs() < 2.6 && npc.hit_cooldown <= 0.0 {
+                let away = if dist > 0.01 { diff / dist } else { Vec2::new(driven_yaw.sin(), driven_yaw.cos()) };
+                let imp = Vec3::new(
+                    away.x * (my_speed * 0.65 + 7.0) + driven_vel.x * 0.45,
+                    5.8 + my_speed * 0.24,
+                    away.y * (my_speed * 0.65 + 7.0) + driven_vel.y * 0.45,
+                );
+                let ko = launch_npc_ragdoll(&mut npc, &mut npc_tf, imp, 14.0 + my_speed * 0.7);
+                play_sfx("hit");
+                if my_speed > 9.0 {
+                    play_sfx("car_crash");
+                }
+                stats.score += if ko { 200 } else { 100 };
+                stats.shake_request = stats.shake_request.max(0.14);
+            } else if (my_speed > 6.0 || honking) && dist < 9.5 && dist > 0.01 {
                 let away = diff / dist;
                 npc_tf.translation.x += away.x * 14.0 * dt;
                 npc_tf.translation.z += away.y * 14.0 * dt;
@@ -4355,6 +4458,7 @@ pub fn update_city_traffic(
             continue;
         }
 
+        let mut in_uturn_curve = false;
         if car.axis_x {
             car_tf.translation.x += car.dir * car.speed * dt;
             if car_tf.translation.x > CITY_HALF_EXTENT {
@@ -4362,20 +4466,23 @@ pub fn update_city_traffic(
             } else if car_tf.translation.x < -CITY_HALF_EXTENT {
                 car_tf.translation.x = CITY_HALF_EXTENT;
             }
-        } else if let Some(z0) = crate::skatepark::bigpark_uturn_z((car_tf.translation.x / 46.0).round() * 46.0) {
+        } else if let Some(z0) = crate::skatepark::bigpark_uturn_z((car.lane_coord / 46.0).round() * 46.0) {
             // Avenue stub absorbed by Five Seasons Park: northbound cars U-turn on a 3.6 m arc
             // north of `z0` into the southbound lane; at the south edge they swap lanes and come
             // back north instead of wrapping into the park.
-            let road = (car_tf.translation.x / 46.0).round() * 46.0;
+            let road = (car.lane_coord / 46.0).round() * 46.0;
             let r = 3.6;
             let (x, z) = (car_tf.translation.x, car_tf.translation.z);
             if car.dir < 0.0 && z <= z0 {
+                in_uturn_curve = true;
                 let phi = (z0 - z).atan2(x - road) - car.speed * dt / r;
                 if phi <= 0.0 {
                     car_tf.translation.x = road + r;
                     car_tf.translation.z = z0;
                     car.dir = 1.0;
                     car.yaw = 0.0;
+                    car.lane_coord = road + r;
+                    car.base_yaw = 0.0;
                 } else {
                     car_tf.translation.x = road + r * phi.cos();
                     car_tf.translation.z = z0 - r * phi.sin();
@@ -4388,6 +4495,8 @@ pub fn update_city_traffic(
                     car_tf.translation.x = road - r;
                     car.dir = -1.0;
                     car.yaw = std::f32::consts::PI;
+                    car.lane_coord = road - r;
+                    car.base_yaw = std::f32::consts::PI;
                 }
             }
         } else {
@@ -4397,6 +4506,44 @@ pub fn update_city_traffic(
             } else if car_tf.translation.z < -CITY_HALF_EXTENT {
                 car_tf.translation.z = CITY_HALF_EXTENT;
             }
+        }
+        // Smooth course reset for traffic cars knocked off their lane by crashes, sabers, or blasts.
+        if !in_uturn_curve && car.knock_vel.length_squared() < 2.5 {
+            let lat_coord = if car.axis_x {
+                car_tf.translation.z
+            } else {
+                car_tf.translation.x
+            };
+            let lat_err = car.lane_coord - lat_coord;
+            let yaw_err = wrap_angle(car.base_yaw - car.yaw);
+            if lat_err.abs() > 0.08 || yaw_err.abs() > 0.03 {
+                car.off_course_timer += dt;
+                let step = lat_err.clamp(-7.5 * dt, 7.5 * dt);
+                if car.axis_x {
+                    car_tf.translation.z += step;
+                } else {
+                    car_tf.translation.x += step;
+                }
+                let steer_bias = (lat_err * 0.08).clamp(-0.35, 0.35) * car.dir;
+                let desired_yaw = wrap_angle(car.base_yaw + steer_bias);
+                let d_yaw = wrap_angle(desired_yaw - car.yaw);
+                car.yaw = wrap_angle(car.yaw + d_yaw.clamp(-3.2 * dt, 3.2 * dt));
+                if car.off_course_timer > 4.2 || lat_err.abs() > 14.0 {
+                    if car.axis_x {
+                        car_tf.translation.z = car.lane_coord;
+                    } else {
+                        car_tf.translation.x = car.lane_coord;
+                    }
+                    car.yaw = car.base_yaw;
+                    car.knock_vel = Vec2::ZERO;
+                    car.off_course_timer = 0.0;
+                }
+            } else {
+                car.off_course_timer = 0.0;
+                car.yaw = car.base_yaw;
+            }
+        } else if in_uturn_curve {
+            car.off_course_timer = 0.0;
         }
         // Backstop for knockback shoving a lane car sideways into Pub 217.
         if push_car_out_of_pub217(&mut car_tf, car.yaw).is_some() {
@@ -4489,7 +4636,94 @@ pub fn update_city_npcs(
     mut limb_q: Query<(&mut Transform, &CityNpcLimb), Without<CityNpc>>,
 ) {
     let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+    let (pmin_x, pmax_x, pmin_z, pmax_z) = pub217_rect();
+
     for (mut tf, mut npc, children) in &mut npc_q {
+        if npc.hit_cooldown > 0.0 {
+            npc.hit_cooldown = (npc.hit_cooldown - dt).max(0.0);
+        }
+
+        if npc.ragdoll_timer > 0.0 {
+            npc.ragdoll_timer = (npc.ragdoll_timer - dt).max(0.0);
+            npc.ragdoll_vel.y -= 25.0 * dt;
+            tf.translation += npc.ragdoll_vel * dt;
+            tf.translation.x = tf.translation.x.clamp(-132.0, 132.0);
+            tf.translation.z = tf.translation.z.clamp(-132.0, 132.0);
+
+            // Bounce off Pub 217 exterior so airborne pedestrians stay outside.
+            if tf.translation.x > pmin_x - 0.5
+                && tf.translation.x < pmax_x + 0.5
+                && tf.translation.z > pmin_z - 0.5
+                && tf.translation.z < pmax_z + 0.5
+            {
+                let away = (tf.translation - PUB217_ANCHOR).with_y(0.0).normalize_or(Vec3::X);
+                tf.translation.x += away.x * 1.4;
+                tf.translation.z += away.z * 1.4;
+                npc.ragdoll_vel.x = away.x * npc.ragdoll_vel.x.abs().max(5.0);
+                npc.ragdoll_vel.z = away.z * npc.ragdoll_vel.z.abs().max(5.0);
+            }
+
+            if tf.translation.y <= 0.34 {
+                tf.translation.y = 0.34;
+                if npc.ragdoll_vel.y < -3.8 {
+                    npc.ragdoll_vel.y = -npc.ragdoll_vel.y * 0.32;
+                } else {
+                    npc.ragdoll_vel.y = 0.0;
+                }
+                let drag = (1.0 - 5.5 * dt).max(0.0);
+                npc.ragdoll_vel.x *= drag;
+                npc.ragdoll_vel.z *= drag;
+                npc.ragdoll_ang_vel *= (1.0 - 6.0 * dt).max(0.0);
+            } else {
+                npc.ragdoll_ang_vel *= (1.0 - 0.6 * dt).max(0.0);
+            }
+
+            let ang_step = npc.ragdoll_ang_vel * dt;
+            if ang_step.length_squared() > 1e-6 {
+                npc.ragdoll_rot = (Quat::from_scaled_axis(ang_step) * npc.ragdoll_rot).normalize();
+            }
+
+            if npc.ragdoll_timer < 0.65 {
+                let u = 1.0 - npc.ragdoll_timer / 0.65;
+                let yaw = tf.rotation.to_euler(EulerRot::YXZ).0;
+                let upright = Quat::from_rotation_y(yaw);
+                tf.rotation = npc.ragdoll_rot.slerp(upright, (u * 0.25 + 8.0 * dt).clamp(0.0, 1.0));
+                tf.translation.y = tf.translation.y * (1.0 - u) + 0.08 * u;
+            } else {
+                let settled = tf.translation.y <= 0.36 && npc.ragdoll_vel.length() < 1.2;
+                if settled {
+                    let yaw = npc.ragdoll_rot.to_euler(EulerRot::YXZ).0;
+                    let flat_pose = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+                    npc.ragdoll_rot = npc.ragdoll_rot.slerp(flat_pose, (dt * 7.0).min(1.0));
+                }
+                tf.rotation = npc.ragdoll_rot;
+            }
+
+            // Flail/splay limbs while ragdolling!
+            let flail = (t * 14.0 + npc.walk_phase).sin();
+            for &ch in children {
+                if let Ok((mut l_tf, limb)) = limb_q.get_mut(ch) {
+                    if limb.is_arm {
+                        l_tf.rotation = Quat::from_rotation_x(flail * 0.9 * limb.side)
+                            * Quat::from_rotation_z(limb.side * 1.15);
+                    } else {
+                        l_tf.rotation = Quat::from_rotation_x(-flail * 0.65 * limb.side)
+                            * Quat::from_rotation_z(limb.side * 0.28);
+                    }
+                }
+            }
+
+            if npc.ragdoll_timer <= 0.0 {
+                npc.hp = 30.0;
+                npc.home_x = tf.translation.x;
+                npc.home_z = tf.translation.z;
+                npc.angle = 0.0;
+                tf.translation.y = 0.08;
+            }
+            continue;
+        }
+
         npc.angle += npc.speed * 0.16 * dt;
         npc.walk_phase += npc.speed * dt * 3.8;
         let nx = npc.home_x + npc.angle.cos() * 2.2;
@@ -4498,6 +4732,7 @@ pub fn update_city_npcs(
         let dz = nz - tf.translation.z;
         tf.translation.x = nx;
         tf.translation.z = nz;
+        tf.translation.y = 0.08;
         if dx * dx + dz * dz > 1e-5 {
             let yaw = dx.atan2(dz);
             tf.rotation = Quat::from_rotation_y(yaw);
@@ -4508,6 +4743,234 @@ pub fn update_city_npcs(
                 let s = if limb.is_arm { -swing * limb.side } else { swing * limb.side };
                 l_tf.rotation = Quat::from_rotation_x(s);
             }
+        }
+    }
+}
+
+/// Scooter impacts, knocked-car impacts, and free-roam lightsaber attacks on NPCs & street cars.
+pub fn update_city_npc_combat(
+    time: Res<Time>,
+    mut stats: ResMut<PlayerStats>,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    mut npc_q: Query<(&mut Transform, &mut CityNpc), Without<Player>>,
+    mut car_q: Query<(&Transform, &mut CityCar), (Without<Player>, Without<CityNpc>)>,
+    mut car_saber_swing: Local<u32>,
+) {
+    let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
+        return;
+    };
+    let p = p_tf.translation;
+    let p_speed = Vec2::new(player.velocity.x, player.velocity.z).length();
+    let scoot_fast = stats.riding_scooter.is_some() && p_speed > 3.8;
+
+    // 1. Scooter ragdoll hits on NPCs (#8)
+    if scoot_fast {
+        for (mut n_tf, mut npc) in &mut npc_q {
+            if npc.hit_cooldown > 0.0 {
+                continue;
+            }
+            let diff = Vec2::new(n_tf.translation.x - p.x, n_tf.translation.z - p.z);
+            let d = diff.length();
+            if d < 2.25 && (n_tf.translation.y - p.y).abs() < 2.1 {
+                let away = if d > 0.01 { diff / d } else { Vec2::Y };
+                let imp = Vec3::new(
+                    away.x * (p_speed * 0.7 + 5.5) + player.velocity.x * 0.4,
+                    5.4 + p_speed * 0.22,
+                    away.y * (p_speed * 0.7 + 5.5) + player.velocity.z * 0.4,
+                );
+                let ko = launch_npc_ragdoll(&mut npc, &mut n_tf, imp, 12.0 + p_speed * 0.5);
+                play_sfx("hit");
+                stats.score += if ko { 150 } else { 80 };
+                stats.shake_request = stats.shake_request.max(0.12);
+            }
+        }
+    }
+
+    // 2. Traffic cars & flying knocked cars launch NPCs (#8)
+    for (c_tf, car) in &car_q {
+        if car.occupied || car.parked {
+            continue;
+        }
+        let k_len = car.knock_vel.length();
+        let active_v = if k_len > 3.5 {
+            Vec3::new(car.knock_vel.x, 0.0, car.knock_vel.y)
+        } else {
+            let fwd = if car.axis_x {
+                Vec3::new(car.dir * car.speed, 0.0, 0.0)
+            } else {
+                Vec3::new(0.0, 0.0, car.dir * car.speed)
+            };
+            fwd
+        };
+        if active_v.length() < 6.0 {
+            continue;
+        }
+        for (mut n_tf, mut npc) in &mut npc_q {
+            if npc.hit_cooldown > 0.0 || npc.ragdoll_timer > 0.0 {
+                continue;
+            }
+            let diff = Vec2::new(n_tf.translation.x - c_tf.translation.x, n_tf.translation.z - c_tf.translation.z);
+            let d = diff.length();
+            if d < 2.55 && (n_tf.translation.y - c_tf.translation.y).abs() < 2.2 {
+                let away = if d > 0.01 { diff / d } else { Vec2::X };
+                let imp = Vec3::new(away.x * 8.0 + active_v.x * 0.55, 6.2, away.y * 8.0 + active_v.z * 0.55);
+                launch_npc_ragdoll(&mut npc, &mut n_tf, imp, 15.0);
+                play_sfx("hit");
+            }
+        }
+    }
+
+    // 3. Free-Roam & City Lightsaber Combat (#9): slash NPCs sky-high + bat traffic cars!
+    if stats.boss_mode
+        && player.attack_timer > 0.0
+        && stats.equipped_weapon == 0
+        && stats.driving_car.is_none()
+        && stats.riding_scooter.is_none()
+    {
+        let mut landed = false;
+        let heavy = stats.heavy_attack;
+        let dmg = if heavy { 30.0 } else { 15.0 };
+        for (mut n_tf, mut npc) in &mut npc_q {
+            if npc.last_saber_swing == player.swing_id {
+                continue;
+            }
+            let target = crate::player::SaberTarget {
+                pos: n_tf.translation,
+                radius: 0.85,
+                height: 1.75,
+            };
+            if let Some(contact) = crate::player::saber_contact(&player, &stats, p, &target) {
+                npc.last_saber_swing = player.swing_id;
+                let dir = (n_tf.translation - p).with_y(0.0).normalize_or(Vec3::NEG_Z);
+                let imp = dir * if heavy { 22.0 } else { 12.5 } + Vec3::Y * if heavy { 11.5 } else { 7.0 };
+                let ko = launch_npc_ragdoll(&mut npc, &mut n_tf, imp, dmg);
+                if !landed {
+                    crate::player::register_saber_hit(&mut player, &mut stats, contact);
+                    play_sfx("saber_hit");
+                    landed = true;
+                }
+                stats.score += if ko { 200 } else { 100 };
+                if ko {
+                    stats.add_tendy_wendies(1);
+                }
+            }
+        }
+        if *car_saber_swing != player.swing_id {
+            for (c_tf, mut car) in &mut car_q {
+                if car.occupied {
+                    continue;
+                }
+                let target = crate::player::SaberTarget {
+                    pos: c_tf.translation,
+                    radius: 2.1,
+                    height: 1.8,
+                };
+                if let Some(contact) = crate::player::saber_contact(&player, &stats, p, &target) {
+                    *car_saber_swing = player.swing_id;
+                    let dir = Vec2::new(c_tf.translation.x - p.x, c_tf.translation.z - p.z).normalize_or_zero();
+                    car.knock_vel += dir * if heavy { 24.0 } else { 14.0 };
+                    car.yaw = wrap_angle(car.yaw + if heavy { 0.7 } else { 0.35 });
+                    if !landed {
+                        crate::player::register_saber_hit(&mut player, &mut stats, contact);
+                        play_sfx("saber_hit");
+                    }
+                    play_sfx("car_crash");
+                    stats.score += 120;
+                    break;
+                }
+            }
+        }
+    }
+    let _ = time.elapsed_secs();
+}
+
+/// Remote multiplayer car impacts on the local player (#14).
+pub fn update_pvp_car_hits(
+    mut stats: ResMut<PlayerStats>,
+    net: Res<crate::net::NetState>,
+    mut coop: ResMut<crate::net::NetCoopEvents>,
+    mut next_state: crate::transition::SceneTransition,
+    mut player_q: Query<(&Transform, &mut Player)>,
+    mut ragdoll: ResMut<crate::ragdoll::Ragdoll>,
+) {
+    for (vc, _dc) in coop.car_pvp_hits.drain(..) {
+        if stats.driving_car.is_some() {
+            stats.score += 250;
+            play_sfx("car_crash");
+            play_sfx("car_horn");
+            stats.hint_text = format!(
+                "+250 ROADKILL! YOU RAN OVER {}!",
+                crate::net::NetState::char_display_name(vc)
+            );
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        }
+    }
+
+    if stats.driving_car.is_some()
+        || stats.riding_wheel
+        || stats.phone_open
+        || stats.bartender_open
+        || stats.char_select_open
+        || ragdoll.active()
+    {
+        return;
+    }
+    let Ok((p_tf, mut player)) = player_q.get_single_mut() else {
+        return;
+    };
+    if player.invuln_timer > 0.0 || player.roll_timer > 0.0 {
+        return;
+    }
+
+    let remote_cars = net.same_scene_remote_cars();
+    for (_slot, driver_char, c_pos, _c_rot, c_vel) in remote_cars {
+        let speed = Vec2::new(c_vel.x, c_vel.z).length();
+        if speed < 3.5 {
+            continue;
+        }
+        let diff = Vec2::new(p_tf.translation.x - c_pos.x, p_tf.translation.z - c_pos.z);
+        let d = diff.length();
+        let hit_r = 2.35 + stats.player_scale * 0.20;
+        if d < hit_r && (p_tf.translation.y - c_pos.y).abs() < 2.1 {
+            if crate::player::try_block(&mut player, &mut stats, p_tf.translation, c_pos).blocked() {
+                play_sfx("saber_hit");
+                return;
+            }
+            let away = if d > 0.01 { diff / d } else { Vec2::X };
+            let knock = Vec3::new(away.x, 0.0, away.y);
+            let imp = knock * 7.0 + Vec3::new(c_vel.x, 0.0, c_vel.z) * 0.65 + Vec3::Y * 5.8;
+            if crate::ragdoll::can_ragdoll(&stats) {
+                ragdoll.request(Some(player.velocity.with_y(0.0)), imp, -7.5);
+            } else {
+                player.velocity = imp;
+            }
+            player.invuln_timer = 1.6;
+            stats.hurt_flash = 0.85;
+            stats.shake_request = 0.55;
+            play_sfx("car_crash");
+            play_sfx("car_horn");
+            play_sfx("hit");
+
+            if !stats.has_ranch_shield {
+                let min_hp = if stats.free_roam { 1 } else { 0 };
+                stats.hearts = (stats.hearts - 1).max(min_hp);
+            } else {
+                stats.has_ranch_shield = false;
+            }
+            crate::audio::net_event(
+                crate::net::EVENT_CAR_PVP_HIT,
+                crate::net::pack_car_pvp_hit(net.local_char(), driver_char),
+            );
+            stats.hint_text = format!(
+                "RAN OVER BY {}'S CAR!",
+                crate::net::NetState::char_display_name(driver_char)
+            );
+            stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            if stats.hearts <= 0 && !stats.free_roam {
+                play_sfx("gameover");
+                next_state.set(GameState::GameOver);
+            }
+            return;
         }
     }
 }
@@ -5493,6 +5956,9 @@ fn spawn_parked_car(
                 squash_vel: 0.0,
                 jump_lock: 0.0,
                 turbo_on: false,
+                lane_coord: 0.0,
+                base_yaw: yaw,
+                off_course_timer: 0.0,
             },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             Visibility::default(),
@@ -5682,6 +6148,16 @@ pub enum PropAction {
     Chillary,
     /// Maria the Pub 217 bartender (`pub_portal.rs`).
     Bartender,
+    /// BooberEats pickup counter, Lead Bomb defusal, or Pub 217 bathroom stall (`city_events.rs`).
+    CityEvent,
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct CityPrompts<'w> {
+    pub wheel: ResMut<'w, crate::ferris::WheelPrompt>,
+    pub chillary: ResMut<'w, crate::chillary::ChillaryPrompt>,
+    pub bartender: ResMut<'w, crate::pub_portal::BartenderPrompt>,
+    pub city_event: ResMut<'w, crate::city_events::CityEventPrompt>,
 }
 
 /// Beer tower and parked car interaction (CityPlay, normal play and free roam). Both use the city
@@ -5712,9 +6188,7 @@ pub fn update_city_props(
     prompt_q: Query<Entity, With<PropPromptUi>>,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<PropPromptButton>)>,
     mut text_q: Query<&mut Text, With<PropPromptText>>,
-    mut wheel: ResMut<crate::ferris::WheelPrompt>,
-    mut chillary: ResMut<crate::chillary::ChillaryPrompt>,
-    mut bartender: ResMut<crate::pub_portal::BartenderPrompt>,
+    mut prompts: CityPrompts,
     mut last: Local<Option<PropAction>>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -5747,14 +6221,16 @@ pub fn update_city_props(
         && parked_q
             .iter()
             .any(|(t, c)| !c.occupied && flat(t.translation) < PARKED_CAR_REACH);
-    let action = if wheel.label.is_some() {
+    let action = if prompts.wheel.label.is_some() {
         Some(PropAction::Wheel)
-    } else if chillary.label.is_some() {
+    } else if prompts.chillary.label.is_some() {
         // Yield to Ferris wheel boarding (`PropAction::Wheel`) so players riding or hopping onto
         // the wheel are never hijacked into the optional boardwalk easter-egg cutscene.
         Some(PropAction::Chillary)
-    } else if bartender.label.is_some() {
+    } else if prompts.bartender.label.is_some() {
         Some(PropAction::Bartender)
+    } else if prompts.city_event.label.is_some() {
+        Some(PropAction::CityEvent)
     } else if near_beer {
         Some(PropAction::Beer)
     } else if near_car {
@@ -5787,9 +6263,10 @@ pub fn update_city_props(
         }
         PropAction::Beer => "DRINK A BEER [F/E]".to_string(),
         PropAction::Car => "DRIVE [F/E]".to_string(),
-        PropAction::Wheel => wheel.label.clone().unwrap_or_default(),
-        PropAction::Chillary => chillary.label.clone().unwrap_or_default(),
-        PropAction::Bartender => bartender.label.clone().unwrap_or_default(),
+        PropAction::Wheel => prompts.wheel.label.clone().unwrap_or_default(),
+        PropAction::Chillary => prompts.chillary.label.clone().unwrap_or_default(),
+        PropAction::Bartender => prompts.bartender.label.clone().unwrap_or_default(),
+        PropAction::CityEvent => prompts.city_event.label.clone().unwrap_or_default(),
     };
     if prompt_q.is_empty() {
         commands
@@ -5876,9 +6353,10 @@ pub fn update_city_props(
             }
         }
         // `ferris::ferris_ride_update` decides what the press means this frame.
-        PropAction::Wheel => wheel.pressed = true,
-        PropAction::Chillary => chillary.pressed = true,
-        PropAction::Bartender => bartender.pressed = true,
+        PropAction::Wheel => prompts.wheel.pressed = true,
+        PropAction::Chillary => prompts.chillary.pressed = true,
+        PropAction::Bartender => prompts.bartender.pressed = true,
+        PropAction::CityEvent => prompts.city_event.pressed = true,
     }
 }
 

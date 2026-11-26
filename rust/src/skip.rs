@@ -25,7 +25,7 @@ const AUTOSKIP_AFTER_SECS: f32 = 3.0;
 
 static SKIP_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-pub const CUTSCENE_STATES: [GameState; 13] = [
+pub const CUTSCENE_STATES: [GameState; 14] = [
     GameState::HeadphoneCutscene,
     GameState::Cutscene,
     GameState::MomVictoryCutscene,
@@ -41,6 +41,7 @@ pub const CUTSCENE_STATES: [GameState; 13] = [
     GameState::PubPortalCutscene,
     GameState::CoasterCutscene,
     GameState::LexieVictoryCutscene,
+    GameState::StanCrashoutCutscene,
 ];
 
 /// True once the player has skipped the current cutscene. Cutscene systems treat this as

@@ -32,6 +32,18 @@ pub struct HeroCosmetic;
 #[derive(Component)]
 pub struct HeroSaberBlade;
 
+/// Tag for Stan's default Santa-Viking hat parts so `FerrisCoolHat` can swap cleanly in when earned.
+#[derive(Component)]
+pub struct StanVikingsHat;
+
+/// Cool River Star Propeller Crown rewarded for completing a full Ferris wheel ride (#13).
+#[derive(Component)]
+pub struct FerrisCoolHat;
+
+/// Rotating top propeller blades on the Ferris wheel cool hat.
+#[derive(Component)]
+pub struct FerrisHatPropeller;
+
 /// Hero saber's outer glow sheath and its light; brightened while a heavy charges.
 #[derive(Component)]
 pub struct HeroSaberAura;
@@ -505,6 +517,7 @@ pub fn ensure_hero_vikings_gear(
         h.spawn((
             LevelEntity,
             HeroCosmetic,
+            StanVikingsHat,
             Mesh3d(meshes.add(Torus::new(0.055, 0.28))),
             MeshMaterial3d(fur_white.clone()),
             Transform::from_xyz(0.0, 0.38, 0.02),
@@ -512,6 +525,7 @@ pub fn ensure_hero_vikings_gear(
         h.spawn((
             LevelEntity,
             HeroCosmetic,
+            StanVikingsHat,
             Mesh3d(meshes.add(Cone::new(0.28, 0.46))),
             MeshMaterial3d(xmas_red.clone()),
             Transform::from_xyz(0.0, 0.60, 0.02),
@@ -519,6 +533,7 @@ pub fn ensure_hero_vikings_gear(
         h.spawn((
             LevelEntity,
             HeroCosmetic,
+            StanVikingsHat,
             Mesh3d(meshes.add(Sphere::new(0.075))),
             MeshMaterial3d(fur_white.clone()),
             Transform::from_xyz(0.0, 0.84, 0.02),
@@ -527,6 +542,7 @@ pub fn ensure_hero_vikings_gear(
             h.spawn((
                 LevelEntity,
                 HeroCosmetic,
+                StanVikingsHat,
                 Mesh3d(meshes.add(Cone::new(0.055, 0.24))),
                 MeshMaterial3d(vikings_gold.clone()),
                 Transform::from_xyz(sx * 0.25, 0.50, 0.02)
@@ -581,6 +597,173 @@ pub fn ensure_hero_vikings_gear(
             ));
         });
     });
+}
+
+fn spawn_ferris_cool_hat(
+    commands: &mut Commands,
+    parent: Entity,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    pos: Vec3,
+    is_crew_rig: bool,
+) {
+    let crown_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.12, 0.68),
+        emissive: LinearRgba::rgb(0.18, 0.06, 0.45),
+        metallic: 0.35,
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    let gold_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.14),
+        emissive: LinearRgba::rgb(0.6, 0.45, 0.05),
+        metallic: 0.8,
+        perceptual_roughness: 0.2,
+        ..default()
+    });
+    let cyan_glow = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.20, 0.95, 1.0),
+        emissive: LinearRgba::rgb(0.8, 2.6, 3.2),
+        unlit: true,
+        ..default()
+    });
+    let hat_e = commands
+        .spawn((
+            LevelEntity,
+            FerrisCoolHat,
+            Transform::from_translation(pos),
+            Visibility::Inherited,
+        ))
+        .with_children(|h| {
+            // Wide neon captain brim + tall top hat crown + gold band
+            h.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.42, 0.05))),
+                MeshMaterial3d(gold_mat.clone()),
+                Transform::from_xyz(0.0, 0.02, 0.0),
+            ));
+            h.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.25, 0.38))),
+                MeshMaterial3d(crown_mat),
+                Transform::from_xyz(0.0, 0.22, 0.0),
+            ));
+            h.spawn((
+                Mesh3d(meshes.add(Torus::new(0.032, 0.255))),
+                MeshMaterial3d(cyan_glow.clone()),
+                Transform::from_xyz(0.0, 0.10, 0.0),
+            ));
+            // Glowing River Star front badge (+Z for crew rigs, -Z for plaid_hero.glb HeroHead)
+            let z_sign = if is_crew_rig { 1.0 } else { -1.0 };
+            h.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.14, 0.14, 0.06))),
+                MeshMaterial3d(cyan_glow.clone()),
+                Transform::from_xyz(0.0, 0.24, z_sign * 0.27)
+                    .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_4)),
+            ));
+            // Spinning River Star propeller on top!
+            h.spawn((
+                Mesh3d(meshes.add(Cylinder::new(0.025, 0.12))),
+                MeshMaterial3d(gold_mat.clone()),
+                Transform::from_xyz(0.0, 0.45, 0.0),
+            ));
+            h.spawn((
+                FerrisHatPropeller,
+                Transform::from_xyz(0.0, 0.51, 0.0),
+                Visibility::Inherited,
+            ))
+            .with_children(|prop| {
+                prop.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.68, 0.025, 0.09))),
+                    MeshMaterial3d(cyan_glow),
+                    Transform::default(),
+                ));
+                prop.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(0.09, 0.025, 0.68))),
+                    MeshMaterial3d(gold_mat),
+                    Transform::default(),
+                ));
+            });
+        })
+        .id();
+    commands.entity(parent).add_child(hat_e);
+}
+
+/// Equips & animates the Cool River Star Propeller Hat once unlocked on the Ferris wheel (#13).
+#[allow(clippy::too_many_arguments)]
+pub fn sync_ferris_cool_hat(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    stats: Res<PlayerStats>,
+    head_q: Query<(Entity, &Name)>,
+    crew_vis_q: Query<(&crate::net::LocalCrewVisual, &Children)>,
+    rig_root_q: Query<&crate::net::CrewRigAnimRoot>,
+    children_q: Query<&Children>,
+    hat_q: Query<(), With<FerrisCoolHat>>,
+    mut old_hat_q: Query<&mut Visibility, With<StanVikingsHat>>,
+    mut prop_q: Query<&mut Transform, With<FerrisHatPropeller>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    for mut v in &mut old_hat_q {
+        let want = if stats.has_ferris_hat {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+    if !stats.has_ferris_hat {
+        return;
+    }
+
+    // 1. Attach to Stan's HeroHead if missing
+    if let Some((head_e, _)) = head_q.iter().find(|(_, n)| n.as_str() == "HeroHead") {
+        let has_hat = children_q
+            .get(head_e)
+            .is_ok_and(|kids| kids.iter().any(|k| hat_q.get(*k).is_ok()));
+        if !has_hat {
+            spawn_ferris_cool_hat(
+                &mut commands,
+                head_e,
+                &mut meshes,
+                &mut materials,
+                Vec3::new(0.0, 0.36, 0.02),
+                false,
+            );
+        }
+    }
+
+    // 2. Attach to active LocalCrewVisual CrewRigAnimRoot if missing (Nate/Glenn/TJ/Derek)
+    for (crew, kids) in &crew_vis_q {
+        for &child in kids.iter() {
+            if rig_root_q.get(child).is_ok() {
+                let has_hat = children_q
+                    .get(child)
+                    .is_ok_and(|c_kids| c_kids.iter().any(|k| hat_q.get(*k).is_ok()));
+                if !has_hat {
+                    let y = match crew.char_id {
+                        crate::net::CHAR_TJ | crate::net::CHAR_GLENN => 2.09,
+                        _ => 2.02,
+                    };
+                    spawn_ferris_cool_hat(
+                        &mut commands,
+                        child,
+                        &mut meshes,
+                        &mut materials,
+                        Vec3::new(0.0, y, 0.0),
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    // 3. Spin propeller blades!
+    for mut p_tf in &mut prop_q {
+        p_tf.rotate_y(16.0 * dt);
+    }
 }
 
 fn spawn_box(

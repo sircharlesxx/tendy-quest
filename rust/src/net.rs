@@ -77,6 +77,55 @@ pub const EVENT_CLUB_NARCAN_PICKUP: u32 = 12;
 pub const EVENT_CLUB_OVERDOSE_REVIVE: u32 = 13;
 pub const EVENT_CLUB_OVERDOSE_DEATH: u32 = 14;
 pub const EVENT_MOM_ACTION: u32 = 15;
+pub const EVENT_LEAD_BOMB_SPAWN: u32 = 16;
+pub const EVENT_LEAD_BOMB_DEFUSED: u32 = 17;
+pub const EVENT_BAR_SHIT: u32 = 18;
+pub const EVENT_CAR_PVP_HIT: u32 = 19;
+pub const EVENT_GRENADE_BLAST: u32 = 20;
+
+pub fn pack_lead_bomb_spawn(spot_idx: u8, incident_id: u8) -> u32 {
+    u32::from(spot_idx) | (u32::from(incident_id) << 8)
+}
+
+pub fn unpack_lead_bomb_spawn(value: u32) -> (u8, u8) {
+    ((value & 0xFF) as u8, ((value >> 8) & 0xFF) as u8)
+}
+
+pub fn pack_lead_bomb_defused(incident_id: u8, defuser_char: u8) -> u32 {
+    u32::from(incident_id) | (u32::from(defuser_char & 7) << 8)
+}
+
+pub fn unpack_lead_bomb_defused(value: u32) -> (u8, u8) {
+    ((value & 0xFF) as u8, ((value >> 8) & 7) as u8)
+}
+
+pub fn pack_bar_shit(victim_char: u8, outcome: u8) -> u32 {
+    u32::from(victim_char & 7) | (u32::from(outcome & 7) << 8)
+}
+
+pub fn unpack_bar_shit(value: u32) -> (u8, u8) {
+    ((value & 7) as u8, ((value >> 8) & 7) as u8)
+}
+
+pub fn pack_car_pvp_hit(victim_char: u8, driver_char: u8) -> u32 {
+    u32::from(victim_char & 7) | (u32::from(driver_char & 7) << 8)
+}
+
+pub fn unpack_car_pvp_hit(value: u32) -> (u8, u8) {
+    ((value & 7) as u8, ((value >> 8) & 7) as u8)
+}
+
+pub fn pack_grenade_blast(x: f32, z: f32) -> u32 {
+    let qx = (((x + 160.0) / 320.0).clamp(0.0, 1.0) * 65535.0).round() as u32;
+    let qz = (((z + 160.0) / 320.0).clamp(0.0, 1.0) * 65535.0).round() as u32;
+    (qx & 0xFFFF) | ((qz & 0xFFFF) << 16)
+}
+
+pub fn unpack_grenade_blast(value: u32) -> (f32, f32) {
+    let qx = (value & 0xFFFF) as f32 / 65535.0;
+    let qz = ((value >> 16) & 0xFFFF) as f32 / 65535.0;
+    (qx * 320.0 - 160.0, qz * 320.0 - 160.0)
+}
 
 pub const MOM_ACT_HIT: u8 = 1;
 pub const MOM_ACT_GUARD_BREAK: u8 = 2;
@@ -195,6 +244,11 @@ pub struct NetCoopEvents {
     pub club_narcan_pickups: Vec<(u8, u8)>,
     pub club_overdose_revives: Vec<(u8, u8, u8)>,
     pub club_overdose_deaths: Vec<(u8, u8)>,
+    pub lead_bomb_spawns: Vec<(u8, u8)>,
+    pub lead_bomb_defused: Vec<(u8, u8)>,
+    pub bar_shits: Vec<(u8, u8)>,
+    pub car_pvp_hits: Vec<(u8, u8)>,
+    pub grenade_blasts: Vec<(f32, f32)>,
 }
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
@@ -212,14 +266,14 @@ pub struct CrewStrideArm {
 /// Inner transform wrapper orienting procedural `+Z`-facing crew rigs to Stan's `-Z` forward
 /// direction and driving walk bounce, lean, and dodge-roll tumbles cleanly.
 #[derive(Component)]
-struct CrewRigAnimRoot {
-    base_scale: f32,
+pub(crate) struct CrewRigAnimRoot {
+    pub(crate) base_scale: f32,
 }
 
 /// Child attached directly to the local `Player` entity when playing as Nate, Glenn, or TJ.
 #[derive(Component)]
-struct LocalCrewVisual {
-    char_id: u8,
+pub(crate) struct LocalCrewVisual {
+    pub(crate) char_id: u8,
 }
 
 pub struct NetPlugin;
@@ -360,6 +414,11 @@ struct NetAssets {
     dark: Handle<StandardMaterial>,
     glass: Handle<StandardMaterial>,
     tire: Handle<StandardMaterial>,
+    car_meshes: crate::city::CarMeshes,
+    car_trim: Handle<StandardMaterial>,
+    car_hub: Handle<StandardMaterial>,
+    car_headlight: Handle<StandardMaterial>,
+    car_taillight: Handle<StandardMaterial>,
 }
 
 #[derive(Resource, Default)]
@@ -416,6 +475,30 @@ impl NetState {
                     .map(|s| (r.slot, s.pos))
             })
             .collect()
+    }
+
+    /// Active same-scene remote players currently driving cars: `(slot, char_id, pos, rot, vel)`.
+    pub fn same_scene_remote_cars(&self) -> Vec<(u8, u8, Vec3, Quat, Vec3)> {
+        self.remotes
+            .iter()
+            .filter_map(|r| {
+                r.shown
+                    .filter(|s| s.mode == MODE_CAR && s.scene_id == self.local_scene_id)
+                    .map(|s| (r.slot, r.char_id, s.pos, s.rot, s.vel))
+            })
+            .collect()
+    }
+
+    /// Character display label (`STAN`, `NATE`, `GLENN`, `TJ`, `DEREK`).
+    pub fn char_display_name(char_id: u8) -> &'static str {
+        match char_id {
+            CHAR_STAN => "STAN",
+            CHAR_NATE => "NATE",
+            CHAR_GLENN => "GLENN",
+            CHAR_TJ => "TJ",
+            CHAR_DEREK => "DEREK",
+            _ => "CREW",
+        }
     }
 
     /// Total players in the active online session (1 when solo/offline; `1 + peers` when online).
@@ -557,13 +640,37 @@ fn ensure_assets(
             ..default()
         }),
         glass: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.10, 0.16, 0.24),
-            metallic: 0.3,
+            base_color: Color::srgb(0.14, 0.22, 0.32),
+            metallic: 0.6,
             perceptual_roughness: 0.15,
             ..default()
         }),
         tire: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.08, 0.08, 0.10),
+            base_color: Color::srgb(0.09, 0.09, 0.11),
+            perceptual_roughness: 0.85,
+            ..default()
+        }),
+        car_meshes: crate::city::car_meshes(meshes),
+        car_trim: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.12, 0.12, 0.14),
+            perceptual_roughness: 0.55,
+            metallic: 0.2,
+            ..default()
+        }),
+        car_hub: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.72, 0.74, 0.78),
+            perceptual_roughness: 0.3,
+            metallic: 0.8,
+            ..default()
+        }),
+        car_headlight: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.98, 0.80),
+            emissive: LinearRgba::rgb(2.2, 2.0, 1.3),
+            ..default()
+        }),
+        car_taillight: materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.15, 0.15),
+            emissive: LinearRgba::rgb(2.2, 0.2, 0.2),
             ..default()
         }),
     });
@@ -743,28 +850,61 @@ fn spawn_remote(
         })
         .id();
 
-    // Car proxy in the character's accent colour.
+    // Car proxy using the full sculpted CarMeshes chassis, cabin, trim, lights, and wheels.
+    let car_paint = materials.add(StandardMaterial {
+        base_color: tint,
+        metallic: 0.45,
+        perceptual_roughness: 0.26,
+        ..default()
+    });
     let car = commands
         .spawn((NetEntity, hidden, Visibility::Hidden))
         .with_children(|c| {
             c.spawn((
-                Mesh3d(a.unit_box.clone()),
-                MeshMaterial3d(paint.clone()),
-                Transform::from_xyz(0.0, 0.68, 0.0).with_scale(Vec3::new(2.15, 0.9, 4.45)),
+                Mesh3d(a.car_meshes.body.clone()),
+                MeshMaterial3d(car_paint.clone()),
+                Transform::from_xyz(0.0, 0.72, 0.0),
             ));
             c.spawn((
-                Mesh3d(a.unit_box.clone()),
+                Mesh3d(a.car_meshes.cabin.clone()),
                 MeshMaterial3d(a.glass.clone()),
-                Transform::from_xyz(0.0, 1.42, -0.15).with_scale(Vec3::new(1.85, 0.6, 2.25)),
+                Transform::from_xyz(0.0, 1.38, -0.15),
             ));
-            for (wx, wz) in [(-1.0_f32, 1.45_f32), (1.0, 1.45), (-1.0, -1.45), (1.0, -1.45)] {
+            c.spawn((
+                Mesh3d(a.car_meshes.roof.clone()),
+                MeshMaterial3d(car_paint),
+                Transform::from_xyz(0.0, 1.665, -0.26),
+            ));
+            c.spawn((
+                Mesh3d(a.car_meshes.trim.clone()),
+                MeshMaterial3d(a.car_trim.clone()),
+                Transform::default(),
+            ));
+            c.spawn((
+                Mesh3d(a.car_meshes.headlights.clone()),
+                MeshMaterial3d(a.car_headlight.clone()),
+                Transform::default(),
+            ));
+            c.spawn((
+                Mesh3d(a.car_meshes.taillights.clone()),
+                MeshMaterial3d(a.car_taillight.clone()),
+                Transform::default(),
+            ));
+            for (wx, wz) in [(-1.05_f32, 1.32_f32), (1.05, 1.32), (-1.05, -1.32), (1.05, -1.32)] {
                 c.spawn((
-                    Mesh3d(a.unit_cyl.clone()),
+                    Mesh3d(a.car_meshes.tyre.clone()),
                     MeshMaterial3d(a.tire.clone()),
                     Transform::from_xyz(wx, 0.36, wz)
                         .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
                         .with_scale(Vec3::new(0.36, 0.28, 0.36)),
-                ));
+                ))
+                .with_children(|w| {
+                    w.spawn((
+                        Mesh3d(a.car_meshes.hub.clone()),
+                        MeshMaterial3d(a.car_hub.clone()),
+                        Transform::default(),
+                    ));
+                });
             }
             c.spawn((
                 NetMarker,
@@ -1297,6 +1437,50 @@ fn receive_remote_states(
                             }
                         }
                     }
+                    EVENT_LEAD_BOMB_SPAWN => {
+                        let (spot_idx, inc_id) = unpack_lead_bomb_spawn(value);
+                        if *state.get() == GameState::CityPlay {
+                            coop.lead_bomb_spawns.push((spot_idx, inc_id));
+                        }
+                        "LEAD BOMB ARMED IN CEDAR RAPIDS -- FIND IT!".to_string()
+                    }
+                    EVENT_LEAD_BOMB_DEFUSED => {
+                        let (inc_id, def_char) = unpack_lead_bomb_defused(value);
+                        if *state.get() == GameState::CityPlay {
+                            coop.lead_bomb_defused.push((inc_id, def_char));
+                        }
+                        format!("{} DEFUSED THE LEAD BOMB!", NetState::char_display_name(def_char))
+                    }
+                    EVENT_BAR_SHIT => {
+                        let (vc, out) = unpack_bar_shit(value);
+                        if *state.get() == GameState::CityPlay {
+                            coop.bar_shits.push((vc, out));
+                        }
+                        let who = NetState::char_display_name(vc);
+                        match out {
+                            1 => format!("{} MADE IT TO THE PUB 217 SHITTER!", who),
+                            2 => format!("OH GOD {} SHIT IN PUB 217!", who),
+                            _ => format!("CODE BROWN! {} HAS TO SHIT AT 217!", who),
+                        }
+                    }
+                    EVENT_CAR_PVP_HIT => {
+                        let (vc, dc) = unpack_car_pvp_hit(value);
+                        if *state.get() == GameState::CityPlay {
+                            coop.car_pvp_hits.push((vc, dc));
+                        }
+                        format!(
+                            "{} RAN OVER {}!",
+                            NetState::char_display_name(dc),
+                            NetState::char_display_name(vc)
+                        )
+                    }
+                    EVENT_GRENADE_BLAST => {
+                        let (bx, bz) = unpack_grenade_blast(value);
+                        if *state.get() == GameState::CityPlay {
+                            coop.grenade_blasts.push((bx, bz));
+                        }
+                        continue;
+                    }
                     _ => continue,
                 };
                 net.event_timer = 4.0;
@@ -1352,7 +1536,7 @@ fn publish_local_state(
     mut net: ResMut<NetState>,
     stats: Res<PlayerStats>,
     player_q: Query<(&Transform, &Player, &Visibility)>,
-    tf_q: Query<&Transform, Without<Player>>,
+    car_q: Query<(&Transform, &crate::city::CityCar), Without<Player>>,
     ragdoll: Res<crate::ragdoll::Ragdoll>,
 ) {
     let is_casino = *state.get() == GameState::CasinoPlay;
@@ -1381,8 +1565,8 @@ fn publish_local_state(
     let Ok((tf, player, vis)) = player_q.get_single() else {
         return;
     };
-    let (mode, pos, rot, vel) = if let Some(car_tf) = stats.driving_car.and_then(|e| tf_q.get(e).ok()) {
-        (MODE_CAR, car_tf.translation, car_tf.rotation, Vec3::ZERO)
+    let (mode, pos, rot, vel) = if let Some((car_tf, car)) = stats.driving_car.and_then(|e| car_q.get(e).ok()) {
+        (MODE_CAR, car_tf.translation, car_tf.rotation, Vec3::new(car.velocity.x, 0.0, car.velocity.y))
     } else if stats.riding_scooter.is_some() {
         (MODE_SCOOTER, tf.translation, tf.rotation, Vec3::ZERO)
     } else if stats.riding_wheel {

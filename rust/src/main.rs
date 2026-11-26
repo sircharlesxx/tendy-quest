@@ -6,6 +6,7 @@ mod casino_arcade;
 mod club;
 mod chillary;
 mod city;
+mod city_events;
 mod controls;
 mod derek;
 mod enemies;
@@ -30,6 +31,7 @@ mod stunts;
 mod tj;
 mod transition;
 mod ui;
+mod weapons;
 
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
 use bevy::prelude::*;
@@ -132,6 +134,9 @@ fn main() {
         .add_plugins(skatepark::SkateParkPlugin)
         // Hero ragdoll: car hits, failed trick landings, head-on scooter wall hits (ragdoll.rs).
         .add_plugins(ragdoll::RagdollPlugin)
+        // Weapons (#15 Guns, #19 Grenades, #9 Crew Sabers) and City Events (#17, #20, #21, #22).
+        .add_plugins(weapons::WeaponsPlugin)
+        .add_plugins(city_events::CityEventsPlugin)
         .init_state::<GameState>()
         .init_resource::<PlayerStats>()
         .init_resource::<CameraOrbit>()
@@ -333,6 +338,7 @@ fn main() {
             Update,
             (
                 ensure_hero_vikings_gear,
+                boss::sync_ferris_cool_hat,
                 camera_mouse_look.in_set(CameraSet::Look),
                 (
                     player_movement,
@@ -349,6 +355,8 @@ fn main() {
                 (update_city_crew_gate, update_pub217_door, city::update_crew_callouts),
                 update_city_traffic.before(stunts::update_ramp_cars),
                 update_city_npcs,
+                city::update_city_npc_combat,
+                city::update_pvp_car_hits,
                 update_city_tj,
                 update_city_derek,
                 update_city_nate,

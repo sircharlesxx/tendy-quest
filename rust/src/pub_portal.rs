@@ -369,6 +369,7 @@ struct BartenderTeleportPrompt;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum BartenderAction {
     OrderTenBeers,
+    BooberEats,
     TeleportEveryone,
     GoAlone,
     Leave,
@@ -679,6 +680,26 @@ fn spawn_bartender_ui(commands: &mut Commands, art: &CasinoArt) {
                     });
 
                     row.spawn((
+                        BartenderAction::BooberEats,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.08, 0.44, 0.56)),
+                        BorderColor(Color::srgb(0.28, 0.94, 1.0)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("BOOBEREATS GIG"),
+                            TextFont { font_size: 14.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
+                    row.spawn((
                         BartenderAction::OrderTenBeers,
                         Button,
                         Node {
@@ -707,6 +728,7 @@ fn handle_bartender_modal_input(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut stats: ResMut<PlayerStats>,
+    mut boober: ResMut<crate::city_events::BooberEatsState>,
     mut next_state: SceneTransition,
     btn_q: Query<(&Interaction, &BartenderAction), Changed<Interaction>>,
     ui_q: Query<Entity, With<BartenderUiRoot>>,
@@ -748,6 +770,12 @@ fn handle_bartender_modal_input(
             stats.casino_esc_grace = true;
             set_touch_playing(true);
             stop_voice();
+        }
+        BartenderAction::BooberEats => {
+            stats.casino_esc_grace = true;
+            set_touch_playing(true);
+            stop_voice();
+            boober.want_start_order = true;
         }
         BartenderAction::OrderTenBeers => {
             let sq = crate::audio::net_squad_info();

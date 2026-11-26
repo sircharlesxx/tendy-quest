@@ -906,7 +906,7 @@ pub fn player_movement(
             "Target Lock-On released.".to_string()
         };
     }
-    if (keys.just_pressed(KeyCode::KeyQ) || keys.just_pressed(KeyCode::Digit1))
+    if (keys.just_pressed(KeyCode::KeyQ) || (!stats.in_city && keys.just_pressed(KeyCode::Digit1)))
         && stats.estus_flasks > 0
         && stats.hearts < stats.max_hearts
         && stats.estus_drink_timer <= 0.0
@@ -1004,9 +1004,12 @@ pub fn player_movement(
 
         // Attack button: a press starts a hold; releasing before `HEAVY_CHARGE_SECS` is a light
         // swing (fired on release), releasing after it (or `CHARGE_AUTO_RELEASE_SECS`) a heavy.
-        // Rolling and the guard cancel the hold until the button is let go.
+        // Rolling, blocking, or holding a firearm (`equipped_weapon != 0` in city) cancels melee holds.
+        let melee_equipped = !stats.in_city || stats.equipped_weapon == 0;
         let mut fire: Option<bool> = None;
-        if !demo_pose {
+        if !melee_equipped {
+            player.attack_hold = AttackHold::Idle;
+        } else if !demo_pose {
             if player.attack_hold == AttackHold::Spent && !atk_down {
                 player.attack_hold = AttackHold::Idle;
             }
@@ -1030,7 +1033,7 @@ pub fn player_movement(
                 };
             }
         }
-        if !player.block_active && !demo_pose {
+        if melee_equipped && !player.block_active && !demo_pose {
             let ready = fire.is_some() && player.attack_cooldown <= 0.0;
             // Short on stamina for the heavy at release: fall back to a light swing.
             let starts_heavy = ready && fire == Some(true) && stats.dash_energy >= 32.0;

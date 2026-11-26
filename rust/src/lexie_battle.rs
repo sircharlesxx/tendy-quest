@@ -569,6 +569,74 @@ pub fn enter_lexie_battle(
             .with_scale(Vec3::splat(2.75)),
     ));
 
+    // Cozy blanket + pillow + floating Zzzs for Stan's Cycle nap (#11)
+    let pillow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.97, 0.96, 0.92),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let blankie_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.32, 0.14, 0.54),
+        perceptual_roughness: 0.78,
+        ..default()
+    });
+    let blankie_trim = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.98, 0.78, 0.14),
+        perceptual_roughness: 0.65,
+        ..default()
+    });
+    let zzz_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.55, 0.90, 1.0),
+        emissive: LinearRgba::rgb(0.7, 1.5, 2.6),
+        unlit: true,
+        ..default()
+    });
+    commands
+        .spawn((
+            LexieBattleEntity,
+            StanNapBlankie,
+            Transform::from_translation(BATTLE_STAGE + Vec3::new(HERO_SLOTS[0].0, 0.04, HERO_SLOTS[0].1))
+                .with_rotation(Quat::from_rotation_y(HERO_SLOTS[0].2)),
+            Visibility::Hidden,
+        ))
+        .with_children(|nb| {
+            // Fluffy white pillow under Stan's head (Stan tips +X in local frame when rolling PI*0.48)
+            nb.spawn((
+                Mesh3d(meshes.add(Cuboid::new(1.35, 0.42, 1.85))),
+                MeshMaterial3d(pillow_mat),
+                Transform::from_xyz(-3.55, 0.34, 0.0).with_rotation(Quat::from_rotation_y(0.14)),
+            ));
+            // Pillow piping strip
+            nb.spawn((
+                Mesh3d(meshes.add(Cuboid::new(1.42, 0.10, 1.90))),
+                MeshMaterial3d(blankie_trim.clone()),
+                Transform::from_xyz(-3.55, 0.34, 0.0).with_rotation(Quat::from_rotation_y(0.14)),
+            ));
+            // Vikings purple plaid blankie draped cozily over Stan's napping body
+            nb.spawn((
+                Mesh3d(meshes.add(Cylinder::new(1.22, 3.25))),
+                MeshMaterial3d(blankie_mat),
+                Transform::from_xyz(-1.35, 0.62, 0.0)
+                    .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
+                    .with_scale(Vec3::new(0.62, 1.0, 1.38)),
+            ));
+            // Gold quilt stripe along the top fold of the blankie
+            nb.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.45, 0.16, 2.95))),
+                MeshMaterial3d(blankie_trim),
+                Transform::from_xyz(-2.65, 1.28, 0.0),
+            ));
+            // Floating glowing "Zzz" sleep bubbles
+            for zi in 0..3_usize {
+                nb.spawn((
+                    StanNapZzz(zi as f32 * 2.1),
+                    Mesh3d(meshes.add(Sphere::new(0.22 + zi as f32 * 0.06))),
+                    MeshMaterial3d(zzz_mat.clone()),
+                    Transform::from_xyz(-3.7, 1.35 + zi as f32 * 0.65, 0.35),
+                ));
+            }
+        });
+
     // 1: Glenn
     let glenn_mats = crate::glenn::make_glenn_materials(&mut materials);
     commands
@@ -2240,6 +2308,12 @@ fn apply_lexie_damage(commands: &mut Commands, battle: &mut RpgBattleState) {
     }
 }
 
+#[derive(Component)]
+pub struct StanNapBlankie;
+
+#[derive(Component)]
+pub struct StanNapZzz(pub f32);
+
 pub fn animate_lexie_battle_stage(
     time: Res<Time>,
     mut commands: Commands,
@@ -2254,9 +2328,59 @@ pub fn animate_lexie_battle_stage(
         Query<(Entity, &mut RpgVfx, &mut Transform)>,
         Query<&mut Transform, With<Camera3d>>,
     )>,
+    mut blankie_q: Query<
+        (&mut Transform, &mut Visibility),
+        (
+            With<StanNapBlankie>,
+            Without<RpgHero>,
+            Without<RpgTurnRing>,
+            Without<RpgLexieRoot>,
+            Without<RpgLexieArm>,
+            Without<RpgLexieHead>,
+            Without<RpgStunStar>,
+            Without<RpgVfx>,
+            Without<Camera3d>,
+            Without<StanNapZzz>,
+        ),
+    >,
+    mut zzz_q: Query<
+        (&StanNapZzz, &mut Transform),
+        (
+            Without<StanNapBlankie>,
+            Without<RpgHero>,
+            Without<RpgTurnRing>,
+            Without<RpgLexieRoot>,
+            Without<RpgLexieArm>,
+            Without<RpgLexieHead>,
+            Without<RpgStunStar>,
+            Without<RpgVfx>,
+            Without<Camera3d>,
+        ),
+    >,
 ) {
     let dt = time.delta_secs().min(0.15);
     let t = time.elapsed_secs();
+
+    let stan_napping = battle.party[0].hp > 0
+        && (battle.party[0].asleep_turns > 0
+            || (battle.phase == RpgPhase::HeroAction && battle.actor == 0 && battle.is_heavy && battle.phase_timer >= 2.25));
+    for (mut b_tf, mut b_vis) in &mut blankie_q {
+        let want = if stan_napping { Visibility::Visible } else { Visibility::Hidden };
+        if *b_vis != want {
+            *b_vis = want;
+        }
+        if stan_napping {
+            let breath = 1.0 + (t * 2.2).sin() * 0.04;
+            b_tf.scale = Vec3::new(1.0, breath, 1.0);
+        }
+    }
+    if stan_napping {
+        for (z, mut z_tf) in &mut zzz_q {
+            let cyc = (t * 0.75 + z.0).rem_euclid(1.0);
+            z_tf.translation = Vec3::new(-3.65 + (t * 2.0 + z.0).sin() * 0.25, 1.2 + cyc * 1.9, 0.3);
+            z_tf.scale = Vec3::splat((1.0 - cyc * 0.55).max(0.25));
+        }
+    }
 
     // Update turn ring position
     if let Ok(mut tr) = qs.p1().get_single_mut() {

@@ -1298,7 +1298,9 @@ pub fn handle_tutorial_input(
         || crate::audio::take_touch_jump()
         || crate::audio::take_touch_help()
     {
-        if stats.boss_mode {
+        if stats.free_roam {
+            next_state.set(GameState::CityPlay);
+        } else if stats.boss_mode {
             next_state.set(GameState::BossFight);
         } else {
             crate::audio::net_set_online(true);

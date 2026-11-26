@@ -35,6 +35,8 @@ pub enum GameState {
     /// Turn-based 5-hero RPG showdown against Giant Lexie (`lexie_battle.rs`).
     LexieBattle,
     LexieVictoryCutscene,
+    /// Dramatic Pub 217 bar crashout cutscene (`city_events.rs`).
+    StanCrashoutCutscene,
     StageClear,
     GameOver,
 }
@@ -186,6 +188,17 @@ pub struct PlayerStats {
     /// Lexie has been beaten at least once (persisted as checkpoint field 7, see
     /// `ui::save_game_checkpoint`). Survives restarts so a later save never drops the win.
     pub game_beaten: bool,
+    /// Cool River Star hat unlocked by riding the Ferris wheel for its full duration.
+    pub has_ferris_hat: bool,
+    /// Active Cedar Rapids combat weapon (`0` = Lightsaber, `1` = Pistol, `2` = Shotgun, `3` = SMG).
+    pub equipped_weapon: u8,
+    /// Grenades held in Cedar Rapids (`[G]` to throw; regenerates over time).
+    pub grenades: u32,
+    pub grenade_regen_timer: f32,
+    /// Restores Stan inside Pub 217 after `StanCrashoutCutscene`.
+    pub crashout_return_city: bool,
+    /// Completed BooberEats deliveries count.
+    pub boober_deliveries: u32,
 }
 
 impl Default for PlayerStats {
@@ -285,6 +298,12 @@ impl Default for PlayerStats {
             shake_request: 0.0,
             free_roam: false,
             game_beaten: false,
+            has_ferris_hat: false,
+            equipped_weapon: 0,
+            grenades: 5,
+            grenade_regen_timer: 0.0,
+            crashout_return_city: false,
+            boober_deliveries: 0,
         }
     }
 }
@@ -410,7 +429,7 @@ impl PlayerStats {
         self.free_roam = true;
         self.lexie_defeated = true;
         self.in_city = true;
-        self.boss_mode = false;
+        self.boss_mode = true;
         self.tendies = 0;
         self.total_tendies = 50;
         self.player_scale = 1.8;

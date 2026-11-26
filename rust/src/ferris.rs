@@ -279,6 +279,7 @@ pub struct FerrisRide {
     welcomed: bool,
     offer_hinted: bool,
     blocked_hinted: bool,
+    completed_full_ride: bool,
 }
 
 impl FerrisRide {
@@ -1882,6 +1883,7 @@ fn ferris_ride_update(
             });
             prompt.actionable = !ride.exit_requested;
             if ride.travelled >= ride.exit_at - 0.02 {
+                ride.completed_full_ride = !ride.exit_requested && ride.travelled >= RIDE_LAPS * TAU - 0.15;
                 ride.phase = RidePhase::StepOut;
                 ride.t = 0.0;
                 // Hand the camera back: behind the hero as he steps out facing the city, at the
@@ -1904,6 +1906,7 @@ fn ferris_ride_update(
             tf.rotation = Quat::from_rotation_y(out_yaw);
             prompt.label = Some("THANKS FOR RIDING!".to_string());
             if ride.t >= STEP_SECS {
+                let full_reward = ride.completed_full_ride;
                 tf.translation = spot;
                 player.velocity = Vec3::ZERO;
                 player.grounded = true;
@@ -1916,9 +1919,25 @@ fn ferris_ride_update(
                 ride.blocked_hinted = true;
                 set_crew_wait(None);
                 *vis = Visibility::Visible;
-                stats.hint_text = "Back on the platform. Thanks for riding the RIVER STAR!".to_string();
+                if full_reward {
+                    let first_time = !stats.has_ferris_hat;
+                    stats.has_ferris_hat = true;
+                    stats.score += 1000;
+                    stats.add_tendy_wendies(if first_time { 25 } else { 10 });
+                    play_sfx("win");
+                    play_sfx("powerup");
+                    stats.hint_text = if first_time {
+                        "FULL RIVER STAR RIDE COMPLETE! Unlocked the COOL RIVER STAR PROPELLER HAT! (+25 TW)"
+                            .to_string()
+                    } else {
+                        "FULL RIVER STAR RIDE COMPLETE! Propeller Hat Turbo Sparkle! (+10 TW)".to_string()
+                    };
+                    speak_voice("Full ride complete! You earned the cool River Star hat!", "narrator");
+                } else {
+                    stats.hint_text = "Back on the platform. Ride all the way to win the cool hat!".to_string();
+                    speak_voice("Thanks for riding the River Star!", "narrator");
+                }
                 stats.hint_bump = stats.hint_bump.wrapping_add(1);
-                speak_voice("Thanks for riding the River Star!", "narrator");
             }
         }
     }

@@ -744,7 +744,8 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         // (`SceneKind::Stylized` gives crisp 20k noon sunlight and bright blue ClearColor sky instead
         // of `SceneKind::City`'s dusk sunset dome). Gameplay impact: visual lighting/sky only.
         | GameState::ChillaryCutscene
-        | GameState::PubPortalCutscene => SceneKind::Stylized,
+        | GameState::PubPortalCutscene
+        | GameState::StanCrashoutCutscene => SceneKind::Stylized,
         GameState::CasinoPlay | GameState::CoasterCutscene | GameState::ClubPlay => SceneKind::Casino,
     }
 }
