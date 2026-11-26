@@ -572,6 +572,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = publish)]
         fn js_net_publish(state: &[f32]);
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = publishMom)]
+        fn js_net_publish_mom(state: &[f32], reliable: bool);
+
         #[wasm_bindgen(js_namespace = ["window", "tendyNet"], js_name = event)]
         fn js_net_event(code: u32, value: u32);
 
@@ -631,6 +634,11 @@ mod imp {
     /// Local hero state for the wire (see net.rs `publish_local_state` for the field order).
     pub fn net_publish(state: &[f32]) {
         js_net_publish(state);
+    }
+
+    /// Authoritative Mom boss snapshot for `BossFight` peers.
+    pub fn net_publish_mom(state: &[f32], reliable: bool) {
+        js_net_publish_mom(state, reliable);
     }
 
     /// One-off event for peers (1 trick landed with points, 2 drank a beer).
@@ -942,6 +950,8 @@ mod imp {
 
     pub fn net_publish(_state: &[f32]) {}
 
+    pub fn net_publish_mom(_state: &[f32], _reliable: bool) {}
+
     pub fn net_event(_code: u32, _value: u32) {}
 
     pub fn net_drain() -> Vec<f64> {
@@ -981,4 +991,4 @@ pub use imp::{debug_fast_club, debug_fentanyl_mode, debug_overdose_secs, rand_un
 // Turn-based Lexie showdown telemetry hook (lexie_battle.rs).
 pub use imp::set_lexie_telemetry;
 // Distributed multiplayer bridge (net.rs & controls.rs).
-pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_lock_char, net_open_char_select, net_publish, net_set_free_roam, net_set_online, net_set_scene, net_squad_info, net_telemetry};
+pub use imp::{net_drain, net_enabled, net_event, net_is_online, net_lock_char, net_open_char_select, net_publish, net_publish_mom, net_set_free_roam, net_set_online, net_set_scene, net_squad_info, net_telemetry};

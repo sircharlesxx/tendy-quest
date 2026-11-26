@@ -10,7 +10,7 @@
 //! prevents peers in other levels or older cached clients from appearing as floating avatars.
 
 use std::collections::VecDeque;
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use bevy::prelude::*;
 use bevy::scene::SceneInstanceReady;
@@ -76,6 +76,44 @@ pub const EVENT_CLUB_OVERDOSE: u32 = 11;
 pub const EVENT_CLUB_NARCAN_PICKUP: u32 = 12;
 pub const EVENT_CLUB_OVERDOSE_REVIVE: u32 = 13;
 pub const EVENT_CLUB_OVERDOSE_DEATH: u32 = 14;
+pub const EVENT_MOM_ACTION: u32 = 15;
+
+pub const MOM_ACT_HIT: u8 = 1;
+pub const MOM_ACT_GUARD_BREAK: u8 = 2;
+pub const MOM_ACT_STAGGER: u8 = 3;
+pub const MOM_ACT_VICTORY: u8 = 4;
+
+pub fn pack_mom_action(kind: u8, dmg: f32, kb_yaw: f32, flag: bool) -> u32 {
+    let q_dmg = (dmg * 2.0).round().clamp(0.0, 4095.0) as u32;
+    let q_yaw = (((kb_yaw + PI) / TAU).rem_euclid(1.0) * 255.0).round().clamp(0.0, 255.0) as u32;
+    u32::from(kind & 7) | (u32::from(flag) << 3) | (q_dmg << 4) | (q_yaw << 16)
+}
+
+pub fn unpack_mom_action(value: u32) -> (u8, f32, f32, bool) {
+    let kind = (value & 7) as u8;
+    let flag = (value & 8) != 0;
+    let dmg = ((value >> 4) & 0x0FFF) as f32 * 0.5;
+    let yaw_byte = ((value >> 16) & 0xFF) as f32;
+    let kb_yaw = (yaw_byte / 255.0) * TAU - PI;
+    (kind, dmg, kb_yaw, flag)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MomSyncSnapshot {
+    pub pos: Vec3,
+    pub yaw: f32,
+    pub hp: f32,
+    pub max_hp: f32,
+    pub state_code: u8,
+    pub guarding: bool,
+    pub enraged_phase2: bool,
+    pub spin_cleave: bool,
+    pub quote_idx: usize,
+    pub timer: f32,
+    pub guard_open: f32,
+    pub attack_seq: u8,
+    pub lunge_dir: Vec3,
+}
 
 pub fn pack_lexie_move(round: u32, actor: usize, is_heavy: bool) -> u32 {
     ((round.min(4095)) << 4) | (((actor as u32) & 7) << 1) | u32::from(is_heavy)
@@ -147,6 +185,9 @@ pub const CHAR_DEREK: u8 = 4;
 #[derive(Resource, Default)]
 pub struct NetCoopEvents {
     pub mom_damage: f32,
+    pub mom_actions: Vec<(u8, u8, f32, f32, bool)>,
+    pub mom_sync: Option<MomSyncSnapshot>,
+    pub mom_victory: bool,
     pub lexie_moves: Vec<(u8, u32, usize, bool)>,
     pub lexie_commits: Vec<(u32, usize, bool)>,
     pub lexie_battle_players: u32,
@@ -331,6 +372,8 @@ pub struct NetState {
     online_active: bool,
     transport_active: bool,
     is_anchor: bool,
+    is_mom_host: bool,
+    has_boss_peers: bool,
     avg_rtt_ms: i32,
     shard: u32,
     last_score: Option<u32>,
@@ -353,6 +396,26 @@ impl NetState {
 
     pub fn is_anchor(&self) -> bool {
         self.is_anchor
+    }
+
+    pub fn is_mom_host(&self) -> bool {
+        !self.online_active || !self.has_boss_peers || self.is_mom_host
+    }
+
+    pub fn has_boss_peers(&self) -> bool {
+        self.online_active && self.has_boss_peers
+    }
+
+    /// World positions `(slot, pos)` of remote peers actively present in the current scene.
+    pub fn same_scene_peer_positions(&self) -> Vec<(u8, Vec3)> {
+        self.remotes
+            .iter()
+            .filter_map(|r| {
+                r.shown
+                    .filter(|s| s.mode != MODE_AWAY && s.scene_id == self.local_scene_id)
+                    .map(|s| (r.slot, s.pos))
+            })
+            .collect()
     }
 
     /// Total players in the active online session (1 when solo/offline; `1 + peers` when online).
@@ -939,6 +1002,8 @@ fn receive_remote_states(
     net.transport_active = (flags_mask & 2) != 0;
     net.is_anchor = (flags_mask & 4) != 0;
     let char_select = (flags_mask & 8) != 0;
+    net.is_mom_host = (flags_mask & 16) != 0;
+    net.has_boss_peers = (flags_mask & 32) != 0;
     stats.char_select_open = char_select;
     if char_select && !*was_char_select {
         if let Ok(mut window) = window_q.get_single_mut() {
@@ -1215,9 +1280,55 @@ fn receive_remote_states(
                         }
                         format!("{} OVERDOSE -- FLATLINE!", label)
                     }
+                    EVENT_MOM_ACTION => {
+                        let (kind, dmg, kb_yaw, flag) = unpack_mom_action(value);
+                        if *state.get() != GameState::BossFight {
+                            continue;
+                        }
+                        if kind == MOM_ACT_VICTORY {
+                            coop.mom_victory = true;
+                            format!("{} DEFEATED MOM!", label)
+                        } else {
+                            coop.mom_actions.push((slot, kind, dmg, kb_yaw, flag));
+                            if kind == MOM_ACT_GUARD_BREAK {
+                                format!("{} BROKE MOM'S GUARD!", label)
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
                     _ => continue,
                 };
                 net.event_timer = 4.0;
+            }
+            4 => {
+                if *state.get() != GameState::BossFight {
+                    continue;
+                }
+                let sflags = rec[11] as u8;
+                let lx = rec[15] as f32;
+                let lz = rec[16] as f32;
+                let lunge_dir = Vec3::new(lx, 0.0, lz).normalize_or(Vec3::Z);
+                let hp = (rec[9] as f32).max(0.0);
+                let snap = MomSyncSnapshot {
+                    pos: Vec3::new(rec[5] as f32, rec[6] as f32, rec[7] as f32),
+                    yaw: rec[8] as f32,
+                    hp,
+                    max_hp: (rec[10] as f32).max(1.0),
+                    state_code: sflags & 3,
+                    guarding: (sflags & 4) != 0,
+                    enraged_phase2: (sflags & 8) != 0,
+                    spin_cleave: (sflags & 16) != 0,
+                    quote_idx: usize::from((sflags >> 5) & 7),
+                    timer: (rec[12] as f32).max(0.0),
+                    guard_open: (rec[13] as f32).max(0.0),
+                    attack_seq: rec[14] as u8,
+                    lunge_dir,
+                };
+                if snap.hp <= 0.0 {
+                    coop.mom_victory = true;
+                }
+                coop.mom_sync = Some(snap);
             }
             _ => {}
         }
@@ -2177,4 +2288,27 @@ fn leave_city(
     }
     net.remotes.clear();
     net.send_accum = 0.0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mom_action_pack_round_trip() {
+        for (kind, dmg, yaw, flag) in [
+            (MOM_ACT_HIT, 22.0_f32, -1.75_f32, false),
+            (MOM_ACT_GUARD_BREAK, 8.0_f32, 0.42_f32, true),
+            (MOM_ACT_STAGGER, 0.0_f32, 2.95_f32, true),
+            (MOM_ACT_VICTORY, 0.0_f32, 0.0_f32, false),
+        ] {
+            let packed = pack_mom_action(kind, dmg, yaw, flag);
+            let (k, d, y, f) = unpack_mom_action(packed);
+            assert_eq!(k, kind);
+            assert_eq!(f, flag);
+            assert!((d - dmg).abs() <= 0.5, "dmg {d} != {dmg}");
+            let yaw_err = (y - yaw + PI).rem_euclid(TAU) - PI;
+            assert!(yaw_err.abs() < 0.03, "yaw {y} != {yaw}");
+        }
+    }
 }

@@ -3401,7 +3401,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-e72780f4f6f05a71.js" crossorigin="anonymous" integrity="sha384-wnjxS0ZgZA/fxv0H0LK6r6PZpiT3h1QeF4bUnI7U3zLx86x9SZj/f5ZPR3wJMBhO"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-e72780f4f6f05a71_bg.wasm" crossorigin="anonymous" integrity="sha384-G+PhNOgOa+ed1dyP4Fp09NFiWFslpojJ0MfN0c2xNtMBFNF4M+aeVVlYQJ6SqZrl" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-4c44a9da9cf07165.js" crossorigin="anonymous" integrity="sha384-8NF4z7sktSB3GWOUC7RBL7yJTXLZl7eQRTeUaPOm8dZ7BCMe++UbMKhnPY8xG8/i"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-4c44a9da9cf07165_bg.wasm" crossorigin="anonymous" integrity="sha384-CIMWVXdCRaautm2hKgcWJXolt8sp3ZvY2HmEHyv+AmhNmQhv/2wzx01Rct97FiPe" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4351,8 +4351,8 @@
       // ---- Constants (keep in sync with rust/src/net.rs) ----
       const VER = 1;
       const VER_BRIDGED = 129; // VER | 0x80: 1-hop bridged packet via lowest-RTT mutual neighbor (never re-relayed)
-      const T_STATE = 1, T_HELLO = 2, T_BYE = 3, T_EVENT = 4, T_PING = 5, T_PONG = 6, T_META = 7, T_FULL = 8;
-      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20, 5: 16, 6: 16, 7: 42, 8: 12 };
+      const T_STATE = 1, T_HELLO = 2, T_BYE = 3, T_EVENT = 4, T_PING = 5, T_PONG = 6, T_META = 7, T_FULL = 8, T_MOM = 9;
+      const LEN = { 1: 44, 2: 12, 3: 12, 4: 20, 5: 16, 6: 16, 7: 42, 8: 12, 9: 36 };
       const MAX_MSG = 64;          // bytes; anything bigger is dropped unread
       const MESH_MAX_REMOTES = 4;  // 5-player squad: Stan, Nate, Glenn, TJ, Derek
       const LEGACY_MAX_REMOTES = 5;
@@ -4364,7 +4364,7 @@
       const KEEPALIVE_MS = 1000;
       const PROBE_INTERVAL_MS = 2500;
       const VETERAN_MS = 4000;
-      const RATE_PER_S = 35, RATE_BURST = 40;
+      const RATE_PER_S = 60, RATE_BURST = 75;
       const CITY_HALF = 135, Y_MIN = -10, Y_MAX = 60;
       const CHARS = {
         0: { name: "STAN", color: "#2ef5ff", role: "Tendy Hunter", bio: "Red plaid hoodie, Vikings visor & lightsaber." },
@@ -4483,6 +4483,23 @@
         v.setUint8(41, clamp(s[12] | 0, 0, 255));
         v.setUint8(42, clamp(Math.round(s[13] * 255), 0, 255));
         v.setUint8(43, net.myChar & 7);
+        return buf;
+      }
+
+      function encodeMom(m) {
+        const [buf, v] = header(T_MOM, LEN[T_MOM]);
+        v.setFloat32(12, clamp(Number.isFinite(m[0]) ? m[0] : 0, -60, 60), true);
+        v.setFloat32(16, clamp(Number.isFinite(m[1]) ? m[1] : -6, -15, 25), true);
+        v.setFloat32(20, clamp(Number.isFinite(m[2]) ? m[2] : -14, -60, 60), true);
+        v.setInt16(24, i16(m[3], 10000), true);
+        v.setUint16(26, clamp(Math.round((Number.isFinite(m[4]) ? m[4] : 0) * 10), 0, 65535), true);
+        v.setUint16(28, clamp(Math.round((Number.isFinite(m[5]) ? m[5] : 200) * 10), 0, 65535), true);
+        v.setUint8(30, clamp((Number.isFinite(m[6]) ? m[6] : 0) | 0, 0, 255));
+        v.setUint8(31, clamp(Math.round((Number.isFinite(m[7]) ? m[7] : 0) * 20), 0, 255));
+        v.setUint8(32, clamp(Math.round((Number.isFinite(m[8]) ? m[8] : 0) * 20), 0, 255));
+        v.setUint8(33, clamp((Number.isFinite(m[9]) ? m[9] : 0) | 0, 0, 255));
+        v.setInt8(34, clamp(Math.round((Number.isFinite(m[10]) ? m[10] : 0) * 120), -127, 127));
+        v.setInt8(35, clamp(Math.round((Number.isFinite(m[11]) ? m[11] : 1) * 120), -127, 127));
         return buf;
       }
 
@@ -4667,10 +4684,25 @@
         net.anchorRttMs = best && best.avg >= 0 ? best.avg : computeOwnAvgRtt();
       }
 
+      function hasBossPeers() {
+        for (const p of net.peers.values()) {
+          if (p.sceneId === 2) return true;
+        }
+        return false;
+      }
+
+      function isMomHost() {
+        if (net.sceneId !== 2) return true;
+        for (const [id, p] of net.peers) {
+          if (p.sceneId === 2 && id < myId) return false;
+        }
+        return true;
+      }
+
       // ---- Receiving: every message is untrusted ----
       function drop() { net.stats.dropped++; }
       function pushRecord(rec) {
-        if (rec[0] === 1) {
+        if (rec[0] === 1 || (rec[0] === 4 && rec[9] > 0)) {
           net.stateInbox.push(rec);
           if (net.stateInbox.length > STATE_INBOX_CAP) {
             net.stateInbox.splice(0, net.stateInbox.length - STATE_INBOX_CAP);
@@ -4708,7 +4740,7 @@
       // the mutual peer with lowest (rtt(self,A) + rtt(self,C)) forwards 1 copy with VER_BRIDGED.
       function maybeBridgePacket(data, srcId, srcPeer, srcConn, type, reliable) {
         if (!net.transport || net.transport.kind !== "mesh") return;
-        if (type !== T_STATE && type !== T_EVENT && type !== T_META) return;
+        if (type !== T_STATE && type !== T_EVENT && type !== T_META && type !== T_MOM) return;
         const now = performance.now();
         if (now - srcPeer.connectedAt < 2000) return;
         const srcRtt = srcPeer.rttMs >= 0 ? srcPeer.rttMs : 120;
@@ -4756,7 +4788,7 @@
         const isMesh = !!(net.transport && net.transport.kind === "mesh");
         const bridged = ver === VER_BRIDGED && isMesh;
         if ((ver !== VER && !bridged) || LEN[type] !== data.byteLength) return drop();
-        if (bridged && type !== T_STATE && type !== T_EVENT && type !== T_META) return drop();
+        if (bridged && type !== T_STATE && type !== T_EVENT && type !== T_META && type !== T_MOM) return drop();
         const id = v.getUint32(4, true);
         if (id === 0 || id === myId) return drop();
 
@@ -4849,6 +4881,23 @@
             directCount: dCount,
             directMap: dMap,
           };
+        } else if (type === T_MOM) {
+          const x = v.getFloat32(12, true), y = v.getFloat32(16, true), z = v.getFloat32(20, true);
+          const maxHp = v.getUint16(28, true) / 10;
+          if (![x, y, z].every(Number.isFinite) || maxHp <= 0) return drop();
+          if (Math.abs(x) > 62 || Math.abs(z) > 62 || y < -16 || y > 26) return drop();
+          rec = new Float64Array(REC_W);
+          rec[0] = 4; rec[2] = v.getUint16(2, true); rec[3] = v.getUint32(8, true);
+          rec[5] = x; rec[6] = y; rec[7] = z;
+          rec[8] = v.getInt16(24, true) / 10000;
+          rec[9] = v.getUint16(26, true) / 10;
+          rec[10] = maxHp;
+          rec[11] = v.getUint8(30);
+          rec[12] = v.getUint8(31) / 20;
+          rec[13] = v.getUint8(32) / 20;
+          rec[14] = v.getUint8(33);
+          rec[15] = v.getInt8(34) / 120;
+          rec[16] = v.getInt8(35) / 120;
         }
 
         let peer = net.peers.get(id);
@@ -4956,8 +5005,10 @@
 
         if (rec) {
           rec[1] = peer.slot;
-          if (rec[0] === 1) {
+          if (rec[0] === 1 || rec[0] === 4) {
             rec[4] = now;
+          }
+          if (rec[0] === 1) {
             rec[16] = (rec[16] & 0x07) | (((peer.sceneId || 0) & 7) << 4);
           }
           rec[19] = peer.charId;
@@ -4966,7 +5017,7 @@
 
         // Legacy copy/paste WebRTC host star relay, OR automatic 1-hop RTT-elected NAT bridge in mesh mode.
         if (net.transport && net.transport.isHost) {
-          net.stats.relayed += net.transport.send(data, type !== T_STATE, conn);
+          net.stats.relayed += net.transport.send(data, type !== T_STATE && (type !== T_MOM || reliable), conn);
         } else if (!bridged && isMesh) {
           maybeBridgePacket(data, id, peer, conn, type, reliable);
         }
@@ -6963,6 +7014,10 @@
           sendBuf(net.lastBuf, false);
           net.lastSendAt = performance.now();
         },
+        publishMom(state, reliable) {
+          if (!state || state.length !== 12 || !net.transport) return;
+          sendBuf(encodeMom(state), !!reliable);
+        },
         selectChar,
         openCharSelect,
         event(code, value) {
@@ -6984,6 +7039,8 @@
           if (net.transport) flagsMask |= 2;
           if (net.anchorId === myId) flagsMask |= 4;
           if (net.charSelectOpen) flagsMask |= 8;
+          if (isMomHost()) flagsMask |= 16;
+          if (hasBossPeers()) flagsMask |= 32;
           out[0] = performance.now();
           out[1] = net.peers.size;
           out[2] = n;
@@ -7008,8 +7065,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-e72780f4f6f05a71.js';
-const wasm = await init({ module_or_path: './tendy-quest-e72780f4f6f05a71_bg.wasm' });
+import init, * as bindings from './tendy-quest-4c44a9da9cf07165.js';
+const wasm = await init({ module_or_path: './tendy-quest-4c44a9da9cf07165_bg.wasm' });
 
 
 window.wasmBindings = bindings;

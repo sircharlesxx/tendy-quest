@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 use bevy::prelude::*;
 use crate::enemies::{spawn_enemy_at, Enemy, EnemyKind};
 use crate::player::Player;
@@ -80,6 +80,9 @@ pub struct BossHudNode;
 
 #[derive(Component)]
 pub struct BossHpBarFill;
+
+#[derive(Component)]
+pub struct BossTitleText;
 
 #[derive(Component)]
 pub struct BossQuoteText;
@@ -201,6 +204,112 @@ pub struct MomBoss {
     pub guard_clash_fx: f32,
     /// The "how to break her guard" hint was shown this fight.
     pub guard_hint_shown: bool,
+    /// Number of players scaled into this boss encounter.
+    pub squad_n: u32,
+    /// Phase 2 enrage (`<= 50%` HP).
+    pub enraged_phase2: bool,
+    /// Current slash is a 360-degree co-op / enraged spin cleave.
+    pub spin_cleave: bool,
+    /// Monotonic attack counter (incremented each time Mom starts `SaberSlash`).
+    pub attack_seq: u8,
+    /// Last `attack_seq` checked locally against the local player.
+    pub last_local_slash_seq: u8,
+    /// Total windups started (used to cycle spin cleaves).
+    pub slash_count: u32,
+    /// Hits landed during the current opening (triggers co-op poise breakaway).
+    pub stagger_hits: u32,
+    /// Aggro target (`0` = local player, `2..=7` = remote peer slot).
+    pub target_slot: u8,
+    pub retarget_timer: f32,
+    pub sync_accum: f32,
+    /// Grace window when entering BossFight with peers so an active Host can sync first.
+    pub host_grace: f32,
+    pub synced_once: bool,
+    pub net_target_pos: Vec3,
+    pub net_target_yaw: f32,
+    pub prev_state_code: u8,
+    pub prev_guarding: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MomDifficultyParams {
+    pub chase_speed: f32,
+    pub windup_secs: f32,
+    pub lunge_speed: f32,
+    pub guard_break_secs: f32,
+    pub end_slash_stagger: f32,
+    pub poise_hits_before_cleave: u32,
+    pub summon_cap: usize,
+    pub summon_interval: f32,
+}
+
+pub fn mom_max_hp(squad_n: u32) -> f32 {
+    200.0 + 220.0 * (squad_n.saturating_sub(1) as f32)
+}
+
+pub fn mom_difficulty_params(squad_n: u32, enraged: bool) -> MomDifficultyParams {
+    let n = squad_n.max(1);
+    let extra = (n - 1) as f32;
+    MomDifficultyParams {
+        chase_speed: if enraged {
+            (8.0 + extra * 1.1).min(12.2)
+        } else {
+            (7.0 + extra * 0.95).min(10.5)
+        },
+        windup_secs: if enraged {
+            (0.48 - extra * 0.035).max(0.36)
+        } else {
+            (0.56 - extra * 0.04).max(0.42)
+        },
+        lunge_speed: (15.5 + extra * 1.8).min(22.0),
+        guard_break_secs: (MOM_GUARD_BREAK_SECS - extra * 0.20).max(1.8),
+        end_slash_stagger: (1.15 - extra * 0.14).max(0.68),
+        poise_hits_before_cleave: 2 + n,
+        summon_cap: (5 + (n - 1) * 2).min(11) as usize,
+        summon_interval: (8.5 - extra * 1.0).max(4.5),
+    }
+}
+
+fn mom_state_to_code(s: MomState) -> u8 {
+    match s {
+        MomState::Pursue => 0,
+        MomState::SaberWindup => 1,
+        MomState::SaberSlash => 2,
+        MomState::Staggered => 3,
+    }
+}
+
+fn mom_code_to_state(code: u8) -> MomState {
+    match code {
+        0 => MomState::Pursue,
+        1 => MomState::SaberWindup,
+        2 => MomState::SaberSlash,
+        _ => MomState::Staggered,
+    }
+}
+
+fn publish_mom_snapshot(mom: &MomBoss, mom_tf: &Transform, reliable: bool) {
+    let yaw = mom_tf.rotation.to_euler(EulerRot::YXZ).0;
+    let sflags = (mom_state_to_code(mom.state) & 3)
+        | (u8::from(mom.guarding) << 2)
+        | (u8::from(mom.enraged_phase2) << 3)
+        | (u8::from(mom.spin_cleave) << 4)
+        | (((mom.quote_idx as u8) & 7) << 5);
+    let payload = [
+        mom_tf.translation.x,
+        mom_tf.translation.y,
+        mom_tf.translation.z,
+        yaw,
+        mom.hp,
+        mom.max_hp,
+        f32::from(sflags),
+        mom.timer,
+        mom.guard_open,
+        f32::from(mom.attack_seq),
+        mom.lunge_dir.x,
+        mom.lunge_dir.z,
+    ];
+    crate::audio::net_publish_mom(&payload, reliable);
 }
 
 /// Mom stays open at least this long after her guard is broken (by a charged heavy, or the dodge
@@ -3288,6 +3397,8 @@ pub fn enter_boss_fight(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut stats: ResMut<PlayerStats>,
+    mut coop: ResMut<crate::net::NetCoopEvents>,
+    net: Res<crate::net::NetState>,
     mut orbit: ResMut<CameraOrbit>,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     enemy_q: Query<Entity, With<Enemy>>,
@@ -3295,6 +3406,11 @@ pub fn enter_boss_fight(
     hud_q: Query<Entity, With<BossHudNode>>,
     healing_tendy_q: Query<Entity, With<BossHealingTendy>>,
 ) {
+    coop.mom_damage = 0.0;
+    coop.mom_actions.clear();
+    coop.mom_sync = None;
+    coop.mom_victory = false;
+
     for e in &enemy_q {
         commands.entity(e).despawn_recursive();
     }
@@ -3322,8 +3438,10 @@ pub fn enter_boss_fight(
     crate::audio::play_sfx("mom_yell");
     crate::audio::speak_voice("Stan! You must eat your veggies! Final warning!", "mom");
 
-    let total_players = crate::audio::net_squad_info()[0].max(1);
-    let scaled_max_hp = (200 + (total_players - 1) * 120) as f32;
+    let total_players = crate::audio::net_squad_info()[0]
+        .max(net.online_player_count())
+        .max(1);
+    let scaled_max_hp = mom_max_hp(total_players);
 
     let resuming_from_headphone = stats.boss_mode && stats.headphone_return_boss;
     stats.headphone_return_boss = false;
@@ -3375,11 +3493,12 @@ pub fn enter_boss_fight(
     }
 
     // Spawn Stan's Mom on the wide 1,200 Sq Ft Apartment Floor wielding her Crimson Lightsaber
+    let init_pos = Vec3::new(0.0, -6.0, -14.0);
     let mom_ent = spawn_mom_mesh_hierarchy(
         &mut commands,
         &mut meshes,
         &mut materials,
-        Vec3::new(0.0, -6.0, -14.0),
+        init_pos,
         2.65,
     );
     commands.entity(mom_ent).insert(MomBoss {
@@ -3403,6 +3522,22 @@ pub fn enter_boss_fight(
         guard_break_fx: 0.0,
         guard_clash_fx: 0.0,
         guard_hint_shown: false,
+        squad_n: total_players,
+        enraged_phase2: init_hp <= scaled_max_hp * 0.5,
+        spin_cleave: false,
+        attack_seq: 0,
+        last_local_slash_seq: 0,
+        slash_count: 0,
+        stagger_hits: 0,
+        target_slot: 0,
+        retarget_timer: 0.5,
+        sync_accum: 0.0,
+        host_grace: if total_players > 1 || net.has_boss_peers() { 0.65 } else { 0.0 },
+        synced_once: false,
+        net_target_pos: init_pos,
+        net_target_yaw: 0.0,
+        prev_state_code: 0,
+        prev_guarding: true,
     });
     // Guard shield: a glowing crimson disc with a bright rim across her front (-Z) while her guard
     // is up, animated by `update_mom_guard_cues`.
@@ -3455,16 +3590,35 @@ pub fn enter_boss_fight(
         );
     }
 
-    // Spawn hardened veggie minions across the open 1,200 Sq Ft Apartment Floor
-    for (kind, pos) in [
+    // Spawn hardened veggie minions across the open 1,200 Sq Ft Apartment Floor (+ co-op reinforcements)
+    let base_veggies = [
         (EnemyKind::BroccoliBrute, Vec3::new(-12.0, -6.0, -6.0)),
         (EnemyKind::CarrotLancer, Vec3::new(12.0, -6.0, -8.0)),
         (EnemyKind::BroccoliBrute, Vec3::new(-18.0, -6.0, -20.0)),
         (EnemyKind::CarrotLancer, Vec3::new(18.0, -6.0, -22.0)),
         (EnemyKind::KaleSlime, Vec3::new(0.0, -6.0, -24.0)),
-    ] {
+    ];
+    for (kind, pos) in base_veggies {
         spawn_enemy_at(&mut commands, &asset_server, kind, pos);
     }
+    let extra_veggies = [
+        (EnemyKind::BroccoliBrute, Vec3::new(-22.0, -6.0, -14.0)),
+        (EnemyKind::CarrotLancer, Vec3::new(22.0, -6.0, -14.0)),
+        (EnemyKind::KaleSlime, Vec3::new(-16.0, -6.0, 2.0)),
+        (EnemyKind::BroccoliBrute, Vec3::new(16.0, -6.0, 2.0)),
+    ];
+    for &(kind, pos) in extra_veggies
+        .iter()
+        .take(total_players.saturating_sub(1).min(4) as usize)
+    {
+        spawn_enemy_at(&mut commands, &asset_server, kind, pos);
+    }
+
+    let boss_title = if total_players >= 2 {
+        format!("FINAL BOSS: MOM (CO-OP x{} RAID!)", total_players)
+    } else {
+        "FINAL BOSS: MOM (EAT YOUR VEGGIES!)".to_string()
+    };
 
     // Top-center Boss Health Bar + Mom Quote Banner
     commands
@@ -3489,7 +3643,8 @@ pub fn enter_boss_fight(
         ))
         .with_children(|panel| {
             panel.spawn((
-                Text::new("FINAL BOSS: MOM (EAT YOUR VEGGIES!)"),
+                BossTitleText,
+                Text::new(boss_title),
                 TextFont {
                     font_size: 13.5,
                     ..default()
@@ -3634,28 +3789,95 @@ pub fn update_boss_healing_tendies(
     }
 }
 
+fn apply_mom_guard_break_host(
+    mom: &mut MomBoss,
+    mom_tf: &mut Transform,
+    stats: &mut PlayerStats,
+    dmg: f32,
+    kb_dir: Vec3,
+    breaker_slot: u8,
+    params: &MomDifficultyParams,
+) {
+    mom.hp = (mom.hp - dmg).max(0.0);
+    stats.boss_hp = mom.hp;
+    mom.guard_open = params.guard_break_secs;
+    mom.guarding = false;
+    mom.guard_break_fx = 1.0;
+    mom.spin_cleave = false;
+    mom.state = MomState::Staggered;
+    mom.timer = MOM_GUARD_BREAK_STAGGER_SECS;
+    mom.stagger_hits = 0;
+    mom.target_slot = breaker_slot;
+    mom.retarget_timer = 2.6;
+    mom_tf.translation += kb_dir * 1.6;
+    crate::audio::play_sfx("guard_break");
+    crate::audio::play_sfx("saber_hit");
+}
+
+fn apply_mom_hit_host(
+    mom: &mut MomBoss,
+    mom_tf: &mut Transform,
+    stats: &mut PlayerStats,
+    dmg: f32,
+    kb_dir: Vec3,
+    hitter_slot: u8,
+    params: &MomDifficultyParams,
+) {
+    mom.hp = (mom.hp - dmg).max(0.0);
+    stats.boss_hp = mom.hp;
+    mom_tf.translation += kb_dir * 1.6;
+    mom.target_slot = hitter_slot;
+    mom.retarget_timer = 2.6;
+    mom.stagger_hits += 1;
+    if mom.squad_n >= 2 && mom.stagger_hits >= params.poise_hits_before_cleave {
+        // Co-op anti-stunlock poise breakout: wind up a 360-degree spin cleave.
+        mom.state = MomState::SaberWindup;
+        mom.spin_cleave = true;
+        mom.timer = params.windup_secs;
+        mom.guard_open = 0.0;
+        mom.guarding = true;
+        mom.stagger_hits = 0;
+        crate::audio::play_sfx("shield");
+        stats.hint_text = "MOM BROKE FREE -- 360 SPIN CLEAVE INCOMING! DODGE ROLL!".to_string();
+    } else {
+        mom.spin_cleave = false;
+        mom.state = MomState::Staggered;
+        mom.timer = 0.55;
+    }
+    crate::audio::play_sfx("saber_hit");
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct BossHudUi<'w, 's> {
+    hp_fill_q: Query<'w, 's, &'static mut Node, With<BossHpBarFill>>,
+    quote_q: Query<'w, 's, &'static mut Text, With<BossQuoteText>>,
+    title_q: Query<'w, 's, &'static mut Text, (With<BossTitleText>, Without<BossQuoteText>)>,
+    hud_pos_q: Query<'w, 's, &'static mut Node, (With<BossHudNode>, Without<BossHpBarFill>)>,
+    window_q: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_boss_fight(
     mut commands: Commands,
     time: Res<Time>,
     asset_server: Res<AssetServer>,
     mut stats: ResMut<PlayerStats>,
     mut coop: ResMut<crate::net::NetCoopEvents>,
+    net: Res<crate::net::NetState>,
     mut next_state: crate::transition::SceneTransition,
     mut player_q: Query<(&mut Transform, &mut Player)>,
     mut mom_q: Query<(Entity, &mut Transform, &mut MomBoss, &Children), Without<Player>>,
     mut enemy_q: Query<(Entity, &mut Transform, &mut Enemy), (Without<Player>, Without<MomBoss>)>,
     children_q: Query<&Children>,
     mut mom_part_q: Query<(&MomPart, &mut Transform), (Without<Player>, Without<MomBoss>, Without<Enemy>)>,
-    mut hp_fill_q: Query<&mut Node, With<BossHpBarFill>>,
-    mut quote_q: Query<&mut Text, With<BossQuoteText>>,
-    mut hud_pos_q: Query<&mut Node, (With<BossHudNode>, Without<BossHpBarFill>)>,
-    window_q: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut hud_ui: BossHudUi,
+    mut prev_has_peers: Local<bool>,
 ) {
     let dt = time.delta_secs().min(0.05);
     let t = time.elapsed_secs();
 
     // Responsive placement for Boss HUD so mobile HELP/SOUND pills never overlap
-    if let (Ok(win), Ok(mut hud_node)) = (window_q.get_single(), hud_pos_q.get_single_mut()) {
+    if let (Ok(win), Ok(mut hud_node)) = (hud_ui.window_q.get_single(), hud_ui.hud_pos_q.get_single_mut()) {
         let narrow = win.width() < 680.0;
         let box_w = if narrow { (win.width() * 0.92).min(360.0) } else { 400.0 };
         hud_node.width = Val::Px(box_w);
@@ -3669,9 +3891,176 @@ pub fn update_boss_fight(
     let Ok((mom_ent, mut mom_tf, mut mom, mom_children)) = mom_q.get_single_mut() else {
         return;
     };
-    if coop.mom_damage > 0.0 {
-        mom.hp = (mom.hp - coop.mom_damage).max(0.0);
-        stats.boss_hp = mom.hp;
+
+    let is_host = net.is_mom_host();
+    let has_peers = net.has_boss_peers();
+    let peer_positions = net.same_scene_peer_positions();
+    let live_squad = (1 + peer_positions.len() as u32)
+        .max(crate::audio::net_squad_info()[0])
+        .max(1);
+    let mut force_sync = has_peers && !*prev_has_peers && mom.host_grace <= 0.0;
+
+    // 1. Adopt authoritative Host `T_MOM` snapshot on Guests (or during initial host_grace handoff).
+    if let Some(snap) = coop.mom_sync.take() {
+        let should_adopt = !is_host
+            || (mom.host_grace > 0.0 && !mom.synced_once)
+            || (mom.host_grace > 0.0 && snap.hp < mom.hp);
+        if should_adopt {
+            let old_state = mom.prev_state_code;
+            let old_guard = mom.prev_guarding;
+            let old_seq = mom.attack_seq;
+            let old_enraged = mom.enraged_phase2;
+            let old_quote = mom.quote_idx;
+
+            mom.net_target_pos = snap.pos;
+            mom.net_target_yaw = snap.yaw;
+            mom.hp = snap.hp.min(snap.max_hp);
+            mom.max_hp = snap.max_hp;
+            stats.boss_hp = mom.hp;
+            stats.boss_max_hp = mom.max_hp;
+            mom.state = mom_code_to_state(snap.state_code);
+            mom.timer = snap.timer;
+            mom.guard_open = snap.guard_open;
+            mom.guarding = snap.guarding;
+            mom.enraged_phase2 = snap.enraged_phase2;
+            mom.spin_cleave = snap.spin_cleave;
+            mom.lunge_dir = snap.lunge_dir;
+            mom.attack_seq = snap.attack_seq;
+            mom.quote_idx = snap.quote_idx % MOM_QUOTES.len();
+            mom.synced_once = true;
+            mom.host_grace = 0.0;
+            mom.prev_state_code = snap.state_code;
+            mom.prev_guarding = snap.guarding;
+
+            if old_quote != mom.quote_idx {
+                let line = MOM_QUOTES[mom.quote_idx];
+                stats.mom_quote = line.to_string();
+                crate::audio::play_sfx("mom_yell");
+                crate::audio::speak_voice(line, "mom");
+            }
+            if snap.state_code == 1 && old_state != 1 {
+                let d_local = Vec2::new(
+                    p_tf.translation.x - snap.pos.x,
+                    p_tf.translation.z - snap.pos.z,
+                )
+                .length();
+                if d_local < 15.0 {
+                    stats.hint_text = if snap.spin_cleave {
+                        "MOM WINDING UP 360 SPIN CLEAVE -- DODGE ROLL (SHIFT / ROLL)!".to_string()
+                    } else {
+                        "MOM WINDING UP -- DODGE ROLL NOW (SHIFT / ROLL)!".to_string()
+                    };
+                }
+            }
+            if snap.attack_seq != old_seq {
+                crate::audio::play_sfx("saber_swing");
+            }
+            if old_guard && !mom.guarding && mom.guard_open > 0.1 && mom.guard_break_fx <= 0.05 {
+                mom.guard_break_fx = 1.0;
+                crate::audio::play_sfx("guard_break");
+            }
+            if !old_guard && mom.guarding {
+                crate::audio::play_sfx("shield");
+                stats.hint_text = "Mom's guard is back UP!".to_string();
+            }
+            if !old_enraged && mom.enraged_phase2 {
+                crate::audio::play_sfx("saber_ignite");
+                crate::audio::play_sfx("mom_yell");
+                stats.hint_text = "MOM ENRAGED! PHASE 2 -- FASTER, DEADLIER, 360 CLEAVES!".to_string();
+            }
+        }
+    }
+
+    if !is_host {
+        let old_pos = mom_tf.translation;
+        if mom.synced_once {
+            if old_pos.distance(mom.net_target_pos) > 8.0 {
+                mom_tf.translation = mom.net_target_pos;
+            } else {
+                mom_tf.translation = old_pos.lerp(mom.net_target_pos, (dt * 14.0).min(1.0));
+            }
+            mom_tf.rotation = mom_tf
+                .rotation
+                .slerp(Quat::from_rotation_y(mom.net_target_yaw), (dt * 14.0).min(1.0));
+        }
+        mom.timer = (mom.timer - dt).max(0.0);
+        mom.guard_open = (mom.guard_open - dt).max(0.0);
+        let step_dist = Vec2::new(
+            mom_tf.translation.x - old_pos.x,
+            mom_tf.translation.z - old_pos.z,
+        )
+        .length();
+        mom.walk_phase += step_dist * 1.4;
+    }
+
+    if is_host {
+        mom.host_grace = (mom.host_grace - dt).max(0.0);
+        if live_squad > mom.squad_n {
+            let new_max = mom_max_hp(live_squad);
+            let delta = (new_max - mom.max_hp).max(0.0);
+            mom.max_hp = new_max;
+            mom.hp = (mom.hp + delta).min(mom.max_hp);
+            mom.squad_n = live_squad;
+            stats.boss_max_hp = mom.max_hp;
+            stats.boss_hp = mom.hp;
+            force_sync = true;
+        }
+    }
+
+    let params = mom_difficulty_params(mom.squad_n, mom.enraged_phase2);
+
+    if is_host {
+        let actions: Vec<_> = coop.mom_actions.drain(..).collect();
+        for (slot, kind, dmg, kb_yaw, flag) in actions {
+            let kb_dir = Vec3::new(kb_yaw.sin(), 0.0, kb_yaw.cos()).normalize_or_zero();
+            match kind {
+                crate::net::MOM_ACT_GUARD_BREAK => {
+                    apply_mom_guard_break_host(
+                        &mut mom,
+                        &mut mom_tf,
+                        &mut stats,
+                        dmg,
+                        kb_dir,
+                        slot,
+                        &params,
+                    );
+                    force_sync = true;
+                }
+                crate::net::MOM_ACT_HIT => {
+                    apply_mom_hit_host(
+                        &mut mom,
+                        &mut mom_tf,
+                        &mut stats,
+                        dmg,
+                        kb_dir,
+                        slot,
+                        &params,
+                    );
+                    force_sync = true;
+                }
+                crate::net::MOM_ACT_STAGGER => {
+                    let open_w = if flag { 3.2 } else { 1.4 };
+                    mom.guard_open = mom.guard_open.max(open_w);
+                    mom.guarding = false;
+                    mom.spin_cleave = false;
+                    mom.state = MomState::Staggered;
+                    mom.timer = if flag { 1.65 } else { 0.9 };
+                    mom.stagger_hits = 0;
+                    mom.target_slot = slot;
+                    mom.retarget_timer = 2.6;
+                    force_sync = true;
+                }
+                _ => {}
+            }
+        }
+        if coop.mom_damage > 0.0 {
+            mom.hp = (mom.hp - coop.mom_damage).max(0.0);
+            stats.boss_hp = mom.hp;
+            coop.mom_damage = 0.0;
+            force_sync = true;
+        }
+    } else {
+        coop.mom_actions.clear();
         coop.mom_damage = 0.0;
     }
 
@@ -3679,53 +4068,72 @@ pub fn update_boss_fight(
         mom.hit_cooldown = (mom.hit_cooldown - dt).max(0.0);
     }
 
-    // Periodic shouting voice lines from Mom
-    mom.voice_timer -= dt;
-    if mom.voice_timer <= 0.0 {
-        mom.voice_timer = 6.5;
-        mom.quote_idx = (mom.quote_idx + 1) % MOM_QUOTES.len();
-        let line = MOM_QUOTES[mom.quote_idx];
-        stats.mom_quote = line.to_string();
-        crate::audio::play_sfx("mom_yell");
-        crate::audio::speak_voice(line, "mom");
-    }
+    if is_host {
+        // Periodic shouting voice lines from Mom (broadcast via stateFlags)
+        mom.voice_timer -= dt;
+        if mom.voice_timer <= 0.0 {
+            mom.voice_timer = 6.5;
+            mom.quote_idx = (mom.quote_idx + 1) % MOM_QUOTES.len();
+            let line = MOM_QUOTES[mom.quote_idx];
+            stats.mom_quote = line.to_string();
+            crate::audio::play_sfx("mom_yell");
+            crate::audio::speak_voice(line, "mom");
+            force_sync = true;
+        }
 
-    // Periodically reinforce angry veggie minions while Mom still fights
-    mom.summon_timer -= dt;
-    if mom.summon_timer <= 0.0 && mom.hp < 85.0 && enemy_q.iter().count() < 5 {
-        mom.summon_timer = 8.5;
-        let angle = t * 1.3;
-        let spawn_pos = Vec3::new(
-            (mom_tf.translation.x + angle.cos() * 5.5).clamp(-42.0, 42.0),
-            mom_tf.translation.y,
-            (mom_tf.translation.z + angle.sin() * 5.5).clamp(-34.0, 20.0),
-        );
-        spawn_enemy_at(&mut commands, &asset_server, EnemyKind::BroccoliBrute, spawn_pos);
-    }
+        // Phase 2 Enrage at 50% HP
+        if !mom.enraged_phase2 && mom.hp > 0.0 && mom.hp <= mom.max_hp * 0.50 {
+            mom.enraged_phase2 = true;
+            crate::audio::play_sfx("saber_ignite");
+            crate::audio::play_sfx("mom_yell");
+            stats.hint_text = "MOM ENRAGED! PHASE 2 -- FASTER, DEADLIER, 360 CLEAVES!".to_string();
+            force_sync = true;
+        }
 
-    // Mom's guard. A dodge roll opens it for its counter window (2.8 s, 3.2 s after a perfect
-    // dodge), a charged heavy breaks it for `MOM_GUARD_BREAK_SECS`; staggers (end of her slash, a
-    // perfect block, a landed hit) leave her open while they last. The open window keeps its own
-    // clock, so landing hits doesn't close it early.
-    if player.roll_timer > 0.0 || player.dodge_counter_timer > 0.0 {
-        mom.guard_open = mom.guard_open.max(player.dodge_counter_timer).max(player.roll_timer);
-    }
-    if mom.guard_open > 0.0 {
-        mom.guard_open = (mom.guard_open - dt).max(0.0);
-        if mom.guard_open <= 0.0 && !matches!(mom.state, MomState::Staggered) {
-            crate::audio::play_sfx("shield");
-            stats.hint_text = "Mom's guard is back UP!".to_string();
+        // Periodically reinforce angry veggie minions while Mom still fights
+        mom.summon_timer -= dt;
+        if mom.summon_timer <= 0.0 && mom.hp <= mom.max_hp * 0.80 && enemy_q.iter().count() < params.summon_cap {
+            mom.summon_timer = params.summon_interval;
+            let wave = if mom.squad_n >= 3 { 2 } else { 1 };
+            for i in 0..wave {
+                let angle = t * 1.3 + i as f32 * PI;
+                let spawn_pos = Vec3::new(
+                    (mom_tf.translation.x + angle.cos() * 5.5).clamp(-42.0, 42.0),
+                    mom_tf.translation.y,
+                    (mom_tf.translation.z + angle.sin() * 5.5).clamp(-34.0, 20.0),
+                );
+                let kind = if i % 2 == 0 {
+                    EnemyKind::BroccoliBrute
+                } else {
+                    EnemyKind::CarrotLancer
+                };
+                spawn_enemy_at(&mut commands, &asset_server, kind, spawn_pos);
+            }
+        }
+
+        // Mom's guard (Host-authoritative)
+        let prev_guard = mom.guarding;
+        if player.roll_timer > 0.0 || player.dodge_counter_timer > 0.0 {
+            mom.guard_open = mom.guard_open.max(player.dodge_counter_timer).max(player.roll_timer);
+        }
+        if mom.guard_open > 0.0 {
+            mom.guard_open = (mom.guard_open - dt).max(0.0);
+            if mom.guard_open <= 0.0 && !matches!(mom.state, MomState::Staggered) {
+                crate::audio::play_sfx("shield");
+                stats.hint_text = "Mom's guard is back UP!".to_string();
+                force_sync = true;
+            }
+        }
+        mom.guarding = mom.guard_open <= 0.0
+            && player.roll_timer <= 0.0
+            && !matches!(mom.state, MomState::Staggered);
+        if mom.guarding != prev_guard {
+            force_sync = true;
         }
     }
-    mom.guarding = mom.guard_open <= 0.0
-        && player.roll_timer <= 0.0
-        && !matches!(mom.state, MomState::Staggered);
 
-    // Stan's Lightsaber attack hits Mom (requires Dodge & Roll opening!) AND Veggie Minions
-    // Shared scale-aware test (player.rs `saber_contact`): reach to the target's surface, swing
-    // arc, active window of the visible strike; each swing lands at most once per target.
+    // 2. Local Player's Lightsaber attack hits shared Mom + local Veggie Minions
     if player.attack_timer > 0.0 {
-        // Check Mom hit once per swing
         let mom_contact = crate::player::saber_contact(
             &player,
             &stats,
@@ -3735,35 +4143,46 @@ pub fn update_boss_fight(
         if let (Some(contact), true) = (mom_contact, mom.last_saber_swing != player.swing_id) {
             mom.last_saber_swing = player.swing_id;
             mom.hit_cooldown = 0.34;
-            if mom.guarding && stats.heavy_attack {
-                // Charged heavy on her guard: breaks it (minor damage, brief stagger) and opens
-                // the same window as a dodge roll so light swings can follow up.
+            let kb = mom_tf.translation - p_tf.translation;
+            let flat_kb = Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero();
+            let kb_yaw = flat_kb.x.atan2(flat_kb.z);
+            let local_open = !mom.guarding || player.dodge_counter_timer > 0.0 || player.roll_timer > 0.0;
+
+            if !local_open && stats.heavy_attack {
                 crate::player::register_saber_hit(&mut player, &mut stats, contact);
                 stats.shake_request = stats.shake_request.max(0.5);
-                mom.hp = (mom.hp - MOM_GUARD_BREAK_DAMAGE).max(0.0);
-                stats.boss_hp = mom.hp;
-                crate::audio::net_event(4, MOM_GUARD_BREAK_DAMAGE.round() as u32);
                 stats.score += 500;
-                mom.guard_open = MOM_GUARD_BREAK_SECS;
-                mom.guarding = false;
-                mom.guard_break_fx = 1.0;
-                mom.state = MomState::Staggered;
-                mom.timer = MOM_GUARD_BREAK_STAGGER_SECS;
-                let kb = mom_tf.translation - p_tf.translation;
-                mom_tf.translation += Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero() * 1.6;
-                crate::audio::play_sfx("guard_break");
-                crate::audio::play_sfx("saber_hit");
+                if is_host {
+                    apply_mom_guard_break_host(
+                        &mut mom,
+                        &mut mom_tf,
+                        &mut stats,
+                        MOM_GUARD_BREAK_DAMAGE,
+                        flat_kb,
+                        0,
+                        &params,
+                    );
+                    force_sync = true;
+                } else {
+                    mom.guard_open = params.guard_break_secs;
+                    mom.guarding = false;
+                    mom.guard_break_fx = 1.0;
+                    crate::audio::play_sfx("guard_break");
+                    crate::audio::play_sfx("saber_hit");
+                    crate::audio::net_event(
+                        crate::net::EVENT_MOM_ACTION,
+                        crate::net::pack_mom_action(
+                            crate::net::MOM_ACT_GUARD_BREAK,
+                            MOM_GUARD_BREAK_DAMAGE,
+                            kb_yaw,
+                            true,
+                        ),
+                    );
+                }
                 stats.hint_text = "GUARD BROKEN! Slash Mom NOW!".to_string();
-            } else if mom.guarding {
-                let push = Vec3::new(
-                    p_tf.translation.x - mom_tf.translation.x,
-                    0.0,
-                    p_tf.translation.z - mom_tf.translation.z,
-                )
-                .normalize_or_zero();
-                // Parry shove (same 1.4 units as before) as a decaying knockback impulse.
+            } else if !local_open {
+                let push = -flat_kb;
                 crate::player::hit_reaction(&mut player, &mut stats, push, 1.4, false);
-                // Clang on her shield: sparks at the blade, a shield flash and the block sound.
                 player.block_spark = player.block_spark.max(1);
                 mom.guard_clash_fx = 1.0;
                 crate::audio::play_sfx("saber_block");
@@ -3778,19 +4197,33 @@ pub fn update_boss_fight(
                 crate::player::register_saber_hit(&mut player, &mut stats, contact);
                 let base_dmg = if stats.enraged { 22.0 } else { 17.0 };
                 let dmg = base_dmg * if stats.heavy_attack { 1.85 } else { 1.0 };
-                mom.hp = (mom.hp - dmg).max(0.0);
-                stats.boss_hp = mom.hp;
-                crate::audio::net_event(4, dmg.round() as u32);
                 stats.score += 1000;
                 player.dodge_counter_timer = 0.0;
-                mom.state = MomState::Staggered;
-                mom.timer = 0.55;
-                let kb = mom_tf.translation - p_tf.translation;
-                let flat_kb = Vec3::new(kb.x, 0.0, kb.z).normalize_or_zero();
-                mom_tf.translation += flat_kb * 1.6;
-                crate::audio::play_sfx("saber_hit");
+                if is_host {
+                    apply_mom_hit_host(
+                        &mut mom,
+                        &mut mom_tf,
+                        &mut stats,
+                        dmg,
+                        flat_kb,
+                        0,
+                        &params,
+                    );
+                    force_sync = true;
+                } else {
+                    crate::audio::play_sfx("saber_hit");
+                    crate::audio::net_event(
+                        crate::net::EVENT_MOM_ACTION,
+                        crate::net::pack_mom_action(
+                            crate::net::MOM_ACT_HIT,
+                            dmg,
+                            kb_yaw,
+                            stats.heavy_attack,
+                        ),
+                    );
+                }
                 stats.hint_text =
-                    format!("DODGE COUNTER HIT! Mom HP: {:.0}/{:.0}", mom.hp, mom.max_hp);
+                    format!("DODGE COUNTER HIT! Mom HP: {:.0}/{:.0}", (mom.hp - if is_host { 0.0 } else { dmg }).max(0.0), mom.max_hp);
             }
         }
 
@@ -3819,137 +4252,273 @@ pub fn update_boss_fight(
         }
     }
 
-    // Check Boss Victory -> transition into Japanese Anime thank-you cutscene before NYC
-    if mom.hp <= 0.0 {
+    // 3. Synchronized Boss Victory -> transition squad together into Thank-You Cutscene
+    let host_defeated = is_host && mom.hp <= 0.0;
+    let guest_defeated = !is_host && (coop.mom_victory || (mom.synced_once && mom.hp <= 0.0));
+    if host_defeated || guest_defeated {
+        if host_defeated && has_peers {
+            mom.hp = 0.0;
+            publish_mom_snapshot(&mom, &mom_tf, true);
+            crate::audio::net_event(
+                crate::net::EVENT_MOM_ACTION,
+                crate::net::pack_mom_action(crate::net::MOM_ACT_VICTORY, 0.0, 0.0, false),
+            );
+        }
+        coop.mom_victory = false;
         stats.score += 10000;
-        stats.hint_text = "MOM DEFEATED — ENTERING HONORABLE THANK-YOU SCENE...".to_string();
+        stats.hint_text = "MOM DEFEATED -- ENTERING HONORABLE THANK-YOU SCENE...".to_string();
         crate::audio::play_sfx("win");
         commands.entity(mom_ent).despawn_recursive();
         next_state.set(GameState::MomVictoryCutscene);
         return;
     }
 
-    // Mom AI State Machine (Harder Phase 1 & 2 requiring Dodge & Roll counterplay)
-    let to_player = p_tf.translation - mom_tf.translation;
-    let flat = Vec3::new(to_player.x, 0.0, to_player.z);
-    let dist = flat.length();
-    let chase_speed = if mom.hp < 50.0 { 8.0 } else { 7.0 };
-    let move_speed = match mom.state {
-        MomState::Pursue => {
-            if dist > 0.2 {
-                let yaw = (-flat.x).atan2(-flat.z);
-                mom_tf.rotation = Quat::from_rotation_y(yaw);
-            }
-            // Match player elevation smoothly so Mom follows Stan between counter & floor
-            let dy = p_tf.translation.y - mom_tf.translation.y;
-            mom_tf.translation.y += dy * (dt * 3.4).min(1.0);
-            if dist < 6.4 {
-                mom.state = MomState::SaberWindup;
-                mom.timer = if mom.hp < 50.0 { 0.48 } else { 0.56 };
-                mom.dealt_slash_hit = false;
-                mom.lunge_dir = flat.normalize_or_zero();
-                stats.hint_text = "MOM WINDING UP — DODGE ROLL NOW (SHIFT / ROLL)!".to_string();
-                0.0
+    // 4. Host AI State Machine targeting the whole squad (+ Guest incoming slash check)
+    let mut move_speed = 0.0_f32;
+    if is_host {
+        let mut all_targets: Vec<(u8, Vec3)> = Vec::with_capacity(1 + peer_positions.len());
+        all_targets.push((0, p_tf.translation));
+        all_targets.extend(peer_positions.iter().copied());
+
+        mom.retarget_timer -= dt;
+        let current_missing = !all_targets.iter().any(|&(slot, _)| slot == mom.target_slot);
+        if mom.retarget_timer <= 0.0 || current_missing {
+            mom.retarget_timer = 2.8;
+            let best = if all_targets.len() > 1 && !current_missing {
+                // Switch to another nearby squadmate when one pressures within 14 m, else closest.
+                all_targets
+                    .iter()
+                    .filter(|&&(slot, pos)| {
+                        slot != mom.target_slot
+                            && Vec2::new(pos.x - mom_tf.translation.x, pos.z - mom_tf.translation.z).length() < 14.0
+                    })
+                    .min_by(|a, b| {
+                        let da = (a.1 - mom_tf.translation).length_squared();
+                        let db = (b.1 - mom_tf.translation).length_squared();
+                        da.total_cmp(&db)
+                    })
+                    .or_else(|| {
+                        all_targets.iter().min_by(|a, b| {
+                            let da = (a.1 - mom_tf.translation).length_squared();
+                            let db = (b.1 - mom_tf.translation).length_squared();
+                            da.total_cmp(&db)
+                        })
+                    })
             } else {
-                let dir = flat.normalize_or_zero();
-                mom_tf.translation += dir * chase_speed * dt;
-                chase_speed
+                all_targets.iter().min_by(|a, b| {
+                    let da = (a.1 - mom_tf.translation).length_squared();
+                    let db = (b.1 - mom_tf.translation).length_squared();
+                    da.total_cmp(&db)
+                })
+            };
+            if let Some(&(slot, _)) = best {
+                mom.target_slot = slot;
             }
         }
-        MomState::SaberWindup => {
-            mom.timer -= dt;
+
+        let target_pos = all_targets
+            .iter()
+            .find(|&&(slot, _)| slot == mom.target_slot)
+            .map(|&(_, pos)| pos)
+            .unwrap_or(p_tf.translation);
+        let to_target = target_pos - mom_tf.translation;
+        let flat = Vec3::new(to_target.x, 0.0, to_target.z);
+        let dist = flat.length();
+
+        if mom.host_grace > 0.0 && has_peers {
             if dist > 0.2 {
-                mom.lunge_dir = flat.normalize_or_zero();
                 mom_tf.rotation = Quat::from_rotation_y((-flat.x).atan2(-flat.z));
             }
-            if mom.timer <= 0.0 {
-                mom.state = MomState::SaberSlash;
-                mom.timer = 0.42;
-                crate::audio::play_sfx("saber_swing");
-            }
-            0.0
+        } else {
+            let nearby_players = all_targets
+                .iter()
+                .filter(|&&(_, pos)| {
+                    Vec2::new(pos.x - mom_tf.translation.x, pos.z - mom_tf.translation.z).length() < 9.0
+                })
+                .count();
+
+            move_speed = match mom.state {
+                MomState::Pursue => {
+                    if dist > 0.2 {
+                        let yaw = (-flat.x).atan2(-flat.z);
+                        mom_tf.rotation = Quat::from_rotation_y(yaw);
+                    }
+                    let dy = target_pos.y - mom_tf.translation.y;
+                    mom_tf.translation.y += dy * (dt * 3.4).min(1.0);
+                    if dist < 6.4 {
+                        mom.state = MomState::SaberWindup;
+                        mom.timer = params.windup_secs;
+                        mom.dealt_slash_hit = false;
+                        mom.lunge_dir = flat.normalize_or_zero();
+                        mom.spin_cleave = (mom.squad_n >= 2 || mom.enraged_phase2)
+                            && (mom.slash_count % 3 == 2 || nearby_players >= 2);
+                        mom.slash_count = mom.slash_count.wrapping_add(1);
+                        force_sync = true;
+                        let local_dist = Vec2::new(
+                            p_tf.translation.x - mom_tf.translation.x,
+                            p_tf.translation.z - mom_tf.translation.z,
+                        )
+                        .length();
+                        if local_dist < 15.0 {
+                            stats.hint_text = if mom.spin_cleave {
+                                "MOM WINDING UP 360 SPIN CLEAVE -- DODGE ROLL (SHIFT / ROLL)!"
+                                    .to_string()
+                            } else {
+                                "MOM WINDING UP -- DODGE ROLL NOW (SHIFT / ROLL)!".to_string()
+                            };
+                        }
+                        0.0
+                    } else {
+                        let dir = flat.normalize_or_zero();
+                        mom_tf.translation += dir * params.chase_speed * dt;
+                        params.chase_speed
+                    }
+                }
+                MomState::SaberWindup => {
+                    mom.timer -= dt;
+                    if dist > 0.2 {
+                        mom.lunge_dir = flat.normalize_or_zero();
+                        mom_tf.rotation = Quat::from_rotation_y((-flat.x).atan2(-flat.z));
+                    }
+                    if mom.timer <= 0.0 {
+                        mom.state = MomState::SaberSlash;
+                        mom.timer = 0.42;
+                        mom.attack_seq = mom.attack_seq.wrapping_add(1);
+                        crate::audio::play_sfx("saber_swing");
+                        force_sync = true;
+                    }
+                    0.0
+                }
+                MomState::SaberSlash => {
+                    mom.timer -= dt;
+                    if dist > 3.6 {
+                        mom_tf.translation += mom.lunge_dir * params.lunge_speed * dt;
+                    }
+                    if mom.timer <= 0.0 {
+                        mom.state = MomState::Staggered;
+                        mom.timer = params.end_slash_stagger;
+                        mom.spin_cleave = false;
+                        mom.stagger_hits = 0;
+                        force_sync = true;
+                    }
+                    params.lunge_speed
+                }
+                MomState::Staggered => {
+                    mom.timer -= dt;
+                    if dist > 0.2 {
+                        mom_tf.rotation = Quat::from_rotation_y((-flat.x).atan2(-flat.z));
+                    }
+                    if mom.timer <= 0.0 {
+                        mom.state = MomState::Pursue;
+                        force_sync = true;
+                    }
+                    0.0
+                }
+            };
         }
-        MomState::SaberSlash => {
-            mom.timer -= dt;
-            if dist > 3.6 {
-                mom_tf.translation += mom.lunge_dir * 15.5 * dt;
+
+        // Enforce minimum duel spacing against ALL squadmates so Mom never overlaps any player
+        let min_sep = 3.8_f32;
+        for &(_, pos) in &all_targets {
+            let after_flat = Vec3::new(
+                pos.x - mom_tf.translation.x,
+                0.0,
+                pos.z - mom_tf.translation.z,
+            );
+            let after_dist = after_flat.length();
+            if after_dist < min_sep && after_dist > 0.01 {
+                let push_back = after_flat.normalize() * (min_sep - after_dist);
+                mom_tf.translation.x -= push_back.x;
+                mom_tf.translation.z -= push_back.z;
             }
-            if !mom.dealt_slash_hit && dist < 5.8 && (p_tf.translation.y - mom_tf.translation.y).abs() < 3.6 {
-                mom.dealt_slash_hit = true;
-                if player.roll_timer > 0.0 {
-                    player.dodge_counter_timer = 3.2;
-                    stats.score += 350;
-                    stats.hint_text =
-                        "PERFECT DODGE ROLL! Counter-attack Mom NOW (E / Click / SABER)!"
-                            .to_string();
-                    crate::audio::play_sfx("shield");
+        }
+
+        mom_tf.translation.x = mom_tf.translation.x.clamp(-46.0, 46.0);
+        mom_tf.translation.z = mom_tf.translation.z.clamp(-36.0, 36.0);
+        mom.walk_phase += move_speed * dt * 1.4;
+    }
+
+    // Check incoming slash / 360 Spin-Cleave against the local player on BOTH Host and Guests!
+    if mom.state == MomState::SaberSlash && mom.last_local_slash_seq != mom.attack_seq {
+        let local_to_p = p_tf.translation - mom_tf.translation;
+        let local_flat = Vec3::new(local_to_p.x, 0.0, local_to_p.z);
+        let reach = if mom.spin_cleave { 7.6 } else { 5.8 };
+        if local_flat.length() < reach && local_to_p.y.abs() < 3.6 {
+            mom.last_local_slash_seq = mom.attack_seq;
+            if player.roll_timer > 0.0 {
+                player.dodge_counter_timer = 3.2;
+                stats.score += 350;
+                stats.hint_text =
+                    "PERFECT DODGE ROLL! Counter-attack Mom NOW (E / Click / SABER)!".to_string();
+                crate::audio::play_sfx("shield");
+                if is_host {
                     mom.state = MomState::Staggered;
                     mom.timer = 1.65;
-                } else if player.invuln_timer <= 0.0 {
-                    let outcome = crate::player::try_block(
-                        &mut player,
-                        &mut stats,
-                        p_tf.translation,
-                        mom_tf.translation,
+                    mom.spin_cleave = false;
+                    mom.stagger_hits = 0;
+                    force_sync = true;
+                } else {
+                    crate::audio::net_event(
+                        crate::net::EVENT_MOM_ACTION,
+                        crate::net::pack_mom_action(crate::net::MOM_ACT_STAGGER, 0.0, 0.0, true),
                     );
-                    if outcome == crate::player::BlockOutcome::Perfect {
-                        // Perfect block knocks her saber wide: a short stagger, which also opens
-                        // her guard to Stan's counter (like the end-of-slash stagger).
+                }
+            } else if player.invuln_timer <= 0.0 {
+                let outcome = crate::player::try_block(
+                    &mut player,
+                    &mut stats,
+                    p_tf.translation,
+                    mom_tf.translation,
+                );
+                if outcome == crate::player::BlockOutcome::Perfect {
+                    stats.hint_text = "PERFECT BLOCK! Mom is staggered, SLASH NOW!".to_string();
+                    if is_host {
                         mom.state = MomState::Staggered;
                         mom.timer = 0.9;
-                        stats.hint_text = "PERFECT BLOCK! Mom is staggered, SLASH NOW!".to_string();
-                    } else if outcome == crate::player::BlockOutcome::None {
-                        stats.hearts -= 1;
-                        player.invuln_timer = 0.9;
-                        // Same 3.6-unit shove as before, delivered as a decaying knockback impulse.
-                        crate::player::hit_reaction(&mut player, &mut stats, mom.lunge_dir, 3.6, true);
-                        player.velocity.y = 6.2;
-                        stats.hint_text =
-                            "SLASHED BY MOM! Press SHIFT / ROLL right as she swings!".to_string();
-                        crate::audio::play_sfx("hit");
-                        if stats.hearts <= 0 {
-                            crate::audio::play_sfx("lose");
-                            next_state.set(GameState::GameOver);
-                            return;
-                        }
+                        mom.spin_cleave = false;
+                        mom.stagger_hits = 0;
+                        force_sync = true;
+                    } else {
+                        crate::audio::net_event(
+                            crate::net::EVENT_MOM_ACTION,
+                            crate::net::pack_mom_action(
+                                crate::net::MOM_ACT_STAGGER,
+                                0.0,
+                                0.0,
+                                false,
+                            ),
+                        );
+                    }
+                } else if outcome == crate::player::BlockOutcome::None {
+                    let dmg_hearts = if mom.enraged_phase2 && mom.spin_cleave { 2 } else { 1 };
+                    stats.hearts -= dmg_hearts;
+                    player.invuln_timer = 0.9;
+                    let push_dir = local_flat.normalize_or(mom.lunge_dir);
+                    crate::player::hit_reaction(&mut player, &mut stats, push_dir, 3.6, true);
+                    player.velocity.y = 6.2;
+                    stats.hint_text =
+                        "SLASHED BY MOM! Press SHIFT / ROLL right as she swings!".to_string();
+                    crate::audio::play_sfx("hit");
+                    if stats.hearts <= 0 {
+                        crate::audio::play_sfx("lose");
+                        next_state.set(GameState::GameOver);
+                        return;
                     }
                 }
             }
-            if mom.timer <= 0.0 {
-                mom.state = MomState::Staggered;
-                mom.timer = 1.15;
-            }
-            15.5
         }
-        MomState::Staggered => {
-            mom.timer -= dt;
-            if dist > 0.2 {
-                mom_tf.rotation = Quat::from_rotation_y((-flat.x).atan2(-flat.z));
-            }
-            if mom.timer <= 0.0 {
-                mom.state = MomState::Pursue;
-            }
-            0.0
-        }
-    };
-
-    // Enforce minimum duel spacing so Mom never overlaps inside Stan's mesh
-    let min_sep = 3.8_f32;
-    let after_flat = Vec3::new(
-        p_tf.translation.x - mom_tf.translation.x,
-        0.0,
-        p_tf.translation.z - mom_tf.translation.z,
-    );
-    let after_dist = after_flat.length();
-    if after_dist < min_sep && after_dist > 0.01 {
-        let push_back = after_flat.normalize() * (min_sep - after_dist);
-        mom_tf.translation.x -= push_back.x;
-        mom_tf.translation.z -= push_back.z;
     }
 
-    mom_tf.translation.x = mom_tf.translation.x.clamp(-46.0, 46.0);
-    mom_tf.translation.z = mom_tf.translation.z.clamp(-36.0, 36.0);
-    mom.walk_phase += move_speed * dt * 1.4;
+    // Broadcast authoritative Mom state at 12 Hz (or immediately on state transitions/hits)
+    let solo_handoff = has_peers && !*prev_has_peers && mom.host_grace <= 0.0;
+    if has_peers && ((is_host && mom.host_grace <= 0.0) || solo_handoff) {
+        mom.sync_accum += dt;
+        if force_sync || mom.sync_accum >= 1.0 / 12.0 {
+            mom.sync_accum = 0.0;
+            publish_mom_snapshot(&mom, &mom_tf, force_sync);
+        }
+    }
+    *prev_has_peers = has_peers;
 
     // Animate Mom limbs & Crimson Lightsaber
     let blend = (dt * 15.0).min(1.0);
@@ -3978,14 +4547,25 @@ pub fn update_boss_fight(
             Quat::from_rotation_x(0.22),
         ),
         MomState::SaberSlash => {
-            let sweep = (1.0 - (mom.timer / 0.42).clamp(0.0, 1.0)) * 2.5 - 1.25;
-            (
-                Quat::from_rotation_x(-0.45),
-                Quat::from_rotation_x(0.45),
-                Quat::from_rotation_x(-0.5),
-                Quat::from_rotation_x(0.45) * Quat::from_rotation_y(sweep),
-                Quat::from_rotation_x(-0.28),
-            )
+            let progress = 1.0 - (mom.timer / 0.42).clamp(0.0, 1.0);
+            if mom.spin_cleave {
+                (
+                    Quat::from_rotation_x(-0.45),
+                    Quat::from_rotation_x(0.45),
+                    Quat::from_rotation_z(-0.85),
+                    Quat::from_rotation_x(1.35) * Quat::from_rotation_y(progress * TAU),
+                    Quat::from_rotation_y(progress * TAU) * Quat::from_rotation_x(-0.24),
+                )
+            } else {
+                let sweep = progress * 2.5 - 1.25;
+                (
+                    Quat::from_rotation_x(-0.45),
+                    Quat::from_rotation_x(0.45),
+                    Quat::from_rotation_x(-0.5),
+                    Quat::from_rotation_x(0.45) * Quat::from_rotation_y(sweep),
+                    Quat::from_rotation_x(-0.28),
+                )
+            }
         }
         MomState::Staggered => (
             Quat::IDENTITY,
@@ -4013,12 +4593,28 @@ pub fn update_boss_fight(
         }
     }
 
-    // Update Boss HUD Health Bar & Quote
-    if let Ok(mut fill) = hp_fill_q.get_single_mut() {
+    // Update Boss HUD Health Bar, Title & Quote
+    if let Ok(mut fill) = hud_ui.hp_fill_q.get_single_mut() {
         fill.width = Val::Percent((mom.hp / mom.max_hp * 100.0).clamp(0.0, 100.0));
     }
-    if let Ok(mut q_txt) = quote_q.get_single_mut() {
+    if let Ok(mut q_txt) = hud_ui.quote_q.get_single_mut() {
         q_txt.0 = format!("\"{}\"", stats.mom_quote);
+    }
+    if let Ok(mut t_txt) = hud_ui.title_q.get_single_mut() {
+        let want_title = if mom.enraged_phase2 {
+            if mom.squad_n >= 2 {
+                format!("ENRAGED MOM -- PHASE 2 (CO-OP x{} RAID!)", mom.squad_n)
+            } else {
+                "ENRAGED MOM -- PHASE 2!".to_string()
+            }
+        } else if mom.squad_n >= 2 {
+            format!("FINAL BOSS: MOM (CO-OP x{} RAID!)", mom.squad_n)
+        } else {
+            "FINAL BOSS: MOM (EAT YOUR VEGGIES!)".to_string()
+        };
+        if t_txt.0 != want_title {
+            t_txt.0 = want_title;
+        }
     }
 }
 
@@ -4105,5 +4701,33 @@ pub fn exit_boss_fight(
     }
     for e in &healing_tendy_q {
         commands.entity(e).despawn_recursive();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mom_difficulty_scales_monotonically_with_squad() {
+        let mut prev_hp = 0.0;
+        let mut prev_speed = 0.0;
+        let mut prev_lunge = 0.0;
+        for n in 1..=5 {
+            let hp = mom_max_hp(n);
+            let p1 = mom_difficulty_params(n, false);
+            let p2 = mom_difficulty_params(n, true);
+            assert!(hp > prev_hp);
+            assert!(p1.chase_speed >= prev_speed);
+            assert!(p1.lunge_speed >= prev_lunge);
+            assert!(p2.chase_speed > p1.chase_speed);
+            assert!(p2.windup_secs < p1.windup_secs);
+            assert!(p1.summon_cap >= 5);
+            prev_hp = hp;
+            prev_speed = p1.chase_speed;
+            prev_lunge = p1.lunge_speed;
+        }
+        assert_eq!(mom_max_hp(1), 200.0);
+        assert_eq!(mom_max_hp(4), 860.0);
     }
 }
