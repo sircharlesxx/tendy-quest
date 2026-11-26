@@ -3137,6 +3137,45 @@
     #touch-controls.boss-mode #btn-block {
       display: flex;
     }
+    /* Mobile city weapon cycle + grenade buttons above JUMP / SABER. */
+    #btn-grenade {
+      display: none;
+      position: absolute;
+      right: 6px;
+      bottom: calc(100% + 10px);
+      width: 64px;
+      height: 64px;
+      font-size: 0.72rem;
+      line-height: 1.05;
+      text-align: center;
+      white-space: pre-line;
+      background: radial-gradient(circle at 30% 30%, rgba(34, 197, 94, 0.94), rgba(21, 128, 61, 0.94));
+      border-color: #fde047;
+      box-shadow: 0 0 14px rgba(34, 197, 94, 0.55);
+    }
+    #btn-grenade.empty {
+      opacity: 0.48;
+      filter: grayscale(0.6);
+    }
+    #btn-weapon {
+      display: none;
+      position: absolute;
+      right: 162px;
+      bottom: calc(100% + 10px);
+      width: 64px;
+      height: 64px;
+      font-size: 0.72rem;
+      line-height: 1.05;
+      text-align: center;
+      white-space: pre-line;
+      background: radial-gradient(circle at 30% 30%, rgba(14, 165, 233, 0.92), rgba(3, 105, 161, 0.92));
+      border-color: #7dd3fc;
+      box-shadow: 0 0 14px rgba(56, 189, 248, 0.5);
+    }
+    #touch-controls.city-weapons #btn-grenade,
+    #touch-controls.city-weapons #btn-weapon {
+      display: flex;
+    }
     #mobile-top-btns {
       position: fixed;
       top: 92px;
@@ -3291,6 +3330,24 @@
         width: 70px;
         height: 70px;
         font-size: 0.84rem;
+      }
+      #btn-block {
+        width: 54px;
+        height: 54px;
+        font-size: 0.68rem;
+        right: 72px;
+      }
+      #btn-grenade {
+        width: 56px;
+        height: 56px;
+        font-size: 0.66rem;
+        right: 4px;
+      }
+      #btn-weapon {
+        width: 54px;
+        height: 54px;
+        font-size: 0.66rem;
+        right: 136px;
       }
       #mobile-top-btns {
         top: 108px;
@@ -3453,7 +3510,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-f21469894628c657.js" crossorigin="anonymous" integrity="sha384-e29udhVw+RhNPZEsuJ13wNNK47TNJR6NqnfxbaUP5tjBSLeFB64oVMmfS2BQJFyE"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-f21469894628c657_bg.wasm" crossorigin="anonymous" integrity="sha384-p050a2QXzzk9dCD6oNYP9EZhK2/FFiT6gxq2EiMzJVqUthDO51KGUZfO1SvSJoHu" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-6692fefbb26ca58c.js" crossorigin="anonymous" integrity="sha384-3mBqvk7SmcTBkRcQQLwY+EhSz7YYmLWsn99BnP4Pv6r5zvXSkvt34yC1wi2Ijgrp"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-6692fefbb26ca58c_bg.wasm" crossorigin="anonymous" integrity="sha384-1qb6XgiZ1EPlOmv1GWSEQnqHWbr3p2r0mhuPPZPFsxG48vBDtyXR6NYAMQ5RD0wU" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3485,7 +3542,9 @@
       </div>
     </div>
     <div id="action-buttons">
+      <button id="btn-weapon" class="touch-btn touch-ui" type="button">WEP</button>
       <button id="btn-block" class="touch-btn touch-ui" type="button">BLOCK</button>
+      <button id="btn-grenade" class="touch-btn touch-ui" type="button">GREN</button>
       <button id="btn-attack" class="touch-btn touch-ui" type="button">SABER</button>
       <button id="btn-dash" class="touch-btn touch-ui" type="button">DASH</button>
       <button id="btn-jump" class="touch-btn touch-ui" type="button">JUMP</button>
@@ -3524,6 +3583,8 @@
       let gpAttackHeld = false;
       let bossModeActive = false;
       let blockHeld = false;
+      let grenadeQueued = false;
+      let weaponCycleQueued = false;
       let actionTapQueued = false;
       let helpQueued = false;
 
@@ -3545,6 +3606,8 @@
       const btnDash = document.getElementById("btn-dash");
       const btnAttack = document.getElementById("btn-attack");
       const btnBlock = document.getElementById("btn-block");
+      const btnGrenade = document.getElementById("btn-grenade");
+      const btnWeapon = document.getElementById("btn-weapon");
       const btnHelp = document.getElementById("btn-help");
       const btnMute = document.getElementById("btn-mute");
       const btnFullscreen = document.getElementById("btn-fullscreen");
@@ -3863,6 +3926,8 @@
         btnBlock.addEventListener("mouseup", () => { blockHeld = false; });
         btnBlock.addEventListener("mouseleave", () => { blockHeld = false; });
       }
+      if (btnGrenade) bindActionBtn(btnGrenade, () => { grenadeQueued = true; });
+      if (btnWeapon) bindActionBtn(btnWeapon, () => { weaponCycleQueued = true; });
       bindActionBtn(btnHelp, () => { helpQueued = true; });
       bindActionBtn(btnMute, () => { window.tendyAudio.toggleMute(); });
 
@@ -4105,6 +4170,27 @@
         }
       }
 
+      const WEP_TAGS = ["SBR", "9MM", "SHT", "SMG"];
+      const ATK_LABELS = ["SABER", "SHOOT", "BLAST", "SMG"];
+      function setCityWeapons(active, weaponSlot, grenades) {
+        const on = !!active;
+        if (touchControls) {
+          touchControls.classList.toggle("city-weapons", on);
+        }
+        const slot = Math.max(0, Math.min(3, weaponSlot | 0));
+        const n = Math.max(0, grenades | 0);
+        if (btnAttack) {
+          btnAttack.textContent = on ? ATK_LABELS[slot] : "SABER";
+        }
+        if (btnGrenade) {
+          btnGrenade.textContent = "GREN\n" + n;
+          btnGrenade.classList.toggle("empty", n <= 0);
+        }
+        if (btnWeapon) {
+          btnWeapon.textContent = "WEP\n" + WEP_TAGS[slot];
+        }
+      }
+
       function setUzumakiMode(level) {
         const on = (level | 0) > 0;
         document.body.classList.toggle("uzumaki-mode", on);
@@ -4289,6 +4375,9 @@
         takeAttack() { const v = attackQueued; attackQueued = false; return v; },
         blockHeld() { return blockHeld; },
         attackHeld() { pollGamepad(); return attackTouchHeld || gpAttackHeld; },
+        takeGrenade() { const v = grenadeQueued; grenadeQueued = false; return v; },
+        takeWeaponCycle() { const v = weaponCycleQueued; weaponCycleQueued = false; return v; },
+        setCityWeapons,
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
         setPlaying,
@@ -7117,8 +7206,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-f21469894628c657.js';
-const wasm = await init({ module_or_path: './tendy-quest-f21469894628c657_bg.wasm' });
+import init, * as bindings from './tendy-quest-6692fefbb26ca58c.js';
+const wasm = await init({ module_or_path: './tendy-quest-6692fefbb26ca58c_bg.wasm' });
 
 
 window.wasmBindings = bindings;

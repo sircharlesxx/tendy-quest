@@ -49,8 +49,11 @@ struct WeaponEntity;
 #[derive(Component)]
 struct WeaponHudRoot;
 
+#[derive(Component, Clone, Copy)]
+struct WeaponHudButton(u8);
+
 #[derive(Component)]
-struct WeaponHudText;
+struct WeaponHudBtnText(u8);
 
 #[derive(Component)]
 pub struct CrewHeroSaber;
@@ -104,7 +107,10 @@ fn spawn_weapon_hud(mut commands: Commands) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(14.0),
                 bottom: Val::Px(54.0),
-                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                flex_direction: FlexDirection::Row,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(5.0),
+                padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
                 border: UiRect::all(Val::Px(1.5)),
                 ..default()
             },
@@ -114,15 +120,42 @@ fn spawn_weapon_hud(mut commands: Commands) {
             GlobalZIndex(10),
         ))
         .with_children(|root| {
-            root.spawn((
-                WeaponHudText,
-                Text::new("[1] SABER  [2] PISTOL  [3] SHOTGUN  [4] SMG | [G] GRENADE x5"),
-                TextFont {
-                    font_size: 12.0,
-                    ..default()
-                },
-                TextColor(Color::srgb(0.96, 0.94, 0.82)),
-            ));
+            let labels = [
+                (0_u8, "1:SABER"),
+                (1_u8, "2:PISTOL"),
+                (2_u8, "3:SHOTGUN"),
+                (3_u8, "4:SMG"),
+                (4_u8, "G:GREN x5"),
+            ];
+            for (slot, label) in labels {
+                root.spawn((
+                    WeaponHudButton(slot),
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(7.0), Val::Px(3.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(if slot == 4 {
+                        Color::srgba(0.10, 0.36, 0.18, 0.90)
+                    } else {
+                        Color::srgba(0.10, 0.14, 0.24, 0.88)
+                    }),
+                    BorderColor(Color::srgba(0.95, 0.82, 0.35, 0.55)),
+                    BorderRadius::all(Val::Px(6.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        WeaponHudBtnText(slot),
+                        Text::new(label),
+                        TextFont {
+                            font_size: 11.5,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.96, 0.94, 0.82)),
+                    ));
+                });
+            }
         });
 }
 
@@ -131,6 +164,7 @@ fn cleanup_weapons_city(
     hud_q: Query<Entity, With<WeaponHudRoot>>,
     ent_q: Query<Entity, With<WeaponEntity>>,
 ) {
+    crate::audio::set_touch_city_weapons(false, 0, 0);
     for e in &hud_q {
         commands.entity(e).despawn_recursive();
     }
@@ -139,21 +173,38 @@ fn cleanup_weapons_city(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_weapon_hud(
     stats: Res<PlayerStats>,
-    mut text_q: Query<&mut Text, With<WeaponHudText>>,
-    mut vis_q: Query<&mut Visibility, With<WeaponHudRoot>>,
+    mut root_q: Query<&mut Visibility, With<WeaponHudRoot>>,
+    mut btn_q: Query<
+        (&WeaponHudButton, &mut BackgroundColor, &mut BorderColor),
+        Without<WeaponHudRoot>,
+    >,
+    mut text_q: Query<(&WeaponHudBtnText, &mut Text)>,
+    mut last_touch: Local<(bool, u8, u32)>,
 ) {
-    let hide = stats.char_select_open
-        || stats.phone_open
-        || stats.bartender_open
-        || stats.riding_wheel;
+    let active_in_foot = stats.driving_car.is_none()
+        && !stats.riding_wheel
+        && !stats.phone_open
+        && !stats.bartender_open
+        && !stats.char_select_open
+        && !stats.casino_open
+        && !stats.arcade_open;
+
+    let cur_touch = (active_in_foot, stats.equipped_weapon, stats.grenades);
+    if *last_touch != cur_touch {
+        *last_touch = cur_touch;
+        crate::audio::set_touch_city_weapons(cur_touch.0, cur_touch.1, cur_touch.2);
+    }
+
+    let hide = !active_in_foot || crate::audio::skip_touch_ui();
     let want = if hide {
         Visibility::Hidden
     } else {
         Visibility::Inherited
     };
-    for mut v in &mut vis_q {
+    for mut v in &mut root_q {
         if *v != want {
             *v = want;
         }
@@ -161,28 +212,48 @@ fn update_weapon_hud(
     if hide {
         return;
     }
-    let slot = |idx: u8, tag: &str| -> String {
-        if stats.equipped_weapon == idx {
-            format!("[*{}*]", tag)
+
+    for (btn, mut bg, mut border) in &mut btn_q {
+        if btn.0 == 4 {
+            bg.0 = if stats.grenades > 0 {
+                Color::srgba(0.10, 0.42, 0.20, 0.92)
+            } else {
+                Color::srgba(0.16, 0.14, 0.14, 0.72)
+            };
+            border.0 = if stats.grenades > 0 {
+                Color::srgb(0.95, 0.82, 0.28)
+            } else {
+                Color::srgba(0.5, 0.5, 0.5, 0.4)
+            };
         } else {
-            tag.to_string()
+            let selected = stats.equipped_weapon == btn.0;
+            bg.0 = if selected {
+                Color::srgb(0.76, 0.46, 0.08)
+            } else {
+                Color::srgba(0.10, 0.14, 0.24, 0.86)
+            };
+            border.0 = if selected {
+                Color::srgb(1.0, 0.90, 0.35)
+            } else {
+                Color::srgba(0.65, 0.75, 0.92, 0.45)
+            };
         }
-    };
-    let line = format!(
-        "{}  {}  {}  {}  [C] Cycle | [G] Grenades: {}",
-        slot(0, "1:SABER"),
-        slot(1, "2:PISTOL"),
-        slot(2, "3:SHOTGUN"),
-        slot(3, "4:SMG"),
-        stats.grenades
-    );
-    if let Ok(mut txt) = text_q.get_single_mut() {
-        if txt.0 != line {
-            txt.0 = line;
+    }
+    for (t, mut txt) in &mut text_q {
+        let label = match t.0 {
+            0 => "1:SABER".to_string(),
+            1 => "2:PISTOL".to_string(),
+            2 => "3:SHOTGUN".to_string(),
+            3 => "4:SMG".to_string(),
+            _ => format!("G:GREN x{}", stats.grenades),
+        };
+        if txt.0 != label {
+            txt.0 = label;
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_weapon_input(
     mut commands: Commands,
     time: Res<Time>,
@@ -194,6 +265,7 @@ fn handle_weapon_input(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut player_q: Query<(&Transform, &mut Player)>,
     cam_q: Query<&Transform, (With<Camera3d>, Without<Player>)>,
+    btn_q: Query<(&Interaction, &WeaponHudButton), Changed<Interaction>>,
     ragdoll: Res<Ragdoll>,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -216,14 +288,34 @@ fn handle_weapon_input(
         || stats.phone_open
         || stats.bartender_open
         || stats.char_select_open
+        || stats.casino_open
+        || stats.arcade_open
         || ragdoll.active()
     {
         return;
     }
 
-    // Weapon selection [1..4] or [C] cycle
+    // Drain mobile / clickable HUD button actions cleanly
+    let touch_cycle = crate::audio::take_touch_weapon_cycle();
+    let touch_gren = crate::audio::take_touch_grenade();
+    let mut ui_weapon: Option<u8> = None;
+    let mut ui_gren = false;
+    for (inter, btn) in &btn_q {
+        if *inter == Interaction::Pressed {
+            if btn.0 == 4 {
+                ui_gren = true;
+            } else {
+                ui_weapon = Some(btn.0);
+            }
+        }
+    }
+
+    // Weapon selection [1..4], [C] cycle, touch WEP button, or desktop HUD pill
     let mut switched = false;
-    if keys.just_pressed(KeyCode::Digit1) {
+    if let Some(slot) = ui_weapon {
+        stats.equipped_weapon = slot;
+        switched = true;
+    } else if keys.just_pressed(KeyCode::Digit1) {
         stats.equipped_weapon = 0;
         switched = true;
     } else if keys.just_pressed(KeyCode::Digit2) {
@@ -235,7 +327,7 @@ fn handle_weapon_input(
     } else if keys.just_pressed(KeyCode::Digit4) {
         stats.equipped_weapon = 3;
         switched = true;
-    } else if keys.just_pressed(KeyCode::KeyC) {
+    } else if keys.just_pressed(KeyCode::KeyC) || touch_cycle {
         stats.equipped_weapon = (stats.equipped_weapon + 1) % 4;
         switched = true;
     }
@@ -258,8 +350,8 @@ fn handle_weapon_input(
         .unwrap_or_else(|_| Vec3::new(-player.facing_yaw.sin(), 0.0, -player.facing_yaw.cos()));
     let cam_right = Vec3::Y.cross(cam_fwd).normalize_or(Vec3::X);
 
-    // Throw Grenade [G] (#19)
-    if keys.just_pressed(KeyCode::KeyG) && cd.grenade_cd <= 0.0 {
+    // Throw Grenade [G] or Mobile GREN button or HUD G button (#19)
+    if (keys.just_pressed(KeyCode::KeyG) || touch_gren || ui_gren) && cd.grenade_cd <= 0.0 {
         if stats.grenades == 0 {
             play_sfx("hack_deny");
             stats.hint_text = "Out of grenades -- recharging!".to_string();

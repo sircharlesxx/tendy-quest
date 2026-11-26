@@ -77,6 +77,7 @@ pub enum CityEventPromptKind {
     #[default]
     None,
     BooberPickup,
+    BooberDeliver,
     DefuseBomb,
     UseShitter,
 }
@@ -88,14 +89,28 @@ pub struct CityEventPrompt {
     pub kind: CityEventPromptKind,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum BooberStage {
+    #[default]
+    Idle,
+    PickupAt217,
+    DeliverToNpc,
+}
+
 #[derive(Resource, Default)]
 pub struct BooberEatsState {
+    pub on_shift: bool,
     pub want_start_order: bool,
-    active: bool,
+    pub want_end_shift: bool,
+    pub stage: BooberStage,
     target_npc: Option<Entity>,
+    last_npc: Option<Entity>,
+    customer_name: &'static str,
     order_name: &'static str,
     timer: f32,
     streak: u32,
+    shift_deliveries: u32,
+    shift_earned_tw: u32,
     cooldown: f32,
 }
 
@@ -159,6 +174,15 @@ struct BooberCounterProp;
 struct BooberCustomerBeacon;
 
 #[derive(Component)]
+struct BooberGuideArrow;
+
+#[derive(Component)]
+struct BooberCarriedBag;
+
+#[derive(Component)]
+struct BooberEndShiftBtn;
+
+#[derive(Component)]
 struct LeadBombProp;
 
 #[derive(Component)]
@@ -194,8 +218,42 @@ const BOOBER_ORDERS: [&str; 6] = [
     "Late-Night Pork Tenderloin + Ranch",
 ];
 
+const BOOBER_CUSTOMERS: [&str; 12] = [
+    "Big Dave",
+    "Brenda from Accounting",
+    "Skater Kyle",
+    "Aunt Linda",
+    "Coach Rick",
+    "Late-Night Tyler",
+    "DJ Marco",
+    "Nurse Tammy",
+    "Cyclist Greg",
+    "Tiffany",
+    "Stoner Pat",
+    "Mayor Ron",
+];
+
 fn boober_counter_pos() -> Vec3 {
-    PUB217_ANCHOR + Vec3::new(-6.2, 0.0, 2.4) * PUB217_SCALE
+    PUB217_ANCHOR + Vec3::new(-3.2, 0.0, -3.2) * PUB217_SCALE
+}
+
+fn boober_curbside_pos() -> Vec3 {
+    PUB217_ANCHOR + Vec3::new(4.2, 0.0, -3.6) * PUB217_SCALE
+}
+
+fn compass_dir(delta: Vec2) -> &'static str {
+    let a = delta.x.atan2(-delta.y); // 0 = North (-Z), +PI/2 = East (+X)
+    let deg = a.to_degrees().rem_euclid(360.0);
+    match ((deg + 22.5) / 45.0).floor() as usize % 8 {
+        0 => "N",
+        1 => "NE",
+        2 => "E",
+        3 => "SE",
+        4 => "S",
+        5 => "SW",
+        6 => "W",
+        _ => "NW",
+    }
 }
 
 fn pub_shitter_pos() -> Vec3 {
@@ -227,16 +285,21 @@ fn spawn_city_events_props(
     mut chaos: ResMut<BarChaosState>,
 ) {
     // Keep delivery cooldown clean and prevent instant repeat bar chaos right after Cutscene return.
+    boober.on_shift = false;
     boober.want_start_order = false;
-    boober.active = false;
+    boober.want_end_shift = false;
+    boober.stage = BooberStage::Idle;
     boober.target_npc = None;
+    boober.last_npc = None;
+    boober.shift_deliveries = 0;
+    boober.shift_earned_tw = 0;
     bomb.active = false;
     bomb.spawn_cd = if stats.free_roam { 32.0 } else { 52.0 };
     chaos.shit_active = false;
     chaos.hang_secs = 0.0;
     chaos.crashout_hang_secs = 0.0;
 
-    // 1. Pub 217 BooberEats Hot-Bag Pickup Station
+    // 1. Pub 217 BooberEats Hot-Bag Pickup Station (Indoor Counter + Outdoor Curbside Drive-Thru Pad)
     let cyan_glow = materials.add(StandardMaterial {
         base_color: Color::srgb(0.15, 0.92, 1.0),
         emissive: LinearRgba::rgb(0.4, 2.0, 2.6),
@@ -246,6 +309,12 @@ fn spawn_city_events_props(
     let bag_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.08, 0.72, 0.88),
         perceptual_roughness: 0.35,
+        ..default()
+    });
+    let gold_trim = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.16),
+        emissive: LinearRgba::rgb(1.5, 1.1, 0.12),
+        unlit: true,
         ..default()
     });
     let wood_mat = materials.add(StandardMaterial {
@@ -271,13 +340,89 @@ fn spawn_city_events_props(
             ));
             c.spawn((
                 Mesh3d(meshes.add(Cuboid::new(0.58, 0.44, 0.48))),
-                MeshMaterial3d(bag_mat),
+                MeshMaterial3d(bag_mat.clone()),
                 Transform::from_xyz(0.0, 1.27, 0.0),
             ));
             c.spawn((
                 Mesh3d(meshes.add(Torus::new(0.95, 1.08))),
                 MeshMaterial3d(cyan_glow.clone()),
                 Transform::from_xyz(0.0, 0.08, 0.0),
+            ));
+        });
+
+    // Curbside pickup pad right outside Pub 217 doorway for cars/scooters/foot
+    let curb_pos = boober_curbside_pos();
+    commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            CityEventEntity,
+            BooberCounterProp,
+            Transform::from_translation(curb_pos),
+            Visibility::default(),
+        ))
+        .with_children(|c| {
+            c.spawn((
+                Mesh3d(meshes.add(Torus::new(1.55, 1.85))),
+                MeshMaterial3d(cyan_glow.clone()),
+                Transform::from_xyz(0.0, 0.10, 0.0),
+            ));
+            c.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.65, 0.50, 0.52))),
+                MeshMaterial3d(bag_mat.clone()),
+                Transform::from_xyz(0.0, 0.95, 0.0),
+            ));
+            c.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.32, 0.32, 0.32))),
+                MeshMaterial3d(gold_trim.clone()),
+                Transform::from_xyz(0.0, 1.75, 0.0)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4) * Quat::from_rotation_x(std::f32::consts::FRAC_PI_4)),
+            ));
+        });
+
+    // Floating 3D Crazy-Taxi guide arrow + carried delivery hot-bag (hidden unless on shift)
+    commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            CityEventEntity,
+            BooberGuideArrow,
+            Transform::default(),
+            Visibility::Hidden,
+        ))
+        .with_children(|a| {
+            // Arrow points toward -Z in local frame (`looking_to(dir, Vec3::Y)`)
+            a.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.22, 0.14, 0.68))),
+                MeshMaterial3d(cyan_glow.clone()),
+                Transform::from_xyz(0.0, 0.0, 0.20),
+            ));
+            a.spawn((
+                Mesh3d(meshes.add(Cone::new(0.30, 0.55))),
+                MeshMaterial3d(gold_trim.clone()),
+                Transform::from_xyz(0.0, 0.0, -0.35)
+                    .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+            ));
+        });
+    commands
+        .spawn((
+            LevelEntity,
+            CityWorldMarker,
+            CityEventEntity,
+            BooberCarriedBag,
+            Transform::default(),
+            Visibility::Hidden,
+        ))
+        .with_children(|b| {
+            b.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.54, 0.42, 0.44))),
+                MeshMaterial3d(bag_mat),
+                Transform::default(),
+            ));
+            b.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.58, 0.08, 0.48))),
+                MeshMaterial3d(gold_trim),
+                Transform::from_xyz(0.0, 0.16, 0.0),
             ));
         });
 
@@ -327,7 +472,7 @@ fn spawn_city_events_props(
             ));
         });
 
-    // 3. Top-Center Event Alert Banner HUD
+    // 3. Top-Center Event Alert Banner HUD (with clickable END SHIFT pill when working BooberEats)
     commands
         .spawn((
             CityEventEntity,
@@ -335,10 +480,13 @@ fn spawn_city_events_props(
             Node {
                 position_type: PositionType::Absolute,
                 top: Val::Px(64.0),
-                left: Val::Percent(22.0),
-                width: Val::Percent(56.0),
+                left: Val::Percent(18.0),
+                width: Val::Percent(64.0),
+                flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::Center,
-                padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(10.0),
+                padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
                 border: UiRect::all(Val::Px(2.0)),
                 ..default()
             },
@@ -353,11 +501,34 @@ fn spawn_city_events_props(
                 CityEventBannerText,
                 Text::new(""),
                 TextFont {
-                    font_size: 14.5,
+                    font_size: 13.5,
                     ..default()
                 },
                 TextColor(Color::WHITE),
             ));
+            b.spawn((
+                BooberEndShiftBtn,
+                Button,
+                Node {
+                    padding: UiRect::axes(Val::Px(8.0), Val::Px(3.0)),
+                    border: UiRect::all(Val::Px(1.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.55, 0.14, 0.18)),
+                BorderColor(Color::srgb(1.0, 0.72, 0.32)),
+                BorderRadius::all(Val::Px(6.0)),
+                Visibility::Hidden,
+            ))
+            .with_children(|eb| {
+                eb.spawn((
+                    Text::new("END SHIFT"),
+                    TextFont {
+                        font_size: 11.5,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                ));
+            });
         });
 }
 
@@ -374,22 +545,110 @@ fn cleanup_city_events(
 
 #[derive(SystemParam)]
 struct BooberQueries<'w, 's> {
-    player_q: Query<'w, 's, &'static Transform, With<Player>>,
+    player_q: Query<
+        'w,
+        's,
+        &'static Transform,
+        (
+            With<Player>,
+            Without<BooberCustomerBeacon>,
+            Without<BooberGuideArrow>,
+            Without<BooberCarriedBag>,
+            Without<CityNpc>,
+        ),
+    >,
     npc_q: Query<
         'w,
         's,
         (Entity, &'static Transform),
-        (With<CityNpc>, Without<Player>, Without<BooberCustomerBeacon>),
+        (
+            With<CityNpc>,
+            Without<Player>,
+            Without<BooberCustomerBeacon>,
+            Without<BooberGuideArrow>,
+            Without<BooberCarriedBag>,
+        ),
     >,
     beacon_q: Query<
         'w,
         's,
         (Entity, &'static mut Transform),
-        (With<BooberCustomerBeacon>, Without<CityNpc>, Without<Player>),
+        (
+            With<BooberCustomerBeacon>,
+            Without<CityNpc>,
+            Without<Player>,
+            Without<BooberGuideArrow>,
+            Without<BooberCarriedBag>,
+        ),
     >,
+    arrow_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility),
+        (
+            With<BooberGuideArrow>,
+            Without<Player>,
+            Without<CityNpc>,
+            Without<BooberCustomerBeacon>,
+            Without<BooberCarriedBag>,
+        ),
+    >,
+    bag_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility),
+        (
+            With<BooberCarriedBag>,
+            Without<Player>,
+            Without<CityNpc>,
+            Without<BooberCustomerBeacon>,
+            Without<BooberGuideArrow>,
+        ),
+    >,
+    end_btn_q: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<BooberEndShiftBtn>)>,
 }
 
-/// #17 BooberEats delivery loop: accept inside Pub 217 or from Maria, rush to target NPC!
+fn pick_random_boober_npc(
+    npc_q: &Query<
+        (Entity, &Transform),
+        (
+            With<CityNpc>,
+            Without<Player>,
+            Without<BooberCustomerBeacon>,
+            Without<BooberGuideArrow>,
+            Without<BooberCarriedBag>,
+        ),
+    >,
+    last_npc: Option<Entity>,
+) -> Option<(Entity, Vec3)> {
+    let pub_pos = boober_curbside_pos();
+    let candidates: Vec<(Entity, Vec3)> = npc_q
+        .iter()
+        .filter_map(|(e, tf)| {
+            if Some(e) == last_npc {
+                return None;
+            }
+            let d = Vec2::new(tf.translation.x - pub_pos.x, tf.translation.z - pub_pos.z).length();
+            if (36.0..=130.0).contains(&d) {
+                Some((e, tf.translation))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if !candidates.is_empty() {
+        return Some(candidates[(rand_u64() as usize) % candidates.len()]);
+    }
+    let fallback: Vec<(Entity, Vec3)> = npc_q.iter().map(|(e, tf)| (e, tf.translation)).collect();
+    if fallback.is_empty() {
+        None
+    } else {
+        Some(fallback[(rand_u64() as usize) % fallback.len()])
+    }
+}
+
+/// #17 BooberEats shift delivery job: clock in at Pub 217 (or Maria), grab food, deliver to a
+/// random Cedar Rapids NPC on foot / scooter / car, then return to 217 for the next ticket!
 fn update_boober_eats(
     mut commands: Commands,
     time: Res<Time>,
@@ -401,38 +660,65 @@ fn update_boober_eats(
     mut qs: BooberQueries,
 ) {
     let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
     boober.cooldown = (boober.cooldown - dt).max(0.0);
 
-    let accept_pressed = boober.want_start_order
-        || (prompt.pressed && prompt.kind == CityEventPromptKind::BooberPickup);
+    // 1. Check clock-out (`END SHIFT` banner button or Maria's `END BOOBEREATS` button)
+    let end_clicked = qs.end_btn_q.iter().any(|i| *i == Interaction::Pressed);
+    if boober.want_end_shift || (end_clicked && boober.on_shift) {
+        boober.want_end_shift = false;
+        boober.want_start_order = false;
+        let done = boober.shift_deliveries;
+        let earned = boober.shift_earned_tw;
+        boober.on_shift = false;
+        boober.stage = BooberStage::Idle;
+        boober.target_npc = None;
+        boober.streak = 0;
+        boober.shift_deliveries = 0;
+        boober.shift_earned_tw = 0;
+        for (be, _) in &qs.beacon_q {
+            commands.entity(be).despawn_recursive();
+        }
+        play_sfx("chip_bet");
+        stats.hint_text = format!(
+            "BOOBEREATS SHIFT ENDED! Completed {} deliveries (+{} TW total).",
+            done, earned
+        );
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    }
+    boober.want_end_shift = false;
+
+    let p_tf_opt = qs.player_q.get_single().ok().copied();
+    let in_vehicle = stats.driving_car.is_some() || stats.riding_scooter.is_some();
+    let near_curb_pad = p_tf_opt.is_some_and(|p| {
+        Vec2::new(p.translation.x - boober_curbside_pos().x, p.translation.z - boober_curbside_pos().z).length() < 4.8
+    });
+
+    // Auto-dispatch next ticket if on shift at PickupAt217 and pulling onto Pub 217 curb in a vehicle
+    let auto_curb_pickup = boober.on_shift
+        && boober.stage == BooberStage::PickupAt217
+        && in_vehicle
+        && near_curb_pad
+        && boober.cooldown <= 0.0;
+
+    let pickup_triggered = boober.want_start_order
+        || (prompt.pressed && prompt.kind == CityEventPromptKind::BooberPickup)
+        || auto_curb_pickup;
     boober.want_start_order = false;
 
-    if accept_pressed && !boober.active {
-        let pub_pos = boober_counter_pos();
-        let candidates: Vec<Entity> = qs
-            .npc_q
-            .iter()
-            .filter_map(|(e, tf)| {
-                let d = Vec2::new(tf.translation.x - pub_pos.x, tf.translation.z - pub_pos.z).length();
-                if d >= 38.0 && d <= 125.0 {
-                    Some(e)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let chosen = if !candidates.is_empty() {
-            Some(candidates[(rand_u64() as usize) % candidates.len()])
-        } else {
-            qs.npc_q.iter().next().map(|(e, _)| e)
-        };
-
-        if let Some(npc_e) = chosen {
-            boober.active = true;
+    if pickup_triggered && boober.stage != BooberStage::DeliverToNpc {
+        if let Some((npc_e, npc_pos)) = pick_random_boober_npc(&qs.npc_q, boober.last_npc) {
+            boober.on_shift = true;
+            boober.stage = BooberStage::DeliverToNpc;
             boober.target_npc = Some(npc_e);
+            boober.last_npc = Some(npc_e);
             boober.order_name = BOOBER_ORDERS[(rand_u64() as usize) % BOOBER_ORDERS.len()];
-            boober.timer = 55.0;
+            boober.customer_name = BOOBER_CUSTOMERS[(rand_u64() as usize) % BOOBER_CUSTOMERS.len()];
+            boober.timer = 65.0;
 
+            for (be, _) in &qs.beacon_q {
+                commands.entity(be).despawn_recursive();
+            }
             let beam_mat = materials.add(StandardMaterial {
                 base_color: Color::srgba(0.15, 0.94, 1.0, 0.65),
                 emissive: LinearRgba::rgb(0.4, 2.4, 3.2),
@@ -446,11 +732,6 @@ fn update_boober_eats(
                 unlit: true,
                 ..default()
             });
-            let npc_pos = qs
-                .npc_q
-                .get(npc_e)
-                .map(|(_, t)| t.translation)
-                .unwrap_or(Vec3::ZERO);
             commands
                 .spawn((
                     LevelEntity,
@@ -462,88 +743,151 @@ fn update_boober_eats(
                 ))
                 .with_children(|b| {
                     b.spawn((
-                        Mesh3d(meshes.add(Cylinder::new(0.32, 34.0))),
+                        Mesh3d(meshes.add(Cylinder::new(0.32, 36.0))),
                         MeshMaterial3d(beam_mat),
-                        Transform::from_xyz(0.0, 17.0, 0.0),
+                        Transform::from_xyz(0.0, 18.0, 0.0),
                     ));
                     b.spawn((
-                        Mesh3d(meshes.add(Torus::new(1.5, 1.8))),
-                        MeshMaterial3d(ring_mat),
+                        Mesh3d(meshes.add(Torus::new(1.6, 1.9))),
+                        MeshMaterial3d(ring_mat.clone()),
                         Transform::from_xyz(0.0, 0.25, 0.0),
+                    ));
+                    b.spawn((
+                        Mesh3d(meshes.add(Cone::new(0.45, 0.75))),
+                        MeshMaterial3d(ring_mat),
+                        Transform::from_xyz(0.0, 3.0, 0.0)
+                            .with_rotation(Quat::from_rotation_x(std::f32::consts::PI)),
                     ));
                 });
 
             play_sfx("hack_success");
             stats.hint_text = format!(
-                "BOOBEREATS: Deliver {} to the cyan customer beacon in 55s!",
-                boober.order_name
+                "BOOBEREATS: Deliver {} to {} (cyan beacon) in 65s!",
+                boober.order_name, boober.customer_name
             );
             stats.hint_bump = stats.hint_bump.wrapping_add(1);
-            speak_voice("New BooberEats order! Get it there hot!", "bartender");
+            speak_voice("New BooberEats order up! Deliver it hot!", "bartender");
         }
     }
 
-    if !boober.active {
-        for (be, _) in &qs.beacon_q {
-            commands.entity(be).despawn_recursive();
-        }
-        return;
-    }
+    // 2. Delivery tracking + completion
+    if boober.stage == BooberStage::DeliverToNpc {
+        boober.timer -= dt;
+        let target_pos = boober.target_npc.and_then(|e| qs.npc_q.get(e).ok()).map(|(_, tf)| tf.translation);
 
-    boober.timer -= dt;
-    let Some(npc_e) = boober.target_npc else {
-        boober.active = false;
-        return;
-    };
-    let Ok((_, npc_tf)) = qs.npc_q.get(npc_e) else {
-        boober.active = false;
-        return;
-    };
-    let target_pos = npc_tf.translation;
+        if let Some(target_pos) = target_pos {
+            for (_, mut b_tf) in &mut qs.beacon_q {
+                b_tf.translation = target_pos;
+                b_tf.rotate_y(dt * 1.9);
+            }
 
-    for (_, mut b_tf) in &mut qs.beacon_q {
-        b_tf.translation = target_pos;
-        b_tf.rotate_y(dt * 1.8);
-    }
+            let delivered = p_tf_opt.is_some_and(|p_tf| {
+                let d = Vec2::new(p_tf.translation.x - target_pos.x, p_tf.translation.z - target_pos.z).length();
+                d < 4.8 || (d < 6.5 && prompt.pressed && prompt.kind == CityEventPromptKind::BooberDeliver)
+            });
 
-    if let Ok(p_tf) = qs.player_q.get_single() {
-        let d = Vec2::new(p_tf.translation.x - target_pos.x, p_tf.translation.z - target_pos.z).length();
-        if d < 5.4 {
-            boober.active = false;
+            if delivered {
+                boober.stage = BooberStage::PickupAt217;
+                boober.target_npc = None;
+                boober.cooldown = 2.0;
+                boober.streak += 1;
+                boober.shift_deliveries += 1;
+                let time_bonus = ((boober.timer / 65.0) * 18.0).round() as u32;
+                let streak_bonus = (boober.streak.saturating_sub(1) * 5).min(20);
+                let payout = 20 + time_bonus + streak_bonus;
+                boober.shift_earned_tw += payout;
+                stats.boober_deliveries += 1;
+                stats.add_tendy_wendies(payout);
+                stats.score += 850 + payout * 35;
+                play_sfx("powerup");
+                play_sfx("chip_bet");
+                stats.hint_text = format!(
+                    "DELIVERED TO {}! +{} TW (+{} Tip! Streak x{}) -- Return to Pub 217 for next order!",
+                    boober.customer_name,
+                    payout,
+                    time_bonus + streak_bonus,
+                    boober.streak
+                );
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                speak_voice("Delivered hot! Head back to 217 for the next order!", "narrator");
+                for (be, _) in &qs.beacon_q {
+                    commands.entity(be).despawn_recursive();
+                }
+            } else if boober.timer <= 0.0 {
+                boober.stage = BooberStage::PickupAt217;
+                boober.target_npc = None;
+                boober.cooldown = 1.5;
+                boober.streak = 0;
+                play_sfx("hack_deny");
+                stats.hint_text = format!(
+                    "{}'s food got cold! Return to Pub 217 curbside or counter for another order.",
+                    boober.customer_name
+                );
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                for (be, _) in &qs.beacon_q {
+                    commands.entity(be).despawn_recursive();
+                }
+            }
+        } else {
+            // NPC reference lost unexpectedly: return to PickupAt217 cleanly
+            boober.stage = BooberStage::PickupAt217;
             boober.target_npc = None;
-            boober.streak += 1;
-            let time_bonus = ((boober.timer / 55.0) * 16.0).round() as u32;
-            let streak_bonus = (boober.streak.saturating_sub(1) * 4).min(16);
-            let payout = 18 + time_bonus + streak_bonus;
-            stats.boober_deliveries += 1;
-            stats.add_tendy_wendies(payout);
-            stats.score += 800 + payout * 30;
-            play_sfx("powerup");
-            play_sfx("chip_bet");
-            stats.hint_text = format!(
-                "BOOBEREATS DELIVERED! +{} TW (+{} Tip! Streak x{})",
-                payout,
-                time_bonus + streak_bonus,
-                boober.streak
-            );
-            stats.hint_bump = stats.hint_bump.wrapping_add(1);
-            speak_voice("Delivered hot! Thanks for the tip!", "narrator");
             for (be, _) in &qs.beacon_q {
                 commands.entity(be).despawn_recursive();
             }
-            return;
+        }
+    } else {
+        for (be, _) in &qs.beacon_q {
+            commands.entity(be).despawn_recursive();
         }
     }
 
-    if boober.timer <= 0.0 {
-        boober.active = false;
-        boober.target_npc = None;
-        boober.streak = 0;
-        play_sfx("hack_deny");
-        stats.hint_text = "BooberEats order got cold -- head back to 217 for a new order!".to_string();
-        stats.hint_bump = stats.hint_bump.wrapping_add(1);
-        for (be, _) in &qs.beacon_q {
-            commands.entity(be).despawn_recursive();
+    // 3. Update 3D Crazy-Taxi guide arrow + carried thermal delivery bag above player/car
+    let guide_target = if boober.stage == BooberStage::DeliverToNpc {
+        boober.target_npc.and_then(|e| qs.npc_q.get(e).ok()).map(|(_, tf)| tf.translation)
+    } else if boober.stage == BooberStage::PickupAt217 {
+        Some(boober_curbside_pos())
+    } else {
+        None
+    };
+
+    let hide_fx = stats.char_select_open || stats.phone_open || stats.bartender_open || stats.riding_wheel;
+    if let (Some(p_tf), Some(tgt)) = (p_tf_opt.filter(|_| !hide_fx), guide_target) {
+        let dir = Vec3::new(tgt.x - p_tf.translation.x, 0.0, tgt.z - p_tf.translation.z).normalize_or(Vec3::NEG_Z);
+        let top_y = if stats.driving_car.is_some() {
+            2.65
+        } else {
+            1.75 * stats.body_scale().max(0.8) + 0.7
+        };
+        for (mut a_tf, mut a_vis) in &mut qs.arrow_q {
+            *a_vis = Visibility::Visible;
+            a_tf.translation = p_tf.translation + Vec3::Y * (top_y + (t * 4.5).sin() * 0.12);
+            a_tf.look_to(dir, Vec3::Y);
+        }
+        for (mut b_tf, mut b_vis) in &mut qs.bag_q {
+            if boober.stage == BooberStage::DeliverToNpc {
+                *b_vis = Visibility::Visible;
+                let back = if stats.driving_car.is_some() {
+                    Vec3::Y * 2.05
+                } else {
+                    (p_tf.rotation * Vec3::Z) * 0.42 + Vec3::Y * (1.05 * stats.body_scale().max(0.8))
+                };
+                b_tf.translation = p_tf.translation + back;
+                b_tf.rotation = p_tf.rotation;
+            } else if *b_vis != Visibility::Hidden {
+                *b_vis = Visibility::Hidden;
+            }
+        }
+    } else {
+        for (_, mut v) in &mut qs.arrow_q {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+            }
+        }
+        for (_, mut v) in &mut qs.bag_q {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+            }
         }
     }
 }
@@ -1037,6 +1381,7 @@ fn update_city_event_prompt(
     bomb: Res<LeadBombState>,
     chaos: Res<BarChaosState>,
     player_q: Query<&Transform, With<Player>>,
+    npc_q: Query<&Transform, (With<CityNpc>, Without<Player>)>,
     mut prompt: ResMut<CityEventPrompt>,
 ) {
     prompt.label = None;
@@ -1045,17 +1390,23 @@ fn update_city_event_prompt(
     let Ok(p_tf) = player_q.get_single() else {
         return;
     };
-    let on_foot = stats.driving_car.is_none()
-        && stats.riding_scooter.is_none()
-        && !stats.phone_open
-        && !stats.bartender_open
-        && !stats.char_select_open
-        && p_tf.translation.y < 3.6;
-    if !on_foot {
-        prompt.pressed = false;
+    if stats.phone_open
+        || stats.bartender_open
+        || stats.char_select_open
+        || stats.riding_wheel
+        || stats.driving_car.is_some()
+        || stats.riding_scooter.is_some()
+        || p_tf.translation.y >= 3.6
+    {
         return;
     }
     let flat = |a: Vec3| Vec2::new(a.x - p_tf.translation.x, a.z - p_tf.translation.z).length();
+    let near_boober_pickup = flat(boober_counter_pos()) < 3.6 || flat(boober_curbside_pos()) < 4.2;
+    let delivery_target = boober
+        .target_npc
+        .filter(|_| boober.stage == BooberStage::DeliverToNpc)
+        .and_then(|e| npc_q.get(e).ok())
+        .map(|t| t.translation);
 
     if bomb.active && flat(bomb.pos) < 5.0 {
         prompt.label = Some("DEFUSE LEAD BOMB [F/E]".to_string());
@@ -1063,12 +1414,62 @@ fn update_city_event_prompt(
     } else if chaos.shit_active && chaos.shit_is_local && flat(pub_shitter_pos()) < 3.6 {
         prompt.label = Some("USE SHITTER! [F/E]".to_string());
         prompt.kind = CityEventPromptKind::UseShitter;
-    } else if !boober.active && flat(boober_counter_pos()) < 3.5 {
-        prompt.label = Some("BOOBEREATS PICKUP [F/E]".to_string());
+    } else if let Some(t_pos) = delivery_target.filter(|&tp| flat(tp) < 6.4) {
+        let _ = t_pos;
+        prompt.label = Some(format!("DELIVER TO {} [F/E]", boober.customer_name.to_uppercase()));
+        prompt.kind = CityEventPromptKind::BooberDeliver;
+    } else if boober.stage != BooberStage::DeliverToNpc && near_boober_pickup {
+        prompt.label = Some(if boober.on_shift {
+            "GRAB NEXT ORDER [F/E]".to_string()
+        } else {
+            "START BOOBEREATS JOB [F/E]".to_string()
+        });
         prompt.kind = CityEventPromptKind::BooberPickup;
-    } else {
-        prompt.pressed = false;
     }
+}
+
+#[derive(SystemParam)]
+struct EventHudQueries<'w, 's> {
+    banner_q: Query<
+        'w,
+        's,
+        (&'static mut Visibility, &'static mut BorderColor),
+        With<CityEventBannerRoot>,
+    >,
+    banner_txt_q: Query<'w, 's, &'static mut Text, With<CityEventBannerText>>,
+    end_btn_vis_q: Query<
+        'w,
+        's,
+        &'static mut Visibility,
+        (
+            With<BooberEndShiftBtn>,
+            Without<CityEventBannerRoot>,
+            Without<BooberRadarDot>,
+            Without<LeadBombRadarDot>,
+        ),
+    >,
+    b_dot_q: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut Visibility),
+        (
+            With<BooberRadarDot>,
+            Without<CityEventBannerRoot>,
+            Without<LeadBombRadarDot>,
+            Without<BooberEndShiftBtn>,
+        ),
+    >,
+    l_dot_q: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut Visibility),
+        (
+            With<LeadBombRadarDot>,
+            Without<CityEventBannerRoot>,
+            Without<BooberRadarDot>,
+            Without<BooberEndShiftBtn>,
+        ),
+    >,
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -1082,29 +1483,12 @@ fn update_city_event_hud_and_radar(
     player_q: Query<&Transform, With<Player>>,
     npc_q: Query<&Transform, (With<CityNpc>, Without<Player>)>,
     radar_q: Query<&Parent, With<CityMinimapPlayerDot>>,
-    mut banner_q: Query<(&mut Visibility, &mut BorderColor), With<CityEventBannerRoot>>,
-    mut banner_txt_q: Query<&mut Text, With<CityEventBannerText>>,
-    mut b_dot_q: Query<
-        (&mut Node, &mut Visibility),
-        (
-            With<BooberRadarDot>,
-            Without<CityEventBannerRoot>,
-            Without<LeadBombRadarDot>,
-        ),
-    >,
-    mut l_dot_q: Query<
-        (&mut Node, &mut Visibility),
-        (
-            With<LeadBombRadarDot>,
-            Without<CityEventBannerRoot>,
-            Without<BooberRadarDot>,
-        ),
-    >,
+    mut hud: EventHudQueries,
 ) {
     // 1. Ensure BooberEats (cyan) & Lead Bomb (red) radar dots exist inside minimap
     if let Ok(radar_parent) = radar_q.get_single() {
         let map_ent = radar_parent.get();
-        if b_dot_q.is_empty() {
+        if hud.b_dot_q.is_empty() {
             commands.entity(map_ent).with_children(|m| {
                 m.spawn((
                     CityEventEntity,
@@ -1126,7 +1510,7 @@ fn update_city_event_hud_and_radar(
                 ));
             });
         }
-        if l_dot_q.is_empty() {
+        if hud.l_dot_q.is_empty() {
             commands.entity(map_ent).with_children(|m| {
                 m.spawn((
                     CityEventEntity,
@@ -1162,12 +1546,19 @@ fn update_city_event_hud_and_radar(
 
     let boober_target_pos = boober
         .target_npc
-        .filter(|_| boober.active)
+        .filter(|_| boober.stage == BooberStage::DeliverToNpc)
         .and_then(|e| npc_q.get(e).ok())
         .map(|t| t.translation);
+    let radar_boober_pos = boober_target_pos.or_else(|| {
+        if boober.stage == BooberStage::PickupAt217 {
+            Some(boober_curbside_pos())
+        } else {
+            None
+        }
+    });
 
-    for (mut node, mut vis) in &mut b_dot_q {
-        if let Some(pos) = boober_target_pos {
+    for (mut node, mut vis) in &mut hud.b_dot_q {
+        if let Some(pos) = radar_boober_pos {
             *vis = Visibility::Visible;
             node.left = Val::Percent(to_pct(pos.x));
             node.top = Val::Percent(to_pct(pos.z));
@@ -1177,7 +1568,7 @@ fn update_city_event_hud_and_radar(
     }
 
     let blink = (time.elapsed_secs() * 7.0).sin() > -0.25;
-    for (mut node, mut vis) in &mut l_dot_q {
+    for (mut node, mut vis) in &mut hud.l_dot_q {
         if bomb.active && blink {
             *vis = Visibility::Visible;
             node.left = Val::Percent(to_pct(bomb.pos.x));
@@ -1187,8 +1578,10 @@ fn update_city_event_hud_and_radar(
         }
     }
 
+    let modals_open = stats.char_select_open || stats.phone_open || stats.bartender_open;
     let mut banner_msg: Option<(String, Color)> = None;
-    if !stats.char_select_open && !stats.phone_open && !stats.bartender_open {
+    let mut show_end_shift = false;
+    if !modals_open {
         if bomb.active {
             let d = Vec2::new(p_pos.x - bomb.pos.x, p_pos.z - bomb.pos.z).length();
             banner_msg = Some((
@@ -1208,24 +1601,58 @@ fn update_city_event_hud_and_radar(
                 Color::srgb(0.65, 0.92, 0.22),
             ));
         } else if let Some(pos) = boober_target_pos {
-            let d = Vec2::new(p_pos.x - pos.x, p_pos.z - pos.z).length();
+            let delta = Vec2::new(pos.x - p_pos.x, pos.z - p_pos.z);
+            let d = delta.length();
+            let dir = compass_dir(delta);
+            show_end_shift = true;
             banner_msg = Some((
                 format!(
-                    "BOOBEREATS: {} | {:.0}s | {:.0}m TO CYAN BEACON",
+                    "BOOBEREATS: {} -> {} ({:.0}m {}) | {:.0}s | Job: {} (+{} TW)",
                     boober.order_name,
+                    boober.customer_name,
+                    d,
+                    dir,
                     boober.timer.ceil().max(0.0),
-                    d
+                    boober.shift_deliveries,
+                    boober.shift_earned_tw
                 ),
                 Color::srgb(0.18, 0.92, 1.0),
+            ));
+        } else if boober.on_shift && boober.stage == BooberStage::PickupAt217 {
+            let curb = boober_curbside_pos();
+            let delta = Vec2::new(curb.x - p_pos.x, curb.z - p_pos.z);
+            let d = delta.length();
+            let dir = compass_dir(delta);
+            show_end_shift = true;
+            banner_msg = Some((
+                format!(
+                    "BOOBEREATS SHIFT: Return to Pub 217 ({:.0}m {}) for next order | Done: {} (+{} TW)",
+                    d,
+                    dir,
+                    boober.shift_deliveries,
+                    boober.shift_earned_tw
+                ),
+                Color::srgb(1.0, 0.82, 0.22),
             ));
         }
     }
 
-    for (mut vis, mut border) in &mut banner_q {
+    for mut v in &mut hud.end_btn_vis_q {
+        let want = if show_end_shift {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *v != want {
+            *v = want;
+        }
+    }
+
+    for (mut vis, mut border) in &mut hud.banner_q {
         if let Some((ref msg, col)) = banner_msg {
             *vis = Visibility::Visible;
             border.0 = col;
-            if let Ok(mut txt) = banner_txt_q.get_single_mut() {
+            if let Ok(mut txt) = hud.banner_txt_q.get_single_mut() {
                 if txt.0 != *msg {
                     txt.0 = msg.clone();
                 }

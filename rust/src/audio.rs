@@ -98,6 +98,15 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = attackHeld)]
         fn js_attack_held() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeGrenade)]
+        fn js_take_grenade() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeWeaponCycle)]
+        fn js_take_weapon_cycle() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setCityWeapons)]
+        fn js_set_city_weapons(active: bool, weapon_slot: u8, grenades: u32);
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = combatDemo)]
         fn js_combat_demo() -> String;
 
@@ -416,6 +425,18 @@ mod imp {
     /// Touch SABER button or a gamepad attack button (RB / RT) is held down (heavy charge).
     pub fn touch_attack_held() -> bool {
         js_attack_held()
+    }
+
+    pub fn take_touch_grenade() -> bool {
+        js_take_grenade()
+    }
+
+    pub fn take_touch_weapon_cycle() -> bool {
+        js_take_weapon_cycle()
+    }
+
+    pub fn set_touch_city_weapons(active: bool, weapon_slot: u8, grenades: u32) {
+        js_set_city_weapons(active, weapon_slot, grenades);
     }
 
     /// `combat_demo=` URL value (empty unless `debug=1`), for the debug combat motion demo.
@@ -842,6 +863,16 @@ mod imp {
         false
     }
 
+    pub fn take_touch_grenade() -> bool {
+        false
+    }
+
+    pub fn take_touch_weapon_cycle() -> bool {
+        false
+    }
+
+    pub fn set_touch_city_weapons(_active: bool, _weapon_slot: u8, _grenades: u32) {}
+
     pub fn debug_combat_demo() -> String {
         String::new()
     }
@@ -967,8 +998,9 @@ pub use imp::{
     play_headphone_music, play_lexie_rpg_music, play_scooter_music, play_sfx, play_viking_chant_music, play_wonka_trip_music, save_checkpoint,
     set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
     skip_touch_ui, stop_voice, set_they_live_mode, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
-    take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_help, take_touch_jump,
-    take_touch_look_dx, take_touch_look_dy, take_touch_zoom_delta, toggle_mute, set_volume, volume, touch_attack_held, touch_block_held, touch_move_x,
+    take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_grenade, take_touch_help, take_touch_jump,
+    take_touch_look_dx, take_touch_look_dy, take_touch_weapon_cycle, take_touch_zoom_delta, set_touch_city_weapons,
+    toggle_mute, set_volume, volume, touch_attack_held, touch_block_held, touch_move_x,
     touch_move_y, update_telemetry,
 };
 #[allow(unused_imports)]

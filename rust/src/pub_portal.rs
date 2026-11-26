@@ -505,6 +505,7 @@ pub fn update_pub_bartender(
     art: Option<Res<CasinoArt>>,
     mut stats: ResMut<PlayerStats>,
     help: Res<HelpPause>,
+    boober: Res<crate::city_events::BooberEatsState>,
     mut prompt: ResMut<BartenderPrompt>,
     player_q: Query<&Transform, (With<Player>, Without<BartenderHeadPivot>, Without<BartenderShakerPivot>)>,
     mut head_q: Query<&mut Transform, (With<BartenderHeadPivot>, Without<BartenderShakerPivot>)>,
@@ -559,14 +560,14 @@ pub fn update_pub_bartender(
                 "Hey handsome! Ready to order ten beers for you and the boys?",
                 "bartender",
             );
-            spawn_bartender_ui(&mut commands, &art);
+            spawn_bartender_ui(&mut commands, &art, boober.on_shift);
             return;
         }
     }
     prompt.pressed = false;
 }
 
-fn spawn_bartender_ui(commands: &mut Commands, art: &CasinoArt) {
+fn spawn_bartender_ui(commands: &mut Commands, art: &CasinoArt, boober_on_shift: bool) {
     commands
         .spawn((
             BartenderUiRoot,
@@ -693,7 +694,7 @@ fn spawn_bartender_ui(commands: &mut Commands, art: &CasinoArt) {
                     ))
                     .with_children(|b| {
                         b.spawn((
-                            Text::new("BOOBEREATS GIG"),
+                            Text::new(if boober_on_shift { "END BOOBEREATS" } else { "BOOBEREATS JOB" }),
                             TextFont { font_size: 14.0, ..default() },
                             TextColor(Color::WHITE),
                         ));
@@ -775,7 +776,11 @@ fn handle_bartender_modal_input(
             stats.casino_esc_grace = true;
             set_touch_playing(true);
             stop_voice();
-            boober.want_start_order = true;
+            if boober.on_shift {
+                boober.want_end_shift = true;
+            } else {
+                boober.want_start_order = true;
+            }
         }
         BartenderAction::OrderTenBeers => {
             let sq = crate::audio::net_squad_info();
