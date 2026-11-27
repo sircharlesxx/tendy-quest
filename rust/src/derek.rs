@@ -257,6 +257,8 @@ pub fn spawn_derek_rig(
                 is_left: idx == 0,
                 is_stan: false,
             });
+        } else {
+            arm.insert(crate::net::CrewStrideArm { is_left: idx == 0 });
         }
         let hand_mesh = sh::add(meshes, sh::hand(0.09, sx.signum(), false));
         arm.with_children(|a| {

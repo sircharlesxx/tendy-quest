@@ -732,7 +732,8 @@ fn sync_weapon_visuals(
         }
     }
 
-    // 2. Local crew rig's right arm (belongs to LocalCrewVisual ancestor) gets Saber + HeldGunVisual
+    // 2. Local crew rig's right arm (belongs to LocalCrewVisual ancestor) gets ONE Saber + ONE HeldGunVisual
+    let mut saber_count = crew_saber_q.iter().count();
     for (arm_e, arm) in &crew_arm_q {
         if arm.is_left {
             continue;
@@ -753,7 +754,8 @@ fn sync_weapon_visuals(
         let kids = children_q.get(arm_e).ok();
         let has_saber = kids.is_some_and(|k| k.iter().any(|c| crew_saber_q.get(*c).is_ok()));
         let has_gun = kids.is_some_and(|k| k.iter().any(|c| gun_q.get(*c).is_ok()));
-        if !has_saber {
+        if !has_saber && saber_count == 0 {
+            saber_count += 1;
             spawn_crew_saber(
                 &mut commands,
                 arm_e,
@@ -774,19 +776,26 @@ fn sync_weapon_visuals(
         }
     }
 
-    let saber_vis = if show_saber {
+    // Never show Stan's HeroSaberBlade while playing as a crew character (TJ/Nate/Glenn/Derek).
+    let using_crew_rig = !crew_vis_q.is_empty();
+    let stan_saber_vis = if show_saber && !using_crew_rig {
         Visibility::Inherited
     } else {
         Visibility::Hidden
     };
     for mut v in &mut stan_saber_q {
-        if *v != saber_vis {
-            *v = saber_vis;
+        if *v != stan_saber_vis {
+            *v = stan_saber_vis;
         }
     }
+    let crew_saber_vis = if show_saber && using_crew_rig {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
     for mut v in &mut crew_saber_q {
-        if *v != saber_vis {
-            *v = saber_vis;
+        if *v != crew_saber_vis {
+            *v = crew_saber_vis;
         }
     }
 
