@@ -10,12 +10,15 @@
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 
 use crate::audio::{
-    is_voice_speaking, play_cutscene_music, play_sfx, play_start_menu_music, play_viking_chant_music,
-    set_touch_playing, speak_voice, stop_voice,
+    is_derek_tutorial_open, is_voice_speaking, open_derek_tutorial_video, play_cutscene_music,
+    play_sfx, play_start_menu_music, play_viking_chant_music, set_touch_craft_mode,
+    set_touch_craft_shape, set_touch_playing, speak_voice, stop_voice, take_derek_tutorial_closed,
+    take_touch_craft_bench, take_touch_craft_shape, take_touch_craft_view,
 };
 use crate::city::{
     is_in_pub217, CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE,
@@ -79,6 +82,119 @@ impl BlockKind {
             Self::SupplyCube => "SUPPLY",
         }
     }
+
+    fn full_name(self) -> &'static str {
+        match self {
+            Self::Brick => "RED BRICK",
+            Self::Wood => "WOOD LOG",
+            Self::Stone => "STONE BLOCK",
+            Self::Glass => "GLASS PANE",
+            Self::TendyGold => "TENDY GOLD",
+            Self::Neon217 => "NEON 217",
+            Self::Leaves => "TREE LEAVES",
+            Self::TendyOre => "TENDY ORE",
+            Self::SupplyCube => "VOID SUPPLY CUBE",
+        }
+    }
+
+    fn ui_color(self) -> Color {
+        match self {
+            Self::Brick => Color::srgb(0.68, 0.25, 0.20),
+            Self::Wood => Color::srgb(0.56, 0.35, 0.18),
+            Self::Stone => Color::srgb(0.54, 0.56, 0.62),
+            Self::Glass => Color::srgb(0.42, 0.84, 1.0),
+            Self::TendyGold => Color::srgb(0.98, 0.76, 0.18),
+            Self::Neon217 => Color::srgb(1.0, 0.86, 0.24),
+            Self::Leaves => Color::srgb(0.20, 0.62, 0.24),
+            Self::TendyOre => Color::srgb(0.95, 0.64, 0.16),
+            Self::SupplyCube => Color::srgb(0.72, 0.30, 1.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum BuildShape {
+    #[default]
+    Single,
+    Wall3x3,
+    Floor3x3,
+    Window3x3,
+}
+
+impl BuildShape {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Single => "1x1 BLOCK",
+            Self::Wall3x3 => "3x3 WALL",
+            Self::Floor3x3 => "3x3 FLOOR",
+            Self::Window3x3 => "3x3 WINDOW",
+        }
+    }
+
+    fn short_tag(self) -> &'static str {
+        match self {
+            Self::Single => "1x1",
+            Self::Wall3x3 => "3x3 W",
+            Self::Floor3x3 => "3x3 F",
+            Self::Window3x3 => "WIN",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Single => Self::Wall3x3,
+            Self::Wall3x3 => Self::Floor3x3,
+            Self::Floor3x3 => Self::Window3x3,
+            Self::Window3x3 => Self::Single,
+        }
+    }
+
+    fn offsets(self, yaw: f32) -> Vec<((i32, i32, i32), bool)> {
+        let fx = -yaw.sin();
+        let fz = -yaw.cos();
+        let along_x = fz.abs() >= fx.abs();
+        match self {
+            Self::Single => vec![((0, 0, 0), false)],
+            Self::Floor3x3 => {
+                let mut v = Vec::with_capacity(9);
+                for dx in -1..=1 {
+                    for dz in -1..=1 {
+                        v.push(((dx, 0, dz), false));
+                    }
+                }
+                v
+            }
+            Self::Wall3x3 | Self::Window3x3 => {
+                let is_win = matches!(self, Self::Window3x3);
+                let mut v = Vec::with_capacity(9);
+                for u in -1..=1 {
+                    for dy in 0..=2 {
+                        let c = if along_x { (u, dy, 0) } else { (0, dy, u) };
+                        let glass_center = is_win && u == 0 && dy == 1;
+                        v.push((c, glass_center));
+                    }
+                }
+                v
+            }
+        }
+    }
+
+    fn ghost_scale_and_offset(self, yaw: f32) -> (Vec3, Vec3) {
+        let fx = -yaw.sin();
+        let fz = -yaw.cos();
+        let along_x = fz.abs() >= fx.abs();
+        match self {
+            Self::Single => (Vec3::splat(1.04), Vec3::ZERO),
+            Self::Floor3x3 => (Vec3::new(3.04, 1.04, 3.04), Vec3::ZERO),
+            Self::Wall3x3 | Self::Window3x3 => {
+                if along_x {
+                    (Vec3::new(3.04, 3.04, 1.04), Vec3::new(0.0, 1.0, 0.0))
+                } else {
+                    (Vec3::new(1.04, 3.04, 3.04), Vec3::new(0.0, 1.0, 0.0))
+                }
+            }
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -87,11 +203,20 @@ pub struct CraftWorldData {
     pub blocks: HashMap<(i32, i32, i32), BlockKind>,
     pub inventory: [u32; 6],
     pub selected_slot: usize,
+    pub build_shape: BuildShape,
+    pub tutorial_video_shown: bool,
+    pub tutorial_auto_delay: f32,
     pub pub_blocks_placed: u32,
     pub house_blocks_placed: u32,
     pub house_completed: bool,
     pub supply_timer: f32,
     pub pub217_decor_spawned: bool,
+    pub target_label: String,
+    pub target_has_hit: bool,
+    pub target_can_place: bool,
+    pub target_out_of_stock: bool,
+    pub feedback_msg: String,
+    pub feedback_timer: f32,
 }
 
 impl Default for CraftWorldData {
@@ -99,13 +224,22 @@ impl Default for CraftWorldData {
         Self {
             initialized: false,
             blocks: HashMap::new(),
-            inventory: [6, 6, 4, 2, 1, 1],
+            inventory: [12, 12, 8, 6, 4, 4],
             selected_slot: 0,
+            build_shape: BuildShape::Single,
+            tutorial_video_shown: false,
+            tutorial_auto_delay: 0.40,
             pub_blocks_placed: 0,
             house_blocks_placed: 0,
             house_completed: false,
             supply_timer: 14.0,
             pub217_decor_spawned: false,
+            target_label: String::new(),
+            target_has_hit: false,
+            target_can_place: false,
+            target_out_of_stock: false,
+            feedback_msg: String::new(),
+            feedback_timer: 0.0,
         }
     }
 }
@@ -2299,7 +2433,10 @@ struct VoxelBlock {
 }
 
 #[derive(Component)]
-struct CraftCursorVisual;
+struct CraftMineCursor;
+
+#[derive(Component)]
+struct CraftPlaceGhost;
 
 #[derive(Component)]
 struct CraftDebris {
@@ -2350,6 +2487,35 @@ struct CraftPromptText;
 #[derive(Component)]
 struct CraftCrosshair;
 
+#[derive(Component)]
+struct CraftTargetPill;
+
+#[derive(Component)]
+struct CraftTargetText;
+
+#[derive(Component)]
+struct CraftFeedbackPill;
+
+#[derive(Component)]
+struct CraftFeedbackText;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CraftQuickAction {
+    OpenBench,
+    CycleShape,
+    ToggleView,
+    OpenTutorial,
+}
+
+#[derive(Component, Clone, Copy)]
+struct CraftQuickBtn(CraftQuickAction);
+
+#[derive(Component)]
+struct CraftShapeBtnText;
+
+#[derive(Component)]
+struct CraftViewBtnText;
+
 #[derive(Component, Clone, Copy)]
 struct CraftHotbarBtn(usize);
 
@@ -2363,10 +2529,14 @@ struct CraftModalRoot;
 enum CraftModalAction {
     Close,
     CraftBrick,
+    CraftStone,
     CraftGlass,
     CraftNeon,
     FreeScrapKit,
+    SelectShape(BuildShape),
     DerekHyperfocusPub217,
+    DerekHyperfocusHouse,
+    WatchTutorial,
     DrinkBeer,
     CasinoFromPub,
 }
@@ -2375,6 +2545,8 @@ enum CraftModalAction {
 struct CraftBlockAssets {
     cube_mesh: Handle<Mesh>,
     mats: [Handle<StandardMaterial>; 9],
+    ghost_ok_mat: Handle<StandardMaterial>,
+    ghost_bad_mat: Handle<StandardMaterial>,
 }
 
 #[derive(Resource, Default)]
@@ -2382,6 +2554,7 @@ struct CraftInteractPrompt {
     target: Option<CraftPromptTarget>,
     tapped: bool,
     modal_is_derek: bool,
+    modal_just_opened: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2393,11 +2566,6 @@ enum CraftPromptTarget {
 
 fn grid_to_world(coord: (i32, i32, i32)) -> Vec3 {
     CRAFT_LEVEL_ORIGIN + Vec3::new(coord.0 as f32, coord.1 as f32 + 0.5, coord.2 as f32)
-}
-
-fn world_to_grid(p: Vec3) -> (i32, i32, i32) {
-    let rel = p - CRAFT_LEVEL_ORIGIN;
-    (rel.x.round() as i32, rel.y.floor() as i32, rel.z.round() as i32)
 }
 
 fn in_pub217_zone(c: (i32, i32, i32)) -> bool {
@@ -2428,8 +2596,9 @@ fn populate_empty_city_world(data: &mut CraftWorldData) {
         return;
     }
     data.initialized = true;
-    data.inventory = [6, 6, 4, 2, 1, 1];
+    data.inventory = [12, 12, 8, 6, 4, 4];
     data.selected_slot = 0;
+    data.build_shape = BuildShape::Single;
     data.supply_timer = 14.0;
 
     // 8 chunky Minecraft trees around the edges
@@ -2624,14 +2793,19 @@ fn enter_craft_play(
     stats.player_scale = 1.8;
     stats.bartender_open = false;
     stats.craft_modal_open = false;
+    stats.craft_first_person = false;
     stats.driving_car = None;
     stats.riding_scooter = None;
     stats.riding_wheel = false;
     stats.phone_open = false;
     data.pub217_decor_spawned = stats.craft_pub217_rebuilt;
+    data.feedback_timer = 0.0;
+    data.target_label.clear();
+    data.tutorial_auto_delay = if data.tutorial_video_shown { 0.0 } else { 0.45 };
 
-    crate::audio::set_touch_playing(true);
-    crate::audio::set_touch_craft_mode(true);
+    set_touch_playing(true);
+    set_touch_craft_mode(true);
+    set_touch_craft_shape(data.build_shape.short_tag());
     play_viking_chant_music();
 
     commands.insert_resource(ClearColor(Color::srgb(0.11, 0.14, 0.24)));
@@ -2684,6 +2858,20 @@ fn enter_craft_play(
                 ..default()
             }),
         ],
+        ghost_ok_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.24, 0.92, 1.0, 0.36),
+            emissive: LinearRgba::rgb(0.22, 0.85, 1.1),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+        ghost_bad_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.24, 0.24, 0.42),
+            emissive: LinearRgba::rgb(0.95, 0.16, 0.16),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
     };
 
     populate_empty_city_world(&mut data);
@@ -2783,6 +2971,7 @@ fn enter_craft_play(
     if stats.craft_pub217_rebuilt {
         spawn_pub217_rebuilt_interior(&mut commands, &mut meshes, &mut materials);
     }
+    let ghost_ok_mat = assets.ghost_ok_mat.clone();
     commands.insert_resource(assets);
 
     // Mysterious Black Hole Return Portal in South Plaza
@@ -2831,10 +3020,10 @@ fn enter_craft_play(
             ));
         });
 
-    // Translucent Highlight Box showing mined/placed voxel cell
-    let cursor_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.94, 0.35, 0.32),
-        emissive: LinearRgba::rgb(0.6, 0.5, 0.08),
+    // Red/orange Mine Target Box + Valheim-style Translucent Cyan Place Ghost Preview
+    let mine_cursor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.34, 0.18, 0.34),
+        emissive: LinearRgba::rgb(1.1, 0.25, 0.08),
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         ..default()
@@ -2842,10 +3031,19 @@ fn enter_craft_play(
     commands.spawn((
         LevelEntity,
         CraftLevelEntity,
-        CraftCursorVisual,
-        Mesh3d(unit_box),
-        MeshMaterial3d(cursor_mat),
+        CraftMineCursor,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(mine_cursor_mat),
         Transform::from_translation(CRAFT_LEVEL_ORIGIN).with_scale(Vec3::splat(1.05)),
+        Visibility::Hidden,
+    ));
+    commands.spawn((
+        LevelEntity,
+        CraftLevelEntity,
+        CraftPlaceGhost,
+        Mesh3d(unit_box),
+        MeshMaterial3d(ghost_ok_mat),
+        Transform::from_translation(CRAFT_LEVEL_ORIGIN).with_scale(Vec3::splat(1.04)),
         Visibility::Hidden,
     ));
 
@@ -2913,24 +3111,17 @@ fn enter_craft_play(
         *p_vis = Visibility::Visible;
     }
     orbit.yaw = 0.0;
-    orbit.pitch = 0.34;
-    orbit.distance = 8.2;
-    orbit.current_dist = 8.2;
+    orbit.pitch = 0.28;
+    orbit.distance = 4.6;
+    orbit.current_dist = 4.6;
     orbit.snap_follow = true;
     if let Ok(mut cam_tf) = cam_q.get_single_mut() {
-        cam_tf.translation = CRAFT_SPAWN_POS + Vec3::new(0.0, 3.8, 7.6);
-        cam_tf.look_at(CRAFT_SPAWN_POS + Vec3::new(0.0, 1.6, 0.0), Vec3::Y);
+        cam_tf.translation = CRAFT_SPAWN_POS + Vec3::new(0.90, 3.25, 4.4);
+        cam_tf.look_at(CRAFT_SPAWN_POS + Vec3::new(0.90, 1.85, -9.5), Vec3::Y);
     }
 
     spawn_craft_hud(&mut commands);
-    stats.hint_text = if stats.craft_pub217_rebuilt {
-        "Pub 217 Rebuilt! Drink beer, visit Casino, build Stan's New House, or enter South Portal!"
-            .to_string()
-    } else {
-        "EMPTY CEDAR RAPIDS! Mine trees/rubble [L-Click] & Place 18 blocks [R-Click] in Pub 217 plot (or Talk to Derek [F/E])!"
-            .to_string()
-    };
-    stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    stats.hint_text.clear();
 }
 
 fn spawn_craft_hud(commands: &mut Commands) {
@@ -2946,20 +3137,22 @@ fn spawn_craft_hud(commands: &mut Commands) {
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
-                padding: UiRect::vertical(Val::Px(12.0)),
+                padding: UiRect::vertical(Val::Px(10.0)),
                 ..default()
             },
             GlobalZIndex(18),
         ))
         .with_children(|root| {
-            // Top quest tracker
+            // Top quest tracker (offset below MIC: OFF and compact so corners stay unobstructed)
             root.spawn((
                 Node {
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                    margin: UiRect::top(Val::Px(34.0)),
+                    max_width: Val::Px(560.0),
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
                     border: UiRect::all(Val::Px(2.0)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.05, 0.04, 0.12, 0.86)),
+                BackgroundColor(Color::srgba(0.05, 0.05, 0.14, 0.88)),
                 BorderColor(Color::srgb(0.72, 0.42, 1.0)),
                 BorderRadius::all(Val::Px(10.0)),
             ))
@@ -2967,32 +3160,81 @@ fn spawn_craft_hud(commands: &mut Commands) {
                 q.spawn((
                     CraftQuestText,
                     Text::new("QUEST 1: REBUILD PUB 217 (0/18)"),
-                    TextFont { font_size: 13.5, ..default() },
+                    TextFont { font_size: 13.0, ..default() },
                     TextColor(Color::srgb(1.0, 0.88, 0.35)),
                 ));
             });
 
-            // Center tiny crosshair
-            root.spawn((
-                CraftCrosshair,
-                Text::new("+"),
-                TextFont { font_size: 20.0, ..default() },
-                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.72)),
-            ));
-
-            // Bottom column: interact pill + 6-slot Minecraft hotbar
+            // Center crosshair + live Valheim/Minecraft action readout directly beneath +
             root.spawn(Node {
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
-                row_gap: Val::Px(8.0),
+                row_gap: Val::Px(6.0),
+                ..default()
+            })
+            .with_children(|mid| {
+                mid.spawn((
+                    CraftCrosshair,
+                    Text::new("+"),
+                    TextFont { font_size: 22.0, ..default() },
+                    TextColor(Color::srgba(1.0, 1.0, 1.0, 0.88)),
+                ));
+                mid.spawn((
+                    CraftTargetPill,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.04, 0.06, 0.14, 0.80)),
+                    BorderColor(Color::srgba(0.30, 0.90, 1.0, 0.72)),
+                    BorderRadius::all(Val::Px(999.0)),
+                ))
+                .with_children(|tp| {
+                    tp.spawn((
+                        CraftTargetText,
+                        Text::new("[R-CLICK] Place BRICK"),
+                        TextFont { font_size: 11.5, ..default() },
+                        TextColor(Color::srgb(0.92, 0.97, 1.0)),
+                    ));
+                });
+            });
+
+            // Bottom stack: floating toast, NPC prompt, quick actions, color-swatched hotbar
+            root.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(6.0),
                 ..default()
             })
             .with_children(|bot| {
                 bot.spawn((
+                    CraftFeedbackPill,
+                    Node {
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(5.0)),
+                        border: UiRect::all(Val::Px(1.5)),
+                        display: Display::None,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.06, 0.22, 0.14, 0.92)),
+                    BorderColor(Color::srgb(0.35, 0.95, 0.62)),
+                    BorderRadius::all(Val::Px(999.0)),
+                ))
+                .with_children(|fb| {
+                    fb.spawn((
+                        CraftFeedbackText,
+                        Text::new("+2 WOOD"),
+                        TextFont { font_size: 12.5, ..default() },
+                        TextColor(Color::srgb(0.55, 1.0, 0.75)),
+                    ));
+                });
+
+                bot.spawn((
                     CraftPromptPill,
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                        padding: UiRect::axes(Val::Px(14.0), Val::Px(7.0)),
                         border: UiRect::all(Val::Px(2.0)),
                         display: Display::None,
                         ..default()
@@ -3005,21 +3247,119 @@ fn spawn_craft_hud(commands: &mut Commands) {
                     p.spawn((
                         CraftPromptText,
                         Text::new("INTERACT [F/E]"),
-                        TextFont { font_size: 14.0, ..default() },
+                        TextFont { font_size: 13.5, ..default() },
                         TextColor(Color::WHITE),
                     ));
                 });
 
+                // Clickable quick-action bar above the hotbar
+                bot.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(4.0),
+                    ..default()
+                })
+                .with_children(|tools| {
+                    tools
+                        .spawn((
+                            CraftQuickBtn(CraftQuickAction::OpenBench),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.08, 0.28, 0.18, 0.92)),
+                            BorderColor(Color::srgb(0.38, 0.95, 0.62)),
+                            BorderRadius::all(Val::Px(7.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("[B] CRAFT BENCH"),
+                                TextFont { font_size: 11.5, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    tools
+                        .spawn((
+                            CraftQuickBtn(CraftQuickAction::CycleShape),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.08, 0.24, 0.36, 0.92)),
+                            BorderColor(Color::srgb(0.32, 0.90, 1.0)),
+                            BorderRadius::all(Val::Px(7.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                CraftShapeBtnText,
+                                Text::new("[G] 1x1 BLOCK"),
+                                TextFont { font_size: 11.5, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    tools
+                        .spawn((
+                            CraftQuickBtn(CraftQuickAction::ToggleView),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.14, 0.20, 0.42, 0.92)),
+                            BorderColor(Color::srgb(0.58, 0.78, 1.0)),
+                            BorderRadius::all(Val::Px(7.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                CraftViewBtnText,
+                                Text::new("[V] 3RD PERSON"),
+                                TextFont { font_size: 11.5, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    tools
+                        .spawn((
+                            CraftQuickBtn(CraftQuickAction::OpenTutorial),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.42, 0.26, 0.06, 0.94)),
+                            BorderColor(Color::srgb(1.0, 0.84, 0.28)),
+                            BorderRadius::all(Val::Px(7.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("[T] DEREK VIDEO"),
+                                TextFont { font_size: 11.5, ..default() },
+                                TextColor(Color::srgb(1.0, 0.92, 0.42)),
+                            ));
+                        });
+                });
+
+                // 6-slot color-swatched Minecraft hotbar
                 bot.spawn((
                     Node {
                         flex_direction: FlexDirection::Row,
+                        flex_wrap: FlexWrap::Wrap,
+                        justify_content: JustifyContent::Center,
                         column_gap: Val::Px(6.0),
+                        row_gap: Val::Px(4.0),
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
                         border: UiRect::all(Val::Px(2.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.05, 0.06, 0.12, 0.88)),
-                    BorderColor(Color::srgba(0.95, 0.78, 0.28, 0.8)),
+                    BackgroundColor(Color::srgba(0.05, 0.06, 0.12, 0.90)),
+                    BorderColor(Color::srgba(0.95, 0.78, 0.28, 0.85)),
                     BorderRadius::all(Val::Px(10.0)),
                 ))
                 .with_children(|bar| {
@@ -3028,7 +3368,10 @@ fn spawn_craft_hud(commands: &mut Commands) {
                             CraftHotbarBtn(idx),
                             Button,
                             Node {
-                                padding: UiRect::axes(Val::Px(9.0), Val::Px(5.0)),
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(6.0),
+                                padding: UiRect::axes(Val::Px(8.0), Val::Px(5.0)),
                                 border: UiRect::all(Val::Px(2.0)),
                                 ..default()
                             },
@@ -3038,8 +3381,19 @@ fn spawn_craft_hud(commands: &mut Commands) {
                         ))
                         .with_children(|btn| {
                             btn.spawn((
+                                Node {
+                                    width: Val::Px(13.0),
+                                    height: Val::Px(13.0),
+                                    border: UiRect::all(Val::Px(1.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(kind.ui_color()),
+                                BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.65)),
+                                BorderRadius::all(Val::Px(3.0)),
+                            ));
+                            btn.spawn((
                                 CraftHotbarText(idx),
-                                Text::new(format!("{}:{} x0", idx + 1, kind.short_name())),
+                                Text::new(format!("[{}] {} x12", idx + 1, kind.short_name())),
                                 TextFont { font_size: 11.5, ..default() },
                                 TextColor(Color::WHITE),
                             ));
@@ -3055,12 +3409,58 @@ fn exit_craft_play(
     mut stats: ResMut<PlayerStats>,
     q: Query<Entity, With<CraftLevelEntity>>,
 ) {
-    crate::audio::set_touch_craft_mode(false);
+    crate::audio::close_derek_tutorial_video();
+    set_touch_craft_mode(false);
     stats.in_craft_level = false;
     stats.craft_modal_open = false;
+    stats.craft_first_person = false;
     for e in &q {
         commands.entity(e).despawn_recursive();
     }
+}
+
+fn ray_voxel_aabb(origin: Vec3, dir: Vec3, bmin: Vec3, bmax: Vec3) -> Option<(f32, (i32, i32, i32))> {
+    let mut t_min = f32::NEG_INFINITY;
+    let mut t_max = f32::INFINITY;
+    let mut hit_axis = 0_usize;
+    let mut hit_sign = 1_i32;
+
+    for axis in 0..3_usize {
+        let d = dir[axis];
+        let o = origin[axis];
+        if d.abs() < 1e-6 {
+            if o < bmin[axis] || o > bmax[axis] {
+                return None;
+            }
+        } else {
+            let inv = 1.0 / d;
+            let mut t1 = (bmin[axis] - o) * inv;
+            let mut t2 = (bmax[axis] - o) * inv;
+            let mut sign = -1_i32;
+            if t1 > t2 {
+                std::mem::swap(&mut t1, &mut t2);
+                sign = 1;
+            }
+            if t1 > t_min {
+                t_min = t1;
+                hit_axis = axis;
+                hit_sign = sign;
+            }
+            t_max = t_max.min(t2);
+            if t_min > t_max {
+                return None;
+            }
+        }
+    }
+    if t_max <= 0.25 || t_min <= 0.25 {
+        return None;
+    }
+    let normal = match hit_axis {
+        0 => (hit_sign, 0, 0),
+        1 => (0, hit_sign, 0),
+        _ => (0, 0, hit_sign),
+    };
+    Some((t_min, normal))
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
@@ -3073,7 +3473,8 @@ struct VoxelRayQueries<'w, 's> {
             With<Player>,
             Without<Camera3d>,
             Without<VoxelBlock>,
-            Without<CraftCursorVisual>,
+            Without<CraftMineCursor>,
+            Without<CraftPlaceGhost>,
             Without<CraftDebris>,
         ),
     >,
@@ -3085,7 +3486,8 @@ struct VoxelRayQueries<'w, 's> {
             With<Camera3d>,
             Without<Player>,
             Without<VoxelBlock>,
-            Without<CraftCursorVisual>,
+            Without<CraftMineCursor>,
+            Without<CraftPlaceGhost>,
             Without<CraftDebris>,
         ),
     >,
@@ -3093,14 +3495,38 @@ struct VoxelRayQueries<'w, 's> {
         'w,
         's,
         (Entity, &'static VoxelBlock),
-        (Without<Player>, Without<CraftCursorVisual>, Without<CraftDebris>),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<CraftMineCursor>,
+            Without<CraftPlaceGhost>,
+            Without<CraftDebris>,
+        ),
     >,
-    cursor_q: Query<
+    mine_cursor_q: Query<
         'w,
         's,
         (&'static mut Transform, &'static mut Visibility),
         (
-            With<CraftCursorVisual>,
+            With<CraftMineCursor>,
+            Without<CraftPlaceGhost>,
+            Without<Player>,
+            Without<Camera3d>,
+            Without<VoxelBlock>,
+            Without<CraftDebris>,
+        ),
+    >,
+    ghost_q: Query<
+        'w,
+        's,
+        (
+            &'static mut Transform,
+            &'static mut Visibility,
+            &'static mut MeshMaterial3d<StandardMaterial>,
+        ),
+        (
+            With<CraftPlaceGhost>,
+            Without<CraftMineCursor>,
             Without<Player>,
             Without<Camera3d>,
             Without<VoxelBlock>,
@@ -3115,10 +3541,46 @@ struct VoxelRayQueries<'w, 's> {
             Without<Player>,
             Without<Camera3d>,
             Without<VoxelBlock>,
-            Without<CraftCursorVisual>,
+            Without<CraftMineCursor>,
+            Without<CraftPlaceGhost>,
         ),
     >,
-    hotbar_btn_q: Query<'w, 's, (&'static Interaction, &'static CraftHotbarBtn), Changed<Interaction>>,
+    ui_inter_q: Query<
+        'w,
+        's,
+        (
+            &'static Interaction,
+            Option<&'static CraftHotbarBtn>,
+            Option<&'static CraftQuickBtn>,
+            Option<&'static CraftPromptPill>,
+        ),
+        Or<(With<CraftHotbarBtn>, With<CraftQuickBtn>, With<CraftPromptPill>)>,
+    >,
+    window_q: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
+}
+
+fn push_craft_toast(data: &mut CraftWorldData, msg: impl Into<String>) {
+    data.feedback_msg = msg.into();
+    data.feedback_timer = 2.4;
+}
+
+fn open_derek_bench_modal(
+    commands: &mut Commands,
+    stats: &mut PlayerStats,
+    data: &CraftWorldData,
+    prompt: &mut CraftInteractPrompt,
+    window_q: &mut Query<&mut Window, With<PrimaryWindow>>,
+) {
+    stats.craft_modal_open = true;
+    prompt.modal_is_derek = true;
+    prompt.modal_just_opened = true;
+    set_touch_playing(false);
+    if let Ok(mut win) = window_q.get_single_mut() {
+        win.cursor_options.grab_mode = CursorGrabMode::None;
+        win.cursor_options.visible = true;
+    }
+    speak_voice("Pick a craft recipe, build stamp, or engage hyperfocus!", "derek");
+    spawn_derek_craft_modal(commands, stats, data);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3127,15 +3589,22 @@ fn update_craft_voxels(
     time: Res<Time>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    scroll: Res<AccumulatedMouseScroll>,
+    orbit: Res<CameraOrbit>,
     mut stats: ResMut<PlayerStats>,
     mut data: ResMut<CraftWorldData>,
+    mut prompt: ResMut<CraftInteractPrompt>,
     assets: Option<Res<CraftBlockAssets>>,
     mut rq: VoxelRayQueries,
-    mut prev_block_btn: Local<bool>,
-    mut act_cd: Local<f32>,
+    mut timers: Local<(f32, f32, f32, bool)>,
 ) {
     let dt = time.delta_secs().min(0.05);
-    *act_cd = (*act_cd - dt).max(0.0);
+    let (mine_cd, place_cd, scroll_acc, prev_block_btn) = &mut *timers;
+    *mine_cd = (*mine_cd - dt).max(0.0);
+    *place_cd = (*place_cd - dt).max(0.0);
+    if data.feedback_timer > 0.0 {
+        data.feedback_timer = (data.feedback_timer - dt).max(0.0);
+    }
 
     // Update voxel break particles
     for (e, mut tf, mut d) in &mut rq.debris_q {
@@ -3154,14 +3623,105 @@ fn update_craft_voxels(
         }
     }
 
-    if stats.craft_modal_open {
-        for (_, mut vis) in &mut rq.cursor_q {
+    // Auto-open Derek's animated tutorial video once on first entry into Craft World
+    if data.tutorial_auto_delay > 0.0 && !stats.craft_modal_open {
+        data.tutorial_auto_delay = (data.tutorial_auto_delay - dt).max(0.0);
+        if data.tutorial_auto_delay <= 0.0
+            && !data.tutorial_video_shown
+            && !crate::audio::debug_autoskip_enabled()
+        {
+            data.tutorial_video_shown = true;
+            open_derek_tutorial_video();
+        }
+    }
+
+    if take_derek_tutorial_closed() {
+        stats.casino_esc_grace = true;
+    }
+
+    if stats.craft_modal_open || is_derek_tutorial_open() {
+        for (_, mut vis) in &mut rq.mine_cursor_q {
             *vis = Visibility::Hidden;
         }
+        for (_, mut vis, _) in &mut rq.ghost_q {
+            *vis = Visibility::Hidden;
+        }
+        data.target_label.clear();
         return;
     }
 
-    // Slot selection via keys [1..6], [C], hotbar clicks, or touch SLOT button
+    // Check HUD UI interactions first so clicking HUD pills doesn't mine/place behind them
+    let mut ui_pointer_busy = false;
+    let mut hud_open_bench = false;
+    let mut hud_cycle_shape = false;
+    let mut hud_toggle_view = false;
+    let mut hud_open_tutorial = false;
+    for (inter, hotbar, quick, _prompt_pill) in &rq.ui_inter_q {
+        if matches!(*inter, Interaction::Pressed | Interaction::Hovered) {
+            ui_pointer_busy = true;
+        }
+        if *inter == Interaction::Pressed {
+            if let Some(h) = hotbar {
+                data.selected_slot = h.0.min(5);
+            }
+            if let Some(q) = quick {
+                match q.0 {
+                    CraftQuickAction::OpenBench => hud_open_bench = true,
+                    CraftQuickAction::CycleShape => hud_cycle_shape = true,
+                    CraftQuickAction::ToggleView => hud_toggle_view = true,
+                    CraftQuickAction::OpenTutorial => hud_open_tutorial = true,
+                }
+            }
+        }
+    }
+
+    if keys.just_pressed(KeyCode::KeyT) || hud_open_tutorial {
+        data.tutorial_video_shown = true;
+        if let Ok(mut win) = rq.window_q.get_single_mut() {
+            win.cursor_options.grab_mode = CursorGrabMode::None;
+            win.cursor_options.visible = true;
+        }
+        open_derek_tutorial_video();
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::KeyB)
+        || keys.just_pressed(KeyCode::Tab)
+        || take_touch_craft_bench()
+        || hud_open_bench
+    {
+        open_derek_bench_modal(
+            &mut commands,
+            &mut stats,
+            &data,
+            &mut prompt,
+            &mut rq.window_q,
+        );
+        return;
+    }
+
+    if keys.just_pressed(KeyCode::KeyG) || take_touch_craft_shape() || hud_cycle_shape {
+        data.build_shape = data.build_shape.next();
+        set_touch_craft_shape(data.build_shape.short_tag());
+        play_sfx("esxi_click");
+        let msg = format!("BUILD SHAPE: {}", data.build_shape.label());
+        push_craft_toast(&mut data, msg);
+    }
+
+    if keys.just_pressed(KeyCode::KeyV) || take_touch_craft_view() || hud_toggle_view {
+        stats.craft_first_person = !stats.craft_first_person;
+        play_sfx("esxi_click");
+        push_craft_toast(
+            &mut data,
+            if stats.craft_first_person {
+                "VIEW: MINECRAFT 1ST-PERSON"
+            } else {
+                "VIEW: VALHEIM OVER-SHOULDER"
+            },
+        );
+    }
+
+    // Slot selection via [1..6], [C], mouse wheel, hotbar clicks, or touch NEXT BLK button
     for (i, code) in [
         KeyCode::Digit1,
         KeyCode::Digit2,
@@ -3180,10 +3740,21 @@ fn update_craft_voxels(
     if keys.just_pressed(KeyCode::KeyC) || crate::audio::take_touch_weapon_cycle() {
         data.selected_slot = (data.selected_slot + 1) % 6;
     }
-    for (inter, btn) in &rq.hotbar_btn_q {
-        if *inter == Interaction::Pressed {
-            data.selected_slot = btn.0.min(5);
+    if scroll.delta.y.abs() > 0.0 {
+        let delta_steps = match scroll.unit {
+            MouseScrollUnit::Line => scroll.delta.y,
+            MouseScrollUnit::Pixel => scroll.delta.y * 0.025,
+        };
+        *scroll_acc += delta_steps;
+        if *scroll_acc >= 0.45 {
+            data.selected_slot = (data.selected_slot + 5) % 6;
+            *scroll_acc = 0.0;
+        } else if *scroll_acc <= -0.45 {
+            data.selected_slot = (data.selected_slot + 1) % 6;
+            *scroll_acc = 0.0;
         }
+    } else {
+        *scroll_acc *= 0.85;
     }
 
     let Ok(p_tf) = rq.player_q.get_single() else {
@@ -3193,90 +3764,207 @@ fn update_craft_voxels(
         return;
     };
 
-    // Raymarch from head along camera view
-    let origin = p_tf.translation + Vec3::Y * 1.45;
+    // Exact camera-crosshair raycast (matches + crosshair pixel-for-pixel!)
+    let origin = cam_tf.translation;
     let dir = *cam_tf.forward();
-    let mut hit_cell: Option<(i32, i32, i32)> = None;
-    let mut place_cell: Option<(i32, i32, i32)> = None;
-    let mut last_empty: Option<(i32, i32, i32)> = None;
-    let mut dist = 1.1_f32;
-    while dist <= 8.5 {
-        let sample = origin + dir * dist;
-        if sample.y <= 0.02 {
-            let g = world_to_grid(Vec3::new(sample.x, 0.2, sample.z));
-            let ground_c = (g.0, 0, g.2);
-            if !data.blocks.contains_key(&ground_c) {
-                place_cell = Some(ground_c);
+    let player_eye = p_tf.translation + Vec3::Y * 1.45;
+    let reach = 12.0_f32;
+
+    let mut best_t = f32::INFINITY;
+    let mut hit_cell: Option<((i32, i32, i32), BlockKind, (i32, i32, i32))> = None;
+    for (&coord, &kind) in &data.blocks {
+        let center = grid_to_world(coord);
+        if center.distance(player_eye) > reach {
+            continue;
+        }
+        let bmin = center - Vec3::splat(0.5);
+        let bmax = center + Vec3::splat(0.5);
+        if let Some((t_hit, normal)) = ray_voxel_aabb(origin, dir, bmin, bmax) {
+            if t_hit < best_t {
+                best_t = t_hit;
+                hit_cell = Some((coord, kind, normal));
             }
-            break;
         }
-        let g = world_to_grid(sample);
-        if data.blocks.contains_key(&g) {
-            hit_cell = Some(g);
-            place_cell = last_empty;
-            break;
-        }
-        last_empty = Some(g);
-        dist += 0.22;
     }
 
-    // Highlight targeted block or ground placement spot
-    if let Ok((mut c_tf, mut c_vis)) = rq.cursor_q.get_single_mut() {
-        if let Some(c) = hit_cell.or(place_cell) {
-            c_tf.translation = grid_to_world(c);
-            *c_vis = Visibility::Inherited;
+    // Check ground plane y = 0.0 if closer than any hit block
+    let mut place_cell: Option<(i32, i32, i32)> = None;
+    let mut ground_hit = false;
+    if dir.y < -0.004 {
+        let t_g = -origin.y / dir.y;
+        if t_g > 0.25 && t_g < best_t {
+            let gp = origin + dir * t_g;
+            if gp.distance(player_eye) <= reach {
+                let rel = gp - CRAFT_LEVEL_ORIGIN;
+                let gx = rel.x.round() as i32;
+                let gz = rel.z.round() as i32;
+                if (-24..=24).contains(&gx) && (-24..=24).contains(&gz) {
+                    let gcell = (gx, 0, gz);
+                    if !data.blocks.contains_key(&gcell) {
+                        place_cell = Some(gcell);
+                        ground_hit = true;
+                        hit_cell = None;
+                    }
+                }
+            }
+        }
+    }
+
+    if !ground_hit {
+        if let Some((coord, _, normal)) = hit_cell {
+            let adj = (coord.0 + normal.0, coord.1 + normal.1, coord.2 + normal.2);
+            if (-24..=24).contains(&adj.0)
+                && (0..=10).contains(&adj.1)
+                && (-24..=24).contains(&adj.2)
+                && !data.blocks.contains_key(&adj)
+            {
+                place_cell = Some(adj);
+            }
+        }
+    }
+
+    let slot = data.selected_slot.min(5);
+    let sel_kind = HOTBAR_BLOCKS[slot];
+    let has_stock = data.inventory[slot] > 0;
+    let pulse = 1.0 + (time.elapsed_secs() * 7.0).sin() * 0.018;
+
+    // 1. Update Red Mine Target Box around exact hit block
+    if let Ok((mut m_tf, mut m_vis)) = rq.mine_cursor_q.get_single_mut() {
+        if let Some((c, _, _)) = hit_cell {
+            m_tf.translation = grid_to_world(c);
+            m_tf.scale = Vec3::splat(1.05 * pulse);
+            *m_vis = Visibility::Inherited;
         } else {
-            *c_vis = Visibility::Hidden;
+            *m_vis = Visibility::Hidden;
         }
     }
-
-    let want_mine = mouse.just_pressed(MouseButton::Left)
-        || keys.just_pressed(KeyCode::KeyJ)
-        || keys.just_pressed(KeyCode::KeyX)
-        || crate::audio::take_touch_attack();
-    let touch_blk_now = crate::audio::touch_block_held();
-    let touch_blk_tap = touch_blk_now && !*prev_block_btn;
-    *prev_block_btn = touch_blk_now;
-    let want_place = mouse.just_pressed(MouseButton::Right)
-        || keys.just_pressed(KeyCode::KeyR)
-        || keys.just_pressed(KeyCode::KeyB)
-        || touch_blk_tap;
 
     let Some(assets) = assets else {
         return;
     };
 
-    if want_mine && *act_cd <= 0.0 {
-        if let Some(c) = hit_cell {
+    // 2. Update Cyan / Red Valheim Ghost Preview (scaled to 1x1 or 3x3 stamp!)
+    if let Ok((mut g_tf, mut g_vis, mut g_mat)) = rq.ghost_q.get_single_mut() {
+        if let Some(pc) = place_cell {
+            let (sc, off) = data.build_shape.ghost_scale_and_offset(orbit.yaw);
+            g_tf.translation = grid_to_world(pc) + off;
+            g_tf.scale = sc;
+            g_mat.0 = if has_stock {
+                assets.ghost_ok_mat.clone()
+            } else {
+                assets.ghost_bad_mat.clone()
+            };
+            *g_vis = Visibility::Inherited;
+        } else {
+            *g_vis = Visibility::Hidden;
+        }
+    }
+
+    // Live crosshair target readout
+    data.target_has_hit = hit_cell.is_some();
+    data.target_can_place = place_cell.is_some();
+    data.target_out_of_stock = !has_stock;
+    data.target_label = if !has_stock && place_cell.is_some() && hit_cell.is_none() {
+        format!(
+            "OUT OF {}! Scroll/[1-6] or press [B] Craft Bench",
+            sel_kind.short_name()
+        )
+    } else if let Some((_, kind, _)) = hit_cell {
+        if place_cell.is_some() && has_stock {
+            format!(
+                "{}  |  [L-CLICK] Mine   [R-CLICK] Place {} ({})",
+                kind.full_name(),
+                sel_kind.short_name(),
+                data.build_shape.short_tag()
+            )
+        } else {
+            format!("{}  |  [L-CLICK] Mine Block", kind.full_name())
+        }
+    } else if let Some(pc) = place_cell {
+        let zone = if in_pub217_zone(pc) {
+            format!(
+                "PUB 217 PLOT ({}/{})",
+                data.pub_blocks_placed.min(PUB217_TARGET_BLOCKS),
+                PUB217_TARGET_BLOCKS
+            )
+        } else if stats.craft_pub217_rebuilt && in_house_zone(pc) {
+            format!(
+                "STAN'S HOUSE ({}/{})",
+                data.house_blocks_placed.min(HOUSE_TARGET_BLOCKS),
+                HOUSE_TARGET_BLOCKS
+            )
+        } else {
+            "BUILD GRID".to_string()
+        };
+        format!(
+            "{}  |  [R-CLICK] Place {} ({})",
+            zone,
+            sel_kind.short_name(),
+            data.build_shape.label()
+        )
+    } else {
+        "Aim at Tree, Rubble, or Ground  |  [B] Craft Bench   [T] Derek Tutorial".to_string()
+    };
+
+    // Continuous hold-to-mine & hold-to-place (also catches single-frame rapid clicks)
+    let touch_atk_tap = crate::audio::take_touch_attack();
+    let touch_atk_held = crate::audio::touch_attack_held();
+    let want_mine = !ui_pointer_busy
+        && (mouse.pressed(MouseButton::Left)
+            || mouse.just_pressed(MouseButton::Left)
+            || keys.pressed(KeyCode::KeyJ)
+            || keys.just_pressed(KeyCode::KeyJ)
+            || keys.pressed(KeyCode::KeyX)
+            || keys.just_pressed(KeyCode::KeyX)
+            || touch_atk_held
+            || touch_atk_tap);
+    let touch_blk_now = crate::audio::touch_block_held();
+    let touch_blk_tap = touch_blk_now && !*prev_block_btn;
+    *prev_block_btn = touch_blk_now;
+    let want_place = !ui_pointer_busy
+        && (mouse.pressed(MouseButton::Right)
+            || mouse.just_pressed(MouseButton::Right)
+            || keys.pressed(KeyCode::KeyR)
+            || keys.just_pressed(KeyCode::KeyR)
+            || touch_blk_now
+            || touch_blk_tap);
+
+    if want_mine && *mine_cd <= 0.0 {
+        if let Some((c, _, _)) = hit_cell {
             if let Some(kind) = data.blocks.remove(&c) {
-                *act_cd = 0.14;
+                *mine_cd = 0.22;
                 for (e, vb) in &rq.block_q {
                     if vb.coord == c {
                         commands.entity(e).despawn_recursive();
                         break;
                     }
                 }
-                match kind {
+                let toast = match kind {
                     BlockKind::Leaves => {
                         data.inventory[BlockKind::Wood as usize] += 1;
+                        "+1 WOOD".to_string()
                     }
                     BlockKind::TendyOre => {
                         data.inventory[BlockKind::TendyGold as usize] += 2;
                         data.inventory[BlockKind::Neon217 as usize] += 1;
+                        "+2 TENDY GOLD  +1 NEON".to_string()
                     }
                     BlockKind::SupplyCube => {
                         for n in &mut data.inventory {
-                            *n += 2;
+                            *n += 4;
                         }
-                        stats.score += 125;
-                        stats.hint_text = "BLACK HOLE SUPPLY CUBE! +2 OF EVERY BLOCK!".to_string();
+                        stats.score += 150;
+                        stats.hint_text = "BLACK HOLE SUPPLY CUBE! +4 OF EVERY BLOCK!".to_string();
                         stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                        "SUPPLY CUBE! +4 ALL BLOCKS".to_string()
                     }
                     k if (k as usize) < 6 => {
-                        data.inventory[k as usize] += 1;
+                        data.inventory[k as usize] += 2;
+                        format!("+2 {}", k.short_name())
                     }
-                    _ => {}
-                }
+                    _ => "+1 BLOCK".to_string(),
+                };
+                push_craft_toast(&mut data, toast);
                 for i in 0..6_usize {
                     let a = i as f32 * 1.047 + c.0 as f32;
                     commands.spawn((
@@ -3297,32 +3985,62 @@ fn update_craft_voxels(
                 recount_quest_blocks(&mut data);
             }
         }
-    } else if want_place && *act_cd <= 0.0 {
-        if let Some(c) = place_cell {
-            let slot = data.selected_slot.min(5);
-            let wp = grid_to_world(c);
-            let flat_p = Vec2::new(wp.x - p_tf.translation.x, wp.z - p_tf.translation.z).length();
-            let overlaps_player = flat_p < 0.72 && (wp.y - (p_tf.translation.y + 0.9)).abs() < 1.1;
-            if (-24..=24).contains(&c.0)
-                && (0..=10).contains(&c.1)
-                && (-24..=24).contains(&c.2)
-                && !data.blocks.contains_key(&c)
-                && !overlaps_player
-                && data.inventory[slot] > 0
-            {
-                *act_cd = 0.14;
-                data.inventory[slot] -= 1;
-                let kind = HOTBAR_BLOCKS[slot];
-                data.blocks.insert(c, kind);
-                spawn_voxel_entity(&mut commands, &assets, c, kind);
-                play_sfx("block_place");
-                stats.score += 35;
-                recount_quest_blocks(&mut data);
-            } else if data.inventory[slot] == 0 {
+    } else if want_place && *place_cd <= 0.0 {
+        if let Some(base_c) = place_cell {
+            if !has_stock {
+                *place_cd = 0.28;
                 play_sfx("hack_deny");
-                stats.hint_text = "Out of that block -- mine trees/rubble or Talk to Derek to craft!"
-                    .to_string();
-                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+                push_craft_toast(
+                    &mut data,
+                    format!("OUT OF {}! Press [B] to Craft!", sel_kind.short_name()),
+                );
+            } else {
+                let offsets = data.build_shape.offsets(orbit.yaw);
+                let mut placed_n = 0_u32;
+                for (off, want_glass) in offsets {
+                    let c = (base_c.0 + off.0, base_c.1 + off.1, base_c.2 + off.2);
+                    if !(-24..=24).contains(&c.0)
+                        || !(0..=10).contains(&c.1)
+                        || !(-24..=24).contains(&c.2)
+                        || data.blocks.contains_key(&c)
+                    {
+                        continue;
+                    }
+                    let wp = grid_to_world(c);
+                    let flat_p = Vec2::new(wp.x - p_tf.translation.x, wp.z - p_tf.translation.z).length();
+                    let overlaps_player =
+                        flat_p < 0.72 && (wp.y - (p_tf.translation.y + 0.9)).abs() < 1.1;
+                    if overlaps_player {
+                        continue;
+                    }
+                    let glass_idx = BlockKind::Glass as usize;
+                    let (use_slot, use_kind) = if want_glass && data.inventory[glass_idx] > 0 {
+                        (glass_idx, BlockKind::Glass)
+                    } else {
+                        (slot, sel_kind)
+                    };
+                    if data.inventory[use_slot] == 0 {
+                        continue;
+                    }
+                    data.inventory[use_slot] -= 1;
+                    data.blocks.insert(c, use_kind);
+                    spawn_voxel_entity(&mut commands, &assets, c, use_kind);
+                    placed_n += 1;
+                }
+                if placed_n > 0 {
+                    *place_cd = if matches!(data.build_shape, BuildShape::Single) {
+                        0.16
+                    } else {
+                        0.32
+                    };
+                    play_sfx("block_place");
+                    stats.score += 35 * placed_n;
+                    recount_quest_blocks(&mut data);
+                    if placed_n > 1 {
+                        let msg = format!("PLACED {} ({} BLOCKS)!", data.build_shape.label(), placed_n);
+                        push_craft_toast(&mut data, msg);
+                    }
+                }
             }
         }
     }
@@ -3434,7 +4152,7 @@ fn update_craft_npcs_and_portals(
         tf.rotate_y(1.2 * dt);
     }
 
-    if stats.craft_modal_open {
+    if stats.craft_modal_open || is_derek_tutorial_open() {
         prompt.target = None;
         prompt.tapped = false;
         return;
@@ -3524,10 +4242,12 @@ fn update_craft_npcs_and_portals(
             }
             if role == CraftNpcRole::Derek {
                 prompt.modal_is_derek = true;
-                speak_voice("Pick a craft recipe or engage my hyperfocus blueprint!", "derek");
+                prompt.modal_just_opened = true;
+                speak_voice("Pick a craft recipe, build stamp, or engage hyperfocus!", "derek");
                 spawn_derek_craft_modal(&mut commands, &stats, &data);
             } else {
                 prompt.modal_is_derek = false;
+                prompt.modal_just_opened = true;
                 if stats.craft_pub217_rebuilt {
                     speak_voice("Welcome back to Pub 217! Cold beer and Casino trips are back!", "bartender");
                 } else {
@@ -3554,67 +4274,206 @@ fn spawn_derek_craft_modal(commands: &mut Commands, stats: &PlayerStats, data: &
                 align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.02, 0.01, 0.05, 0.72)),
+            BackgroundColor(Color::srgba(0.02, 0.01, 0.05, 0.74)),
             GlobalZIndex(850),
         ))
         .with_children(|root| {
             root.spawn((
                 Node {
-                    width: Val::Px(520.0),
-                    max_width: Val::Percent(92.0),
-                    padding: UiRect::all(Val::Px(20.0)),
+                    width: Val::Px(580.0),
+                    max_width: Val::Percent(94.0),
+                    padding: UiRect::all(Val::Px(18.0)),
                     flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
+                    row_gap: Val::Px(9.0),
                     border: UiRect::all(Val::Px(2.5)),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.08, 0.06, 0.14, 0.96)),
+                BackgroundColor(Color::srgba(0.07, 0.06, 0.14, 0.97)),
                 BorderColor(Color::srgb(0.45, 0.95, 0.65)),
                 BorderRadius::all(Val::Px(14.0)),
             ))
             .with_children(|card| {
                 card.spawn((
-                    Text::new("DEREK'S CRAFTING & HYPERFOCUS TABLE"),
-                    TextFont { font_size: 18.0, ..default() },
+                    Text::new("DEREK'S CRAFTING & BLUEPRINT WORKBENCH [B / TAB]"),
+                    TextFont { font_size: 17.5, ..default() },
                     TextColor(Color::srgb(0.48, 1.0, 0.72)),
                 ));
-                card.spawn((
-                    Text::new(format!(
-                        "Inventory -- Brick:{} Wood:{} Stone:{} Glass:{} Tendy:{} Neon:{}",
-                        data.inventory[0], data.inventory[1], data.inventory[2],
-                        data.inventory[3], data.inventory[4], data.inventory[5]
-                    )),
-                    TextFont { font_size: 13.0, ..default() },
-                    TextColor(Color::srgb(0.92, 0.94, 0.98)),
-                ));
-                for (act, label, bg) in [
-                    (CraftModalAction::CraftBrick, "CRAFT +2 BRICK (Costs 2 STONE)", Color::srgb(0.42, 0.16, 0.16)),
-                    (CraftModalAction::CraftGlass, "CRAFT +2 GLASS (Costs 1 WOOD)", Color::srgb(0.14, 0.38, 0.52)),
-                    (CraftModalAction::CraftNeon, "CRAFT +2 NEON217 (Costs 1 TENDY GOLD)", Color::srgb(0.55, 0.36, 0.08)),
-                    (CraftModalAction::FreeScrapKit, "SCAVENGE VOID SCRAP (+3 BRICK, +3 WOOD)", Color::srgb(0.24, 0.24, 0.38)),
-                ] {
+
+                // Live color-swatched inventory strip
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|inv| {
+                    for (idx, kind) in HOTBAR_BLOCKS.iter().enumerate() {
+                        inv.spawn((
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(5.0),
+                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.12, 0.14, 0.24, 0.9)),
+                            BorderColor(Color::srgba(0.55, 0.65, 0.85, 0.4)),
+                            BorderRadius::all(Val::Px(6.0)),
+                        ))
+                        .with_children(|chip| {
+                            chip.spawn((
+                                Node {
+                                    width: Val::Px(11.0),
+                                    height: Val::Px(11.0),
+                                    ..default()
+                                },
+                                BackgroundColor(kind.ui_color()),
+                                BorderRadius::all(Val::Px(2.0)),
+                            ));
+                            chip.spawn((
+                                Text::new(format!("{}: {}", kind.short_name(), data.inventory[idx])),
+                                TextFont { font_size: 12.0, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    }
+                });
+
+                let brick_ready = data.inventory[BlockKind::Stone as usize] >= 2;
+                let stone_ready = data.inventory[BlockKind::Wood as usize] >= 2;
+                let glass_ready = data.inventory[BlockKind::Wood as usize] >= 1;
+                let neon_ready = data.inventory[BlockKind::TendyGold as usize] >= 1;
+
+                let recipes = [
+                    (
+                        CraftModalAction::CraftBrick,
+                        format!(
+                            "CRAFT +4 BRICK   (Need 2 STONE, Have {})  {}",
+                            data.inventory[BlockKind::Stone as usize],
+                            if brick_ready { "-- READY" } else { "-- NEED STONE" }
+                        ),
+                        if brick_ready { Color::srgb(0.46, 0.18, 0.18) } else { Color::srgb(0.18, 0.14, 0.18) },
+                        brick_ready,
+                    ),
+                    (
+                        CraftModalAction::CraftStone,
+                        format!(
+                            "CRAFT +4 STONE   (Need 2 WOOD, Have {})   {}",
+                            data.inventory[BlockKind::Wood as usize],
+                            if stone_ready { "-- READY" } else { "-- NEED WOOD" }
+                        ),
+                        if stone_ready { Color::srgb(0.24, 0.28, 0.36) } else { Color::srgb(0.15, 0.16, 0.22) },
+                        stone_ready,
+                    ),
+                    (
+                        CraftModalAction::CraftGlass,
+                        format!(
+                            "CRAFT +3 GLASS   (Need 1 WOOD, Have {})   {}",
+                            data.inventory[BlockKind::Wood as usize],
+                            if glass_ready { "-- READY" } else { "-- NEED WOOD" }
+                        ),
+                        if glass_ready { Color::srgb(0.14, 0.40, 0.56) } else { Color::srgb(0.14, 0.20, 0.26) },
+                        glass_ready,
+                    ),
+                    (
+                        CraftModalAction::CraftNeon,
+                        format!(
+                            "CRAFT +3 NEON217 (Need 1 TENDY, Have {})  {}",
+                            data.inventory[BlockKind::TendyGold as usize],
+                            if neon_ready { "-- READY" } else { "-- NEED TENDY" }
+                        ),
+                        if neon_ready { Color::srgb(0.56, 0.36, 0.08) } else { Color::srgb(0.22, 0.18, 0.14) },
+                        neon_ready,
+                    ),
+                    (
+                        CraftModalAction::FreeScrapKit,
+                        "SCAVENGE VOID SCRAP (+6 BRICK, +6 WOOD, +4 STONE)".to_string(),
+                        Color::srgb(0.20, 0.24, 0.42),
+                        true,
+                    ),
+                ];
+
+                for (act, label, bg, ready) in recipes {
                     card.spawn((
                         act,
                         Button,
                         Node {
-                            padding: UiRect::axes(Val::Px(14.0), Val::Px(9.0)),
+                            padding: UiRect::axes(Val::Px(13.0), Val::Px(8.0)),
                             border: UiRect::all(Val::Px(1.5)),
                             ..default()
                         },
                         BackgroundColor(bg),
-                        BorderColor(Color::srgba(1.0, 0.9, 0.4, 0.55)),
+                        BorderColor(if ready {
+                            Color::srgb(0.45, 0.96, 0.62)
+                        } else {
+                            Color::srgba(0.95, 0.40, 0.40, 0.55)
+                        }),
                         BorderRadius::all(Val::Px(8.0)),
                     ))
                     .with_children(|b| {
-                        b.spawn((Text::new(label), TextFont { font_size: 13.5, ..default() }, TextColor(Color::WHITE)));
+                        b.spawn((Text::new(label), TextFont { font_size: 13.0, ..default() }, TextColor(Color::WHITE)));
                     });
                 }
+
+                // Valheim Quick-Build Stamps row
+                card.spawn((
+                    Text::new("VALHEIM QUICK-BUILD STAMPS (Right-Click Places Entire Shape!):"),
+                    TextFont { font_size: 12.0, ..default() },
+                    TextColor(Color::srgb(0.42, 0.92, 1.0)),
+                ));
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    column_gap: Val::Px(6.0),
+                    row_gap: Val::Px(6.0),
+                    ..default()
+                })
+                .with_children(|row| {
+                    for sh in [
+                        BuildShape::Single,
+                        BuildShape::Wall3x3,
+                        BuildShape::Floor3x3,
+                        BuildShape::Window3x3,
+                    ] {
+                        let active = data.build_shape == sh;
+                        row.spawn((
+                            CraftModalAction::SelectShape(sh),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(11.0), Val::Px(7.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(if active {
+                                Color::srgb(0.14, 0.46, 0.58)
+                            } else {
+                                Color::srgb(0.14, 0.18, 0.30)
+                            }),
+                            BorderColor(if active {
+                                Color::srgb(1.0, 0.88, 0.32)
+                            } else {
+                                Color::srgba(0.42, 0.90, 1.0, 0.55)
+                            }),
+                            BorderRadius::all(Val::Px(7.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new(sh.label()),
+                                TextFont { font_size: 12.0, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    }
+                });
+
                 if !stats.craft_pub217_rebuilt {
                     card.spawn((
                         CraftModalAction::DerekHyperfocusPub217,
                         Button,
                         Node {
-                            padding: UiRect::axes(Val::Px(14.0), Val::Px(11.0)),
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
                             border: UiRect::all(Val::Px(2.0)),
                             ..default()
                         },
@@ -3625,25 +4484,74 @@ fn spawn_derek_craft_modal(commands: &mut Commands, stats: &PlayerStats, data: &
                     .with_children(|b| {
                         b.spawn((
                             Text::new("DEREK HYPERFOCUS: AUTO-REBUILD PUB 217 NOW!"),
-                            TextFont { font_size: 14.0, ..default() },
+                            TextFont { font_size: 13.5, ..default() },
                             TextColor(Color::srgb(1.0, 0.94, 0.45)),
                         ));
                     });
+                } else if !data.house_completed {
+                    card.spawn((
+                        CraftModalAction::DerekHyperfocusHouse,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(10.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.10, 0.44, 0.64)),
+                        BorderColor(Color::srgb(0.42, 0.95, 1.0)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("DEREK HYPERFOCUS: AUTO-BUILD STAN'S NEW HOUSE!"),
+                            TextFont { font_size: 13.5, ..default() },
+                            TextColor(Color::srgb(1.0, 0.95, 0.55)),
+                        ));
+                    });
                 }
-                card.spawn((
-                    CraftModalAction::Close,
-                    Button,
-                    Node {
-                        padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
-                        border: UiRect::all(Val::Px(1.5)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.22, 0.14, 0.22)),
-                    BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.4)),
-                    BorderRadius::all(Val::Px(8.0)),
-                ))
-                .with_children(|b| {
-                    b.spawn((Text::new("CLOSE [ESC]"), TextFont { font_size: 13.0, ..default() }, TextColor(Color::WHITE)));
+
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|foot| {
+                    foot.spawn((
+                        CraftModalAction::WatchTutorial,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(13.0), Val::Px(8.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.42, 0.26, 0.06)),
+                        BorderColor(Color::srgb(1.0, 0.84, 0.28)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("WATCH DEREK TUTORIAL VIDEO [T]"),
+                            TextFont { font_size: 12.5, ..default() },
+                            TextColor(Color::srgb(1.0, 0.92, 0.42)),
+                        ));
+                    });
+
+                    foot.spawn((
+                        CraftModalAction::Close,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.22, 0.14, 0.22)),
+                        BorderColor(Color::srgba(1.0, 1.0, 1.0, 0.45)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((Text::new("BACK TO BUILD [ESC / B]"), TextFont { font_size: 12.5, ..default() }, TextColor(Color::WHITE)));
+                    });
                 });
             });
         });
@@ -3757,7 +4665,7 @@ fn handle_craft_modal_input(
     touches: Res<Touches>,
     mut stats: ResMut<PlayerStats>,
     mut data: ResMut<CraftWorldData>,
-    prompt: Res<CraftInteractPrompt>,
+    mut prompt: ResMut<CraftInteractPrompt>,
     assets: Option<Res<CraftBlockAssets>>,
     mut next_state: SceneTransition,
     btn_q: Query<(&Interaction, &CraftModalAction), Changed<Interaction>>,
@@ -3768,9 +4676,14 @@ fn handle_craft_modal_input(
         return;
     }
 
+    let just_opened = std::mem::take(&mut prompt.modal_just_opened);
     let mut chosen = None;
-    if keys.just_pressed(KeyCode::Escape) {
+    if keys.just_pressed(KeyCode::Escape)
+        || (!just_opened && (keys.just_pressed(KeyCode::KeyB) || keys.just_pressed(KeyCode::Tab)))
+    {
         chosen = Some(CraftModalAction::Close);
+    } else if !just_opened && keys.just_pressed(KeyCode::KeyT) {
+        chosen = Some(CraftModalAction::WatchTutorial);
     } else {
         for (inter, act) in &btn_q {
             if *inter == Interaction::Pressed {
@@ -3787,8 +4700,19 @@ fn handle_craft_modal_input(
         CraftModalAction::CraftBrick => {
             if data.inventory[BlockKind::Stone as usize] >= 2 {
                 data.inventory[BlockKind::Stone as usize] -= 2;
-                data.inventory[BlockKind::Brick as usize] += 2;
+                data.inventory[BlockKind::Brick as usize] += 4;
                 play_sfx("block_place");
+                push_craft_toast(&mut data, "+4 BRICK CRAFTED!");
+            } else {
+                play_sfx("hack_deny");
+            }
+        }
+        CraftModalAction::CraftStone => {
+            if data.inventory[BlockKind::Wood as usize] >= 2 {
+                data.inventory[BlockKind::Wood as usize] -= 2;
+                data.inventory[BlockKind::Stone as usize] += 4;
+                play_sfx("block_place");
+                push_craft_toast(&mut data, "+4 STONE CRAFTED!");
             } else {
                 play_sfx("hack_deny");
             }
@@ -3796,8 +4720,9 @@ fn handle_craft_modal_input(
         CraftModalAction::CraftGlass => {
             if data.inventory[BlockKind::Wood as usize] >= 1 {
                 data.inventory[BlockKind::Wood as usize] -= 1;
-                data.inventory[BlockKind::Glass as usize] += 2;
+                data.inventory[BlockKind::Glass as usize] += 3;
                 play_sfx("block_place");
+                push_craft_toast(&mut data, "+3 GLASS CRAFTED!");
             } else {
                 play_sfx("hack_deny");
             }
@@ -3805,16 +4730,33 @@ fn handle_craft_modal_input(
         CraftModalAction::CraftNeon => {
             if data.inventory[BlockKind::TendyGold as usize] >= 1 {
                 data.inventory[BlockKind::TendyGold as usize] -= 1;
-                data.inventory[BlockKind::Neon217 as usize] += 2;
+                data.inventory[BlockKind::Neon217 as usize] += 3;
                 play_sfx("block_place");
+                push_craft_toast(&mut data, "+3 NEON 217 CRAFTED!");
             } else {
                 play_sfx("hack_deny");
             }
         }
         CraftModalAction::FreeScrapKit => {
-            data.inventory[BlockKind::Brick as usize] += 3;
-            data.inventory[BlockKind::Wood as usize] += 3;
+            data.inventory[BlockKind::Brick as usize] += 6;
+            data.inventory[BlockKind::Wood as usize] += 6;
+            data.inventory[BlockKind::Stone as usize] += 4;
             play_sfx("powerup");
+            push_craft_toast(&mut data, "+6 BRICK  +6 WOOD  +4 STONE");
+        }
+        CraftModalAction::SelectShape(sh) => {
+            data.build_shape = sh;
+            set_touch_craft_shape(sh.short_tag());
+            play_sfx("esxi_click");
+            push_craft_toast(&mut data, format!("STAMP: {} (R-Click to Place!)", sh.label()));
+            for e in &modal_q {
+                commands.entity(e).despawn_recursive();
+            }
+            stats.craft_modal_open = false;
+            stats.casino_esc_grace = true;
+            set_touch_playing(true);
+            stop_voice();
+            return;
         }
         CraftModalAction::DerekHyperfocusPub217 => {
             if let Some(assets) = assets {
@@ -3849,6 +4791,52 @@ fn handle_craft_modal_input(
             stats.craft_modal_open = false;
             stats.casino_esc_grace = true;
             set_touch_playing(true);
+            return;
+        }
+        CraftModalAction::DerekHyperfocusHouse => {
+            if let Some(assets) = assets {
+                // Auto-build Stan & the boys' new Brick + Wood + Glass + TendyGold house!
+                for gx in 3..=11 {
+                    for gz in -6..=2 {
+                        let edge = gx == 3 || gx == 11 || gz == -6 || gz == 2;
+                        let door = gx == 3 && (gz == -2 || gz == -1);
+                        if edge && !door {
+                            for gy in 0..=2 {
+                                let k = if gy == 1 && (gx == 7 || gz == -2) {
+                                    BlockKind::Glass
+                                } else if gy == 2 {
+                                    BlockKind::TendyGold
+                                } else {
+                                    BlockKind::Brick
+                                };
+                                let c = (gx, gy, gz);
+                                if !data.blocks.contains_key(&c) {
+                                    data.blocks.insert(c, k);
+                                    spawn_voxel_entity(&mut commands, &assets, c, k);
+                                }
+                            }
+                        }
+                    }
+                }
+                recount_quest_blocks(&mut data);
+            }
+            for e in &modal_q {
+                commands.entity(e).despawn_recursive();
+            }
+            stats.craft_modal_open = false;
+            stats.casino_esc_grace = true;
+            set_touch_playing(true);
+            return;
+        }
+        CraftModalAction::WatchTutorial => {
+            for e in &modal_q {
+                commands.entity(e).despawn_recursive();
+            }
+            stats.craft_modal_open = false;
+            stats.casino_esc_grace = true;
+            set_touch_playing(true);
+            stop_voice();
+            open_derek_tutorial_video();
             return;
         }
         CraftModalAction::DrinkBeer => {
@@ -3890,6 +4878,7 @@ fn handle_craft_modal_input(
     } else if matches!(
         act,
         CraftModalAction::CraftBrick
+            | CraftModalAction::CraftStone
             | CraftModalAction::CraftGlass
             | CraftModalAction::CraftNeon
             | CraftModalAction::FreeScrapKit
@@ -3905,67 +4894,235 @@ fn handle_craft_modal_input(
     }
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+#[derive(bevy::ecs::system::SystemParam)]
+struct CraftHudQueries<'w, 's> {
+    quest_q: Query<'w, 's, &'static mut Text, With<CraftQuestText>>,
+    cross_q: Query<
+        'w,
+        's,
+        &'static mut Visibility,
+        (
+            With<CraftCrosshair>,
+            Without<CraftTargetPill>,
+            Without<CraftFeedbackPill>,
+            Without<CraftPromptPill>,
+        ),
+    >,
+    target_pill_q: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut Visibility, &'static mut BorderColor),
+        (
+            With<CraftTargetPill>,
+            Without<CraftCrosshair>,
+            Without<CraftFeedbackPill>,
+            Without<CraftPromptPill>,
+            Without<CraftHotbarBtn>,
+        ),
+    >,
+    target_txt_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<CraftTargetText>,
+            Without<CraftQuestText>,
+            Without<CraftFeedbackText>,
+            Without<CraftPromptText>,
+            Without<CraftHotbarText>,
+            Without<CraftShapeBtnText>,
+            Without<CraftViewBtnText>,
+        ),
+    >,
+    feedback_pill_q: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut Visibility),
+        (
+            With<CraftFeedbackPill>,
+            Without<CraftCrosshair>,
+            Without<CraftTargetPill>,
+            Without<CraftPromptPill>,
+        ),
+    >,
+    feedback_txt_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<CraftFeedbackText>,
+            Without<CraftQuestText>,
+            Without<CraftTargetText>,
+            Without<CraftPromptText>,
+            Without<CraftHotbarText>,
+            Without<CraftShapeBtnText>,
+            Without<CraftViewBtnText>,
+        ),
+    >,
+    pill_q: Query<
+        'w,
+        's,
+        (&'static mut Node, &'static mut Visibility),
+        (
+            With<CraftPromptPill>,
+            Without<CraftCrosshair>,
+            Without<CraftTargetPill>,
+            Without<CraftFeedbackPill>,
+        ),
+    >,
+    ptext_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<CraftPromptText>,
+            Without<CraftQuestText>,
+            Without<CraftTargetText>,
+            Without<CraftFeedbackText>,
+            Without<CraftHotbarText>,
+            Without<CraftShapeBtnText>,
+            Without<CraftViewBtnText>,
+        ),
+    >,
+    slot_q: Query<
+        'w,
+        's,
+        (&'static CraftHotbarBtn, &'static mut BorderColor, &'static mut BackgroundColor),
+        Without<CraftTargetPill>,
+    >,
+    slot_txt_q: Query<
+        'w,
+        's,
+        (&'static CraftHotbarText, &'static mut Text),
+        (
+            Without<CraftQuestText>,
+            Without<CraftTargetText>,
+            Without<CraftFeedbackText>,
+            Without<CraftPromptText>,
+            Without<CraftShapeBtnText>,
+            Without<CraftViewBtnText>,
+        ),
+    >,
+    shape_txt_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<CraftShapeBtnText>,
+            Without<CraftQuestText>,
+            Without<CraftTargetText>,
+            Without<CraftFeedbackText>,
+            Without<CraftPromptText>,
+            Without<CraftHotbarText>,
+            Without<CraftViewBtnText>,
+        ),
+    >,
+    view_txt_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<CraftViewBtnText>,
+            Without<CraftQuestText>,
+            Without<CraftTargetText>,
+            Without<CraftFeedbackText>,
+            Without<CraftPromptText>,
+            Without<CraftHotbarText>,
+            Without<CraftShapeBtnText>,
+        ),
+    >,
+}
+
 fn update_craft_hud(
     stats: Res<PlayerStats>,
     data: Res<CraftWorldData>,
     prompt: Res<CraftInteractPrompt>,
-    mut quest_q: Query<&mut Text, With<CraftQuestText>>,
-    mut cross_q: Query<&mut Visibility, With<CraftCrosshair>>,
-    mut pill_q: Query<(&mut Node, &mut Visibility), (With<CraftPromptPill>, Without<CraftCrosshair>)>,
-    mut ptext_q: Query<&mut Text, (With<CraftPromptText>, Without<CraftQuestText>)>,
-    mut slot_q: Query<(&CraftHotbarBtn, &mut BorderColor, &mut BackgroundColor)>,
-    mut slot_txt_q: Query<
-        (&CraftHotbarText, &mut Text),
-        (Without<CraftQuestText>, Without<CraftPromptText>),
-    >,
+    mut q: CraftHudQueries,
 ) {
-    if let Ok(mut qt) = quest_q.get_single_mut() {
+    let hide_play_hud = stats.craft_modal_open || is_derek_tutorial_open();
+
+    if let Ok(mut qt) = q.quest_q.get_single_mut() {
         let next_msg = if !stats.craft_pub217_rebuilt {
             format!(
-                "QUEST 1: REBUILD PUB 217 ({}/{} blocks) -- Mine trees/rubble [L-Click] & Place [R-Click] or Talk to Derek [F/E]",
+                "QUEST 1: REBUILD PUB 217 ({}/{} blocks) -- Amber Plot West",
                 data.pub_blocks_placed.min(PUB217_TARGET_BLOCKS),
                 PUB217_TARGET_BLOCKS
             )
         } else if !data.house_completed {
             format!(
-                "PUB 217 REBUILT! | QUEST 2: BUILD STAN'S NEW HOUSE ({}/{} blocks) -- Cyan Foundation East",
+                "PUB 217 REBUILT! | QUEST 2: BUILD STAN'S HOUSE ({}/{}) -- Cyan Plot East",
                 data.house_blocks_placed.min(HOUSE_TARGET_BLOCKS),
                 HOUSE_TARGET_BLOCKS
             )
         } else {
-            "PUB 217 & STAN'S HOUSE COMPLETE! Party at 217 or enter South Portal -> Cedar Rapids!"
-                .to_string()
+            "PUB 217 & STAN'S HOUSE COMPLETE! Party inside or South Portal -> City!".to_string()
         };
         if qt.0 != next_msg {
             qt.0 = next_msg;
         }
     }
 
-    if let Ok(mut vis) = cross_q.get_single_mut() {
-        *vis = if stats.craft_modal_open {
+    if let Ok(mut vis) = q.cross_q.get_single_mut() {
+        *vis = if hide_play_hud {
             Visibility::Hidden
         } else {
             Visibility::Inherited
         };
     }
 
-    if let Ok((mut node, mut vis)) = pill_q.get_single_mut() {
+    if let Ok((mut node, mut vis, mut border)) = q.target_pill_q.get_single_mut() {
+        if hide_play_hud || data.target_label.is_empty() {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
+        } else {
+            node.display = Display::Flex;
+            *vis = Visibility::Inherited;
+            border.0 = if data.target_out_of_stock && data.target_can_place && !data.target_has_hit {
+                Color::srgb(1.0, 0.32, 0.28)
+            } else if data.target_has_hit {
+                Color::srgb(1.0, 0.56, 0.24)
+            } else {
+                Color::srgb(0.28, 0.90, 1.0)
+            };
+            if let Ok(mut tt) = q.target_txt_q.get_single_mut() {
+                if tt.0 != data.target_label {
+                    tt.0 = data.target_label.clone();
+                }
+            }
+        }
+    }
+
+    if let Ok((mut node, mut vis)) = q.feedback_pill_q.get_single_mut() {
+        if !hide_play_hud && data.feedback_timer > 0.0 && !data.feedback_msg.is_empty() {
+            node.display = Display::Flex;
+            *vis = Visibility::Inherited;
+            if let Ok(mut ft) = q.feedback_txt_q.get_single_mut() {
+                if ft.0 != data.feedback_msg {
+                    ft.0 = data.feedback_msg.clone();
+                }
+            }
+        } else {
+            node.display = Display::None;
+            *vis = Visibility::Hidden;
+        }
+    }
+
+    if let Ok((mut node, mut vis)) = q.pill_q.get_single_mut() {
         match prompt.target {
-            Some(tgt) if !stats.craft_modal_open => {
+            Some(tgt) if !hide_play_hud => {
                 node.display = Display::Flex;
                 *vis = Visibility::Inherited;
                 let msg = match tgt {
                     CraftPromptTarget::Portal => "MYSTERIOUS PORTAL -> CEDAR RAPIDS [F/E]",
                     CraftPromptTarget::BeerTower => "POUR COLD BEER AT PUB 217 [F/E]",
                     CraftPromptTarget::Npc(CraftNpcRole::Maria) => "TALK TO MARIA [F/E]",
-                    CraftPromptTarget::Npc(CraftNpcRole::Derek) => "CRAFT / BLUEPRINT TABLE WITH DEREK [F/E]",
+                    CraftPromptTarget::Npc(CraftNpcRole::Derek) => "DEREK'S WORKBENCH [F/E / B]",
                     CraftPromptTarget::Npc(CraftNpcRole::Mike) => "SMOKE BREAK WITH MIKE [F/E]",
                     CraftPromptTarget::Npc(CraftNpcRole::Tj) => "TALK TO TJ [F/E]",
                     CraftPromptTarget::Npc(CraftNpcRole::Nate) => "TALK TO NATE [F/E]",
                     CraftPromptTarget::Npc(CraftNpcRole::Glenn) => "TALK TO GLENN [F/E]",
                 };
-                if let Ok(mut pt) = ptext_q.get_single_mut() {
+                if let Ok(mut pt) = q.ptext_q.get_single_mut() {
                     if pt.0 != msg {
                         pt.0 = msg.to_string();
                     }
@@ -3978,7 +5135,7 @@ fn update_craft_hud(
         }
     }
 
-    for (btn, mut border, mut bg) in &mut slot_q {
+    for (btn, mut border, mut bg) in &mut q.slot_q {
         let sel = btn.0 == data.selected_slot;
         border.0 = if sel {
             Color::srgb(1.0, 0.90, 0.30)
@@ -3992,11 +5149,29 @@ fn update_craft_hud(
         };
     }
 
-    for (st, mut txt) in &mut slot_txt_q {
+    for (st, mut txt) in &mut q.slot_txt_q {
         let i = st.0.min(5);
-        let label = format!("{}:{} x{}", i + 1, HOTBAR_BLOCKS[i].short_name(), data.inventory[i]);
+        let label = format!("[{}] {} x{}", i + 1, HOTBAR_BLOCKS[i].short_name(), data.inventory[i]);
         if txt.0 != label {
             txt.0 = label;
+        }
+    }
+
+    if let Ok(mut st) = q.shape_txt_q.get_single_mut() {
+        let want = format!("[G] {}", data.build_shape.label());
+        if st.0 != want {
+            st.0 = want;
+        }
+    }
+
+    if let Ok(mut vt) = q.view_txt_q.get_single_mut() {
+        let want = if stats.craft_first_person {
+            "[V] 1ST PERSON"
+        } else {
+            "[V] 3RD PERSON"
+        };
+        if vt.0 != want {
+            vt.0 = want.to_string();
         }
     }
 }

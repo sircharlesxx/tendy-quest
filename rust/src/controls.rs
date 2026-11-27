@@ -166,13 +166,16 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
         ControlContext::Craft => vec![
             bind("WASD", "L-STICK", "Move", true),
             bind("SPACE", "A", "Jump", true),
-            bind("CLICK / J", "RB", "Mine Block", true),
-            bind("R-CLICK / R", "LT", "Place Block", true),
-            bind("1-6 / C", "Y", "Block Slot", true),
             bind("F / E", "X", "Talk / Portal", true),
             PAUSE,
+            bind("L-CLICK (hold)", "RB", "Mine Block", false),
+            bind("R-CLICK (hold)", "LT", "Place / Stamp", false),
+            bind("1-6 / WHEEL", "Y", "Select Block", false),
+            bind("G", "", "Build Stamp (1x1 / 3x3)", false),
+            bind("B / TAB", "", "Craft Bench", false),
+            bind("V", "", "1st / 3rd View", false),
+            bind("T", "", "Derek Tutorial", false),
             LOOK,
-            bind("WHEEL", "", "Zoom", false),
         ],
     }
 }
@@ -273,6 +276,7 @@ fn update_control_strip(
         && !stats.bartender_open
         && !stats.char_select_open
         && !stats.craft_modal_open
+        && !crate::audio::is_derek_tutorial_open()
         && !crate::audio::skip_touch_ui();
     let want = if show { Visibility::Inherited } else { Visibility::Hidden };
     if *vis != want {
@@ -606,6 +610,9 @@ fn update_pause_menu(
         // Only open over settled gameplay: not during a fade-in (a pointer-lock loss or the debug
         // flag waits for it to finish instead of being dropped).
         // (`SceneTransition` owns `SceneFade`; `input_unlocked(0.0)` is "fade phase is Idle".)
+        if crate::audio::take_derek_tutorial_closed() {
+            stats.casino_esc_grace = true;
+        }
         if !next_state.input_unlocked(0.0)
             || stats.casino_open
             || stats.arcade_open
@@ -615,6 +622,7 @@ fn update_pause_menu(
             || stats.craft_modal_open
             || stats.club_seated
             || stats.casino_esc_grace
+            || crate::audio::is_derek_tutorial_open()
         {
             stats.casino_esc_grace = false;
             let _ = crate::audio::take_pointer_lock_lost();

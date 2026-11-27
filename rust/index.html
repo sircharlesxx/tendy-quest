@@ -212,6 +212,7 @@
   <link data-trunk rel="copy-dir" href="../assets/models" data-target-path="assets/models" />
   <link data-trunk rel="copy-dir" href="../assets/audio" data-target-path="assets/audio" />
   <link data-trunk rel="copy-dir" href="../assets/sprites" data-target-path="assets/sprites" />
+  <link data-trunk rel="copy-file" href="../assets/video/derek_craft_tutorial.mp4" data-target-path="assets/video" />
   <script>
     window.tendySave = {
       saveCheckpoint(json) {
@@ -376,13 +377,14 @@
       let bgmStarted = false;
       let ambStarted = false;
       let muted = false;
+      let tutorialDuck = false;
       // Master volume (0..1), set from the pause menu slider and remembered between visits.
       let volume = 1.0;
       try {
         const sv = parseFloat(localStorage.getItem("tendy_quest_volume_v1"));
         if (isFinite(sv)) volume = Math.min(1, Math.max(0, sv));
       } catch (_) {}
-      const masterLevel = () => (muted ? 0.0 : volume);
+      const masterLevel = () => (muted || tutorialDuck ? 0.0 : volume);
       const buffers = {};
       const loading = {};
 
@@ -3023,6 +3025,14 @@
         getVolume() {
           return volume;
         },
+        setTutorialDuck(ducked) {
+          tutorialDuck = !!ducked;
+          try {
+            if (masterGain && ctx) {
+              masterGain.gain.setValueAtTime(masterLevel(), ctx.currentTime);
+            }
+          } catch (_) {}
+        },
         touchUnlock() {
           preloadAll();
           unlockAndMaybeStart();
@@ -3284,8 +3294,22 @@
       top: 92px;
       right: max(12px, env(safe-area-inset-right));
       display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      max-width: 72vw;
       gap: 8px;
       pointer-events: none;
+    }
+    .craft-only-pill {
+      display: none;
+    }
+    #touch-controls.craft-mode .craft-only-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-color: rgba(72, 236, 255, 0.72);
+      color: #cffafe;
+      background: rgba(12, 26, 48, 0.85);
     }
     .touch-pill {
       pointer-events: auto;
@@ -3626,6 +3650,146 @@
         font-size: 8.5px;
       }
     }
+    #derek-tutorial-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 9000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(6, 8, 18, 0.84);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #derek-tutorial-modal.open {
+      display: flex;
+    }
+    .dt-card {
+      width: min(940px, 96vw);
+      max-height: 94vh;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px 18px;
+      border-radius: 16px;
+      background: linear-gradient(160deg, rgba(16, 21, 42, 0.98), rgba(22, 16, 40, 0.98));
+      border: 2.5px solid rgba(74, 232, 136, 0.82);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.78);
+      color: #f4f7ff;
+    }
+    .dt-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .dt-title-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .dt-title {
+      font-size: clamp(0.95rem, 2.2vw, 1.25rem);
+      font-weight: 800;
+      color: #ffd648;
+      letter-spacing: 0.03em;
+    }
+    .dt-sub {
+      font-size: 0.78rem;
+      color: #93c5fd;
+    }
+    .dt-chapters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .dt-chap, .dt-close, .dt-btn {
+      cursor: pointer;
+      border-radius: 8px;
+      font-weight: 700;
+      border: 1.5px solid rgba(148, 163, 184, 0.45);
+      background: rgba(30, 41, 75, 0.92);
+      color: #e2e8f0;
+      padding: 6px 10px;
+      font-size: 0.76rem;
+      transition: transform 0.08s ease, border-color 0.12s ease, background 0.12s ease;
+    }
+    .dt-chap:hover, .dt-btn:hover {
+      border-color: #ffd648;
+      background: rgba(52, 64, 112, 0.96);
+    }
+    .dt-chap.active {
+      border-color: #ffd648;
+      background: rgba(88, 52, 165, 0.96);
+      color: #fff;
+    }
+    .dt-close {
+      background: rgba(127, 29, 29, 0.85);
+      border-color: rgba(248, 113, 113, 0.7);
+      color: #fff;
+      font-size: 0.82rem;
+      padding: 6px 11px;
+    }
+    .dt-video-wrap {
+      position: relative;
+      width: 100%;
+      background: #080912;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1.5px solid rgba(110, 140, 210, 0.45);
+    }
+    #derek-tutorial-video {
+      display: block;
+      width: 100%;
+      max-height: 60vh;
+      background: #080912;
+      outline: none;
+    }
+    #dt-unmute-btn {
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      display: none;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 2px solid #ffd648;
+      background: rgba(180, 83, 9, 0.94);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.78rem;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+    }
+    #dt-unmute-btn.visible {
+      display: inline-block;
+    }
+    .dt-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .dt-tip {
+      font-size: 0.76rem;
+      color: #cbd5e1;
+    }
+    .dt-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .dt-btn.primary {
+      background: linear-gradient(135deg, #22c55e, #15803d);
+      border-color: #fde047;
+      color: #fff;
+      padding: 8px 16px;
+      font-size: 0.84rem;
+    }
   </style>
 </head>
 <body>
@@ -3668,6 +3832,10 @@
       <button id="btn-jump" class="touch-btn touch-ui" type="button">JUMP</button>
     </div>
     <div id="mobile-top-btns">
+      <button id="btn-craft-bench" class="touch-pill touch-ui craft-only-pill" type="button">CRAFT</button>
+      <button id="btn-craft-shape" class="touch-pill touch-ui craft-only-pill" type="button">1x1</button>
+      <button id="btn-craft-view" class="touch-pill touch-ui craft-only-pill" type="button">VIEW</button>
+      <button id="btn-craft-tut" class="touch-pill touch-ui craft-only-pill" type="button">GUIDE</button>
       <button id="btn-fullscreen" class="touch-pill touch-ui highlight" type="button">FULL</button>
       <button id="btn-help" class="touch-pill touch-ui" type="button">HELP</button>
       <button id="btn-mute" class="touch-pill touch-ui" type="button">SOUND</button>
@@ -3682,6 +3850,35 @@
     <div class="fs-prompt-actions">
       <button id="btn-fullscreen-prompt" type="button">FULLSCREEN</button>
       <button id="btn-fullscreen-dismiss" type="button" aria-label="Dismiss fullscreen prompt">✕</button>
+    </div>
+  </div>
+  <div id="derek-tutorial-modal" role="dialog" aria-modal="true" aria-label="Derek Crafting and Building Tutorial Video">
+    <div class="dt-card">
+      <div class="dt-header">
+        <div class="dt-title-wrap">
+          <div class="dt-title">DEREK'S CRAFT, MINE &amp; BUILD TUTORIAL</div>
+          <div class="dt-sub">Fear not! Click any chapter below or watch Derek walk through every button.</div>
+        </div>
+        <div class="dt-chapters">
+          <button class="dt-chap" type="button" data-seek="0.0">INTRO</button>
+          <button class="dt-chap" type="button" data-seek="4.5">1. MINE</button>
+          <button class="dt-chap" type="button" data-seek="10.5">2. BUILD</button>
+          <button class="dt-chap" type="button" data-seek="16.5">3. CRAFT</button>
+          <button class="dt-chap" type="button" data-seek="22.0">4. PORTAL</button>
+          <button id="dt-close-x" class="dt-close" type="button" aria-label="Close tutorial">X</button>
+        </div>
+      </div>
+      <div class="dt-video-wrap">
+        <video id="derek-tutorial-video" src="./assets/video/derek_craft_tutorial.mp4" controls playsinline preload="metadata"></video>
+        <button id="dt-unmute-btn" type="button">CLICK FOR SOUND</button>
+      </div>
+      <div class="dt-footer">
+        <div class="dt-tip">Tip: Press <strong>[T]</strong> anytime in Craft World to replay this video, <strong>[B]</strong> for Craft Bench, <strong>[V]</strong> for 1st-Person!</div>
+        <div class="dt-actions">
+          <button id="dt-replay-btn" class="dt-btn" type="button">REPLAY</button>
+          <button id="dt-start-btn" class="dt-btn primary" type="button">START BUILDING! [ESC]</button>
+        </div>
+      </div>
     </div>
   </div>
   <script>
@@ -3703,6 +3900,9 @@
       let blockHeld = false;
       let grenadeQueued = false;
       let weaponCycleQueued = false;
+      let craftBenchQueued = false;
+      let craftShapeQueued = false;
+      let craftViewQueued = false;
       let actionTapQueued = false;
       let helpQueued = false;
 
@@ -3726,6 +3926,10 @@
       const btnBlock = document.getElementById("btn-block");
       const btnGrenade = document.getElementById("btn-grenade");
       const btnWeapon = document.getElementById("btn-weapon");
+      const btnCraftBench = document.getElementById("btn-craft-bench");
+      const btnCraftShape = document.getElementById("btn-craft-shape");
+      const btnCraftView = document.getElementById("btn-craft-view");
+      const btnCraftTut = document.getElementById("btn-craft-tut");
       const btnHelp = document.getElementById("btn-help");
       const btnMute = document.getElementById("btn-mute");
       const btnFullscreen = document.getElementById("btn-fullscreen");
@@ -4046,6 +4250,10 @@
       }
       if (btnGrenade) bindActionBtn(btnGrenade, () => { grenadeQueued = true; });
       if (btnWeapon) bindActionBtn(btnWeapon, () => { weaponCycleQueued = true; });
+      if (btnCraftBench) bindActionBtn(btnCraftBench, () => { craftBenchQueued = true; });
+      if (btnCraftShape) bindActionBtn(btnCraftShape, () => { craftShapeQueued = true; });
+      if (btnCraftView) bindActionBtn(btnCraftView, () => { craftViewQueued = true; });
+      if (btnCraftTut) bindActionBtn(btnCraftTut, () => { if (window.tendyTutorialVideo) window.tendyTutorialVideo.open(); });
       bindActionBtn(btnHelp, () => { helpQueued = true; });
       bindActionBtn(btnMute, () => { window.tendyAudio.toggleMute(); });
 
@@ -4322,7 +4530,13 @@
           btnBlock.textContent = on ? "PLACE" : "BLOCK";
         }
         if (btnWeapon) {
-          btnWeapon.textContent = on ? "SLOT" : "WEP";
+          btnWeapon.textContent = on ? "NEXT\nBLK" : "WEP";
+        }
+      }
+
+      function setCraftShapeLabel(label) {
+        if (btnCraftShape && label) {
+          btnCraftShape.textContent = String(label);
         }
       }
 
@@ -4485,9 +4699,18 @@
       let hadPointerLock = false;
       document.addEventListener("pointerlockchange", () => {
         const locked = !!document.pointerLockElement;
-        if (!locked && hadPointerLock && isPlayingState) pointerLockLost = true;
+        const vidOpen = !!(window.tendyTutorialVideo && window.tendyTutorialVideo.isOpen());
+        if (!locked && hadPointerLock && isPlayingState && !vidOpen) pointerLockLost = true;
         hadPointerLock = locked;
       });
+      window.addEventListener("contextmenu", (e) => {
+        if (e.target && e.target.tagName === "CANVAS") e.preventDefault();
+      });
+      window.addEventListener("keydown", (e) => {
+        if (e.code === "Tab" && isPlayingState && !(window.tendyTutorialVideo && window.tendyTutorialVideo.isOpen())) {
+          e.preventDefault();
+        }
+      }, true);
       // Real (trusted) keyboard or mouse input switches the controls strip back to key labels;
       // the gamepad poller's synthetic key events are untrusted and ignored here.
       window.addEventListener("keydown", (e) => { if (e.isTrusted) lastInputPad = false; });
@@ -4512,8 +4735,12 @@
         attackHeld() { pollGamepad(); return attackTouchHeld || gpAttackHeld; },
         takeGrenade() { const v = grenadeQueued; grenadeQueued = false; return v; },
         takeWeaponCycle() { const v = weaponCycleQueued; weaponCycleQueued = false; return v; },
+        takeCraftBench() { const v = craftBenchQueued; craftBenchQueued = false; return v; },
+        takeCraftShape() { const v = craftShapeQueued; craftShapeQueued = false; return v; },
+        takeCraftView() { const v = craftViewQueued; craftViewQueued = false; return v; },
         setCityWeapons,
         setCraftMode,
+        setCraftShapeLabel,
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
         setPlaying,
@@ -7340,5 +7567,119 @@
     })();
   </script>
   <!-- ===== END distributed free-roam multiplayer ===== -->
+  <script>
+    window.tendyTutorialVideo = (() => {
+      const modal = document.getElementById("derek-tutorial-modal");
+      const video = document.getElementById("derek-tutorial-video");
+      const unmuteBtn = document.getElementById("dt-unmute-btn");
+      const closeX = document.getElementById("dt-close-x");
+      const replayBtn = document.getElementById("dt-replay-btn");
+      const startBtn = document.getElementById("dt-start-btn");
+      const chaps = Array.from(document.querySelectorAll("#derek-tutorial-modal .dt-chap"));
+      const chapTimes = [0.0, 4.5, 10.5, 16.5, 22.0];
+      let openState = false;
+      let justClosed = false;
+
+      function syncChapters() {
+        if (!video) return;
+        const t = video.currentTime || 0;
+        let idx = 0;
+        for (let i = 0; i < chapTimes.length; i++) {
+          if (t >= chapTimes[i] - 0.15) idx = i;
+        }
+        chaps.forEach((btn, i) => btn.classList.toggle("active", i === idx));
+      }
+
+      function tryPlayFrom(sec) {
+        if (!video) return;
+        try { video.currentTime = Math.max(0, sec || 0); } catch (_) {}
+        try { video.muted = false; } catch (_) {}
+        if (unmuteBtn) unmuteBtn.classList.remove("visible");
+        const p = video.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {
+            try {
+              video.muted = true;
+              if (unmuteBtn) unmuteBtn.classList.add("visible");
+              void video.play();
+            } catch (_) {}
+          });
+        }
+      }
+
+      function open() {
+        if (!modal) return;
+        openState = true;
+        justClosed = false;
+        try {
+          if (document.pointerLockElement && document.exitPointerLock) {
+            document.exitPointerLock();
+          }
+        } catch (_) {}
+        try {
+          if (window.tendyAudio && window.tendyAudio.setTutorialDuck) {
+            window.tendyAudio.setTutorialDuck(true);
+          }
+        } catch (_) {}
+        modal.classList.add("open");
+        syncChapters();
+        tryPlayFrom(0.0);
+      }
+
+      function close() {
+        if (!openState && (!modal || !modal.classList.contains("open"))) return;
+        openState = false;
+        justClosed = true;
+        if (modal) modal.classList.remove("open");
+        if (video) {
+          try { video.pause(); } catch (_) {}
+        }
+        try {
+          if (window.tendyAudio && window.tendyAudio.setTutorialDuck) {
+            window.tendyAudio.setTutorialDuck(false);
+          }
+        } catch (_) {}
+      }
+
+      if (video) {
+        video.addEventListener("timeupdate", syncChapters);
+      }
+      if (unmuteBtn && video) {
+        unmuteBtn.addEventListener("click", () => {
+          video.muted = false;
+          unmuteBtn.classList.remove("visible");
+        });
+      }
+      if (closeX) closeX.addEventListener("click", close);
+      if (startBtn) startBtn.addEventListener("click", close);
+      if (replayBtn) replayBtn.addEventListener("click", () => tryPlayFrom(0.0));
+      chaps.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const sec = parseFloat(btn.getAttribute("data-seek") || "0") || 0;
+          tryPlayFrom(sec);
+          syncChapters();
+        });
+      });
+      if (modal) {
+        modal.addEventListener("click", (e) => {
+          if (e.target === modal) close();
+        });
+      }
+      window.addEventListener("keydown", (e) => {
+        if (openState && e.code === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          close();
+        }
+      }, true);
+
+      return {
+        open,
+        close,
+        isOpen() { return openState; },
+        takeJustClosed() { const v = justClosed; justClosed = false; return v; },
+      };
+    })();
+  </script>
 </body>
 </html>

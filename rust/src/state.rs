@@ -219,6 +219,8 @@ pub struct PlayerStats {
     pub craft_modal_open: bool,
     /// True once Quest 1 (Rebuild Pub 217) is completed inside Craft World.
     pub craft_pub217_rebuilt: bool,
+    /// True when toggled into First-Person Minecraft camera inside Craft World (`[V]`).
+    pub craft_first_person: bool,
 }
 
 impl Default for PlayerStats {
@@ -331,6 +333,7 @@ impl Default for PlayerStats {
             house_craft_return_city: false,
             craft_modal_open: false,
             craft_pub217_rebuilt: false,
+            craft_first_person: false,
         }
     }
 }

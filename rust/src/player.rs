@@ -613,7 +613,7 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if stats.club_modal_open || stats.craft_modal_open {
+    if stats.club_modal_open || stats.craft_modal_open || crate::audio::is_derek_tutorial_open() {
         if let Ok(mut window) = window_q.get_single_mut() {
             window.cursor_options.grab_mode = CursorGrabMode::None;
             window.cursor_options.visible = true;
@@ -637,9 +637,15 @@ pub fn camera_mouse_look(
     // Track how long since the player last looked around so vehicle chase cams can back off.
     orbit.since_look = (orbit.since_look + time.delta_secs().min(0.05)).min(99.0);
 
+    let (p_min, p_max) = if stats.in_craft_level {
+        (-1.12_f32, 1.25_f32)
+    } else {
+        (PITCH_MIN, PITCH_MAX)
+    };
+
     if mouse_motion.delta != Vec2::ZERO {
         orbit.yaw -= mouse_motion.delta.x * 0.0045;
-        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(PITCH_MIN, PITCH_MAX);
+        orbit.pitch = (orbit.pitch + mouse_motion.delta.y * 0.0035).clamp(p_min, p_max);
         orbit.since_look = 0.0;
     }
 
@@ -648,16 +654,16 @@ pub fn camera_mouse_look(
     let t_dy = crate::audio::take_touch_look_dy();
     if t_dx != 0.0 || t_dy != 0.0 {
         orbit.yaw -= t_dx * 0.0065;
-        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(PITCH_MIN, PITCH_MAX);
+        orbit.pitch = (orbit.pitch + t_dy * 0.0050).clamp(p_min, p_max);
         orbit.since_look = 0.0;
     }
 
     let zoom_delta = crate::audio::take_touch_zoom_delta();
     let joy_active = crate::audio::touch_move_x().abs() > 0.001
         || crate::audio::touch_move_y().abs() > 0.001;
-    if zoom_delta != 0.0 && !joy_active {
+    if zoom_delta != 0.0 && !joy_active && !stats.in_craft_level {
         orbit.distance = (orbit.distance + zoom_delta).clamp(3.0, 42.0);
-    } else if mouse_scroll.delta.y != 0.0 {
+    } else if !stats.in_craft_level && mouse_scroll.delta.y != 0.0 {
         let step = match mouse_scroll.unit {
             bevy::input::mouse::MouseScrollUnit::Line => mouse_scroll.delta.y * 0.85,
             bevy::input::mouse::MouseScrollUnit::Pixel => mouse_scroll.delta.y * 0.012,
@@ -824,7 +830,10 @@ pub fn player_movement(
     // visibility (the car hides them), so the blink stands down there.
     player.hurt_blink = (player.hurt_blink - dt).max(0.0);
     let in_vehicle = stats.driving_car.is_some() || stats.riding_scooter.is_some() || stats.riding_wheel;
-    if in_vehicle {
+    if stats.in_craft_level && stats.craft_first_person {
+        *vis = Visibility::Hidden;
+        player.blink_hidden = true;
+    } else if in_vehicle {
         if player.blink_hidden {
             player.blink_hidden = false;
             if stats.driving_car.is_none() {
@@ -852,6 +861,7 @@ pub fn player_movement(
         || stats.club_cutscene_open
         || stats.club_modal_open
         || stats.craft_modal_open
+        || crate::audio::is_derek_tutorial_open()
         || stats.club_seated
         // Limp or getting up: `ragdoll::update_ragdoll` owns Stan's position and pose.
         || ragdoll.active()
@@ -1682,6 +1692,85 @@ pub fn update_camera(
     }
     orbit.last_player_pos = p_pos;
     let follow = orbit.follow_pos;
+
+    // Craft World camera: crisp First-Person Minecraft mode (`[V]`) or Valheim Over-the-Shoulder
+    // view (shifted right of Stan so he never blocks the center aiming crosshair).
+    if stats.in_craft_level {
+        let c = crate::craft::CRAFT_LEVEL_ORIGIN;
+        let craft_min = Vec3::new(c.x - 34.0, 0.55, c.z - 34.0);
+        let craft_max = Vec3::new(c.x + 34.0, 28.0, c.z + 34.0);
+        let (final_cam_pos, final_look, mut fov) = if stats.craft_first_person {
+            let eye = (p_pos + Vec3::Y * 1.58).clamp(craft_min, craft_max);
+            let fp_pitch = orbit.pitch.clamp(-1.12, 1.25);
+            let fwd = -Vec3::new(
+                orbit.yaw.sin() * fp_pitch.cos(),
+                fp_pitch.sin(),
+                orbit.yaw.cos() * fp_pitch.cos(),
+            )
+            .normalize();
+            (eye, eye + fwd * 12.0, base_fov * 1.08)
+        } else {
+            let aspect_mul = if let Ok(win) = window_q.get_single() {
+                let aspect = win.width() / win.height().max(1.0);
+                1.0 + (1.0 - aspect).clamp(0.0, 0.55) * 0.30
+            } else {
+                1.0
+            };
+            let cam_right = Vec3::new(orbit.yaw.cos(), 0.0, -orbit.yaw.sin());
+            let shoulder_anchor = follow + Vec3::Y * 1.88 + cam_right * 0.90;
+            let s_pitch = orbit.pitch.clamp(-0.55, 1.18);
+            let back_dir = Vec3::new(
+                orbit.yaw.sin() * s_pitch.cos(),
+                s_pitch.sin(),
+                orbit.yaw.cos() * s_pitch.cos(),
+            )
+            .normalize();
+            let desired = 4.6 * aspect_mul;
+            let mut safe = desired;
+            let min_d = 1.65;
+            for (p_tf_box, p_box) in &platform_q {
+                if p_box.half_extents.y < 1.1 && p_tf_box.translation.y < shoulder_anchor.y {
+                    continue;
+                }
+                if p_box.half_extents.x > 10.0 {
+                    continue;
+                }
+                let bmin = p_tf_box.translation - p_box.half_extents - Vec3::splat(0.22);
+                let bmax = p_tf_box.translation + p_box.half_extents + Vec3::splat(0.22);
+                if let Some((t_min, t_max)) = ray_aabb_t(shoulder_anchor, back_dir, bmin, bmax) {
+                    if t_max > 0.0 && t_min < safe && t_min > 0.0 {
+                        safe = safe.min((t_min - 0.14).max(min_d));
+                    }
+                }
+            }
+            if snapping {
+                orbit.current_dist = safe;
+            } else {
+                let rate = if safe < orbit.current_dist { 24.0 } else { 8.0 };
+                orbit.current_dist += (safe - orbit.current_dist) * smooth_factor(rate, dt);
+            }
+            let dist = orbit.current_dist.clamp(min_d, desired);
+            let cam_p = (shoulder_anchor + back_dir * dist).clamp(craft_min, craft_max);
+            let look_t = shoulder_anchor - back_dir * 14.0;
+            (cam_p, look_t, base_fov)
+        };
+        let mut goal = Transform::from_translation(final_cam_pos);
+        goal.look_at(final_look, Vec3::Y);
+        if stats.shake_request > 0.0 {
+            orbit.shake = orbit.shake.max(stats.shake_request.min(1.0));
+            stats.shake_request = 0.0;
+        }
+        orbit.blend_request = false;
+        orbit.snap_follow = false;
+        orbit.blend_t = CAMERA_BLEND_SECS;
+        c_tf.translation = goal.translation;
+        c_tf.rotation = goal.rotation;
+        if let Projection::Perspective(ref mut p) = *proj {
+            p.fov = fov;
+        }
+        let _ = &mut fov;
+        return;
+    }
 
     let anchor_y = if stats.driving_car.is_some() {
         1.95

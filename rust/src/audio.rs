@@ -113,6 +113,30 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setCraftMode)]
         fn js_set_craft_mode(active: bool);
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setCraftShapeLabel)]
+        fn js_set_craft_shape_label(label: &str);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCraftBench)]
+        fn js_take_craft_bench() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCraftShape)]
+        fn js_take_craft_shape() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCraftView)]
+        fn js_take_craft_view() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTutorialVideo"], js_name = open)]
+        fn js_open_derek_tutorial_video();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTutorialVideo"], js_name = close)]
+        fn js_close_derek_tutorial_video();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTutorialVideo"], js_name = isOpen)]
+        fn js_is_derek_tutorial_open() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyTutorialVideo"], js_name = takeJustClosed)]
+        fn js_take_derek_tutorial_closed() -> bool;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = combatDemo)]
         fn js_combat_demo() -> String;
 
@@ -451,6 +475,38 @@ mod imp {
 
     pub fn set_touch_craft_mode(active: bool) {
         js_set_craft_mode(active);
+    }
+
+    pub fn set_touch_craft_shape(label: &str) {
+        js_set_craft_shape_label(label);
+    }
+
+    pub fn take_touch_craft_bench() -> bool {
+        js_take_craft_bench()
+    }
+
+    pub fn take_touch_craft_shape() -> bool {
+        js_take_craft_shape()
+    }
+
+    pub fn take_touch_craft_view() -> bool {
+        js_take_craft_view()
+    }
+
+    pub fn open_derek_tutorial_video() {
+        js_open_derek_tutorial_video();
+    }
+
+    pub fn close_derek_tutorial_video() {
+        js_close_derek_tutorial_video();
+    }
+
+    pub fn is_derek_tutorial_open() -> bool {
+        js_is_derek_tutorial_open()
+    }
+
+    pub fn take_derek_tutorial_closed() -> bool {
+        js_take_derek_tutorial_closed()
     }
 
     /// `combat_demo=` URL value (empty unless `debug=1`), for the debug combat motion demo.
@@ -891,6 +947,32 @@ mod imp {
 
     pub fn set_touch_craft_mode(_active: bool) {}
 
+    pub fn set_touch_craft_shape(_label: &str) {}
+
+    pub fn take_touch_craft_bench() -> bool {
+        false
+    }
+
+    pub fn take_touch_craft_shape() -> bool {
+        false
+    }
+
+    pub fn take_touch_craft_view() -> bool {
+        false
+    }
+
+    pub fn open_derek_tutorial_video() {}
+
+    pub fn close_derek_tutorial_video() {}
+
+    pub fn is_derek_tutorial_open() -> bool {
+        false
+    }
+
+    pub fn take_derek_tutorial_closed() -> bool {
+        false
+    }
+
     pub fn debug_combat_demo() -> String {
         String::new()
     }
@@ -1019,7 +1101,10 @@ pub use imp::{
     skip_touch_ui, stop_voice, set_they_live_mode, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_grenade, take_touch_help, take_touch_jump,
     take_touch_look_dx, take_touch_look_dy, take_touch_weapon_cycle, take_touch_zoom_delta, set_touch_city_weapons,
-    set_touch_craft_mode, toggle_mute, set_volume, volume, touch_attack_held, touch_block_held, touch_move_x,
+    set_touch_craft_mode, set_touch_craft_shape, take_touch_craft_bench, take_touch_craft_shape,
+    take_touch_craft_view, open_derek_tutorial_video, close_derek_tutorial_video,
+    is_derek_tutorial_open, take_derek_tutorial_closed, toggle_mute, set_volume, volume,
+    touch_attack_held, touch_block_held, touch_move_x,
     touch_move_y, update_telemetry,
 };
 #[allow(unused_imports)]
