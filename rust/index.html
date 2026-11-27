@@ -98,6 +98,7 @@
         } catch (_) {}
         const u = new URL(location.href);
         if (remoteVer) u.searchParams.set("_v", remoteVer);
+        if (u.searchParams.get("debug") !== "1") u.searchParams.delete("free_roam");
         u.searchParams.set("_cb", String(Date.now()));
         location.replace(u.toString());
       };
@@ -124,7 +125,13 @@
         const u = new URL(location.href);
         u.searchParams.set("_v", remoteVer);
         u.searchParams.set("_cb", String(Date.now()));
-        if (preserveFreeRoam) u.searchParams.set("free_roam", "1");
+        const keepFree = !!(preserveFreeRoam && isActiveFreeRoamScene());
+        if (keepFree) {
+          try { sessionStorage.setItem("tq_updater_free_roam", "1"); } catch (_) {}
+          u.searchParams.set("free_roam", "1");
+        } else if (u.searchParams.get("debug") !== "1") {
+          u.searchParams.delete("free_roam");
+        }
         location.replace(u.toString());
         return true;
       }
@@ -142,7 +149,7 @@
             "font:700 12px system-ui,sans-serif;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5)";
           b.addEventListener("click", () => {
             try { sessionStorage.removeItem("tq_reloaded_v"); } catch (_) {}
-            void applyUpdate(remoteVer, !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam()));
+            void applyUpdate(remoteVer, isActiveFreeRoamScene());
           });
           document.body.appendChild(b);
         };
@@ -179,6 +186,14 @@
           return false;
         }
       }
+      function isActiveFreeRoamScene() {
+        try {
+          const st = window.tendyNet && typeof window.tendyNet.debugState === "function" ? window.tendyNet.debugState() : null;
+          return !!(st && st.sceneId >= 3 && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam());
+        } catch (_) {
+          return false;
+        }
+      }
       // Called when entering Free Mode or when a peer joins in Free Mode so everyone runs
       // the latest deployed build while preserving all localStorage save data, without kicking
       // players who are already inside an active gameplay scene.
@@ -198,13 +213,13 @@
       void checkVersion(true, false);
       window.addEventListener("pageshow", (e) => {
         const activeScene = isActiveGameplayScene();
-        if (e.persisted) void checkVersion(!activeScene, !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam()));
+        if (e.persisted) void checkVersion(!activeScene, isActiveFreeRoamScene());
       });
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") {
-          const inFree = !!(window.tendyNet && window.tendyNet.isInFreeRoam && window.tendyNet.isInFreeRoam());
+          const inFree = isActiveFreeRoamScene();
           const activeScene = isActiveGameplayScene();
-          void checkVersion(inFree && !activeScene, inFree);
+          void checkVersion(!activeScene, inFree);
         }
       });
     })();
@@ -3403,6 +3418,31 @@
       border-radius: 8px;
       cursor: pointer;
     }
+    body.tutorial-active #fullscreen-prompt {
+      top: max(8px, env(safe-area-inset-top));
+      right: max(8px, env(safe-area-inset-right));
+      left: auto;
+      bottom: auto;
+      transform: none;
+      width: auto;
+      max-width: min(44vw, 220px);
+      padding: 5px 8px;
+      gap: 6px;
+      border-radius: 999px;
+    }
+    body.tutorial-active #fullscreen-prompt .fs-prompt-copy {
+      display: none;
+    }
+    body.tutorial-active #btn-fullscreen-prompt {
+      font-size: 0.68rem;
+      padding: 5px 9px;
+      border-radius: 999px;
+    }
+    body.tutorial-active #btn-fullscreen-dismiss {
+      font-size: 0.7rem;
+      padding: 4px 7px;
+      border-radius: 999px;
+    }
     @media (max-height: 500px) {
       #joystick-zone {
         width: 106px;
@@ -3645,7 +3685,7 @@
     @media (max-width: 959px) {
       #tutorial-stan-box {
         left: 12px;
-        top: 58px;
+        top: 90px;
         transform: none;
         width: 108px;
       }
@@ -4214,8 +4254,12 @@
           window.location.search
         );
         if (fsPrompt) {
+          const isSmallOrCoarse =
+            window.matchMedia &&
+            (window.matchMedia("(pointer: coarse)").matches ||
+              window.matchMedia("(max-width: 960px)").matches);
           const shouldShow =
-            isMobileViewport() && !fs && !fsDismissed && !isPlayingState && !inCutsceneInit;
+            isSmallOrCoarse && !fs && !fsDismissed && !isPlayingState && !inCutsceneInit;
           fsPrompt.classList.toggle("visible", shouldShow);
         }
       }
@@ -4586,8 +4630,27 @@
       }, { passive: false });
 
       let pendingInitMode = (() => {
+        const sp = new URLSearchParams(window.location.search);
         const s = window.location.search;
-        if (s.includes("free_roam=1")) return 17;
+        if (sp.get("free_roam") === "1") {
+          const fromUpdater = sp.has("_v") && sp.get("debug") !== "1";
+          if (fromUpdater) {
+            let oneShot = false;
+            try {
+              oneShot = sessionStorage.getItem("tq_updater_free_roam") === "1";
+              sessionStorage.removeItem("tq_updater_free_roam");
+            } catch (_) {}
+            try {
+              const clean = new URL(location.href);
+              clean.searchParams.delete("free_roam");
+              clean.searchParams.delete("_cb");
+              history.replaceState(null, "", clean.pathname + clean.search + clean.hash);
+            } catch (_) {}
+            if (oneShot) return 17;
+          } else {
+            return 17;
+          }
+        }
         if (s.includes("coaster_cutscene=1")) return 22;
         if (s.includes("cutscene=1")) return 1;
         if (s.includes("boss=1")) return 2;
@@ -5762,7 +5825,7 @@
           };
           net.peers.set(id, peer);
           if (net.inFreeRoam && typeof window.tqEnsureLatestBuild === "function") {
-            void window.tqEnsureLatestBuild(true);
+            void window.tqEnsureLatestBuild(net.sceneId >= 3);
           }
           if (isMesh) setStatus("Connected (" + (net.peers.size + 1) + "/5 | Shard " + (net.shard + 1) + ")");
           sendHello();
@@ -7703,7 +7766,7 @@
       function setFreeRoam(active) {
         net.inFreeRoam = !!active;
         if (net.inFreeRoam && typeof window.tqEnsureLatestBuild === "function") {
-          void window.tqEnsureLatestBuild(true);
+          void window.tqEnsureLatestBuild(net.sceneId >= 3);
         }
         updatePillVisibility();
         refreshPanel();
