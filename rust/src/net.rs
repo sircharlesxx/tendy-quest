@@ -82,6 +82,24 @@ pub const EVENT_LEAD_BOMB_DEFUSED: u32 = 17;
 pub const EVENT_BAR_SHIT: u32 = 18;
 pub const EVENT_CAR_PVP_HIT: u32 = 19;
 pub const EVENT_GRENADE_BLAST: u32 = 20;
+pub const EVENT_CRAFT_VOXEL: u32 = 21;
+pub const CRAFT_VOXEL_REMOVE: u8 = 15;
+
+pub fn pack_craft_voxel(gx: i32, gy: i32, gz: i32, op_kind: u8) -> u32 {
+    let ux = (gx + 24).clamp(0, 63) as u32;
+    let uy = gy.clamp(0, 15) as u32;
+    let uz = (gz + 24).clamp(0, 63) as u32;
+    let uk = u32::from(op_kind & 15);
+    ux | (uy << 6) | (uz << 10) | (uk << 16)
+}
+
+pub fn unpack_craft_voxel(value: u32) -> (i32, i32, i32, u8) {
+    let gx = (value & 0x3F) as i32 - 24;
+    let gy = ((value >> 6) & 0x0F) as i32;
+    let gz = ((value >> 10) & 0x3F) as i32 - 24;
+    let op_kind = ((value >> 16) & 0x0F) as u8;
+    (gx, gy, gz, op_kind)
+}
 
 pub fn pack_lead_bomb_spawn(spot_idx: u8, incident_id: u8) -> u32 {
     u32::from(spot_idx) | (u32::from(incident_id) << 8)
@@ -249,6 +267,7 @@ pub struct NetCoopEvents {
     pub bar_shits: Vec<(u8, u8)>,
     pub car_pvp_hits: Vec<(u8, u8)>,
     pub grenade_blasts: Vec<(f32, f32)>,
+    pub craft_voxels: Vec<(i32, i32, i32, u8)>,
 }
 
 /// Shared limb pivot markers attached by procedural crew rig builders when spawned for multiplayer,
@@ -453,6 +472,10 @@ impl NetState {
 
     pub fn local_char(&self) -> u8 {
         self.local_char
+    }
+
+    pub fn peer_count(&self) -> u32 {
+        if self.online_active { self.peers } else { 0 }
     }
 
     pub fn is_anchor(&self) -> bool {
@@ -1093,6 +1116,8 @@ fn parse_sample(rec: &[f64]) -> Option<Sample> {
         pos += crate::casino::CASINO_LEVEL_ORIGIN;
     } else if scene_id == 5 {
         pos += crate::club::CLUB_LEVEL_ORIGIN;
+    } else if scene_id == 7 {
+        pos += crate::craft::CRAFT_LEVEL_ORIGIN;
     }
     let q = Quat::from_xyzw(f(8), f(9), f(10), f(11));
     let rot = if q.length() > 0.5 { q.normalize() } else { Quat::IDENTITY };
@@ -1484,6 +1509,13 @@ fn receive_remote_states(
                         }
                         continue;
                     }
+                    EVENT_CRAFT_VOXEL => {
+                        let v = unpack_craft_voxel(value);
+                        if *state.get() == GameState::CraftPlay {
+                            coop.craft_voxels.push(v);
+                        }
+                        continue;
+                    }
                     _ => continue,
                 };
                 net.event_timer = 4.0;
@@ -1544,6 +1576,7 @@ fn publish_local_state(
 ) {
     let is_casino = *state.get() == GameState::CasinoPlay;
     let is_club = *state.get() == GameState::ClubPlay;
+    let is_craft = *state.get() == GameState::CraftPlay;
     if stats.char_select_open || !mp_playable(state) {
         return;
     }
@@ -1608,6 +1641,8 @@ fn publish_local_state(
         pos - crate::casino::CASINO_LEVEL_ORIGIN
     } else if is_club {
         pos - crate::club::CLUB_LEVEL_ORIGIN
+    } else if is_craft {
+        pos - crate::craft::CRAFT_LEVEL_ORIGIN
     } else {
         pos
     };
@@ -1759,6 +1794,11 @@ fn sample_at(samples: &VecDeque<Sample>, render_t: f64) -> Option<Sample> {
                 rel.x = rel.x.clamp(-half, half);
                 rel.z = rel.z.clamp(-half, half);
                 s.pos = rel + crate::club::CLUB_LEVEL_ORIGIN;
+            } else if s.scene_id == 7 {
+                let mut rel = s.pos - crate::craft::CRAFT_LEVEL_ORIGIN;
+                rel.x = rel.x.clamp(-half, half);
+                rel.z = rel.z.clamp(-half, half);
+                s.pos = rel + crate::craft::CRAFT_LEVEL_ORIGIN;
             } else {
                 s.pos.x = s.pos.x.clamp(-half, half);
                 s.pos.z = s.pos.z.clamp(-half, half);

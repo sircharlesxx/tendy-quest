@@ -175,6 +175,7 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             bind("B / TAB", "", "Craft Bench", false),
             bind("V", "", "1st / 3rd View", false),
             bind("T", "", "Derek Tutorial", false),
+            bind("Y", "", "Sync / Share Craft Save", false),
             LOOK,
         ],
     }
@@ -277,6 +278,7 @@ fn update_control_strip(
         && !stats.char_select_open
         && !stats.craft_modal_open
         && !crate::audio::is_derek_tutorial_open()
+        && !crate::audio::is_craft_sync_modal_open()
         && !crate::audio::skip_touch_ui();
     let want = if show { Visibility::Inherited } else { Visibility::Hidden };
     if *vis != want {
@@ -610,7 +612,7 @@ fn update_pause_menu(
         // Only open over settled gameplay: not during a fade-in (a pointer-lock loss or the debug
         // flag waits for it to finish instead of being dropped).
         // (`SceneTransition` owns `SceneFade`; `input_unlocked(0.0)` is "fade phase is Idle".)
-        if crate::audio::take_derek_tutorial_closed() {
+        if crate::audio::take_derek_tutorial_closed() || crate::audio::take_craft_sync_closed() {
             stats.casino_esc_grace = true;
         }
         if !next_state.input_unlocked(0.0)
@@ -623,6 +625,7 @@ fn update_pause_menu(
             || stats.club_seated
             || stats.casino_esc_grace
             || crate::audio::is_derek_tutorial_open()
+            || crate::audio::is_craft_sync_modal_open()
         {
             stats.casino_esc_grace = false;
             let _ = crate::audio::take_pointer_lock_lost();

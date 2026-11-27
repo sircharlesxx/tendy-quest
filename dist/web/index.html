@@ -47,7 +47,7 @@
         void clearCachesAsync();
       }
 
-      const SAVE_KEYS = ["tendy_quest_save_v1", "tendy_quest_mom_defeated_v1", "tendy_wendies_v1"];
+      const SAVE_KEYS = ["tendy_quest_save_v1", "tendy_quest_mom_defeated_v1", "tendy_wendies_v1", "tendy_craft_world_v1"];
       function snapshotSavesBeforeReload() {
         const snap = {};
         try {
@@ -276,11 +276,26 @@
           return 100;
         }
       },
+      saveCraftWorld(raw) {
+        try {
+          if (raw && String(raw).startsWith("TQCW1|")) {
+            localStorage.setItem("tendy_craft_world_v1", String(raw));
+          }
+        } catch (_) {}
+      },
+      loadCraftWorld() {
+        try {
+          return localStorage.getItem("tendy_craft_world_v1") || "";
+        } catch (_) {
+          return "";
+        }
+      },
       clearAllProgress() {
         try {
           localStorage.removeItem("tendy_quest_save_v1");
           localStorage.removeItem("tendy_quest_mom_defeated_v1");
           localStorage.removeItem("tendy_wendies_v1");
+          localStorage.removeItem("tendy_craft_world_v1");
         } catch (_) {}
         if (window.tendyTelemetry) window.tendyTelemetry.tendyWendies = 100;
       },
@@ -3790,8 +3805,138 @@
       padding: 8px 16px;
       font-size: 0.84rem;
     }
+    #craft-sync-banner {
+      position: fixed;
+      top: 56px;
+      right: max(14px, env(safe-area-inset-right));
+      z-index: 8900;
+      width: min(360px, 92vw);
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 13px;
+      background: linear-gradient(155deg, rgba(16, 26, 52, 0.96), rgba(32, 18, 56, 0.96));
+      border: 2px solid #48ecff;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.72);
+      color: #f4f7ff;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #craft-sync-banner.visible {
+      display: flex;
+    }
+    .csb-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .csb-title {
+      font-size: 0.86rem;
+      font-weight: 800;
+      color: #ffd648;
+      letter-spacing: 0.02em;
+    }
+    .csb-meta {
+      font-size: 0.75rem;
+      color: #bae6fd;
+      line-height: 1.3;
+    }
+    .csb-actions {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    #craft-sync-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 9050;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(6, 8, 18, 0.82);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #craft-sync-modal.open {
+      display: flex;
+    }
+    .cs-card {
+      width: min(590px, 95vw);
+      max-height: 92vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px 20px;
+      border-radius: 16px;
+      background: linear-gradient(160deg, rgba(16, 22, 46, 0.98), rgba(26, 16, 44, 0.98));
+      border: 2.5px solid rgba(72, 236, 255, 0.82);
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.78);
+      color: #f4f7ff;
+    }
+    .cs-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(10, 14, 30, 0.76);
+      border: 1.5px solid rgba(110, 140, 210, 0.42);
+    }
+    .cs-panel.offer {
+      border-color: rgba(74, 232, 136, 0.85);
+      background: rgba(12, 34, 28, 0.84);
+      display: none;
+    }
+    .cs-panel.offer.visible {
+      display: flex;
+    }
+    .cs-label {
+      font-size: 0.86rem;
+      font-weight: 800;
+      color: #48ecff;
+      letter-spacing: 0.03em;
+    }
+    .cs-desc {
+      font-size: 0.79rem;
+      color: #cbd5e1;
+      line-height: 1.35;
+    }
+    .cs-status {
+      font-size: 0.80rem;
+      font-weight: 700;
+      color: #4ae888;
+      min-height: 1.1em;
+    }
+    .cs-code-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    #cs-import-input {
+      flex: 1;
+      min-width: 0;
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 1.5px solid rgba(148, 163, 184, 0.45);
+      background: rgba(15, 23, 42, 0.95);
+      color: #f8fafc;
+      font-size: 0.76rem;
+      font-family: monospace;
+    }
+    .dt-btn.gold {
+      background: linear-gradient(135deg, #d97706, #b45309);
+      border-color: #fde047;
+      color: #fff;
+      padding: 9px 14px;
+      font-size: 0.83rem;
+    }
   </style>
-<link rel="modulepreload" href="./tendy-quest-ebd8188a39004e24.js" crossorigin="anonymous" integrity="sha384-2O9t7Nw/WcdxHcxKJMDV0oirYUs9U1vNUKt1F4/+Kdd2W8/9iLPKRQRnojEa+i98"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-ebd8188a39004e24_bg.wasm" crossorigin="anonymous" integrity="sha384-QKpKjDnGtdueiRf2ItZLpsN9narNJbBR06pms+Xh8gKYIxW50/s5E2NImXIA8uBK" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-18f05ecfa32605.js" crossorigin="anonymous" integrity="sha384-ZpBnFJH54uh7XJZArRiRFsoiBBJygvtZwCOUjXEFl3MVHl1k04WE2rzD5/GBUzlO"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-18f05ecfa32605_bg.wasm" crossorigin="anonymous" integrity="sha384-h5eO7GUUHxQD0vS4/Q1/x2ZcsQLIejdlsBQckTnIGfFh4y8cMvpU2iz1b+VmOTO4" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3835,6 +3980,7 @@
       <button id="btn-craft-bench" class="touch-pill touch-ui craft-only-pill" type="button">CRAFT</button>
       <button id="btn-craft-shape" class="touch-pill touch-ui craft-only-pill" type="button">1x1</button>
       <button id="btn-craft-view" class="touch-pill touch-ui craft-only-pill" type="button">VIEW</button>
+      <button id="btn-craft-sync" class="touch-pill touch-ui craft-only-pill" type="button">SYNC</button>
       <button id="btn-craft-tut" class="touch-pill touch-ui craft-only-pill" type="button">GUIDE</button>
       <button id="btn-fullscreen" class="touch-pill touch-ui highlight" type="button">FULL</button>
       <button id="btn-help" class="touch-pill touch-ui" type="button">HELP</button>
@@ -3881,6 +4027,57 @@
       </div>
     </div>
   </div>
+  <div id="craft-sync-banner" role="alert" aria-live="polite">
+    <div class="csb-top">
+      <div id="csb-title" class="csb-title">CREW WANTS TO SYNC CRAFT WORLD!</div>
+      <button id="csb-dismiss" class="dt-close" type="button" aria-label="Dismiss sync offer">X</button>
+    </div>
+    <div id="csb-meta" class="csb-meta"></div>
+    <div class="csb-actions">
+      <button id="csb-accept" class="dt-btn primary" type="button">SYNC &amp; JOIN</button>
+      <button id="csb-review" class="dt-btn" type="button">REVIEW [Y]</button>
+    </div>
+  </div>
+  <div id="craft-sync-modal" role="dialog" aria-modal="true" aria-label="Shared Crafting World Sync">
+    <div class="cs-card">
+      <div class="dt-header">
+        <div class="dt-title-wrap">
+          <div class="dt-title">SHARED CRAFT WORLD &amp; SQUAD SYNC [Y]</div>
+          <div class="dt-sub">Share your solo/offline Craft World save with online squadmates, or sync onto theirs!</div>
+        </div>
+        <button id="cs-close-x" class="dt-close" type="button" aria-label="Close sync modal">X</button>
+      </div>
+      <div id="cs-offer-panel" class="cs-panel offer">
+        <div id="cs-offer-title" class="cs-label">INCOMING SYNC INVITE</div>
+        <div id="cs-offer-meta" class="cs-desc"></div>
+        <div class="dt-actions">
+          <button id="cs-offer-accept" class="dt-btn primary" type="button">ACCEPT &amp; SYNC WORLD</button>
+          <button id="cs-offer-decline" class="dt-btn" type="button">DECLINE</button>
+        </div>
+      </div>
+      <div class="cs-panel">
+        <div class="cs-label">SHARE YOUR CRAFT WORLD SAVE</div>
+        <div id="cs-local-summary" class="cs-desc">Loading local Craft World stats...</div>
+        <div class="dt-actions">
+          <button id="cs-share-btn" class="dt-btn gold" type="button">SYNC MY SAVE TO ONLINE PLAYERS</button>
+        </div>
+        <div id="cs-status" class="cs-status"></div>
+      </div>
+      <div class="cs-panel">
+        <div class="cs-label">OFFLINE / DISCORD SAVE CODE</div>
+        <div class="cs-desc">Copy your Craft save code to share anytime, or paste a friend's save code to load it cleanly.</div>
+        <div class="cs-code-row">
+          <button id="cs-copy-btn" class="dt-btn" type="button">COPY SAVE CODE</button>
+          <input id="cs-import-input" type="text" placeholder="Paste TQCW1|... save code here" autocomplete="off" />
+          <button id="cs-import-btn" class="dt-btn primary" type="button">IMPORT</button>
+        </div>
+      </div>
+      <div class="dt-footer">
+        <div class="dt-tip">Live edits in Craft World also sync automatically with online teammates!</div>
+        <button id="cs-close-btn" class="dt-btn" type="button">CLOSE [ESC / Y]</button>
+      </div>
+    </div>
+  </div>
   <script>
     window.tendyInput = (() => {
       let joyX = 0.0;
@@ -3903,6 +4100,7 @@
       let craftBenchQueued = false;
       let craftShapeQueued = false;
       let craftViewQueued = false;
+      let craftSyncQueued = false;
       let actionTapQueued = false;
       let helpQueued = false;
 
@@ -3929,6 +4127,7 @@
       const btnCraftBench = document.getElementById("btn-craft-bench");
       const btnCraftShape = document.getElementById("btn-craft-shape");
       const btnCraftView = document.getElementById("btn-craft-view");
+      const btnCraftSync = document.getElementById("btn-craft-sync");
       const btnCraftTut = document.getElementById("btn-craft-tut");
       const btnHelp = document.getElementById("btn-help");
       const btnMute = document.getElementById("btn-mute");
@@ -4253,6 +4452,7 @@
       if (btnCraftBench) bindActionBtn(btnCraftBench, () => { craftBenchQueued = true; });
       if (btnCraftShape) bindActionBtn(btnCraftShape, () => { craftShapeQueued = true; });
       if (btnCraftView) bindActionBtn(btnCraftView, () => { craftViewQueued = true; });
+      if (btnCraftSync) bindActionBtn(btnCraftSync, () => { craftSyncQueued = true; });
       if (btnCraftTut) bindActionBtn(btnCraftTut, () => { if (window.tendyTutorialVideo) window.tendyTutorialVideo.open(); });
       bindActionBtn(btnHelp, () => { helpQueued = true; });
       bindActionBtn(btnMute, () => { window.tendyAudio.toggleMute(); });
@@ -4700,14 +4900,17 @@
       document.addEventListener("pointerlockchange", () => {
         const locked = !!document.pointerLockElement;
         const vidOpen = !!(window.tendyTutorialVideo && window.tendyTutorialVideo.isOpen());
-        if (!locked && hadPointerLock && isPlayingState && !vidOpen) pointerLockLost = true;
+        const syncOpen = !!(window.tendyCraftSync && window.tendyCraftSync.isModalOpen());
+        if (!locked && hadPointerLock && isPlayingState && !vidOpen && !syncOpen) pointerLockLost = true;
         hadPointerLock = locked;
       });
       window.addEventListener("contextmenu", (e) => {
         if (e.target && e.target.tagName === "CANVAS") e.preventDefault();
       });
       window.addEventListener("keydown", (e) => {
-        if (e.code === "Tab" && isPlayingState && !(window.tendyTutorialVideo && window.tendyTutorialVideo.isOpen())) {
+        const vidOpen = !!(window.tendyTutorialVideo && window.tendyTutorialVideo.isOpen());
+        const syncOpen = !!(window.tendyCraftSync && window.tendyCraftSync.isModalOpen());
+        if (e.code === "Tab" && isPlayingState && !vidOpen && !syncOpen) {
           e.preventDefault();
         }
       }, true);
@@ -4738,6 +4941,7 @@
         takeCraftBench() { const v = craftBenchQueued; craftBenchQueued = false; return v; },
         takeCraftShape() { const v = craftShapeQueued; craftShapeQueued = false; return v; },
         takeCraftView() { const v = craftViewQueued; craftViewQueued = false; return v; },
+        takeCraftSync() { const v = craftSyncQueued; craftSyncQueued = false; return v; },
         setCityWeapons,
         setCraftMode,
         setCraftShapeLabel,
@@ -5285,7 +5489,112 @@
         }
       }
 
+      let craftSyncSeq = 0;
+      const craftSyncChunks = new Map();
+      const craftSyncSeen = new Set();
+      const craftSyncLastAt = new Map();
+
+      function toUtf8B64(str) {
+        const bytes = new TextEncoder().encode(str);
+        let bin = "";
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+        return btoa(bin);
+      }
+
+      function fromUtf8B64(b64) {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new TextDecoder().decode(bytes);
+      }
+
+      function maybeBridgeCraftChunk(msg, srcId, srcConn) {
+        if (!net.transport || net.transport.kind !== "mesh") return;
+        const srcPeer = net.peers.get(srcId);
+        const now = performance.now();
+        for (const [dstId, dstPeer] of net.peers) {
+          if (dstId === srcId || !dstPeer.directOpen || !dstPeer.conn || dstPeer.conn === srcConn) continue;
+          if (now - dstPeer.connectedAt < 2000) continue;
+          if (dstPeer.directMap && dstPeer.directMap.has(srcId)) continue;
+          if (srcPeer && srcPeer.directMap && srcPeer.directMap.has(dstId)) continue;
+          const ch = dstPeer.conn.ev && dstPeer.conn.ev.readyState === "open" ? dstPeer.conn.ev : dstPeer.conn.st;
+          try {
+            if (ch && ch.readyState === "open") {
+              ch.send(msg);
+              net.stats.relayed++;
+            }
+          } catch (_) {}
+        }
+      }
+
+      function handleCraftSyncChunk(raw, conn) {
+        const parts = raw.split("|");
+        if (parts.length !== 7 || parts[0] !== "TQCS1") return;
+        const fromId = Number(parts[1]) >>> 0;
+        const seq = Number(parts[2]) >>> 0;
+        const bridged = (Number(parts[3]) | 0) !== 0;
+        const idx = Number(parts[4]) | 0;
+        const total = Number(parts[5]) | 0;
+        const chunk = parts[6];
+        if (!fromId || fromId === myId || !seq || total < 1 || total > 16 || idx < 0 || idx >= total) return;
+        if (chunk.length > 12000) return;
+
+        const seenKey = fromId + ":" + seq;
+        if (craftSyncSeen.has(seenKey)) return;
+
+        const now = performance.now();
+        const lastAt = craftSyncLastAt.get(fromId) || 0;
+        if (now - lastAt < 1200 && !craftSyncChunks.has(seenKey)) return;
+
+        if (!bridged) {
+          if (net.transport && net.transport.isHost) {
+            try { net.transport.send(raw, true, conn); } catch (_) {}
+          } else if (net.transport && net.transport.kind === "mesh") {
+            const bMsg = "TQCS1|" + fromId + "|" + seq + "|1|" + idx + "|" + total + "|" + chunk;
+            maybeBridgeCraftChunk(bMsg, fromId, conn);
+          }
+        }
+
+        for (const [k, ent] of craftSyncChunks) {
+          if (now - ent.at > 15000) craftSyncChunks.delete(k);
+        }
+
+        let entry = craftSyncChunks.get(seenKey);
+        if (!entry || entry.total !== total) {
+          entry = { total, parts: new Array(total), got: 0, at: now };
+          craftSyncChunks.set(seenKey, entry);
+        }
+        entry.at = now;
+        if (entry.parts[idx] === undefined) {
+          entry.parts[idx] = chunk;
+          entry.got++;
+        }
+        if (entry.got < entry.total) return;
+
+        craftSyncChunks.delete(seenKey);
+        craftSyncLastAt.set(fromId, now);
+        craftSyncSeen.add(seenKey);
+        if (craftSyncSeen.size > 100) {
+          craftSyncSeen.delete(craftSyncSeen.values().next().value);
+        }
+
+        try {
+          const obj = JSON.parse(fromUtf8B64(entry.parts.join("")));
+          if (!obj || typeof obj.save !== "string" || !obj.save.startsWith("TQCW1|") || obj.save.length > 150000) {
+            return;
+          }
+          net.stats.recv++;
+          if (window.tendyCraftSync && typeof window.tendyCraftSync._onRemoteOffer === "function") {
+            window.tendyCraftSync._onRemoteOffer(obj);
+          }
+        } catch (_) {}
+      }
+
       function onWire(data, conn, reliable) {
+        if (typeof data === "string" && data.startsWith("TQCS1|")) {
+          handleCraftSyncChunk(data, conn);
+          return;
+        }
         if (!(data instanceof ArrayBuffer) || data.byteLength < 12 || data.byteLength > MAX_MSG) return drop();
         const v = new DataView(data);
         const ver = v.getUint8(0), type = v.getUint8(1);
@@ -7563,6 +7872,35 @@
           if (net.game) net.game.gameT = Date.now();
           updateTelemetry();
         },
+        peerCount() {
+          return net.peers.size;
+        },
+        sendCraftSync(meta) {
+          if (!net.transport) return 0;
+          craftSyncSeq = (craftSyncSeq + 1) >>> 0;
+          const body = {
+            charId: net.myChar,
+            senderName: (CHARS[net.myChar] && CHARS[net.myChar].name) || "CREW",
+            seq: craftSyncSeq,
+            blockCount: (meta && meta.blockCount) | 0,
+            pubRebuilt: !!(meta && meta.pubRebuilt),
+            houseDone: !!(meta && meta.houseDone),
+            save: String((meta && meta.save) || ""),
+          };
+          if (!body.save.startsWith("TQCW1|")) return 0;
+          const encoded = toUtf8B64(JSON.stringify(body));
+          const CHUNK_LEN = 10000;
+          const total = Math.max(1, Math.min(16, Math.ceil(encoded.length / CHUNK_LEN)));
+          let sentMax = 0;
+          for (let i = 0; i < total; i++) {
+            const part = encoded.slice(i * CHUNK_LEN, (i + 1) * CHUNK_LEN);
+            const msg = "TQCS1|" + myId + "|" + craftSyncSeq + "|0|" + i + "|" + total + "|" + part;
+            const c = net.transport.send(msg, true, null) || 0;
+            if (c > sentMax) sentMax = c;
+            net.stats.sent++;
+          }
+          return Math.max(sentMax, net.peers.size);
+        },
       };
     })();
   </script>
@@ -7681,10 +8019,256 @@
       };
     })();
   </script>
+  <script>
+    window.tendyCraftSync = (() => {
+      const banner = document.getElementById("craft-sync-banner");
+      const bTitle = document.getElementById("csb-title");
+      const bMeta = document.getElementById("csb-meta");
+      const bAccept = document.getElementById("csb-accept");
+      const bReview = document.getElementById("csb-review");
+      const bDismiss = document.getElementById("csb-dismiss");
+
+      const modal = document.getElementById("craft-sync-modal");
+      const closeX = document.getElementById("cs-close-x");
+      const closeBtn = document.getElementById("cs-close-btn");
+      const offerPanel = document.getElementById("cs-offer-panel");
+      const offerTitle = document.getElementById("cs-offer-title");
+      const offerMeta = document.getElementById("cs-offer-meta");
+      const offerAccept = document.getElementById("cs-offer-accept");
+      const offerDecline = document.getElementById("cs-offer-decline");
+      const localSummary = document.getElementById("cs-local-summary");
+      const shareBtn = document.getElementById("cs-share-btn");
+      const statusEl = document.getElementById("cs-status");
+      const copyBtn = document.getElementById("cs-copy-btn");
+      const importInput = document.getElementById("cs-import-input");
+      const importBtn = document.getElementById("cs-import-btn");
+
+      let openState = false;
+      let justClosed = false;
+      let pendingOffer = null;
+      let acceptedCommand = "";
+      let lastLocal = {
+        save: "",
+        blockCount: 0,
+        pubRebuilt: false,
+        houseDone: false,
+        inCraft: false,
+      };
+
+      function offerSummary(o) {
+        const pub = o.pubRebuilt ? "Pub 217 REBUILT" : "Pub 217 in progress";
+        const house = o.houseDone ? "Stan's House COMPLETE" : "Stan's House open";
+        return `${o.blockCount || 0} blocks placed -- ${pub} | ${house}`;
+      }
+
+      function renderBanner() {
+        if (!banner) return;
+        if (!pendingOffer || openState) {
+          banner.classList.remove("visible");
+          return;
+        }
+        const sender = String(pendingOffer.senderName || "CREW").toUpperCase();
+        if (bTitle) bTitle.textContent = `${sender} SHARED THEIR CRAFT WORLD!`;
+        if (bMeta) bMeta.textContent = `${offerSummary(pendingOffer)} -- Press [Y] or Sync Now!`;
+        const curState = (window.tendyTelemetry && window.tendyTelemetry.state) || "";
+        if (bAccept) bAccept.textContent = curState === "CraftPlay" ? "SYNC NOW" : "SYNC & JOIN";
+        banner.classList.add("visible");
+      }
+
+      function renderModal() {
+        const peers = window.tendyNet && window.tendyNet.peerCount ? window.tendyNet.peerCount() : 0;
+        if (offerPanel) {
+          if (pendingOffer) {
+            const sender = String(pendingOffer.senderName || "CREW").toUpperCase();
+            if (offerTitle) offerTitle.textContent = `INCOMING SYNC INVITE FROM ${sender}`;
+            if (offerMeta) offerMeta.textContent = offerSummary(pendingOffer);
+            if (offerAccept) {
+              offerAccept.textContent = lastLocal.inCraft
+                ? "ACCEPT & SYNC THIS WORLD"
+                : "ACCEPT, SYNC & WARP TO CRAFT WORLD";
+            }
+            offerPanel.classList.add("visible");
+          } else {
+            offerPanel.classList.remove("visible");
+          }
+        }
+        if (localSummary) {
+          const pub = lastLocal.pubRebuilt ? "Pub 217 Rebuilt" : "Pub 217 In Progress";
+          const house = lastLocal.houseDone ? "Stan's House Complete" : "Stan's House Open";
+          localSummary.textContent =
+            `Your save: ${lastLocal.blockCount} blocks | ${pub} | ${house} | Online Squadmates: ${peers}`;
+        }
+      }
+
+      function closeModal() {
+        if (!openState && (!modal || !modal.classList.contains("open"))) return;
+        openState = false;
+        justClosed = true;
+        if (modal) modal.classList.remove("open");
+        renderBanner();
+      }
+
+      function openModal(saveStr, blockCount, pubRebuilt, houseDone, inCraft) {
+        lastLocal = {
+          save: String(saveStr || ""),
+          blockCount: blockCount | 0,
+          pubRebuilt: !!pubRebuilt,
+          houseDone: !!houseDone,
+          inCraft: !!inCraft,
+        };
+        openState = true;
+        justClosed = false;
+        try {
+          if (document.pointerLockElement && document.exitPointerLock) {
+            document.exitPointerLock();
+          }
+        } catch (_) {}
+        if (statusEl) statusEl.textContent = "";
+        renderModal();
+        renderBanner();
+        if (modal) modal.classList.add("open");
+      }
+
+      function acceptOffer(joinIfOutside) {
+        if (!pendingOffer) return;
+        const sender = String(pendingOffer.senderName || "CREW").toUpperCase().replace(/[^A-Z0-9_ ]/g, "");
+        const curState = (window.tendyTelemetry && window.tendyTelemetry.state) || "";
+        const prefix = joinIfOutside && curState !== "CraftPlay" ? "JOIN" : "SAVE";
+        acceptedCommand = `${prefix}|${sender || "CREW"}|${pendingOffer.save}`;
+        pendingOffer = null;
+        if (banner) banner.classList.remove("visible");
+        closeModal();
+      }
+
+      function broadcastSync(saveStr, blockCount, pubRebuilt, houseDone) {
+        const s = String(saveStr || "");
+        if (!s.startsWith("TQCW1|") || !window.tendyNet || !window.tendyNet.sendCraftSync) return 0;
+        return window.tendyNet.sendCraftSync({
+          save: s,
+          blockCount: blockCount | 0,
+          pubRebuilt: !!pubRebuilt,
+          houseDone: !!houseDone,
+        }) | 0;
+      }
+
+      if (bAccept) bAccept.addEventListener("click", () => acceptOffer(true));
+      if (bReview) bReview.addEventListener("click", () => {
+        const saved = (window.tendySave && window.tendySave.loadCraftWorld && window.tendySave.loadCraftWorld()) || "";
+        let bCount = 0;
+        let pubR = false;
+        let houseD = false;
+        if (saved.startsWith("TQCW1|")) {
+          const sp = saved.split("|");
+          pubR = sp[1] === "1";
+          houseD = sp[2] === "1";
+          bCount = sp[4] ? sp[4].split(";").filter(Boolean).length : 0;
+        }
+        openModal(saved, bCount, pubR, houseD, (window.tendyTelemetry && window.tendyTelemetry.state) === "CraftPlay");
+      });
+      if (bDismiss) bDismiss.addEventListener("click", () => {
+        pendingOffer = null;
+        renderBanner();
+      });
+
+      if (offerAccept) offerAccept.addEventListener("click", () => acceptOffer(true));
+      if (offerDecline) offerDecline.addEventListener("click", () => {
+        pendingOffer = null;
+        renderModal();
+      });
+
+      if (shareBtn) {
+        shareBtn.addEventListener("click", () => {
+          const sent = broadcastSync(
+            lastLocal.save,
+            lastLocal.blockCount,
+            lastLocal.pubRebuilt,
+            lastLocal.houseDone
+          );
+          if (statusEl) {
+            if (sent > 0) {
+              statusEl.style.color = "#4ae888";
+              statusEl.textContent = `Sync prompt sent to ${sent} online player(s)!`;
+            } else {
+              statusEl.style.color = "#ffd648";
+              statusEl.textContent = "No online squadmates connected right now -- use Copy Save Code below!";
+            }
+          }
+        });
+      }
+
+      if (copyBtn) {
+        copyBtn.addEventListener("click", () => {
+          if (!lastLocal.save) return;
+          const finish = (ok) => {
+            if (statusEl) {
+              statusEl.style.color = ok ? "#4ae888" : "#ffd648";
+              statusEl.textContent = ok
+                ? "Craft World save code copied to clipboard!"
+                : "Select & copy your save from the input box if needed.";
+            }
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(lastLocal.save).then(() => finish(true), () => finish(false));
+          } else {
+            finish(false);
+          }
+        });
+      }
+
+      if (importBtn && importInput) {
+        importBtn.addEventListener("click", () => {
+          const code = String(importInput.value || "").trim();
+          if (!code.startsWith("TQCW1|") || code.length < 14) {
+            if (statusEl) {
+              statusEl.style.color = "#ff6b6b";
+              statusEl.textContent = "Invalid save code -- must start with TQCW1|";
+            }
+            return;
+          }
+          const curState = (window.tendyTelemetry && window.tendyTelemetry.state) || "";
+          const prefix = curState === "CraftPlay" ? "SAVE" : "JOIN";
+          acceptedCommand = `${prefix}|CODE|${code}`;
+          importInput.value = "";
+          closeModal();
+        });
+      }
+
+      if (closeX) closeX.addEventListener("click", closeModal);
+      if (closeBtn) closeBtn.addEventListener("click", closeModal);
+      if (modal) {
+        modal.addEventListener("click", (e) => {
+          if (e.target === modal) closeModal();
+        });
+      }
+      window.addEventListener("keydown", (e) => {
+        if (openState && e.code === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          closeModal();
+        }
+      }, true);
+
+      return {
+        openModal,
+        closeModal,
+        isModalOpen() { return openState; },
+        takeJustClosed() { const v = justClosed; justClosed = false; return v; },
+        hasPendingOffer() { return !!pendingOffer; },
+        takeAcceptedSync() { const v = acceptedCommand; acceptedCommand = ""; return v; },
+        broadcastSync,
+        _onRemoteOffer(offer) {
+          pendingOffer = offer;
+          try { if (window.tendyAudio && window.tendyAudio.playSfx) window.tendyAudio.playSfx("powerup"); } catch (_) {}
+          if (openState) renderModal();
+          renderBanner();
+        },
+      };
+    })();
+  </script>
 
 <script type="module">
-import init, * as bindings from './tendy-quest-ebd8188a39004e24.js';
-const wasm = await init({ module_or_path: './tendy-quest-ebd8188a39004e24_bg.wasm' });
+import init, * as bindings from './tendy-quest-18f05ecfa32605.js';
+const wasm = await init({ module_or_path: './tendy-quest-18f05ecfa32605_bg.wasm' });
 
 
 window.wasmBindings = bindings;

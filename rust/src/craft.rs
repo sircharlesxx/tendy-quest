@@ -15,11 +15,15 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 
 use crate::audio::{
-    is_derek_tutorial_open, is_voice_speaking, open_derek_tutorial_video, play_cutscene_music,
-    play_sfx, play_start_menu_music, play_viking_chant_music, set_touch_craft_mode,
-    set_touch_craft_shape, set_touch_playing, speak_voice, stop_voice, take_derek_tutorial_closed,
-    take_touch_craft_bench, take_touch_craft_shape, take_touch_craft_view,
+    broadcast_craft_world_sync, close_craft_sync_modal, has_craft_sync_offer,
+    is_craft_sync_modal_open, is_derek_tutorial_open, is_voice_speaking, load_craft_world,
+    net_event, open_craft_sync_modal, open_derek_tutorial_video, play_cutscene_music, play_sfx,
+    play_start_menu_music, play_viking_chant_music, save_craft_world, set_touch_craft_mode,
+    set_touch_craft_shape, set_touch_playing, speak_voice, stop_voice, take_craft_sync_accepted,
+    take_craft_sync_closed, take_derek_tutorial_closed, take_touch_craft_bench,
+    take_touch_craft_shape, take_touch_craft_sync, take_touch_craft_view,
 };
+use crate::net::{pack_craft_voxel, CRAFT_VOXEL_REMOVE, EVENT_CRAFT_VOXEL};
 use crate::city::{
     is_in_pub217, CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE,
 };
@@ -217,6 +221,8 @@ pub struct CraftWorldData {
     pub target_out_of_stock: bool,
     pub feedback_msg: String,
     pub feedback_timer: f32,
+    pub needs_world_rebuild: bool,
+    pub online_sync_hint_shown: bool,
 }
 
 impl Default for CraftWorldData {
@@ -240,6 +246,8 @@ impl Default for CraftWorldData {
             target_out_of_stock: false,
             feedback_msg: String::new(),
             feedback_timer: 0.0,
+            needs_world_rebuild: false,
+            online_sync_hint_shown: false,
         }
     }
 }
@@ -287,12 +295,26 @@ impl Plugin for CraftPlugin {
                     .run_if(in_state(GameState::BlackHoleCutscene))
                     .run_if(sim_running),
             )
-            // Level 5: Empty Black Hole Cedar Rapids Voxel Craft World
+            // Level 5: Empty Black Hole Cedar Rapids Voxel Craft World & Cross-State P2P World Sync
+            .add_systems(
+                Update,
+                poll_craft_sync_bridge
+                    .run_if(
+                        in_state(GameState::Playing)
+                            .or(in_state(GameState::BossFight))
+                            .or(in_state(GameState::CityPlay))
+                            .or(in_state(GameState::CasinoPlay))
+                            .or(in_state(GameState::ClubPlay))
+                            .or(in_state(GameState::CraftPlay)),
+                    )
+                    .run_if(gameplay_running),
+            )
             .add_systems(OnEnter(GameState::CraftPlay), enter_craft_play)
             .add_systems(OnExit(GameState::CraftPlay), exit_craft_play)
             .add_systems(
                 Update,
                 (
+                    apply_craft_net_sync,
                     update_craft_voxels,
                     update_craft_supply_drops,
                     check_craft_quests,
@@ -301,6 +323,7 @@ impl Plugin for CraftPlugin {
                     update_craft_hud,
                 )
                     .chain()
+                    .after(poll_craft_sync_bridge)
                     .run_if(in_state(GameState::CraftPlay))
                     .run_if(gameplay_running),
             );
@@ -2504,6 +2527,7 @@ enum CraftQuickAction {
     OpenBench,
     CycleShape,
     ToggleView,
+    OpenSync,
     OpenTutorial,
 }
 
@@ -2515,6 +2539,9 @@ struct CraftShapeBtnText;
 
 #[derive(Component)]
 struct CraftViewBtnText;
+
+#[derive(Component)]
+struct CraftSyncBtnText;
 
 #[derive(Component, Clone, Copy)]
 struct CraftHotbarBtn(usize);
@@ -2536,6 +2563,7 @@ enum CraftModalAction {
     SelectShape(BuildShape),
     DerekHyperfocusPub217,
     DerekHyperfocusHouse,
+    OpenSyncModal,
     WatchTutorial,
     DrinkBeer,
     CasinoFromPub,
@@ -2562,6 +2590,111 @@ enum CraftPromptTarget {
     Npc(CraftNpcRole),
     BeerTower,
     Portal,
+}
+
+fn block_kind_from_u8(v: u8) -> Option<BlockKind> {
+    match v {
+        0 => Some(BlockKind::Brick),
+        1 => Some(BlockKind::Wood),
+        2 => Some(BlockKind::Stone),
+        3 => Some(BlockKind::Glass),
+        4 => Some(BlockKind::TendyGold),
+        5 => Some(BlockKind::Neon217),
+        6 => Some(BlockKind::Leaves),
+        7 => Some(BlockKind::TendyOre),
+        8 => Some(BlockKind::SupplyCube),
+        _ => None,
+    }
+}
+
+fn encode_craft_world_save(data: &CraftWorldData, pub_rebuilt: bool) -> String {
+    let mut entries: Vec<((i32, i32, i32), BlockKind)> =
+        data.blocks.iter().map(|(&c, &k)| (c, k)).collect();
+    entries.sort_by_key(|(c, _)| *c);
+    let mut out = format!(
+        "TQCW1|{}|{}|{},{},{},{},{},{}|",
+        u8::from(pub_rebuilt),
+        u8::from(data.house_completed),
+        data.inventory[0].min(999),
+        data.inventory[1].min(999),
+        data.inventory[2].min(999),
+        data.inventory[3].min(999),
+        data.inventory[4].min(999),
+        data.inventory[5].min(999),
+    );
+    for (idx, ((x, y, z), k)) in entries.into_iter().take(6000).enumerate() {
+        if idx > 0 {
+            out.push(';');
+        }
+        out.push_str(&format!("{},{},{},{}", x, y, z, k as u8));
+    }
+    out
+}
+
+fn apply_craft_world_save(
+    raw: &str,
+    data: &mut CraftWorldData,
+    stats: &mut PlayerStats,
+    replace_inventory: bool,
+) -> bool {
+    let parts: Vec<&str> = raw.trim().splitn(5, '|').collect();
+    if parts.len() != 5 || parts[0] != "TQCW1" {
+        return false;
+    }
+    let pub_rebuilt = parts[1] == "1";
+    let house_done = parts[2] == "1";
+
+    let inv_nums: Vec<u32> = parts[3]
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u32>().ok())
+        .collect();
+    if inv_nums.len() != 6 {
+        return false;
+    }
+
+    let mut next_blocks: HashMap<(i32, i32, i32), BlockKind> = HashMap::new();
+    for item in parts[4].split(';').filter(|s| !s.is_empty()).take(6000) {
+        let mut nums = item.split(',');
+        let (Some(xs), Some(ys), Some(zs), Some(ks)) =
+            (nums.next(), nums.next(), nums.next(), nums.next())
+        else {
+            continue;
+        };
+        let (Ok(x), Ok(y), Ok(z), Ok(kv)) = (
+            xs.parse::<i32>(),
+            ys.parse::<i32>(),
+            zs.parse::<i32>(),
+            ks.parse::<u8>(),
+        ) else {
+            continue;
+        };
+        if (-24..=24).contains(&x) && (0..=10).contains(&y) && (-24..=24).contains(&z) {
+            if let Some(kind) = block_kind_from_u8(kv) {
+                next_blocks.insert((x, y, z), kind);
+            }
+        }
+    }
+
+    data.blocks = next_blocks;
+    data.initialized = true;
+    data.house_completed = house_done;
+    stats.craft_pub217_rebuilt = pub_rebuilt;
+    if pub_rebuilt || !data.blocks.is_empty() {
+        stats.craft_world_unlocked = true;
+    }
+    for (i, &val) in inv_nums.iter().enumerate() {
+        if replace_inventory {
+            data.inventory[i] = val.min(999);
+        } else {
+            data.inventory[i] = data.inventory[i].max(val).min(999);
+        }
+    }
+    recount_quest_blocks(data);
+    true
+}
+
+fn persist_craft_world(data: &CraftWorldData, pub_rebuilt: bool) {
+    save_craft_world(&encode_craft_world_save(data, pub_rebuilt));
 }
 
 fn grid_to_world(coord: (i32, i32, i32)) -> Vec3 {
@@ -2874,7 +3007,17 @@ fn enter_craft_play(
         }),
     };
 
-    populate_empty_city_world(&mut data);
+    if !data.initialized {
+        let saved = load_craft_world();
+        if !saved.is_empty() && apply_craft_world_save(&saved, &mut data, &mut stats, true) {
+            recount_quest_blocks(&mut data);
+        } else {
+            populate_empty_city_world(&mut data);
+            persist_craft_world(&data, stats.craft_pub217_rebuilt);
+        }
+    } else {
+        recount_quest_blocks(&mut data);
+    }
 
     // Flat empty Cedar Rapids ground + faint ghostly road lines showing what used to be here
     let ground_mat = materials.add(StandardMaterial {
@@ -3326,6 +3469,27 @@ fn spawn_craft_hud(commands: &mut Commands) {
                         });
                     tools
                         .spawn((
+                            CraftQuickBtn(CraftQuickAction::OpenSync),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
+                                border: UiRect::all(Val::Px(1.5)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.16, 0.14, 0.44, 0.94)),
+                            BorderColor(Color::srgb(0.45, 0.90, 1.0)),
+                            BorderRadius::all(Val::Px(7.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                CraftSyncBtnText,
+                                Text::new("[Y] SYNC WORLD"),
+                                TextFont { font_size: 11.5, ..default() },
+                                TextColor(Color::srgb(0.68, 0.96, 1.0)),
+                            ));
+                        });
+                    tools
+                        .spawn((
                             CraftQuickBtn(CraftQuickAction::OpenTutorial),
                             Button,
                             Node {
@@ -3409,6 +3573,7 @@ fn exit_craft_play(
     mut stats: ResMut<PlayerStats>,
     q: Query<Entity, With<CraftLevelEntity>>,
 ) {
+    close_craft_sync_modal();
     crate::audio::close_derek_tutorial_video();
     set_touch_craft_mode(false);
     stats.in_craft_level = false;
@@ -3559,6 +3724,212 @@ struct VoxelRayQueries<'w, 's> {
     window_q: Query<'w, 's, &'static mut Window, With<PrimaryWindow>>,
 }
 
+#[allow(clippy::too_many_arguments)]
+fn poll_craft_sync_bridge(
+    state: Res<State<GameState>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut stats: ResMut<PlayerStats>,
+    mut data: ResMut<CraftWorldData>,
+    mut next_state: SceneTransition,
+    mut window_q: Query<&mut Window, With<PrimaryWindow>>,
+) {
+    if take_craft_sync_closed() {
+        stats.casino_esc_grace = true;
+    }
+
+    let in_craft = *state.get() == GameState::CraftPlay;
+    let trigger_sync = (keys.just_pressed(KeyCode::KeyY) || (in_craft && take_touch_craft_sync()))
+        && !stats.craft_modal_open
+        && !stats.casino_open
+        && !stats.arcade_open
+        && !stats.bartender_open
+        && !stats.char_select_open
+        && !stats.club_modal_open
+        && !is_derek_tutorial_open()
+        && !is_craft_sync_modal_open()
+        && (in_craft || has_craft_sync_offer());
+
+    if trigger_sync {
+        if !data.initialized {
+            let saved = load_craft_world();
+            if saved.is_empty() || !apply_craft_world_save(&saved, &mut data, &mut stats, true) {
+                populate_empty_city_world(&mut data);
+            }
+        }
+        if let Ok(mut win) = window_q.get_single_mut() {
+            win.cursor_options.grab_mode = CursorGrabMode::None;
+            win.cursor_options.visible = true;
+        }
+        let encoded = encode_craft_world_save(&data, stats.craft_pub217_rebuilt);
+        open_craft_sync_modal(
+            &encoded,
+            data.blocks.len() as u32,
+            stats.craft_pub217_rebuilt,
+            data.house_completed,
+            in_craft,
+        );
+    }
+
+    let accepted = take_craft_sync_accepted();
+    if accepted.is_empty() {
+        return;
+    }
+    let parts: Vec<&str> = accepted.splitn(3, '|').collect();
+    if parts.len() != 3 {
+        return;
+    }
+    let join_craft = parts[0] == "JOIN";
+    let sender = parts[1];
+    let raw_save = parts[2];
+    if !apply_craft_world_save(raw_save, &mut data, &mut stats, false) {
+        play_sfx("hack_deny");
+        return;
+    }
+
+    let block_n = data.blocks.len();
+    persist_craft_world(&data, stats.craft_pub217_rebuilt);
+    data.needs_world_rebuild = true;
+    data.online_sync_hint_shown = true;
+    let msg = format!("SYNCED CRAFT WORLD FROM {} ({} BLOCKS)!", sender, block_n);
+    push_craft_toast(&mut data, msg.clone());
+    if !in_craft && !join_craft {
+        stats.hint_text = msg;
+        stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    }
+    play_sfx("portal_warp");
+    play_sfx("powerup");
+
+    if join_craft && !in_craft {
+        stats.casino_open = false;
+        stats.arcade_open = false;
+        stats.bartender_open = false;
+        stats.phone_open = false;
+        stats.club_modal_open = false;
+        stats.driving_car = None;
+        stats.riding_scooter = None;
+        stats.riding_wheel = false;
+        next_state.set(GameState::CraftPlay);
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn apply_craft_net_sync(
+    mut commands: Commands,
+    mut data: ResMut<CraftWorldData>,
+    stats: Res<PlayerStats>,
+    net: Res<crate::net::NetState>,
+    mut coop: ResMut<crate::net::NetCoopEvents>,
+    assets: Option<Res<CraftBlockAssets>>,
+    block_q: Query<
+        (Entity, &VoxelBlock),
+        (
+            Without<CraftPubDecor>,
+            Without<CraftNpc>,
+            Without<CraftHouseOutline>,
+        ),
+    >,
+    decor_q: Query<
+        Entity,
+        (
+            With<CraftPubDecor>,
+            Without<VoxelBlock>,
+            Without<CraftNpc>,
+            Without<CraftHouseOutline>,
+        ),
+    >,
+    mut npc_q: Query<
+        (&mut Transform, &CraftNpc),
+        (
+            Without<VoxelBlock>,
+            Without<CraftPubDecor>,
+            Without<CraftHouseOutline>,
+        ),
+    >,
+    mut house_q: Query<
+        &mut Visibility,
+        (
+            With<CraftHouseOutline>,
+            Without<VoxelBlock>,
+            Without<CraftPubDecor>,
+            Without<CraftNpc>,
+        ),
+    >,
+) {
+    let Some(assets) = assets else {
+        return;
+    };
+
+    if !data.online_sync_hint_shown
+        && data.feedback_timer <= 0.0
+        && net.peer_count() > 0
+        && (data.pub_blocks_placed > 0 || stats.craft_pub217_rebuilt)
+    {
+        data.online_sync_hint_shown = true;
+        push_craft_toast(&mut data, "SQUAD ONLINE! Press [Y] to Share & Sync Craft Save!");
+    }
+
+    if data.needs_world_rebuild {
+        data.needs_world_rebuild = false;
+        for (e, _) in &block_q {
+            commands.entity(e).despawn_recursive();
+        }
+        for e in &decor_q {
+            commands.entity(e).despawn_recursive();
+        }
+        let blocks_copy: Vec<((i32, i32, i32), BlockKind)> =
+            data.blocks.iter().map(|(&c, &k)| (c, k)).collect();
+        for (coord, kind) in blocks_copy {
+            spawn_voxel_entity(&mut commands, &assets, coord, kind);
+        }
+        data.pub217_decor_spawned = false;
+        if !stats.craft_pub217_rebuilt {
+            for (mut tf, npc) in &mut npc_q {
+                let (pos, yaw) = npc_position(npc.role, false);
+                tf.translation = pos;
+                tf.rotation = Quat::from_rotation_y(yaw);
+            }
+            for mut v in &mut house_q {
+                *v = Visibility::Hidden;
+            }
+        }
+        coop.craft_voxels.clear();
+        recount_quest_blocks(&mut data);
+        return;
+    }
+
+    if coop.craft_voxels.is_empty() {
+        return;
+    }
+    let ops = std::mem::take(&mut coop.craft_voxels);
+    let mut changed = false;
+    for (gx, gy, gz, op_kind) in ops {
+        if !(-24..=24).contains(&gx) || !(0..=10).contains(&gy) || !(-24..=24).contains(&gz) {
+            continue;
+        }
+        let coord = (gx, gy, gz);
+        for (e, vb) in &block_q {
+            if vb.coord == coord {
+                commands.entity(e).despawn_recursive();
+            }
+        }
+        if op_kind == CRAFT_VOXEL_REMOVE {
+            if data.blocks.remove(&coord).is_some() {
+                play_sfx("block_break");
+                changed = true;
+            }
+        } else if let Some(kind) = block_kind_from_u8(op_kind) {
+            data.blocks.insert(coord, kind);
+            spawn_voxel_entity(&mut commands, &assets, coord, kind);
+            play_sfx("block_place");
+            changed = true;
+        }
+    }
+    if changed {
+        recount_quest_blocks(&mut data);
+        persist_craft_world(&data, stats.craft_pub217_rebuilt);
+    }
+}
+
 fn push_craft_toast(data: &mut CraftWorldData, msg: impl Into<String>) {
     data.feedback_msg = msg.into();
     data.feedback_timer = 2.4;
@@ -3639,7 +4010,7 @@ fn update_craft_voxels(
         stats.casino_esc_grace = true;
     }
 
-    if stats.craft_modal_open || is_derek_tutorial_open() {
+    if stats.craft_modal_open || is_derek_tutorial_open() || is_craft_sync_modal_open() {
         for (_, mut vis) in &mut rq.mine_cursor_q {
             *vis = Visibility::Hidden;
         }
@@ -3655,6 +4026,7 @@ fn update_craft_voxels(
     let mut hud_open_bench = false;
     let mut hud_cycle_shape = false;
     let mut hud_toggle_view = false;
+    let mut hud_open_sync = false;
     let mut hud_open_tutorial = false;
     for (inter, hotbar, quick, _prompt_pill) in &rq.ui_inter_q {
         if matches!(*inter, Interaction::Pressed | Interaction::Hovered) {
@@ -3669,10 +4041,27 @@ fn update_craft_voxels(
                     CraftQuickAction::OpenBench => hud_open_bench = true,
                     CraftQuickAction::CycleShape => hud_cycle_shape = true,
                     CraftQuickAction::ToggleView => hud_toggle_view = true,
+                    CraftQuickAction::OpenSync => hud_open_sync = true,
                     CraftQuickAction::OpenTutorial => hud_open_tutorial = true,
                 }
             }
         }
+    }
+
+    if hud_open_sync {
+        if let Ok(mut win) = rq.window_q.get_single_mut() {
+            win.cursor_options.grab_mode = CursorGrabMode::None;
+            win.cursor_options.visible = true;
+        }
+        let encoded = encode_craft_world_save(&data, stats.craft_pub217_rebuilt);
+        open_craft_sync_modal(
+            &encoded,
+            data.blocks.len() as u32,
+            stats.craft_pub217_rebuilt,
+            data.house_completed,
+            true,
+        );
+        return;
     }
 
     if keys.just_pressed(KeyCode::KeyT) || hud_open_tutorial {
@@ -3983,6 +4372,8 @@ fn update_craft_voxels(
                 play_sfx("block_break");
                 stats.score += 25;
                 recount_quest_blocks(&mut data);
+                net_event(EVENT_CRAFT_VOXEL, pack_craft_voxel(c.0, c.1, c.2, CRAFT_VOXEL_REMOVE));
+                persist_craft_world(&data, stats.craft_pub217_rebuilt);
             }
         }
     } else if want_place && *place_cd <= 0.0 {
@@ -4025,6 +4416,7 @@ fn update_craft_voxels(
                     data.inventory[use_slot] -= 1;
                     data.blocks.insert(c, use_kind);
                     spawn_voxel_entity(&mut commands, &assets, c, use_kind);
+                    net_event(EVENT_CRAFT_VOXEL, pack_craft_voxel(c.0, c.1, c.2, use_kind as u8));
                     placed_n += 1;
                 }
                 if placed_n > 0 {
@@ -4036,6 +4428,7 @@ fn update_craft_voxels(
                     play_sfx("block_place");
                     stats.score += 35 * placed_n;
                     recount_quest_blocks(&mut data);
+                    persist_craft_world(&data, stats.craft_pub217_rebuilt);
                     if placed_n > 1 {
                         let msg = format!("PLACED {} ({} BLOCKS)!", data.build_shape.label(), placed_n);
                         push_craft_toast(&mut data, msg);
@@ -4069,6 +4462,11 @@ fn update_craft_supply_drops(
     if !data.blocks.contains_key(&c) {
         data.blocks.insert(c, BlockKind::SupplyCube);
         spawn_voxel_entity(&mut commands, &assets, c, BlockKind::SupplyCube);
+        net_event(
+            EVENT_CRAFT_VOXEL,
+            pack_craft_voxel(c.0, c.1, c.2, BlockKind::SupplyCube as u8),
+        );
+        persist_craft_world(&data, stats.craft_pub217_rebuilt);
         play_sfx("portal_warp");
         stats.hint_text = "BLACK HOLE RIFT DROPPED A TENDY SUPPLY CUBE IN THE PLAZA!".to_string();
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
@@ -4112,6 +4510,7 @@ fn check_craft_quests(
             "PUB 217 REBUILT! (+2500 | +25 TW) Beer & Casino Open! Next: Build Stan's House!"
                 .to_string();
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        persist_craft_world(&data, stats.craft_pub217_rebuilt);
     }
 
     if stats.craft_pub217_rebuilt && !data.house_completed && data.house_blocks_placed >= HOUSE_TARGET_BLOCKS {
@@ -4127,6 +4526,7 @@ fn check_craft_quests(
             "STAN & THE BOYS' NEW HOUSE COMPLETE! (+5000 | +50 TW) Keep building or use the South Portal!"
                 .to_string();
         stats.hint_bump = stats.hint_bump.wrapping_add(1);
+        persist_craft_world(&data, stats.craft_pub217_rebuilt);
     }
 }
 
@@ -4152,7 +4552,7 @@ fn update_craft_npcs_and_portals(
         tf.rotate_y(1.2 * dt);
     }
 
-    if stats.craft_modal_open || is_derek_tutorial_open() {
+    if stats.craft_modal_open || is_derek_tutorial_open() || is_craft_sync_modal_open() {
         prompt.target = None;
         prompt.tapped = false;
         return;
@@ -4512,11 +4912,33 @@ fn spawn_derek_craft_modal(commands: &mut Commands, stats: &PlayerStats, data: &
 
                 card.spawn(Node {
                     flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
                     justify_content: JustifyContent::SpaceBetween,
                     column_gap: Val::Px(8.0),
+                    row_gap: Val::Px(6.0),
                     ..default()
                 })
                 .with_children(|foot| {
+                    foot.spawn((
+                        CraftModalAction::OpenSyncModal,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.14, 0.16, 0.44)),
+                        BorderColor(Color::srgb(0.45, 0.90, 1.0)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("SYNC / SHARE SAVE [Y]"),
+                            TextFont { font_size: 12.0, ..default() },
+                            TextColor(Color::srgb(0.68, 0.96, 1.0)),
+                        ));
+                    });
+
                     foot.spawn((
                         CraftModalAction::WatchTutorial,
                         Button,
@@ -4684,6 +5106,8 @@ fn handle_craft_modal_input(
         chosen = Some(CraftModalAction::Close);
     } else if !just_opened && keys.just_pressed(KeyCode::KeyT) {
         chosen = Some(CraftModalAction::WatchTutorial);
+    } else if !just_opened && keys.just_pressed(KeyCode::KeyY) {
+        chosen = Some(CraftModalAction::OpenSyncModal);
     } else {
         for (inter, act) in &btn_q {
             if *inter == Interaction::Pressed {
@@ -4785,6 +5209,20 @@ fn handle_craft_modal_input(
                 }
                 recount_quest_blocks(&mut data);
             }
+            if !stats.craft_pub217_rebuilt && data.pub_blocks_placed >= PUB217_TARGET_BLOCKS {
+                stats.craft_pub217_rebuilt = true;
+            }
+            let raw_save = encode_craft_world_save(&data, stats.craft_pub217_rebuilt);
+            save_craft_world(&raw_save);
+            let sent = broadcast_craft_world_sync(
+                &raw_save,
+                data.blocks.len() as u32,
+                stats.craft_pub217_rebuilt,
+                data.house_completed,
+            );
+            if sent > 0 {
+                push_craft_toast(&mut data, format!("AUTO-BUILT & SHARED SYNC INVITE ({})!", sent));
+            }
             for e in &modal_q {
                 commands.entity(e).despawn_recursive();
             }
@@ -4820,12 +5258,44 @@ fn handle_craft_modal_input(
                 }
                 recount_quest_blocks(&mut data);
             }
+            if stats.craft_pub217_rebuilt && !data.house_completed && data.house_blocks_placed >= HOUSE_TARGET_BLOCKS {
+                data.house_completed = true;
+            }
+            let raw_save = encode_craft_world_save(&data, stats.craft_pub217_rebuilt);
+            save_craft_world(&raw_save);
+            let sent = broadcast_craft_world_sync(
+                &raw_save,
+                data.blocks.len() as u32,
+                stats.craft_pub217_rebuilt,
+                data.house_completed,
+            );
+            if sent > 0 {
+                push_craft_toast(&mut data, format!("HOUSE BUILT & SHARED SYNC INVITE ({})!", sent));
+            }
             for e in &modal_q {
                 commands.entity(e).despawn_recursive();
             }
             stats.craft_modal_open = false;
             stats.casino_esc_grace = true;
             set_touch_playing(true);
+            return;
+        }
+        CraftModalAction::OpenSyncModal => {
+            for e in &modal_q {
+                commands.entity(e).despawn_recursive();
+            }
+            stats.craft_modal_open = false;
+            stats.casino_esc_grace = true;
+            set_touch_playing(true);
+            stop_voice();
+            let raw_save = encode_craft_world_save(&data, stats.craft_pub217_rebuilt);
+            open_craft_sync_modal(
+                &raw_save,
+                data.blocks.len() as u32,
+                stats.craft_pub217_rebuilt,
+                data.house_completed,
+                true,
+            );
             return;
         }
         CraftModalAction::WatchTutorial => {
@@ -4883,6 +5353,7 @@ fn handle_craft_modal_input(
             | CraftModalAction::CraftNeon
             | CraftModalAction::FreeScrapKit
     ) {
+        persist_craft_world(&data, stats.craft_pub217_rebuilt);
         for e in &modal_q {
             commands.entity(e).despawn_recursive();
         }
@@ -4932,6 +5403,7 @@ struct CraftHudQueries<'w, 's> {
             Without<CraftHotbarText>,
             Without<CraftShapeBtnText>,
             Without<CraftViewBtnText>,
+            Without<CraftSyncBtnText>,
         ),
     >,
     feedback_pill_q: Query<
@@ -4957,6 +5429,7 @@ struct CraftHudQueries<'w, 's> {
             Without<CraftHotbarText>,
             Without<CraftShapeBtnText>,
             Without<CraftViewBtnText>,
+            Without<CraftSyncBtnText>,
         ),
     >,
     pill_q: Query<
@@ -4982,6 +5455,7 @@ struct CraftHudQueries<'w, 's> {
             Without<CraftHotbarText>,
             Without<CraftShapeBtnText>,
             Without<CraftViewBtnText>,
+            Without<CraftSyncBtnText>,
         ),
     >,
     slot_q: Query<
@@ -5001,6 +5475,7 @@ struct CraftHudQueries<'w, 's> {
             Without<CraftPromptText>,
             Without<CraftShapeBtnText>,
             Without<CraftViewBtnText>,
+            Without<CraftSyncBtnText>,
         ),
     >,
     shape_txt_q: Query<
@@ -5015,6 +5490,7 @@ struct CraftHudQueries<'w, 's> {
             Without<CraftPromptText>,
             Without<CraftHotbarText>,
             Without<CraftViewBtnText>,
+            Without<CraftSyncBtnText>,
         ),
     >,
     view_txt_q: Query<
@@ -5029,6 +5505,22 @@ struct CraftHudQueries<'w, 's> {
             Without<CraftPromptText>,
             Without<CraftHotbarText>,
             Without<CraftShapeBtnText>,
+            Without<CraftSyncBtnText>,
+        ),
+    >,
+    sync_txt_q: Query<
+        'w,
+        's,
+        &'static mut Text,
+        (
+            With<CraftSyncBtnText>,
+            Without<CraftQuestText>,
+            Without<CraftTargetText>,
+            Without<CraftFeedbackText>,
+            Without<CraftPromptText>,
+            Without<CraftHotbarText>,
+            Without<CraftShapeBtnText>,
+            Without<CraftViewBtnText>,
         ),
     >,
 }
@@ -5037,9 +5529,11 @@ fn update_craft_hud(
     stats: Res<PlayerStats>,
     data: Res<CraftWorldData>,
     prompt: Res<CraftInteractPrompt>,
+    net: Res<crate::net::NetState>,
     mut q: CraftHudQueries,
 ) {
-    let hide_play_hud = stats.craft_modal_open || is_derek_tutorial_open();
+    let hide_play_hud =
+        stats.craft_modal_open || is_derek_tutorial_open() || is_craft_sync_modal_open();
 
     if let Ok(mut qt) = q.quest_q.get_single_mut() {
         let next_msg = if !stats.craft_pub217_rebuilt {
@@ -5172,6 +5666,20 @@ fn update_craft_hud(
         };
         if vt.0 != want {
             vt.0 = want.to_string();
+        }
+    }
+
+    if let Ok(mut st) = q.sync_txt_q.get_single_mut() {
+        let peers = net.peer_count();
+        let want = if has_craft_sync_offer() {
+            "[Y] SYNC OFFER!".to_string()
+        } else if peers > 0 {
+            format!("[Y] SYNC ({} ON)", peers)
+        } else {
+            "[Y] SYNC WORLD".to_string()
+        };
+        if st.0 != want {
+            st.0 = want;
         }
     }
 }

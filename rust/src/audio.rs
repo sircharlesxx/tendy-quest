@@ -125,6 +125,47 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCraftView)]
         fn js_take_craft_view() -> bool;
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = takeCraftSync)]
+        fn js_take_craft_sync() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = saveCraftWorld)]
+        fn js_save_craft_world(raw: &str);
+
+        #[wasm_bindgen(js_namespace = ["window", "tendySave"], js_name = loadCraftWorld)]
+        fn js_load_craft_world() -> String;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = openModal)]
+        fn js_open_craft_sync_modal(
+            save: &str,
+            block_count: u32,
+            pub_rebuilt: bool,
+            house_done: bool,
+            in_craft: bool,
+        );
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = closeModal)]
+        fn js_close_craft_sync_modal();
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = isModalOpen)]
+        fn js_is_craft_sync_modal_open() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = takeJustClosed)]
+        fn js_take_craft_sync_closed() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = hasPendingOffer)]
+        fn js_has_craft_sync_offer() -> bool;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = takeAcceptedSync)]
+        fn js_take_craft_sync_accepted() -> String;
+
+        #[wasm_bindgen(js_namespace = ["window", "tendyCraftSync"], js_name = broadcastSync)]
+        fn js_broadcast_craft_world_sync(
+            save: &str,
+            block_count: u32,
+            pub_rebuilt: bool,
+            house_done: bool,
+        ) -> u32;
+
         #[wasm_bindgen(js_namespace = ["window", "tendyTutorialVideo"], js_name = open)]
         fn js_open_derek_tutorial_video();
 
@@ -491,6 +532,57 @@ mod imp {
 
     pub fn take_touch_craft_view() -> bool {
         js_take_craft_view()
+    }
+
+    pub fn take_touch_craft_sync() -> bool {
+        js_take_craft_sync()
+    }
+
+    pub fn save_craft_world(raw: &str) {
+        js_save_craft_world(raw);
+    }
+
+    pub fn load_craft_world() -> String {
+        js_load_craft_world()
+    }
+
+    pub fn open_craft_sync_modal(
+        save: &str,
+        block_count: u32,
+        pub_rebuilt: bool,
+        house_done: bool,
+        in_craft: bool,
+    ) {
+        js_open_craft_sync_modal(save, block_count, pub_rebuilt, house_done, in_craft);
+    }
+
+    pub fn close_craft_sync_modal() {
+        js_close_craft_sync_modal();
+    }
+
+    pub fn is_craft_sync_modal_open() -> bool {
+        js_is_craft_sync_modal_open()
+    }
+
+    pub fn take_craft_sync_closed() -> bool {
+        js_take_craft_sync_closed()
+    }
+
+    pub fn has_craft_sync_offer() -> bool {
+        js_has_craft_sync_offer()
+    }
+
+    pub fn take_craft_sync_accepted() -> String {
+        js_take_craft_sync_accepted()
+    }
+
+    pub fn broadcast_craft_world_sync(
+        save: &str,
+        block_count: u32,
+        pub_rebuilt: bool,
+        house_done: bool,
+    ) -> u32 {
+        js_broadcast_craft_world_sync(save, block_count, pub_rebuilt, house_done)
     }
 
     pub fn open_derek_tutorial_video() {
@@ -961,6 +1053,52 @@ mod imp {
         false
     }
 
+    pub fn take_touch_craft_sync() -> bool {
+        false
+    }
+
+    pub fn save_craft_world(_raw: &str) {}
+
+    pub fn load_craft_world() -> String {
+        String::new()
+    }
+
+    pub fn open_craft_sync_modal(
+        _save: &str,
+        _block_count: u32,
+        _pub_rebuilt: bool,
+        _house_done: bool,
+        _in_craft: bool,
+    ) {
+    }
+
+    pub fn close_craft_sync_modal() {}
+
+    pub fn is_craft_sync_modal_open() -> bool {
+        false
+    }
+
+    pub fn take_craft_sync_closed() -> bool {
+        false
+    }
+
+    pub fn has_craft_sync_offer() -> bool {
+        false
+    }
+
+    pub fn take_craft_sync_accepted() -> String {
+        String::new()
+    }
+
+    pub fn broadcast_craft_world_sync(
+        _save: &str,
+        _block_count: u32,
+        _pub_rebuilt: bool,
+        _house_done: bool,
+    ) -> u32 {
+        0
+    }
+
     pub fn open_derek_tutorial_video() {}
 
     pub fn close_derek_tutorial_video() {}
@@ -1102,7 +1240,10 @@ pub use imp::{
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_grenade, take_touch_help, take_touch_jump,
     take_touch_look_dx, take_touch_look_dy, take_touch_weapon_cycle, take_touch_zoom_delta, set_touch_city_weapons,
     set_touch_craft_mode, set_touch_craft_shape, take_touch_craft_bench, take_touch_craft_shape,
-    take_touch_craft_view, open_derek_tutorial_video, close_derek_tutorial_video,
+    take_touch_craft_view, take_touch_craft_sync, save_craft_world, load_craft_world,
+    open_craft_sync_modal, close_craft_sync_modal, is_craft_sync_modal_open,
+    take_craft_sync_closed, has_craft_sync_offer, take_craft_sync_accepted,
+    broadcast_craft_world_sync, open_derek_tutorial_video, close_derek_tutorial_video,
     is_derek_tutorial_open, take_derek_tutorial_closed, toggle_mute, set_volume, volume,
     touch_attack_held, touch_block_held, touch_move_x,
     touch_move_y, update_telemetry,

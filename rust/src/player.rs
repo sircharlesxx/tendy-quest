@@ -613,7 +613,11 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if stats.club_modal_open || stats.craft_modal_open || crate::audio::is_derek_tutorial_open() {
+    if stats.club_modal_open
+        || stats.craft_modal_open
+        || crate::audio::is_derek_tutorial_open()
+        || crate::audio::is_craft_sync_modal_open()
+    {
         if let Ok(mut window) = window_q.get_single_mut() {
             window.cursor_options.grab_mode = CursorGrabMode::None;
             window.cursor_options.visible = true;
@@ -862,6 +866,7 @@ pub fn player_movement(
         || stats.club_modal_open
         || stats.craft_modal_open
         || crate::audio::is_derek_tutorial_open()
+        || crate::audio::is_craft_sync_modal_open()
         || stats.club_seated
         // Limp or getting up: `ragdoll::update_ragdoll` owns Stan's position and pose.
         || ragdoll.active()
