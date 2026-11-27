@@ -428,6 +428,50 @@ pub struct CityCar {
     pub base_yaw: f32,
     /// Seconds spent off-course after a collision (triggers clean snap recovery if wedged).
     pub off_course_timer: f32,
+    /// Remaining seconds as a burning, charred exploded wreck (`<= 0` = healthy car).
+    pub exploded_timer: f32,
+    /// Ballistic velocity while tumbling from an explosion.
+    pub explode_vel: Vec3,
+    /// Angular spin velocity while airborne/tumbling from an explosion.
+    pub explode_ang_vel: Vec3,
+    /// Staggered chain-reaction fuse before detonating.
+    pub chain_fuse: f32,
+    /// Cooldown for spawning rising fire/smoke plumes on an exploded wreck.
+    pub burn_vfx_cd: f32,
+    /// Initial spawn position (used to restore parked/wrecked cars cleanly).
+    pub spawn_pos: Vec3,
+}
+
+#[derive(Component)]
+pub struct CityCarPaint {
+    pub original: Handle<StandardMaterial>,
+}
+
+#[derive(Component)]
+pub struct DestructibleWindow {
+    pub intact: bool,
+    pub respawn_timer: f32,
+    pub outward_normal: Vec3,
+    pub half_size: Vec2,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DestructiblePropKind {
+    Bench,
+    Hydrant,
+    Tree,
+}
+
+#[derive(Component)]
+pub struct DestructibleProp {
+    pub kind: DestructiblePropKind,
+    pub broken: bool,
+    pub home_pos: Vec3,
+    pub home_rot: Quat,
+    pub vel: Vec3,
+    pub ang_vel: Vec3,
+    pub respawn_timer: f32,
+    pub geyser_cd: f32,
 }
 
 impl CityCar {
@@ -527,7 +571,7 @@ fn pub217_rect() -> (f32, f32, f32, f32) {
 /// bar, doorway included). Returns the outward normal when it had to push. The pub sits on its
 /// own block clear of every lane, so this is only a safety net for cars Stan drives (or that
 /// get knocked) onto the sidewalk.
-fn push_car_out_of_pub217(car_tf: &mut Transform, yaw: f32) -> Option<Vec2> {
+pub(crate) fn push_car_out_of_pub217(car_tf: &mut Transform, yaw: f32) -> Option<Vec2> {
     let (min_x, max_x, min_z, max_z) = pub217_rect();
     let (s, c) = (yaw.sin().abs(), yaw.cos().abs());
     let hx = s * CAR_HALF_L + c * CAR_HALF_W + 0.2;
@@ -1418,30 +1462,133 @@ pub fn spawn_nyc_world_if_needed(
     });
     for tz in STREET_TREE_Z {
         for tx in [-STREET_TREE_X, STREET_TREE_X] {
-            commands.spawn((
-                LevelEntity,
-                CityWorldMarker,
-                Mesh3d(unit_cyl.clone()),
-                MeshMaterial3d(trunk_mat.clone()),
-                Transform::from_xyz(tx, 1.5, tz).with_scale(Vec3::new(0.22, 3.0, 0.22)),
-            ));
-            commands.spawn((
-                LevelEntity,
-                CityWorldMarker,
-                Mesh3d(unit_sphere.clone()),
-                MeshMaterial3d(leaf_mat.clone()),
-                Transform::from_xyz(tx, 3.6, tz).with_scale(Vec3::new(1.8, 1.4, 1.8)),
-            ));
+            let tree_pos = Vec3::new(tx, 0.0, tz);
+            commands
+                .spawn((
+                    LevelEntity,
+                    CityWorldMarker,
+                    DestructibleProp {
+                        kind: DestructiblePropKind::Tree,
+                        broken: false,
+                        home_pos: tree_pos,
+                        home_rot: Quat::IDENTITY,
+                        vel: Vec3::ZERO,
+                        ang_vel: Vec3::ZERO,
+                        respawn_timer: 0.0,
+                        geyser_cd: 0.0,
+                    },
+                    Transform::from_translation(tree_pos),
+                    Visibility::Inherited,
+                ))
+                .with_children(|tree| {
+                    tree.spawn((
+                        Mesh3d(unit_cyl.clone()),
+                        MeshMaterial3d(trunk_mat.clone()),
+                        Transform::from_xyz(0.0, 1.5, 0.0).with_scale(Vec3::new(0.22, 3.0, 0.22)),
+                    ));
+                    tree.spawn((
+                        Mesh3d(unit_sphere.clone()),
+                        MeshMaterial3d(leaf_mat.clone()),
+                        Transform::from_xyz(0.0, 3.6, 0.0).with_scale(Vec3::new(1.8, 1.4, 1.8)),
+                    ));
+                });
             if (tz as i32) % 24 == 0 {
+                let bench_pos = Vec3::new(tx * 1.08, 0.35, tz + 3.0);
                 commands.spawn((
                     LevelEntity,
                     CityWorldMarker,
+                    DestructibleProp {
+                        kind: DestructiblePropKind::Bench,
+                        broken: false,
+                        home_pos: bench_pos,
+                        home_rot: Quat::IDENTITY,
+                        vel: Vec3::ZERO,
+                        ang_vel: Vec3::ZERO,
+                        respawn_timer: 0.0,
+                        geyser_cd: 0.0,
+                    },
                     Mesh3d(unit_box.clone()),
                     MeshMaterial3d(bench_mat.clone()),
-                    Transform::from_xyz(tx * 1.08, 0.35, tz + 3.0).with_scale(Vec3::new(0.6, 0.5, 1.8)),
+                    Transform::from_translation(bench_pos).with_scale(Vec3::new(0.6, 0.5, 1.8)),
+                    Visibility::Inherited,
                 ));
             }
         }
+    }
+
+    // Downtown sidewalk Fire Hydrants (blast open to gush water fountains!)
+    let hydrant_red = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.88, 0.14, 0.12),
+        metallic: 0.45,
+        perceptual_roughness: 0.32,
+        ..default()
+    });
+    let hydrant_silver = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.82, 0.84, 0.88),
+        metallic: 0.78,
+        perceptual_roughness: 0.25,
+        ..default()
+    });
+    for (hx, hz) in [
+        (-11.6_f32, -34.4_f32),
+        (11.6, -34.4),
+        (-11.6, -11.6),
+        (11.6, -11.6),
+        (-11.6, 11.6),
+        (11.6, 11.6),
+        (-11.6, 34.4),
+        (11.6, 34.4),
+        (-11.6, 57.6),
+        (11.6, 57.6),
+        (-34.4, -11.6),
+        (-34.4, 11.6),
+        (34.4, -11.6),
+        (34.4, 11.6),
+        (34.4, 34.4),
+        (-34.4, 34.4),
+    ] {
+        let h_pos = Vec3::new(hx, 0.0, hz);
+        commands
+            .spawn((
+                LevelEntity,
+                CityWorldMarker,
+                DestructibleProp {
+                    kind: DestructiblePropKind::Hydrant,
+                    broken: false,
+                    home_pos: h_pos,
+                    home_rot: Quat::IDENTITY,
+                    vel: Vec3::ZERO,
+                    ang_vel: Vec3::ZERO,
+                    respawn_timer: 0.0,
+                    geyser_cd: 0.0,
+                },
+                Transform::from_translation(h_pos),
+                Visibility::Inherited,
+            ))
+            .with_children(|h| {
+                h.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(hydrant_red.clone()),
+                    Transform::from_xyz(0.0, 0.42, 0.0).with_scale(Vec3::new(0.22, 0.84, 0.22)),
+                ));
+                h.spawn((
+                    Mesh3d(unit_sphere.clone()),
+                    MeshMaterial3d(hydrant_red.clone()),
+                    Transform::from_xyz(0.0, 0.84, 0.0).with_scale(Vec3::new(0.24, 0.16, 0.24)),
+                ));
+                h.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(hydrant_silver.clone()),
+                    Transform::from_xyz(0.0, 0.62, 0.0)
+                        .with_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2))
+                        .with_scale(Vec3::new(0.11, 0.56, 0.11)),
+                ));
+                h.spawn((
+                    Mesh3d(unit_cyl.clone()),
+                    MeshMaterial3d(hydrant_silver.clone()),
+                    Transform::from_xyz(0.0, 0.94, 0.0).with_scale(Vec3::new(0.08, 0.14, 0.08)),
+                ));
+            });
     }
 
     // Walk-In Pub 217 (217 3rd St SE) on its own block west of 3rd St SE (see `PUB217_ANCHOR`).
@@ -1758,6 +1905,62 @@ pub fn spawn_nyc_world_if_needed(
         },
     ));
 
+    // Shatterable storefront / pub glass materials + Pub 217 exterior windows
+    let storefront_glass_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.32, 0.66, 0.88, 0.72),
+        emissive: LinearRgba::rgb(0.14, 0.30, 0.45),
+        metallic: 0.65,
+        perceptual_roughness: 0.12,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let pub_glass_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.86, 0.72, 0.42, 0.76),
+        emissive: LinearRgba::rgb(0.45, 0.30, 0.10),
+        metallic: 0.45,
+        perceptual_roughness: 0.14,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let broken_interior_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.03, 0.04, 0.06),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
+    for (wpos, normal, w_span, h_span) in [
+        (Vec3::new(-12.56, 2.5, 16.48), Vec3::X, 3.6_f32, 2.5_f32),
+        (Vec3::new(-12.33, 2.5, 29.52), Vec3::X, 3.6, 2.5),
+        (Vec3::new(-22.42, 2.5, 12.76), Vec3::NEG_Z, 5.4, 2.5),
+        (Vec3::new(-22.42, 2.5, 33.24), Vec3::Z, 5.4, 2.5),
+    ] {
+        let scale = if normal.x.abs() > 0.5 {
+            Vec3::new(0.06, h_span, w_span)
+        } else {
+            Vec3::new(w_span, h_span, 0.06)
+        };
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(broken_interior_mat.clone()),
+            Transform::from_translation(wpos).with_scale(scale),
+        ));
+        commands.spawn((
+            LevelEntity,
+            CityWorldMarker,
+            DestructibleWindow {
+                intact: true,
+                respawn_timer: 0.0,
+                outward_normal: normal,
+                half_size: Vec2::new(w_span * 0.5, h_span * 0.5),
+            },
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(pub_glass_mat.clone()),
+            Transform::from_translation(wpos + normal * 0.07).with_scale(scale),
+            Visibility::Inherited,
+        ));
+    }
+
     let block_walk_mesh = tiled_unit(meshes, Vec3::new(26.5, 0.08, 26.5), 3.0);
     let kerb_ring = meshes.add(crate::gfx::kerb_ring_mesh(26.54, 0.32, 0.11, 1.5));
     let kerb_mat = materials.add(crate::gfx::city_textured(StandardMaterial {
@@ -1920,6 +2123,42 @@ pub fn spawn_nyc_world_if_needed(
                         ));
                     }
                 });
+            // Shatterable ground-floor storefront & 2nd-story glass windows on inner downtown towers
+            if !is_outer {
+                let half_fp = footprint * 0.5;
+                for normal in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+                    for (wy, w_span, h_span) in [(2.1_f32, 4.2_f32, 2.8_f32), (6.2, 4.2, 2.1)] {
+                        let back_pos = Vec3::new(bx, wy, bz) + normal * (half_fp + 0.04);
+                        let glass_pos = Vec3::new(bx, wy, bz) + normal * (half_fp + 0.10);
+                        let pane_scale = if normal.x.abs() > 0.5 {
+                            Vec3::new(0.06, h_span, w_span)
+                        } else {
+                            Vec3::new(w_span, h_span, 0.06)
+                        };
+                        commands.spawn((
+                            LevelEntity,
+                            CityWorldMarker,
+                            Mesh3d(unit_box.clone()),
+                            MeshMaterial3d(broken_interior_mat.clone()),
+                            Transform::from_translation(back_pos).with_scale(pane_scale),
+                        ));
+                        commands.spawn((
+                            LevelEntity,
+                            CityWorldMarker,
+                            DestructibleWindow {
+                                intact: true,
+                                respawn_timer: 0.0,
+                                outward_normal: normal,
+                                half_size: Vec2::new(w_span * 0.5, h_span * 0.5),
+                            },
+                            Mesh3d(unit_box.clone()),
+                            MeshMaterial3d(storefront_glass_mat.clone()),
+                            Transform::from_translation(glass_pos).with_scale(pane_scale),
+                            Visibility::Inherited,
+                        ));
+                    }
+                }
+            }
             b_idx += 1;
         }
     }
@@ -2674,14 +2913,35 @@ fn spawn_city_traffic(
                     lane_coord,
                     base_yaw: yaw,
                     off_course_timer: 0.0,
+                    exploded_timer: 0.0,
+                    explode_vel: Vec3::ZERO,
+                    explode_ang_vel: Vec3::ZERO,
+                    chain_fuse: 0.0,
+                    burn_vfx_cd: 0.0,
+                    spawn_pos: pos,
                 },
                 Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             ))
             .with_children(|car| {
                 // Rounded chassis with sloped hood/trunk, tapered glass cabin and a body-colour roof
-                car.spawn((Mesh3d(cm.body.clone()), MeshMaterial3d(mat.clone()), Transform::from_xyz(0.0, 0.72, 0.0)));
-                car.spawn((Mesh3d(cm.cabin.clone()), MeshMaterial3d(glass.clone()), Transform::from_xyz(0.0, 1.38, -0.15)));
-                car.spawn((Mesh3d(cm.roof.clone()), MeshMaterial3d(mat), Transform::from_xyz(0.0, 1.665, -0.26)));
+                car.spawn((
+                    CityCarPaint { original: mat.clone() },
+                    Mesh3d(cm.body.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    Transform::from_xyz(0.0, 0.72, 0.0),
+                ));
+                car.spawn((
+                    CityCarPaint { original: glass.clone() },
+                    Mesh3d(cm.cabin.clone()),
+                    MeshMaterial3d(glass.clone()),
+                    Transform::from_xyz(0.0, 1.38, -0.15),
+                ));
+                car.spawn((
+                    CityCarPaint { original: mat.clone() },
+                    Mesh3d(cm.roof.clone()),
+                    MeshMaterial3d(mat),
+                    Transform::from_xyz(0.0, 1.665, -0.26),
+                ));
                 // Bumpers, grille, side skirts
                 car.spawn((Mesh3d(cm.trim.clone()), MeshMaterial3d(trim.clone()), Transform::default()));
                 // Headlights (+Z front) & Taillights (-Z rear)
@@ -3939,7 +4199,10 @@ pub fn update_city_driving(
             return;
         }
         let mut nearest: Option<(Entity, f32)> = None;
-        for (car_e, car_tf, _car, _) in &car_q {
+        for (car_e, car_tf, car, _) in &car_q {
+            if car.exploded_timer > 0.0 || car.chain_fuse > 0.0 {
+                continue;
+            }
             let d = Vec2::new(
                 car_tf.translation.x - p_tf.translation.x,
                 car_tf.translation.z - p_tf.translation.z,
@@ -4429,7 +4692,7 @@ pub fn update_city_traffic(
     let hit_radius = 1.9 + stats.player_scale * 0.22;
 
     for (mut car_tf, mut car) in &mut car_q {
-        if car.occupied {
+        if car.occupied || car.exploded_timer > 0.0 {
             continue;
         }
         if car.horn_cooldown > 0.0 {
@@ -5959,14 +6222,35 @@ fn spawn_parked_car(
                 lane_coord: 0.0,
                 base_yaw: yaw,
                 off_course_timer: 0.0,
+                exploded_timer: 0.0,
+                explode_vel: Vec3::ZERO,
+                explode_ang_vel: Vec3::ZERO,
+                chain_fuse: 0.0,
+                burn_vfx_cd: 0.0,
+                spawn_pos: pos,
             },
             Transform::from_translation(pos).with_rotation(Quat::from_rotation_y(yaw)),
             Visibility::default(),
         ))
         .with_children(|car| {
-            car.spawn((Mesh3d(cm.body.clone()), MeshMaterial3d(paint.clone()), Transform::from_xyz(0.0, 0.72, 0.0)));
-            car.spawn((Mesh3d(cm.cabin.clone()), MeshMaterial3d(glass), Transform::from_xyz(0.0, 1.38, -0.15)));
-            car.spawn((Mesh3d(cm.roof.clone()), MeshMaterial3d(paint), Transform::from_xyz(0.0, 1.665, -0.26)));
+            car.spawn((
+                CityCarPaint { original: paint.clone() },
+                Mesh3d(cm.body.clone()),
+                MeshMaterial3d(paint.clone()),
+                Transform::from_xyz(0.0, 0.72, 0.0),
+            ));
+            car.spawn((
+                CityCarPaint { original: glass.clone() },
+                Mesh3d(cm.cabin.clone()),
+                MeshMaterial3d(glass),
+                Transform::from_xyz(0.0, 1.38, -0.15),
+            ));
+            car.spawn((
+                CityCarPaint { original: paint.clone() },
+                Mesh3d(cm.roof.clone()),
+                MeshMaterial3d(paint),
+                Transform::from_xyz(0.0, 1.665, -0.26),
+            ));
             car.spawn((Mesh3d(cm.trim.clone()), MeshMaterial3d(trim), Transform::default()));
             car.spawn((Mesh3d(cm.headlights.clone()), MeshMaterial3d(lamp_off.clone()), Transform::default()));
             car.spawn((Mesh3d(cm.taillights.clone()), MeshMaterial3d(lamp_off), Transform::default()));
@@ -6013,7 +6297,7 @@ pub fn sync_parked_car_collider(
             commands.entity(box_e).despawn();
             continue;
         };
-        let driven = car.occupied || stats.driving_car == Some(col.car);
+        let driven = car.occupied || stats.driving_car == Some(col.car) || car.exploded_timer > 0.0;
         if driven {
             col.armed = false;
         } else if !col.armed {

@@ -871,6 +871,26 @@
           mkOsc("sine", 82, 20, 0.62, 0.45);
           return true;
         }
+        if (name === "car_explode") {
+          mkNoise(0.85, 0.58, 360);
+          mkOsc("sawtooth", 120, 20, 0.72, 0.46);
+          mkOsc("sine", 68, 16, 0.78, 0.50);
+          setTimeout(() => mkNoise(0.32, 0.34, 1600), 110);
+          return true;
+        }
+        if (name === "glass_shatter") {
+          mkNoise(0.28, 0.32, 4200);
+          mkOsc("triangle", 2800, 1400, 0.09, 0.16);
+          setTimeout(() => mkOsc("triangle", 3600, 1900, 0.08, 0.14), 35);
+          setTimeout(() => mkOsc("triangle", 2200, 1100, 0.09, 0.14), 70);
+          setTimeout(() => mkOsc("triangle", 4100, 2100, 0.08, 0.12), 110);
+          return true;
+        }
+        if (name === "hydrant_pop") {
+          mkOsc("square", 380, 140, 0.12, 0.24);
+          mkNoise(0.55, 0.22, 2600);
+          return true;
+        }
         if (name === "bomb_beep") {
           mkOsc("sine", 1420, 1380, 0.06, 0.20);
           return true;
@@ -3510,7 +3530,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-36289201586e4b1d.js" crossorigin="anonymous" integrity="sha384-3mBqvk7SmcTBkRcQQLwY+EhSz7YYmLWsn99BnP4Pv6r5zvXSkvt34yC1wi2Ijgrp"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-36289201586e4b1d_bg.wasm" crossorigin="anonymous" integrity="sha384-lXTHt9bjqAMjWoIbAyLRRf1n3VFwx4azLSFO33ZDz5Ax4oQSM8y8tORFZ+C8E8wW" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-eb675709e4e7c512.js" crossorigin="anonymous" integrity="sha384-hfncPgnUBcF5Q/ajJOJbqHsvTWMPE5duXRVdan7y1VdoNerWnPHlvfWiPxYk2/0t"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-eb675709e4e7c512_bg.wasm" crossorigin="anonymous" integrity="sha384-pGmzvO1uOqfUK3d4B25BWei9V3BHWJfULX8mnMRwZ696mop7flbwa2ivEVD1phBt" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -7206,8 +7226,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-36289201586e4b1d.js';
-const wasm = await init({ module_or_path: './tendy-quest-36289201586e4b1d_bg.wasm' });
+import init, * as bindings from './tendy-quest-eb675709e4e7c512.js';
+const wasm = await init({ module_or_path: './tendy-quest-eb675709e4e7c512_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -2769,6 +2769,8 @@ pub fn update_saber_fx(
     stats: Res<PlayerStats>,
     mut player_q: Query<&mut Player>,
     blade_q: Query<&GlobalTransform, With<crate::boss::HeroSaberBlade>>,
+    crew_blade_q: Query<&GlobalTransform, (With<crate::weapons::CrewHeroSaber>, Without<crate::boss::HeroSaberBlade>)>,
+    crew_vis_q: Query<(), With<crate::net::LocalCrewVisual>>,
     mut fx_q: Query<(Entity, &mut SaberFx, &mut Transform, &MeshMaterial3d<StandardMaterial>)>,
     mut prev_blade: Local<Option<(Vec3, Vec3)>>,
 ) {
@@ -2809,7 +2811,12 @@ pub fn update_saber_fx(
         *prev_blade = None;
         return;
     };
-    let Ok(blade_gt) = blade_q.get_single() else {
+    let active_blade_gt = if !crew_vis_q.is_empty() {
+        crew_blade_q.iter().next().copied()
+    } else {
+        blade_q.get_single().ok().copied()
+    };
+    let Some(blade_gt) = active_blade_gt else {
         *prev_blade = None;
         player.block_spark = 0;
         return;
@@ -2820,7 +2827,10 @@ pub fn update_saber_fx(
 
     // Swoosh: a ribbon quad between last frame's blade and this frame's, bright at the tip edge
     // and fading toward the hilt, during the striking part of the swing.
-    let striking = stats.boss_mode && player.attack_timer > 0.0 && {
+    let striking = stats.boss_mode
+        && (!stats.in_city || stats.equipped_weapon == 0)
+        && player.attack_timer > 0.0
+        && {
         let total = if stats.heavy_attack { HEAVY_SWING_SECS } else { LIGHT_SWING_SECS };
         let p = 1.0 - player.attack_timer / total;
         let (a, b) = swing_trail_window(stats.heavy_attack);

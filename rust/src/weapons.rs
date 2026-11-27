@@ -5,7 +5,10 @@ use bevy::prelude::*;
 
 use crate::audio::play_sfx;
 use crate::boss::{HeroSaberBlade, HERO_SABER_AURA_COLOR, HERO_SABER_LIGHT};
-use crate::city::{CityCar, CityNpc, CityWorldMarker, LexieBoss, launch_npc_ragdoll, wrap_angle};
+use crate::city::{
+    CityCar, CityCarPaint, CityNpc, CityWorldMarker, DestructibleProp, DestructiblePropKind,
+    DestructibleWindow, LexieBoss, launch_npc_ragdoll, push_car_out_of_pub217, wrap_angle,
+};
 use crate::net::{CrewStrideArm, LocalCrewVisual, NetCoopEvents, EVENT_GRENADE_BLAST, pack_grenade_blast};
 use crate::player::Player;
 use crate::ragdoll::Ragdoll;
@@ -18,7 +21,8 @@ pub struct WeaponsPlugin;
 impl Plugin for WeaponsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WeaponCooldowns>()
-            .add_systems(OnEnter(GameState::CityPlay), spawn_weapon_hud)
+            .init_resource::<PendingBlasts>()
+            .add_systems(OnEnter(GameState::CityPlay), (spawn_weapon_hud, init_destruction_assets))
             .add_systems(OnExit(GameState::CityPlay), cleanup_weapons_city)
             .add_systems(
                 Update,
@@ -27,6 +31,9 @@ impl Plugin for WeaponsPlugin {
                     sync_weapon_visuals,
                     update_bullets,
                     update_grenades,
+                    update_exploded_cars,
+                    apply_blast_destruction,
+                    update_destructibles_and_debris,
                     update_explosions,
                     update_weapon_hud,
                 )
@@ -41,6 +48,49 @@ impl Plugin for WeaponsPlugin {
 struct WeaponCooldowns {
     fire_cd: f32,
     grenade_cd: f32,
+}
+
+#[derive(Clone, Copy)]
+struct BlastEvent {
+    center: Vec3,
+    radius: f32,
+    from_car: bool,
+}
+
+#[derive(Resource, Default)]
+struct PendingBlasts(Vec<BlastEvent>);
+
+#[derive(Resource)]
+struct DestructionAssets {
+    chunk_mesh: Handle<Mesh>,
+    puff_mesh: Handle<Mesh>,
+    charred_car_mat: Handle<StandardMaterial>,
+    glass_shard_mat: Handle<StandardMaterial>,
+    fire_mat: Handle<StandardMaterial>,
+    smoke_mat: Handle<StandardMaterial>,
+    metal_debris_mat: Handle<StandardMaterial>,
+    leaf_mat: Handle<StandardMaterial>,
+    water_mat: Handle<StandardMaterial>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DebrisKind {
+    MetalChunk,
+    GlassShard,
+    FirePuff,
+    SmokePuff,
+    LeafChunk,
+    WaterDrop,
+}
+
+#[derive(Component)]
+struct FlyingDebris {
+    vel: Vec3,
+    ang_vel: Vec3,
+    age: f32,
+    max_age: f32,
+    kind: DebrisKind,
+    base_scale: Vec3,
 }
 
 #[derive(Component)]
@@ -59,7 +109,9 @@ struct WeaponHudBtnText(u8);
 pub struct CrewHeroSaber;
 
 #[derive(Component)]
-pub struct HeldGunVisual;
+pub struct HeldGunVisual {
+    pub is_crew: bool,
+}
 
 #[derive(Component)]
 struct HeldGunSlide;
@@ -159,12 +211,76 @@ fn spawn_weapon_hud(mut commands: Commands) {
         });
 }
 
+fn init_destruction_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.insert_resource(DestructionAssets {
+        chunk_mesh: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
+        puff_mesh: meshes.add(Sphere::new(1.0)),
+        charred_car_mat: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.08, 0.07, 0.07),
+            perceptual_roughness: 0.96,
+            metallic: 0.08,
+            ..default()
+        }),
+        glass_shard_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.70, 0.90, 1.0, 0.84),
+            emissive: LinearRgba::rgb(0.28, 0.48, 0.68),
+            metallic: 0.55,
+            perceptual_roughness: 0.12,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+        fire_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.46, 0.08, 0.90),
+            emissive: LinearRgba::rgb(4.0, 1.4, 0.16),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+        smoke_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.16, 0.16, 0.18, 0.72),
+            perceptual_roughness: 0.95,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+        metal_debris_mat: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.22, 0.19, 0.17),
+            metallic: 0.65,
+            perceptual_roughness: 0.68,
+            ..default()
+        }),
+        leaf_mat: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.20, 0.56, 0.22),
+            perceptual_roughness: 0.85,
+            ..default()
+        }),
+        water_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.45, 0.86, 1.0, 0.84),
+            emissive: LinearRgba::rgb(0.24, 0.72, 1.15),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+    });
+}
+
 fn cleanup_weapons_city(
     mut commands: Commands,
     hud_q: Query<Entity, With<WeaponHudRoot>>,
     ent_q: Query<Entity, With<WeaponEntity>>,
+    mut stan_saber_q: Query<&mut Visibility, With<HeroSaberBlade>>,
+    mut pending: ResMut<PendingBlasts>,
 ) {
     crate::audio::set_touch_city_weapons(false, 0, 0);
+    pending.0.clear();
+    for mut v in &mut stan_saber_q {
+        if *v != Visibility::Inherited {
+            *v = Visibility::Inherited;
+        }
+    }
     for e in &hud_q {
         commands.entity(e).despawn_recursive();
     }
@@ -627,6 +743,7 @@ fn spawn_held_gun(
     materials: &mut Assets<StandardMaterial>,
     pos: Vec3,
     fwd_z: f32,
+    is_crew: bool,
 ) {
     let steel = materials.add(StandardMaterial {
         base_color: Color::srgb(0.16, 0.18, 0.22),
@@ -649,7 +766,7 @@ fn spawn_held_gun(
         .spawn((
             LevelEntity,
             WeaponEntity,
-            HeldGunVisual,
+            HeldGunVisual { is_crew },
             Transform::from_translation(pos),
             Visibility::Hidden,
         ))
@@ -682,6 +799,7 @@ fn sync_weapon_visuals(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     stats: Res<PlayerStats>,
+    player_q: Query<Entity, With<Player>>,
     arm_q: Query<(Entity, &Name)>,
     crew_vis_q: Query<&LocalCrewVisual>,
     crew_arm_q: Query<(Entity, &CrewStrideArm)>,
@@ -696,7 +814,7 @@ fn sync_weapon_visuals(
         ),
     >,
     mut crew_saber_q: Query<
-        &mut Visibility,
+        (Entity, &mut Visibility),
         (
             With<CrewHeroSaber>,
             Without<HeroSaberBlade>,
@@ -704,31 +822,44 @@ fn sync_weapon_visuals(
         ),
     >,
     mut gun_q: Query<
-        (&mut Visibility, &mut Transform),
-        (
-            With<HeldGunVisual>,
-            Without<HeroSaberBlade>,
-            Without<CrewHeroSaber>,
-        ),
+        (&mut Visibility, &mut Transform, &HeldGunVisual),
+        (Without<HeroSaberBlade>, Without<CrewHeroSaber>),
     >,
 ) {
     let show_saber = stats.equipped_weapon == 0 && stats.driving_car.is_none();
     let show_gun = stats.equipped_weapon > 0 && stats.driving_car.is_none();
 
-    // 1. Stan's HeroRightArm gets HeldGunVisual if missing
-    if let Some((r_arm, _)) = arm_q.iter().find(|(_, n)| n.as_str() == "HeroRightArm") {
-        let has_gun = children_q
-            .get(r_arm)
-            .is_ok_and(|k| k.iter().any(|c| gun_q.get(*c).is_ok()));
-        if !has_gun {
-            spawn_held_gun(
-                &mut commands,
-                r_arm,
-                &mut meshes,
-                &mut materials,
-                Vec3::new(0.23, -0.44, -0.10),
-                -1.0,
-            );
+    let player_ent = player_q.get_single().ok();
+    let has_ancestor = |mut cur: Entity, target: Entity| -> bool {
+        while let Ok(p) = parent_q.get(cur) {
+            cur = p.get();
+            if cur == target {
+                return true;
+            }
+        }
+        false
+    };
+
+    // 1. Local Stan's HeroRightArm gets HeldGunVisual if missing (never attach to remote Stans)
+    if let Some(p_e) = player_ent {
+        if let Some((r_arm, _)) = arm_q
+            .iter()
+            .find(|(e, n)| n.as_str() == "HeroRightArm" && has_ancestor(*e, p_e))
+        {
+            let has_gun = children_q
+                .get(r_arm)
+                .is_ok_and(|k| k.iter().any(|c| gun_q.get(*c).is_ok()));
+            if !has_gun {
+                spawn_held_gun(
+                    &mut commands,
+                    r_arm,
+                    &mut meshes,
+                    &mut materials,
+                    Vec3::new(0.23, -0.44, -0.10),
+                    -1.0,
+                    false,
+                );
+            }
         }
     }
 
@@ -772,6 +903,7 @@ fn sync_weapon_visuals(
                 &mut materials,
                 Vec3::new(0.04, -0.58, 0.14),
                 1.0,
+                true,
             );
         }
     }
@@ -793,23 +925,29 @@ fn sync_weapon_visuals(
     } else {
         Visibility::Hidden
     };
-    for mut v in &mut crew_saber_q {
+    for (idx, (e, mut v)) in crew_saber_q.iter_mut().enumerate() {
+        if idx > 0 {
+            if let Some(ec) = commands.get_entity(e) {
+                ec.despawn_recursive();
+            }
+            continue;
+        }
         if *v != crew_saber_vis {
             *v = crew_saber_vis;
         }
     }
 
-    let gun_vis = if show_gun {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
     let gun_scale = match stats.equipped_weapon {
         2 => Vec3::new(1.25, 1.15, 1.75), // Shotgun longer/chunkier
         3 => Vec3::new(1.10, 1.25, 1.35), // SMG compact tactical
         _ => Vec3::ONE,                   // 9mm Pistol
     };
-    for (mut v, mut tf) in &mut gun_q {
+    for (mut v, mut tf, gun) in &mut gun_q {
+        let gun_vis = if show_gun && gun.is_crew == using_crew_rig {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
         if *v != gun_vis {
             *v = gun_vis;
         }
@@ -819,26 +957,194 @@ fn sync_weapon_visuals(
     }
 }
 
+fn spawn_debris_particle(
+    commands: &mut Commands,
+    vfx: &DestructionAssets,
+    pos: Vec3,
+    vel: Vec3,
+    ang_vel: Vec3,
+    max_age: f32,
+    kind: DebrisKind,
+    base_scale: Vec3,
+) {
+    let (mesh, mat) = match kind {
+        DebrisKind::MetalChunk => (vfx.chunk_mesh.clone(), vfx.metal_debris_mat.clone()),
+        DebrisKind::GlassShard => (vfx.chunk_mesh.clone(), vfx.glass_shard_mat.clone()),
+        DebrisKind::FirePuff => (vfx.puff_mesh.clone(), vfx.fire_mat.clone()),
+        DebrisKind::SmokePuff => (vfx.puff_mesh.clone(), vfx.smoke_mat.clone()),
+        DebrisKind::LeafChunk => (vfx.chunk_mesh.clone(), vfx.leaf_mat.clone()),
+        DebrisKind::WaterDrop => (vfx.puff_mesh.clone(), vfx.water_mat.clone()),
+    };
+    commands.spawn((
+        LevelEntity,
+        CityWorldMarker,
+        WeaponEntity,
+        FlyingDebris {
+            vel,
+            ang_vel,
+            age: 0.0,
+            max_age,
+            kind,
+            base_scale,
+        },
+        Mesh3d(mesh),
+        MeshMaterial3d(mat),
+        Transform::from_translation(pos).with_scale(base_scale),
+    ));
+}
+
+fn spawn_glass_shards(commands: &mut Commands, vfx: &DestructionAssets, origin: Vec3, outward: Vec3, count: usize, seed_f: f32) {
+    let tangent = Vec3::new(-outward.z, 0.0, outward.x);
+    for i in 0..count {
+        let a = seed_f * 1.7 + i as f32 * 2.399;
+        let lateral = tangent * (a.sin() * 4.8);
+        let up = 2.5 + (a.cos().abs()) * 5.2;
+        let vel = outward * (6.5 + (i % 4) as f32 * 2.2) + lateral + Vec3::Y * up;
+        let pos = origin + tangent * (a.sin() * 1.2) + Vec3::Y * (a.cos() * 0.7);
+        spawn_debris_particle(
+            commands,
+            vfx,
+            pos,
+            vel,
+            Vec3::new(9.5, -12.0, 8.2),
+            1.6 + (i % 3) as f32 * 0.35,
+            DebrisKind::GlassShard,
+            Vec3::new(0.28 + (i % 2) as f32 * 0.14, 0.32, 0.05),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn detonate_car(
+    commands: &mut Commands,
+    car_e: Entity,
+    car_pos: Vec3,
+    car: &mut CityCar,
+    away_xz: Vec2,
+    power: f32,
+    chain: bool,
+    children_q: &Query<&Children>,
+    paint_q: &mut Query<(&mut MeshMaterial3d<StandardMaterial>, &CityCarPaint), Without<CityCar>>,
+    vfx: Option<&DestructionAssets>,
+    stats: &mut PlayerStats,
+    out_blasts: &mut Vec<BlastEvent>,
+) {
+    car.exploded_timer = 12.0;
+    car.car_hp = 0.0;
+    car.chain_fuse = 0.0;
+    car.burn_vfx_cd = 0.04;
+    car.knock_vel = Vec2::ZERO;
+    car.velocity = Vec2::ZERO;
+    car.park = false;
+    car.explode_vel = Vec3::new(away_xz.x, 0.0, away_xz.y) * (10.0 + 7.5 * power)
+        + Vec3::Y * (12.5 + 5.0 * power);
+    car.explode_ang_vel = Vec3::new(3.8, 2.7, -4.4);
+
+    if let Some(vfx) = vfx {
+        if let Ok(kids) = children_q.get(car_e) {
+            for &kid in kids.iter() {
+                if let Ok((mut mat, _)) = paint_q.get_mut(kid) {
+                    mat.0 = vfx.charred_car_mat.clone();
+                }
+            }
+        }
+        for i in 0..12_usize {
+            let a = i as f32 * 0.5236 + car_pos.x;
+            let vel = Vec3::new(a.cos() * 14.0, 8.0 + (i % 4) as f32 * 3.0, a.sin() * 14.0);
+            spawn_debris_particle(
+                commands,
+                vfx,
+                car_pos + Vec3::Y * 0.9,
+                vel,
+                Vec3::new(6.0, -8.5, 7.2),
+                2.2,
+                if i % 3 == 0 { DebrisKind::FirePuff } else { DebrisKind::MetalChunk },
+                if i % 3 == 0 { Vec3::splat(0.7) } else { Vec3::new(0.45, 0.18, 0.52) },
+            );
+        }
+    }
+
+    stats.score += 500;
+    stats.wanted_stars = (stats.wanted_stars + 1).min(5);
+    stats.wanted_decay_timer = 14.0;
+    stats.hint_text = if chain {
+        "BOOM! CHAIN CAR EXPLOSION! +500".to_string()
+    } else {
+        "BOOM! CAR EXPLODED! +500".to_string()
+    };
+    stats.hint_bump = stats.hint_bump.wrapping_add(1);
+    out_blasts.push(BlastEvent {
+        center: car_pos + Vec3::Y * 1.1,
+        radius: 15.0,
+        from_car: true,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
 fn update_bullets(
     mut commands: Commands,
     time: Res<Time>,
     mut stats: ResMut<PlayerStats>,
-    mut bullet_q: Query<(Entity, &mut Transform, &mut BulletProjectile)>,
+    vfx: Option<Res<DestructionAssets>>,
+    mut bullet_q: Query<
+        (Entity, &mut Transform, &mut BulletProjectile),
+        (
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<LexieBoss>,
+            Without<PlatformBox>,
+            Without<DestructibleWindow>,
+        ),
+    >,
     mut npc_q: Query<
         (&mut Transform, &mut CityNpc),
-        (Without<BulletProjectile>, Without<CityCar>, Without<LexieBoss>, Without<PlatformBox>),
+        (
+            Without<BulletProjectile>,
+            Without<CityCar>,
+            Without<LexieBoss>,
+            Without<PlatformBox>,
+            Without<DestructibleWindow>,
+        ),
     >,
     mut car_q: Query<
         (&Transform, &mut CityCar),
-        (Without<BulletProjectile>, Without<CityNpc>, Without<LexieBoss>, Without<PlatformBox>),
+        (
+            Without<BulletProjectile>,
+            Without<CityNpc>,
+            Without<LexieBoss>,
+            Without<PlatformBox>,
+            Without<DestructibleWindow>,
+        ),
     >,
     mut lexie_q: Query<
         (&Transform, &mut LexieBoss),
-        (Without<BulletProjectile>, Without<CityNpc>, Without<CityCar>, Without<PlatformBox>),
+        (
+            Without<BulletProjectile>,
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<PlatformBox>,
+            Without<DestructibleWindow>,
+        ),
+    >,
+    mut win_q: Query<
+        (&Transform, &mut DestructibleWindow, &mut Visibility),
+        (
+            Without<BulletProjectile>,
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<LexieBoss>,
+            Without<PlatformBox>,
+        ),
     >,
     box_q: Query<
         (&Transform, &PlatformBox),
-        (Without<BulletProjectile>, Without<CityNpc>, Without<CityCar>, Without<LexieBoss>),
+        (
+            Without<BulletProjectile>,
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<LexieBoss>,
+            Without<DestructibleWindow>,
+        ),
     >,
 ) {
     let dt = time.delta_secs().min(0.05);
@@ -898,9 +1204,9 @@ fn update_bullets(
             continue;
         }
 
-        // Hit Unoccupied Cars
+        // Hit Unoccupied Cars (heavy gunfire can detonate cars!)
         for (c_tf, mut car) in &mut car_q {
-            if car.occupied {
+            if car.occupied || car.exploded_timer > 0.0 {
                 continue;
             }
             let flat = Vec2::new(p.x - c_tf.translation.x, p.z - c_tf.translation.z).length();
@@ -908,10 +1214,43 @@ fn update_bullets(
                 let dir = Vec2::new(b.vel.x, b.vel.z).normalize_or_zero();
                 car.knock_vel += dir * b.car_knock;
                 car.yaw = wrap_angle(car.yaw + (dir.x * 0.08));
+                car.car_hp -= b.damage;
+                if car.car_hp <= 0.0 && car.chain_fuse <= 0.0 {
+                    car.chain_fuse = 0.02;
+                }
                 if b.car_knock > 8.0 {
                     play_sfx("car_crash");
                 } else {
                     play_sfx("grind_lock");
+                }
+                hit = true;
+                break;
+            }
+        }
+        if hit {
+            commands.entity(b_e).despawn_recursive();
+            continue;
+        }
+
+        // Shatterable building storefront/pub windows
+        for (w_tf, mut win, mut w_vis) in &mut win_q {
+            if !win.intact {
+                continue;
+            }
+            let d = p - w_tf.translation;
+            let n = win.outward_normal;
+            let tang = Vec3::new(-n.z, 0.0, n.x);
+            if d.dot(n).abs() < 0.75
+                && d.y.abs() < win.half_size.y + 0.35
+                && d.dot(tang).abs() < win.half_size.x + 0.35
+            {
+                win.intact = false;
+                win.respawn_timer = 35.0;
+                *w_vis = Visibility::Hidden;
+                stats.score += 75;
+                play_sfx("glass_shatter");
+                if let Some(ref assets) = vfx {
+                    spawn_glass_shards(&mut commands, assets, w_tf.translation, n, 6, p.x + p.z);
                 }
                 hit = true;
                 break;
@@ -942,36 +1281,84 @@ fn update_bullets(
 }
 
 #[derive(bevy::ecs::system::SystemParam)]
-struct GrenadeTargets<'w, 's> {
+struct BlastTargets<'w, 's> {
     npc_q: Query<
         'w,
         's,
         (&'static mut Transform, &'static mut CityNpc),
-        (Without<ThrownGrenade>, Without<GrenadeFuseLed>, Without<CityCar>, Without<LexieBoss>, Without<PlatformBox>, Without<Player>),
+        (
+            Without<CityCar>,
+            Without<CityCarPaint>,
+            Without<DestructibleWindow>,
+            Without<DestructibleProp>,
+            Without<LexieBoss>,
+            Without<Player>,
+        ),
     >,
     car_q: Query<
         'w,
         's,
-        (&'static Transform, &'static mut CityCar),
-        (Without<ThrownGrenade>, Without<GrenadeFuseLed>, Without<CityNpc>, Without<LexieBoss>, Without<PlatformBox>, Without<Player>),
+        (Entity, &'static Transform, &'static mut CityCar),
+        (
+            Without<CityNpc>,
+            Without<CityCarPaint>,
+            Without<DestructibleWindow>,
+            Without<DestructibleProp>,
+            Without<LexieBoss>,
+            Without<Player>,
+        ),
+    >,
+    win_q: Query<
+        'w,
+        's,
+        (&'static Transform, &'static mut DestructibleWindow, &'static mut Visibility),
+        (
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<CityCarPaint>,
+            Without<DestructibleProp>,
+            Without<LexieBoss>,
+            Without<Player>,
+        ),
+    >,
+    prop_q: Query<
+        'w,
+        's,
+        (&'static Transform, &'static mut DestructibleProp),
+        (
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<CityCarPaint>,
+            Without<DestructibleWindow>,
+            Without<LexieBoss>,
+            Without<Player>,
+        ),
     >,
     lexie_q: Query<
         'w,
         's,
         (&'static Transform, &'static mut LexieBoss),
-        (Without<ThrownGrenade>, Without<GrenadeFuseLed>, Without<CityNpc>, Without<CityCar>, Without<PlatformBox>, Without<Player>),
-    >,
-    box_q: Query<
-        'w,
-        's,
-        (&'static Transform, &'static PlatformBox),
-        (Without<ThrownGrenade>, Without<GrenadeFuseLed>, Without<CityNpc>, Without<CityCar>, Without<LexieBoss>, Without<Player>),
+        (
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<CityCarPaint>,
+            Without<DestructibleWindow>,
+            Without<DestructibleProp>,
+            Without<Player>,
+        ),
     >,
     player_q: Query<
         'w,
         's,
         (&'static Transform, &'static mut Player),
-        (Without<ThrownGrenade>, Without<GrenadeFuseLed>, Without<CityNpc>, Without<CityCar>, Without<LexieBoss>, Without<PlatformBox>),
+        (
+            Without<CityNpc>,
+            Without<CityCar>,
+            Without<CityCarPaint>,
+            Without<DestructibleWindow>,
+            Without<DestructibleProp>,
+            Without<LexieBoss>,
+        ),
     >,
 }
 
@@ -979,20 +1366,19 @@ struct GrenadeTargets<'w, 's> {
 fn update_grenades(
     mut commands: Commands,
     time: Res<Time>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut stats: ResMut<PlayerStats>,
     mut coop: ResMut<NetCoopEvents>,
-    mut next_state: SceneTransition,
-    mut ragdoll: ResMut<Ragdoll>,
+    mut pending_blasts: ResMut<PendingBlasts>,
     mut gren_q: Query<(Entity, &mut Transform, &mut ThrownGrenade), Without<GrenadeFuseLed>>,
     mut led_q: Query<&mut Transform, (With<GrenadeFuseLed>, Without<ThrownGrenade>)>,
-    mut targets: GrenadeTargets,
+    box_q: Query<(&Transform, &PlatformBox), (Without<ThrownGrenade>, Without<GrenadeFuseLed>)>,
 ) {
     let dt = time.delta_secs().min(0.05);
-    let mut blasts: Vec<Vec3> = Vec::new();
     for (bx, bz) in coop.grenade_blasts.drain(..) {
-        blasts.push(Vec3::new(bx, 0.3, bz));
+        pending_blasts.0.push(BlastEvent {
+            center: Vec3::new(bx, 0.3, bz),
+            radius: 14.0,
+            from_car: false,
+        });
     }
 
     for (g_e, mut g_tf, mut g) in &mut gren_q {
@@ -1018,7 +1404,7 @@ fn update_grenades(
         }
         // Wall bounce off buildings
         let gp = g_tf.translation;
-        for (pb_tf, pb) in &targets.box_q {
+        for (pb_tf, pb) in &box_q {
             if pb_tf.translation.y + pb.half_extents.y <= 0.3 {
                 continue;
             }
@@ -1043,7 +1429,11 @@ fn update_grenades(
         if g.fuse <= 0.0 {
             let pos = g_tf.translation;
             crate::audio::net_event(EVENT_GRENADE_BLAST, pack_grenade_blast(pos.x, pos.z));
-            blasts.push(pos);
+            pending_blasts.0.push(BlastEvent {
+                center: pos,
+                radius: 14.0,
+                from_car: false,
+            });
             commands.entity(g_e).despawn_recursive();
         }
     }
@@ -1053,22 +1443,174 @@ fn update_grenades(
     for mut l_tf in &mut led_q {
         l_tf.scale = Vec3::splat(pulse);
     }
+}
 
-    if blasts.is_empty() {
+#[allow(clippy::too_many_arguments)]
+fn update_exploded_cars(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut stats: ResMut<PlayerStats>,
+    mut pending_blasts: ResMut<PendingBlasts>,
+    vfx: Option<Res<DestructionAssets>>,
+    children_q: Query<&Children>,
+    mut car_q: Query<(Entity, &mut Transform, &mut CityCar), Without<CityCarPaint>>,
+    mut paint_q: Query<(&mut MeshMaterial3d<StandardMaterial>, &CityCarPaint), Without<CityCar>>,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let mut new_blasts = Vec::new();
+    let vfx_ref = vfx.as_deref();
+
+    for (car_e, mut c_tf, mut car) in &mut car_q {
+        if car.chain_fuse > 0.0 && car.exploded_timer <= 0.0 && !car.occupied {
+            car.chain_fuse -= dt;
+            if car.chain_fuse <= 0.0 {
+                let away_xz = Vec2::new(car.yaw.cos(), -car.yaw.sin());
+                detonate_car(
+                    &mut commands,
+                    car_e,
+                    c_tf.translation,
+                    &mut car,
+                    away_xz,
+                    0.75,
+                    true,
+                    &children_q,
+                    &mut paint_q,
+                    vfx_ref,
+                    &mut stats,
+                    &mut new_blasts,
+                );
+            }
+        }
+        if car.exploded_timer <= 0.0 {
+            continue;
+        }
+
+        car.exploded_timer -= dt;
+        car.explode_vel.y -= 28.0 * dt;
+        c_tf.translation += car.explode_vel * dt;
+        c_tf.translation.x = c_tf.translation.x.clamp(-130.0, 130.0);
+        c_tf.translation.z = c_tf.translation.z.clamp(-130.0, 130.0);
+        if push_car_out_of_pub217(&mut c_tf, car.yaw).is_some() {
+            car.explode_vel.x = 0.0;
+            car.explode_vel.z = 0.0;
+        }
+        if c_tf.translation.y <= 0.45 {
+            c_tf.translation.y = 0.45;
+            if car.explode_vel.y < -3.5 {
+                car.explode_vel.y = -car.explode_vel.y * 0.30;
+                car.explode_vel.x *= 0.65;
+                car.explode_vel.z *= 0.65;
+                car.explode_ang_vel *= 0.65;
+            } else {
+                car.explode_vel.y = 0.0;
+                let damp = (1.0 - 4.5 * dt).max(0.0);
+                car.explode_vel.x *= damp;
+                car.explode_vel.z *= damp;
+                car.explode_ang_vel *= (1.0 - 5.5 * dt).max(0.0);
+            }
+        }
+        c_tf.rotate_x(car.explode_ang_vel.x * dt);
+        c_tf.rotate_y(car.explode_ang_vel.y * dt);
+        c_tf.rotate_z(car.explode_ang_vel.z * dt);
+
+        if car.exploded_timer > 1.8 {
+            car.burn_vfx_cd -= dt;
+            if car.burn_vfx_cd <= 0.0 {
+                car.burn_vfx_cd = 0.16;
+                if let Some(assets) = vfx_ref {
+                    let jitter = ((time.elapsed_secs() * 19.0).sin()) * 0.65;
+                    spawn_debris_particle(
+                        &mut commands,
+                        assets,
+                        c_tf.translation + Vec3::new(jitter, 1.0, -jitter * 0.7),
+                        Vec3::new(jitter * 0.8, 3.8, 0.4),
+                        Vec3::ZERO,
+                        0.75,
+                        DebrisKind::FirePuff,
+                        Vec3::splat(0.65),
+                    );
+                    spawn_debris_particle(
+                        &mut commands,
+                        assets,
+                        c_tf.translation + Vec3::new(-jitter * 0.5, 1.4, jitter * 0.5),
+                        Vec3::new(-jitter * 0.6, 5.4, 0.5),
+                        Vec3::ZERO,
+                        1.45,
+                        DebrisKind::SmokePuff,
+                        Vec3::splat(0.85),
+                    );
+                }
+            }
+        }
+
+        if car.exploded_timer <= 0.0 {
+            if let Ok(kids) = children_q.get(car_e) {
+                for &kid in kids.iter() {
+                    if let Ok((mut mat, orig)) = paint_q.get_mut(kid) {
+                        mat.0 = orig.original.clone();
+                    }
+                }
+            }
+            car.car_hp = 100.0;
+            car.explode_vel = Vec3::ZERO;
+            car.explode_ang_vel = Vec3::ZERO;
+            car.knock_vel = Vec2::ZERO;
+            car.velocity = Vec2::ZERO;
+            car.yaw = car.base_yaw;
+            c_tf.rotation = Quat::from_rotation_y(car.base_yaw);
+            c_tf.translation = if car.parked {
+                car.spawn_pos
+            } else if car.axis_x {
+                Vec3::new(-126.0 * car.dir, 0.0, car.lane_coord)
+            } else {
+                let road = (car.lane_coord / 46.0).round() * 46.0;
+                let z = if crate::skatepark::bigpark_uturn_z(road).is_some() {
+                    115.0
+                } else {
+                    -126.0 * car.dir
+                };
+                Vec3::new(car.lane_coord, 0.0, z)
+            };
+        }
+    }
+    pending_blasts.0.extend(new_blasts);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_blast_destruction(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut stats: ResMut<PlayerStats>,
+    mut next_state: SceneTransition,
+    mut ragdoll: ResMut<Ragdoll>,
+    mut pending_blasts: ResMut<PendingBlasts>,
+    vfx: Option<Res<DestructionAssets>>,
+    children_q: Query<&Children>,
+    mut paint_q: Query<(&mut MeshMaterial3d<StandardMaterial>, &CityCarPaint), Without<CityCar>>,
+    mut targets: BlastTargets,
+) {
+    if pending_blasts.0.is_empty() {
         return;
     }
+    let blasts: Vec<BlastEvent> = pending_blasts.0.drain(..).take(8).collect();
+    let vfx_ref = vfx.as_deref();
+    let t = time.elapsed_secs();
 
-    for center in blasts {
-        spawn_explosion_vfx(&mut commands, &mut meshes, &mut materials, center, 11.5, 0.75);
-        play_sfx("explosion");
-        stats.shake_request = stats.shake_request.max(0.65);
+    for blast in blasts {
+        let center = blast.center;
+        let max_age = if blast.from_car { 0.92 } else { 0.75 };
+        spawn_explosion_vfx(&mut commands, &mut meshes, &mut materials, center, blast.radius, max_age);
+        play_sfx(if blast.from_car { "car_explode" } else { "explosion" });
+        stats.shake_request = stats.shake_request.max(if blast.from_car { 0.85 } else { 0.65 });
 
         // Blast NPCs into high-flying ragdolls!
         for (mut n_tf, mut npc) in &mut targets.npc_q {
             let delta = n_tf.translation - center;
             let dist = delta.length();
-            if dist < 13.0 {
-                let k = (1.0 - dist / 13.0).max(0.25);
+            if dist < blast.radius {
+                let k = (1.0 - dist / blast.radius).max(0.25);
                 let away = delta.with_y(0.0).normalize_or(Vec3::X);
                 let imp = away * (26.0 * k) + Vec3::Y * (16.0 * k + 4.0);
                 let ko = launch_npc_ragdoll(&mut npc, &mut n_tf, imp, 40.0 * k);
@@ -1079,21 +1621,130 @@ fn update_grenades(
             }
         }
 
-        // Blast unoccupied cars sideways!
-        for (c_tf, mut car) in &mut targets.car_q {
-            if car.occupied {
+        // Explode or chain-detonate unoccupied cars!
+        for (car_e, c_tf, mut car) in &mut targets.car_q {
+            if car.occupied || car.exploded_timer > 0.0 {
                 continue;
             }
             let diff = Vec2::new(c_tf.translation.x - center.x, c_tf.translation.z - center.z);
             let dist = diff.length();
-            if dist < 14.0 {
-                let k = (1.0 - dist / 14.0).max(0.2);
+            if dist < blast.radius {
+                let k = (1.0 - dist / blast.radius).max(0.25);
                 let away = if dist > 0.01 { diff / dist } else { Vec2::X };
-                car.knock_vel += away * (32.0 * k);
-                car.yaw = wrap_angle(car.yaw + 0.85 * k);
-                play_sfx("car_crash");
-                stats.score += 150;
+                if !blast.from_car {
+                    detonate_car(
+                        &mut commands,
+                        car_e,
+                        c_tf.translation,
+                        &mut car,
+                        away,
+                        k,
+                        false,
+                        &children_q,
+                        &mut paint_q,
+                        vfx_ref,
+                        &mut stats,
+                        &mut pending_blasts.0,
+                    );
+                } else if dist < 11.5 && car.chain_fuse <= 0.0 {
+                    car.chain_fuse = 0.25;
+                    car.knock_vel += away * (16.0 * k);
+                }
             }
+        }
+
+        // Shatter storefront / Pub 217 windows within blast radius!
+        let mut shattered = 0_u32;
+        for (w_tf, mut win, mut w_vis) in &mut targets.win_q {
+            if !win.intact {
+                continue;
+            }
+            if w_tf.translation.distance(center) < blast.radius + 2.5 {
+                win.intact = false;
+                win.respawn_timer = 35.0;
+                *w_vis = Visibility::Hidden;
+                shattered += 1;
+                stats.score += 75;
+                if let Some(assets) = vfx_ref {
+                    spawn_glass_shards(&mut commands, assets, w_tf.translation, win.outward_normal, 7, t + w_tf.translation.x);
+                }
+            }
+        }
+        if shattered > 0 {
+            play_sfx("glass_shatter");
+        }
+
+        // Launch street props (hydrants gush water, trees shed leaves, benches fly)!
+        let mut popped_hydrant = false;
+        for (p_tf, mut prop) in &mut targets.prop_q {
+            if prop.broken {
+                continue;
+            }
+            let delta = p_tf.translation - center;
+            let dist = delta.length();
+            if dist < blast.radius {
+                let k = (1.0 - dist / blast.radius).max(0.25);
+                let away = delta.with_y(0.0).normalize_or(Vec3::Z);
+                prop.broken = true;
+                prop.respawn_timer = 26.0;
+                prop.geyser_cd = 0.02;
+                prop.vel = away * (14.0 * k + 6.0) + Vec3::Y * (11.0 * k + 5.0);
+                prop.ang_vel = Vec3::new(5.2, 3.4, -4.8);
+                stats.score += 100;
+                if let Some(assets) = vfx_ref {
+                    match prop.kind {
+                        DestructiblePropKind::Tree => {
+                            for i in 0..10_usize {
+                                let a = i as f32 * 0.628 + t;
+                                spawn_debris_particle(
+                                    &mut commands,
+                                    assets,
+                                    prop.home_pos + Vec3::Y * 3.4,
+                                    Vec3::new(a.cos() * 7.5, 6.0 + (i % 3) as f32 * 2.5, a.sin() * 7.5),
+                                    Vec3::new(5.0, 7.0, 4.0),
+                                    2.0,
+                                    DebrisKind::LeafChunk,
+                                    Vec3::splat(0.32),
+                                );
+                            }
+                        }
+                        DestructiblePropKind::Hydrant => {
+                            popped_hydrant = true;
+                            for i in 0..8_usize {
+                                let a = i as f32 * 0.785 + t;
+                                spawn_debris_particle(
+                                    &mut commands,
+                                    assets,
+                                    prop.home_pos + Vec3::Y * 0.4,
+                                    Vec3::new(a.cos() * 2.2, 13.5 + (i % 3) as f32 * 1.8, a.sin() * 2.2),
+                                    Vec3::ZERO,
+                                    1.2,
+                                    DebrisKind::WaterDrop,
+                                    Vec3::splat(0.24),
+                                );
+                            }
+                        }
+                        DestructiblePropKind::Bench => {
+                            for i in 0..5_usize {
+                                let a = i as f32 * 1.25 + t;
+                                spawn_debris_particle(
+                                    &mut commands,
+                                    assets,
+                                    prop.home_pos + Vec3::Y * 0.4,
+                                    Vec3::new(a.cos() * 8.0, 7.5, a.sin() * 8.0),
+                                    Vec3::new(7.0, -6.0, 5.0),
+                                    1.6,
+                                    DebrisKind::MetalChunk,
+                                    Vec3::new(0.25, 0.14, 0.35),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if popped_hydrant {
+            play_sfx("hydrant_pop");
         }
 
         // Blast Lexie if present!
@@ -1115,12 +1766,13 @@ fn update_grenades(
             }
         }
 
-        // Self-blast / close-range friend blast!
+        // Self-blast / close-range blast!
+        let self_r = if blast.from_car { 7.5 } else { 6.0 };
         if stats.driving_car.is_none() && !stats.riding_wheel {
             if let Ok((p_tf, mut player)) = targets.player_q.get_single_mut() {
                 let delta = p_tf.translation - center;
                 let dist = delta.length();
-                if dist < 6.0 && player.invuln_timer <= 0.0 && player.roll_timer <= 0.0 {
+                if dist < self_r && player.invuln_timer <= 0.0 && player.roll_timer <= 0.0 {
                     let away = delta.with_y(0.0).normalize_or(Vec3::Z);
                     let imp = away * 15.0 + Vec3::Y * 9.5;
                     if crate::ragdoll::can_ragdoll(&stats) {
@@ -1138,6 +1790,138 @@ fn update_grenades(
                     }
                 }
             }
+        }
+    }
+}
+
+fn update_destructibles_and_debris(
+    mut commands: Commands,
+    time: Res<Time>,
+    vfx: Option<Res<DestructionAssets>>,
+    mut win_q: Query<
+        (&mut DestructibleWindow, &mut Visibility),
+        (Without<DestructibleProp>, Without<FlyingDebris>),
+    >,
+    mut prop_q: Query<
+        (&mut Transform, &mut DestructibleProp),
+        (Without<DestructibleWindow>, Without<FlyingDebris>),
+    >,
+    mut debris_q: Query<
+        (Entity, &mut Transform, &mut FlyingDebris),
+        (Without<DestructibleWindow>, Without<DestructibleProp>),
+    >,
+) {
+    let dt = time.delta_secs().min(0.05);
+    let t = time.elapsed_secs();
+
+    for (e, mut tf, mut d) in &mut debris_q {
+        d.age += dt;
+        if d.age >= d.max_age {
+            commands.entity(e).despawn_recursive();
+            continue;
+        }
+        let u = d.age / d.max_age;
+        match d.kind {
+            DebrisKind::FirePuff | DebrisKind::SmokePuff => {
+                d.vel.y += 2.2 * dt;
+                tf.translation += d.vel * dt;
+                let s = (1.0 + u * 1.1) * (1.0 - u * 0.85).max(0.05);
+                tf.scale = d.base_scale * s;
+            }
+            _ => {
+                d.vel.y -= 26.0 * dt;
+                tf.translation += d.vel * dt;
+                tf.rotate_x(d.ang_vel.x * dt);
+                tf.rotate_y(d.ang_vel.y * dt);
+                tf.rotate_z(d.ang_vel.z * dt);
+                if tf.translation.y <= 0.10 {
+                    tf.translation.y = 0.10;
+                    if d.vel.y < -3.0 {
+                        d.vel.y = -d.vel.y * 0.35;
+                        d.vel.x *= 0.65;
+                        d.vel.z *= 0.65;
+                    } else {
+                        d.vel.y = 0.0;
+                        d.vel.x *= (1.0 - 5.0 * dt).max(0.0);
+                        d.vel.z *= (1.0 - 5.0 * dt).max(0.0);
+                        d.ang_vel *= (1.0 - 6.0 * dt).max(0.0);
+                    }
+                }
+                if u > 0.75 {
+                    tf.scale = d.base_scale * ((1.0 - u) * 4.0).max(0.05);
+                }
+            }
+        }
+    }
+
+    for (mut win, mut vis) in &mut win_q {
+        if win.intact {
+            continue;
+        }
+        win.respawn_timer -= dt;
+        if win.respawn_timer <= 0.0 {
+            win.intact = true;
+            win.respawn_timer = 0.0;
+            *vis = Visibility::Inherited;
+        }
+    }
+
+    let vfx_ref = vfx.as_deref();
+    for (mut tf, mut prop) in &mut prop_q {
+        if !prop.broken {
+            continue;
+        }
+        prop.respawn_timer -= dt;
+        prop.vel.y -= 25.0 * dt;
+        tf.translation += prop.vel * dt;
+        tf.rotate_x(prop.ang_vel.x * dt);
+        tf.rotate_y(prop.ang_vel.y * dt);
+        tf.rotate_z(prop.ang_vel.z * dt);
+        let floor_y = if prop.kind == DestructiblePropKind::Bench { 0.35 } else { 0.15 };
+        if tf.translation.y <= floor_y {
+            tf.translation.y = floor_y;
+            if prop.vel.y < -3.0 {
+                prop.vel.y = -prop.vel.y * 0.32;
+                prop.vel.x *= 0.62;
+                prop.vel.z *= 0.62;
+                prop.ang_vel *= 0.65;
+            } else {
+                prop.vel.y = 0.0;
+                prop.vel.x *= (1.0 - 5.0 * dt).max(0.0);
+                prop.vel.z *= (1.0 - 5.0 * dt).max(0.0);
+                prop.ang_vel *= (1.0 - 6.0 * dt).max(0.0);
+            }
+        }
+
+        if prop.kind == DestructiblePropKind::Hydrant && prop.respawn_timer > 10.0 {
+            prop.geyser_cd -= dt;
+            if prop.geyser_cd <= 0.0 {
+                prop.geyser_cd = 0.075;
+                if let Some(assets) = vfx_ref {
+                    for j in 0..2 {
+                        let a = t * 11.0 + j as f32 * 3.14;
+                        spawn_debris_particle(
+                            &mut commands,
+                            assets,
+                            prop.home_pos + Vec3::Y * 0.32,
+                            Vec3::new(a.cos() * 1.4, 12.0 + j as f32 * 2.0, a.sin() * 1.4),
+                            Vec3::ZERO,
+                            0.95,
+                            DebrisKind::WaterDrop,
+                            Vec3::splat(0.21),
+                        );
+                    }
+                }
+            }
+        }
+
+        if prop.respawn_timer <= 0.0 {
+            prop.broken = false;
+            prop.respawn_timer = 0.0;
+            prop.vel = Vec3::ZERO;
+            prop.ang_vel = Vec3::ZERO;
+            tf.translation = prop.home_pos;
+            tf.rotation = prop.home_rot;
         }
     }
 }

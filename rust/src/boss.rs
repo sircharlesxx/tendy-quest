@@ -358,6 +358,8 @@ pub fn ensure_hero_vikings_gear(
     mut materials: ResMut<Assets<StandardMaterial>>,
     stats: Res<PlayerStats>,
     state: Res<State<GameState>>,
+    player_q: Query<Entity, With<crate::player::Player>>,
+    parent_q: Query<&Parent>,
     existing_q: Query<Entity, With<HeroCosmetic>>,
     part_q: Query<(Entity, &Name), Without<HeroCosmetic>>,
 ) {
@@ -369,11 +371,27 @@ pub fn ensure_hero_vikings_gear(
     if !should_wear || !existing_q.is_empty() {
         return;
     }
+    let Ok(player_ent) = player_q.get_single() else {
+        return;
+    };
+
+    let is_local_player_part = |mut cur: Entity| -> bool {
+        while let Ok(p) = parent_q.get(cur) {
+            cur = p.get();
+            if cur == player_ent {
+                return true;
+            }
+        }
+        false
+    };
 
     let mut torso_ent = None;
     let mut head_ent = None;
     let mut r_arm_ent = None;
     for (ent, name) in &part_q {
+        if !is_local_player_part(ent) {
+            continue;
+        }
         match name.as_str() {
             "HeroTorso" => torso_ent = Some(ent),
             "HeroHead" => head_ent = Some(ent),
@@ -559,6 +577,7 @@ pub fn ensure_hero_vikings_gear(
             HeroSaberBlade,
             Transform::from_xyz(0.23, -0.46, -0.06)
                 .with_rotation(Quat::from_rotation_x(-1.18)),
+            Visibility::Inherited,
         ))
         .with_children(|saber| {
             // Metallic hilt
