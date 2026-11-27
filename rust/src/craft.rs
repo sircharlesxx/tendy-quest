@@ -2070,11 +2070,59 @@ fn exit_craft_play(
 
 #[derive(bevy::ecs::system::SystemParam)]
 struct VoxelRayQueries<'w, 's> {
-    player_q: Query<'w, 's, &'static Transform, (With<Player>, Without<VoxelBlock>, Without<CraftCursorVisual>)>,
-    cam_q: Query<'w, 's, &'static Transform, (With<Camera3d>, Without<Player>, Without<VoxelBlock>, Without<CraftCursorVisual>)>,
-    block_q: Query<'w, 's, (Entity, &'static VoxelBlock), (Without<Player>, Without<CraftCursorVisual>, Without<CraftDebris>)>,
-    cursor_q: Query<'w, 's, (&'static mut Transform, &'static mut Visibility), (With<CraftCursorVisual>, Without<Player>, Without<VoxelBlock>)>,
-    debris_q: Query<'w, 's, (Entity, &'static mut Transform, &'static mut CraftDebris), (Without<Player>, Without<VoxelBlock>, Without<CraftCursorVisual>)>,
+    player_q: Query<
+        'w,
+        's,
+        &'static Transform,
+        (
+            With<Player>,
+            Without<Camera3d>,
+            Without<VoxelBlock>,
+            Without<CraftCursorVisual>,
+            Without<CraftDebris>,
+        ),
+    >,
+    cam_q: Query<
+        'w,
+        's,
+        &'static Transform,
+        (
+            With<Camera3d>,
+            Without<Player>,
+            Without<VoxelBlock>,
+            Without<CraftCursorVisual>,
+            Without<CraftDebris>,
+        ),
+    >,
+    block_q: Query<
+        'w,
+        's,
+        (Entity, &'static VoxelBlock),
+        (Without<Player>, Without<CraftCursorVisual>, Without<CraftDebris>),
+    >,
+    cursor_q: Query<
+        'w,
+        's,
+        (&'static mut Transform, &'static mut Visibility),
+        (
+            With<CraftCursorVisual>,
+            Without<Player>,
+            Without<Camera3d>,
+            Without<VoxelBlock>,
+            Without<CraftDebris>,
+        ),
+    >,
+    debris_q: Query<
+        'w,
+        's,
+        (Entity, &'static mut Transform, &'static mut CraftDebris),
+        (
+            Without<Player>,
+            Without<Camera3d>,
+            Without<VoxelBlock>,
+            Without<CraftCursorVisual>,
+        ),
+    >,
     hotbar_btn_q: Query<'w, 's, (&'static Interaction, &'static CraftHotbarBtn), Changed<Interaction>>,
 }
 
