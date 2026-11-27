@@ -3192,8 +3192,10 @@
       border-color: #7dd3fc;
       box-shadow: 0 0 14px rgba(56, 189, 248, 0.5);
     }
-    #touch-controls.city-weapons #btn-grenade,
     #touch-controls.city-weapons #btn-weapon {
+      display: flex;
+    }
+    #touch-controls.city-weapons.city-grenades #btn-grenade {
       display: flex;
     }
     #mobile-top-btns {
@@ -3530,7 +3532,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-eb675709e4e7c512.js" crossorigin="anonymous" integrity="sha384-hfncPgnUBcF5Q/ajJOJbqHsvTWMPE5duXRVdan7y1VdoNerWnPHlvfWiPxYk2/0t"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-eb675709e4e7c512_bg.wasm" crossorigin="anonymous" integrity="sha384-pGmzvO1uOqfUK3d4B25BWei9V3BHWJfULX8mnMRwZ696mop7flbwa2ivEVD1phBt" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-1a5209d3a9fce580.js" crossorigin="anonymous" integrity="sha384-bC2v7CNBKC/LiXqdGQPfH5fycjpcALUapG8A5hTCYHqW8PJJOUFdhHc4pCTnznN3"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-1a5209d3a9fce580_bg.wasm" crossorigin="anonymous" integrity="sha384-AdbhcFLPgfckMlk/UNP5snm2yvsIrXzjaTkeus1KMYHu/h4MlPKi9i4zgvxk6xk6" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -4192,10 +4194,11 @@
 
       const WEP_TAGS = ["SBR", "9MM", "SHT", "SMG"];
       const ATK_LABELS = ["SABER", "SHOOT", "BLAST", "SMG"];
-      function setCityWeapons(active, weaponSlot, grenades) {
+      function setCityWeapons(active, weaponSlot, grenades, grenadesUnlocked) {
         const on = !!active;
         if (touchControls) {
           touchControls.classList.toggle("city-weapons", on);
+          touchControls.classList.toggle("city-grenades", on && !!grenadesUnlocked);
         }
         const slot = Math.max(0, Math.min(3, weaponSlot | 0));
         const n = Math.max(0, grenades | 0);
@@ -7226,8 +7229,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-eb675709e4e7c512.js';
-const wasm = await init({ module_or_path: './tendy-quest-eb675709e4e7c512_bg.wasm' });
+import init, * as bindings from './tendy-quest-1a5209d3a9fce580.js';
+const wasm = await init({ module_or_path: './tendy-quest-1a5209d3a9fce580_bg.wasm' });
 
 
 window.wasmBindings = bindings;

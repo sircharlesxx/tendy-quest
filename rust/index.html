@@ -3192,8 +3192,10 @@
       border-color: #7dd3fc;
       box-shadow: 0 0 14px rgba(56, 189, 248, 0.5);
     }
-    #touch-controls.city-weapons #btn-grenade,
     #touch-controls.city-weapons #btn-weapon {
+      display: flex;
+    }
+    #touch-controls.city-weapons.city-grenades #btn-grenade {
       display: flex;
     }
     #mobile-top-btns {
@@ -4192,10 +4194,11 @@
 
       const WEP_TAGS = ["SBR", "9MM", "SHT", "SMG"];
       const ATK_LABELS = ["SABER", "SHOOT", "BLAST", "SMG"];
-      function setCityWeapons(active, weaponSlot, grenades) {
+      function setCityWeapons(active, weaponSlot, grenades, grenadesUnlocked) {
         const on = !!active;
         if (touchControls) {
           touchControls.classList.toggle("city-weapons", on);
+          touchControls.classList.toggle("city-grenades", on && !!grenadesUnlocked);
         }
         const slot = Math.max(0, Math.min(3, weaponSlot | 0));
         const n = Math.max(0, grenades | 0);

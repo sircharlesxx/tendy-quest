@@ -274,7 +274,7 @@ fn cleanup_weapons_city(
     mut stan_saber_q: Query<&mut Visibility, With<HeroSaberBlade>>,
     mut pending: ResMut<PendingBlasts>,
 ) {
-    crate::audio::set_touch_city_weapons(false, 0, 0);
+    crate::audio::set_touch_city_weapons(false, 0, 0, false);
     pending.0.clear();
     for mut v in &mut stan_saber_q {
         if *v != Visibility::Inherited {
@@ -294,11 +294,11 @@ fn update_weapon_hud(
     stats: Res<PlayerStats>,
     mut root_q: Query<&mut Visibility, With<WeaponHudRoot>>,
     mut btn_q: Query<
-        (&WeaponHudButton, &mut BackgroundColor, &mut BorderColor),
+        (&WeaponHudButton, &mut BackgroundColor, &mut BorderColor, &mut Node),
         Without<WeaponHudRoot>,
     >,
     mut text_q: Query<(&WeaponHudBtnText, &mut Text)>,
-    mut last_touch: Local<(bool, u8, u32)>,
+    mut last_touch: Local<(bool, u8, u32, bool)>,
 ) {
     let active_in_foot = stats.driving_car.is_none()
         && !stats.riding_wheel
@@ -307,11 +307,12 @@ fn update_weapon_hud(
         && !stats.char_select_open
         && !stats.casino_open
         && !stats.arcade_open;
+    let gren_unlocked = stats.grenades_unlocked();
 
-    let cur_touch = (active_in_foot, stats.equipped_weapon, stats.grenades);
+    let cur_touch = (active_in_foot, stats.equipped_weapon, stats.grenades, gren_unlocked);
     if *last_touch != cur_touch {
         *last_touch = cur_touch;
-        crate::audio::set_touch_city_weapons(cur_touch.0, cur_touch.1, cur_touch.2);
+        crate::audio::set_touch_city_weapons(cur_touch.0, cur_touch.1, cur_touch.2, cur_touch.3);
     }
 
     let hide = !active_in_foot || crate::audio::skip_touch_ui();
@@ -329,8 +330,16 @@ fn update_weapon_hud(
         return;
     }
 
-    for (btn, mut bg, mut border) in &mut btn_q {
+    for (btn, mut bg, mut border, mut node) in &mut btn_q {
         if btn.0 == 4 {
+            let want_disp = if gren_unlocked {
+                Display::Flex
+            } else {
+                Display::None
+            };
+            if node.display != want_disp {
+                node.display = want_disp;
+            }
             bg.0 = if stats.grenades > 0 {
                 Color::srgba(0.10, 0.42, 0.20, 0.92)
             } else {
@@ -387,9 +396,10 @@ fn handle_weapon_input(
     let dt = time.delta_secs().min(0.05);
     cd.fire_cd = (cd.fire_cd - dt).max(0.0);
     cd.grenade_cd = (cd.grenade_cd - dt).max(0.0);
+    let gren_unlocked = stats.grenades_unlocked();
 
-    // Regenerate grenades gradually so players never stay empty.
-    if stats.grenades < 5 {
+    // Regenerate grenades gradually once unlocked so players never stay empty.
+    if gren_unlocked && stats.grenades < 5 {
         stats.grenade_regen_timer += dt;
         if stats.grenade_regen_timer >= 6.5 {
             stats.grenade_regen_timer = 0.0;
@@ -468,7 +478,13 @@ fn handle_weapon_input(
 
     // Throw Grenade [G] or Mobile GREN button or HUD G button (#19)
     if (keys.just_pressed(KeyCode::KeyG) || touch_gren || ui_gren) && cd.grenade_cd <= 0.0 {
-        if stats.grenades == 0 {
+        if !gren_unlocked {
+            if keys.just_pressed(KeyCode::KeyG) {
+                play_sfx("hack_deny");
+                stats.hint_text = "Grenades unlock after defeating Lexie (or in Free Mode)!".to_string();
+                stats.hint_bump = stats.hint_bump.wrapping_add(1);
+            }
+        } else if stats.grenades == 0 {
             play_sfx("hack_deny");
             stats.hint_text = "Out of grenades -- recharging!".to_string();
             stats.hint_bump = stats.hint_bump.wrapping_add(1);

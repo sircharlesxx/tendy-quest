@@ -441,6 +441,11 @@ impl PlayerStats {
         self.test_crew_preset = None;
     }
 
+    /// Grenades unlock once Lexie is defeated or when playing in Free Mode.
+    pub fn grenades_unlocked(&self) -> bool {
+        self.lexie_defeated || self.free_roam
+    }
+
     /// Credits `delta` Tendy Wendies to the player's persistent wallet (saved immediately).
     pub fn add_tendy_wendies(&mut self, delta: u32) {
         self.tendy_wendies = self.tendy_wendies.saturating_add(delta);

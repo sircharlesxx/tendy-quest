@@ -105,7 +105,7 @@ mod imp {
         fn js_take_weapon_cycle() -> bool;
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = setCityWeapons)]
-        fn js_set_city_weapons(active: bool, weapon_slot: u8, grenades: u32);
+        fn js_set_city_weapons(active: bool, weapon_slot: u8, grenades: u32, grenades_unlocked: bool);
 
         #[wasm_bindgen(js_namespace = ["window", "tendyInput"], js_name = combatDemo)]
         fn js_combat_demo() -> String;
@@ -435,8 +435,8 @@ mod imp {
         js_take_weapon_cycle()
     }
 
-    pub fn set_touch_city_weapons(active: bool, weapon_slot: u8, grenades: u32) {
-        js_set_city_weapons(active, weapon_slot, grenades);
+    pub fn set_touch_city_weapons(active: bool, weapon_slot: u8, grenades: u32, grenades_unlocked: bool) {
+        js_set_city_weapons(active, weapon_slot, grenades, grenades_unlocked);
     }
 
     /// `combat_demo=` URL value (empty unless `debug=1`), for the debug combat motion demo.
@@ -871,7 +871,7 @@ mod imp {
         false
     }
 
-    pub fn set_touch_city_weapons(_active: bool, _weapon_slot: u8, _grenades: u32) {}
+    pub fn set_touch_city_weapons(_active: bool, _weapon_slot: u8, _grenades: u32, _grenades_unlocked: bool) {}
 
     pub fn debug_combat_demo() -> String {
         String::new()
