@@ -14,6 +14,9 @@ mod imp {
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playBgm)]
         fn js_play_bgm();
 
+        #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playStartMenuMusic)]
+        fn js_play_start_menu_music();
+
         #[wasm_bindgen(js_namespace = ["window", "tendyAudio"], js_name = playCutsceneMusic)]
         fn js_play_cutscene_music();
 
@@ -252,6 +255,10 @@ mod imp {
 
     pub fn play_bgm() {
         js_play_bgm();
+    }
+
+    pub fn play_start_menu_music() {
+        js_play_start_menu_music();
     }
 
     pub fn play_cutscene_music() {
@@ -720,6 +727,8 @@ mod imp {
 mod imp {
     pub fn play_bgm() {}
 
+    pub fn play_start_menu_music() {}
+
     pub fn play_cutscene_music() {}
 
     pub fn play_headphone_music(_level: u8) {}
@@ -1004,7 +1013,8 @@ mod imp {
 pub use imp::{
     debug_autoskip_enabled, debug_city_start, debug_combat_demo, debug_keys_enabled, init_test_mode, is_muted, is_voice_speaking, load_checkpoint,
     mark_mom_defeated, notify_boot_ready, play_bgm, play_boss_music, play_casino_jazz_music, play_club_disco_music, play_cutscene_music, play_hacking_music,
-    play_headphone_music, play_lexie_rpg_music, play_scooter_music, play_sfx, play_viking_chant_music, play_wonka_trip_music, save_checkpoint,
+    play_headphone_music, play_lexie_rpg_music, play_scooter_music, play_sfx, play_start_menu_music,
+    play_viking_chant_music, play_wonka_trip_music, save_checkpoint,
     set_cutscene_skip, set_touch_boss_mode, set_touch_playing, set_tutorial_visible, skip_input_held,
     skip_touch_ui, stop_voice, set_they_live_mode, set_uzumaki_mode, speak_voice, take_cutscene_start_time,
     take_touch_action_tap, take_touch_attack, take_touch_dash, take_touch_grenade, take_touch_help, take_touch_jump,

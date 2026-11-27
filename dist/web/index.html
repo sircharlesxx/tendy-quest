@@ -430,6 +430,9 @@
           loadBuffer("ambience", "assets/audio/kitchen_ambience.mp3").then(() => {
             if (bgmRequested) startLoops();
           });
+          loadBuffer("start_menu", "assets/audio/start_menu_cute.mp3").then(() => {
+            if (startMenuRequested && currentTrack === "start_menu") startStartMenuSource();
+          });
           for (const name of SFX_NAMES) {
             loadBuffer(name, `assets/audio/${name}.wav`);
           }
@@ -439,6 +442,8 @@
       let droneOsc1 = null;
       let droneOsc2 = null;
       let droneGain = null;
+      let startMenuSource = null;
+      let startMenuRequested = false;
       let bossTimer = null;
       let bossStep = 0;
       let vikingTimer = null;
@@ -501,6 +506,7 @@
           const oscs = [droneOsc1, droneOsc2];
           const oldDrone = droneGain;
           const oldBus = musicBus;
+          const oldStartMenu = startMenuSource;
           bossTimer = null;
           vikingTimer = null;
           headphoneTimer = null;
@@ -510,9 +516,12 @@
           droneOsc2 = null;
           droneGain = null;
           musicBus = null;
+          startMenuSource = null;
+          startMenuRequested = false;
           if (ctx) {
             const end = ctx.currentTime + MUSIC_FADE_S + 0.05;
             if (oldBus) rampGain(oldBus.gain, 0.0, MUSIC_FADE_S);
+            if (oldStartMenu) { try { oldStartMenu.stop(end); } catch (_) {} }
             for (const o of oscs) {
               if (o) { try { o.stop(end); } catch (_) {} }
             }
@@ -520,6 +529,7 @@
           setTimeout(() => {
             for (const t of timers) { if (t) clearInterval(t); }
             for (const o of oscs) { if (o) { try { o.disconnect(); } catch (_) {} } }
+            try { if (oldStartMenu) oldStartMenu.disconnect(); } catch (_) {}
             try { if (oldDrone) oldDrone.disconnect(); } catch (_) {}
             try { if (oldBus) oldBus.disconnect(); } catch (_) {}
           }, (MUSIC_FADE_S + 0.1) * 1000);
@@ -1279,6 +1289,24 @@
         }
       }
 
+      function startStartMenuSource() {
+        const ac = ensureCtx();
+        if (!ac || ac.state !== "running") return;
+        if (!startMenuRequested || currentTrack !== "start_menu" || startMenuSource || !buffers["start_menu"]) return;
+        try {
+          const bus = musicBus || newMusicBus(ac);
+          const g = ac.createGain();
+          g.gain.value = 0.48;
+          const src = ac.createBufferSource();
+          src.buffer = buffers["start_menu"];
+          src.loop = true;
+          src.connect(g);
+          g.connect(bus);
+          src.start(0);
+          startMenuSource = src;
+        } catch (_) {}
+      }
+
       function unlockAndMaybeStart() {
         try {
           if (window.speechSynthesis) {
@@ -1292,14 +1320,20 @@
           if (ac.state === "suspended") {
             ac.resume().then(() => {
               if (bgmRequested) startLoops();
+              if (startMenuRequested && currentTrack === "start_menu") startStartMenuSource();
             }).catch(() => {});
-          } else if (bgmRequested) {
-            startLoops();
+          } else {
+            if (bgmRequested) startLoops();
+            if (startMenuRequested && currentTrack === "start_menu") startStartMenuSource();
           }
         } catch (_) {}
       }
 
       window.addEventListener("pointerdown", () => {
+        preloadAll();
+        unlockAndMaybeStart();
+      });
+      window.addEventListener("touchstart", () => {
         preloadAll();
         unlockAndMaybeStart();
       });
@@ -1323,6 +1357,23 @@
             if (ac && ambGain) rampGain(ambGain.gain, 0.14, MUSIC_FADE_S);
             if (bgmSource) bgmSource.playbackRate.value = 1.0;
           } catch (_) {}
+        },
+        playStartMenuMusic() {
+          if (isTrackRestart("start_menu")) return;
+          stopSpecialAudio();
+          bgmRequested = false;
+          startMenuRequested = true;
+          preloadAll();
+          try {
+            const ac = ensureCtx();
+            if (ac && masterGain) {
+              newMusicBus(ac);
+              if (bgmGain) rampGain(bgmGain.gain, 0.0, MUSIC_FADE_S);
+              if (ambGain) rampGain(ambGain.gain, 0.0, MUSIC_FADE_S);
+            }
+          } catch (_) {}
+          unlockAndMaybeStart();
+          startStartMenuSource();
         },
         playCutsceneMusic() {
           if (isTrackRestart("cutscene")) return;
@@ -3576,7 +3627,7 @@
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-a880700f349b36d3.js" crossorigin="anonymous" integrity="sha384-JAKeYAs8FUaA1Nj1FQ7NebxPVZU8jB/oLSKon2VE2V2Az7zYU45anNhIYcX/7Tuo"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-a880700f349b36d3_bg.wasm" crossorigin="anonymous" integrity="sha384-jJ9v92lHV/U8GzwQ3ZNtJVT61L8OVG5lav5Mk5dmSfRnEHkHOoAtY+gBPeKVKJ2z" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-1e85738f9011d064.js" crossorigin="anonymous" integrity="sha384-Af5GZjeIiAJtPvZYB3sEzFOvT7E/yJQEcShN9rpJxJ9IlpwBmHylsYGo7Y6+EZQ2"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-1e85738f9011d064_bg.wasm" crossorigin="anonymous" integrity="sha384-hujnOexUmMDZE8QLzV01mv0C9EBQgaisIZd4WVBAGKOWbjtiNtjwQpjSqn5ZDE3J" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -7291,8 +7342,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-a880700f349b36d3.js';
-const wasm = await init({ module_or_path: './tendy-quest-a880700f349b36d3_bg.wasm' });
+import init, * as bindings from './tendy-quest-1e85738f9011d064.js';
+const wasm = await init({ module_or_path: './tendy-quest-1e85738f9011d064_bg.wasm' });
 
 
 window.wasmBindings = bindings;

@@ -14,8 +14,8 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, PrimaryWindow};
 
 use crate::audio::{
-    is_voice_speaking, play_cutscene_music, play_sfx, play_viking_chant_music, set_touch_playing,
-    speak_voice, stop_voice,
+    is_voice_speaking, play_cutscene_music, play_sfx, play_start_menu_music, play_viking_chant_music,
+    set_touch_playing, speak_voice, stop_voice,
 };
 use crate::city::{
     is_in_pub217, CityWorldMarker, PUB217_ANCHOR, PUB217_SCALE,
@@ -135,12 +135,12 @@ impl Plugin for CraftPlugin {
                     .run_if(in_state(GameState::CityPlay))
                     .run_if(gameplay_running),
             )
-            // Cutscene 1: Post-Lexie Pub 217 reunion & beer proposal
+            // Cutscene 1: Post-Lexie Pub 217 reunion & Maria's interactive 10-beer choices
             .add_systems(OnEnter(GameState::HouseCraftCutscene), enter_house_craft_cutscene)
             .add_systems(OnExit(GameState::HouseCraftCutscene), exit_house_craft_cutscene)
             .add_systems(
                 Update,
-                update_house_craft_cutscene
+                (update_house_craft_cutscene, handle_house_craft_choice_input)
                     .run_if(in_state(GameState::HouseCraftCutscene))
                     .run_if(sim_running),
             )
@@ -230,6 +230,7 @@ fn enter_tutorial_menu_diorama(
         color: Color::srgb(1.0, 0.90, 0.80),
         brightness: 500.0,
     });
+    play_start_menu_music();
 
     let stage = MENU_PUB_STAGE;
     let table_pos = stage + MENU_TABLE_REL;
@@ -593,7 +594,7 @@ fn update_tutorial_menu_diorama(
         let ang = -0.35 + shot_u * 1.15;
         let eye = table_pos + Vec3::new(ang.sin() * 4.4, 2.30, ang.cos() * 4.4);
         let look = table_pos + Vec3::new(0.0, 1.10, 0.0);
-        (eye, look, "PUB 217 -- PLAY ANY OF THE BOYS IN FREE ROAM & CRAFTING!")
+        (eye, look, "PUB 217 -- PLAY ANY OF THE BOYS IN FREE ROAM!")
     };
 
     if shot != ms.last_shot {
@@ -607,6 +608,7 @@ fn update_tutorial_menu_diorama(
 
     if !ms.snapped {
         ms.snapped = true;
+        play_start_menu_music();
         commands.insert_resource(ClearColor(Color::srgb(0.06, 0.04, 0.04)));
         commands.insert_resource(AmbientLight {
             color: Color::srgb(1.0, 0.90, 0.80),
@@ -796,11 +798,20 @@ struct HouseCraftSpeakerText;
 #[derive(Component)]
 struct HouseCraftSubText;
 
+#[derive(Component, Clone, Copy)]
+enum HouseCraftChoice {
+    TenBeersCasino,
+    TenBeersCraft,
+    FreeRoamCity,
+}
+
 #[derive(Resource, Default)]
 pub struct HouseCraftState {
     beat: u8,
     beat_t: f32,
     beat0_spoken: bool,
+    choice_shown: bool,
+    cam_look: Vec3,
 }
 
 const HOUSE_CRAFT_BEATS: [(&str, &str, &str, f32); 4] = [
@@ -829,6 +840,159 @@ const HOUSE_CRAFT_BEATS: [(&str, &str, &str, f32); 4] = [
         5.0,
     ),
 ];
+
+fn spawn_house_craft_choice_modal(commands: &mut Commands, art: Option<&crate::casino::CasinoArt>) {
+    commands
+        .spawn((
+            HouseCraftEntity,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                padding: UiRect::all(Val::Px(14.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.02, 0.01, 0.04, 0.56)),
+            GlobalZIndex(80),
+        ))
+        .with_children(|bg| {
+            bg.spawn((
+                Node {
+                    width: Val::Percent(94.0),
+                    max_width: Val::Px(560.0),
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(12.0),
+                    padding: UiRect::all(Val::Px(18.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.11, 0.04, 0.09, 0.96)),
+                BorderColor(Color::srgb(0.98, 0.78, 0.30)),
+                BorderRadius::all(Val::Px(14.0)),
+            ))
+            .with_children(|card| {
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(14.0),
+                    ..default()
+                })
+                .with_children(|top| {
+                    if let Some(a) = art {
+                        top.spawn((
+                            Node {
+                                padding: UiRect::all(Val::Px(3.0)),
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BorderColor(Color::srgb(1.0, 0.72, 0.84)),
+                            BorderRadius::all(Val::Px(10.0)),
+                        ))
+                        .with_children(|frame| {
+                            frame.spawn((
+                                ImageNode::new(a.bartender_portrait.clone()),
+                                Node {
+                                    width: Val::Px(92.0),
+                                    height: Val::Px(92.0),
+                                    ..default()
+                                },
+                            ));
+                        });
+                    }
+                    top.spawn(Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(5.0),
+                        flex_shrink: 1.0,
+                        ..default()
+                    })
+                    .with_children(|info| {
+                        info.spawn((
+                            Text::new("MARIA -- PUB 217 BARTENDER"),
+                            TextFont { font_size: 16.5, ..default() },
+                            TextColor(Color::srgb(1.0, 0.84, 0.30)),
+                        ));
+                        info.spawn((
+                            Text::new("\"What'll it be, boys? Order 10 beers for the Casino, or order 10 beers AND craft?\""),
+                            TextFont { font_size: 14.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
+
+                card.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    ..default()
+                })
+                .with_children(|col| {
+                    col.spawn((
+                        HouseCraftChoice::TenBeersCasino,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(11.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.76, 0.44, 0.08)),
+                        BorderColor(Color::srgb(1.0, 0.88, 0.34)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("ORDER 10 BEERS -> CASINO [1]"),
+                            TextFont { font_size: 15.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
+                    col.spawn((
+                        HouseCraftChoice::TenBeersCraft,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(11.0)),
+                            border: UiRect::all(Val::Px(2.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.38, 0.14, 0.68)),
+                        BorderColor(Color::srgb(0.45, 0.96, 0.68)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("ORDER 10 BEERS & CRAFT [2]"),
+                            TextFont { font_size: 15.0, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+
+                    col.spawn((
+                        HouseCraftChoice::FreeRoamCity,
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(9.0)),
+                            border: UiRect::all(Val::Px(1.5)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.14, 0.36, 0.46)),
+                        BorderColor(Color::srgba(0.62, 0.92, 1.0, 0.7)),
+                        BorderRadius::all(Val::Px(8.0)),
+                    ))
+                    .with_children(|b| {
+                        b.spawn((
+                            Text::new("EXPLORE CEDAR RAPIDS FREE ROAM [ESC / 3]"),
+                            TextFont { font_size: 13.5, ..default() },
+                            TextColor(Color::WHITE),
+                        ));
+                    });
+                });
+            });
+        });
+}
 
 fn spawn_house_craft_overlay(commands: &mut Commands) {
     commands
@@ -915,10 +1079,11 @@ fn enter_house_craft_cutscene(
     commands.insert_resource(ClearColor(Color::srgb(0.07, 0.04, 0.05)));
     commands.insert_resource(AmbientLight {
         color: Color::srgb(1.0, 0.90, 0.82),
-        brightness: 420.0,
+        brightness: 460.0,
     });
 
     let stage = HOUSE_CRAFT_STAGE;
+    let table_c = stage + Vec3::new(1.5, 0.0, 0.5);
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
     let floor_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.28, 0.18, 0.11),
@@ -928,6 +1093,11 @@ fn enter_house_craft_cutscene(
     let brick_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.42, 0.14, 0.12),
         perceptual_roughness: 0.82,
+        ..default()
+    });
+    let ceiling_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.11, 0.06, 0.05),
+        perceptual_roughness: 0.85,
         ..default()
     });
     let wood_mat = materials.add(StandardMaterial {
@@ -947,20 +1117,29 @@ fn enter_house_craft_cutscene(
         HouseCraftEntity,
         Mesh3d(unit_box.clone()),
         MeshMaterial3d(floor_mat),
-        Transform::from_translation(stage + Vec3::new(0.0, -0.1, 0.0)).with_scale(Vec3::new(16.0, 0.2, 16.0)),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.1, 0.0)).with_scale(Vec3::new(18.0, 0.2, 18.0)),
     ));
     for (p, s) in [
-        (Vec3::new(0.0, 2.8, -6.5), Vec3::new(16.0, 5.6, 0.4)),
-        (Vec3::new(-7.5, 2.8, 0.0), Vec3::new(0.4, 5.6, 16.0)),
-        (Vec3::new(7.5, 2.8, 0.0), Vec3::new(0.4, 5.6, 16.0)),
+        (Vec3::new(0.0, 2.8, -6.5), Vec3::new(18.0, 5.6, 0.4)),
+        (Vec3::new(-7.5, 2.8, 0.0), Vec3::new(0.4, 5.6, 18.0)),
+        (Vec3::new(7.5, 2.8, 0.0), Vec3::new(0.4, 5.6, 18.0)),
+        (Vec3::new(0.0, 2.8, 8.0), Vec3::new(18.0, 5.6, 0.4)),
     ] {
         commands.spawn((
             HouseCraftEntity,
+            bevy::pbr::NotShadowCaster,
             Mesh3d(unit_box.clone()),
             MeshMaterial3d(brick_mat.clone()),
             Transform::from_translation(stage + p).with_scale(s),
         ));
     }
+    commands.spawn((
+        HouseCraftEntity,
+        bevy::pbr::NotShadowCaster,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(ceiling_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, 5.5, 0.0)).with_scale(Vec3::new(18.0, 0.3, 18.0)),
+    ));
     // Bar counter + beer table + beer tower
     commands.spawn((
         HouseCraftEntity,
@@ -972,7 +1151,7 @@ fn enter_house_craft_cutscene(
         HouseCraftEntity,
         Mesh3d(unit_box.clone()),
         MeshMaterial3d(wood_mat),
-        Transform::from_translation(stage + Vec3::new(1.5, 0.55, 0.5)).with_scale(Vec3::new(2.8, 1.1, 2.8)),
+        Transform::from_translation(table_c + Vec3::new(0.0, 0.55, 0.0)).with_scale(Vec3::new(2.4, 1.1, 2.4)),
     ));
     commands.spawn((
         HouseCraftEntity,
@@ -983,7 +1162,7 @@ fn enter_house_craft_cutscene(
     commands
         .spawn((
             HouseCraftEntity,
-            Transform::from_translation(stage + Vec3::new(1.5, 1.1, 0.5)),
+            Transform::from_translation(table_c + Vec3::new(0.0, 1.1, 0.0)).with_scale(Vec3::splat(0.32)),
             Visibility::Inherited,
         ))
         .with_children(|t| {
@@ -992,64 +1171,79 @@ fn enter_house_craft_cutscene(
     commands.spawn((
         HouseCraftEntity,
         PointLight {
-            color: Color::srgb(1.0, 0.86, 0.65),
-            intensity: 95_000.0,
+            color: Color::srgb(1.0, 0.88, 0.72),
+            intensity: 165_000.0,
             range: 28.0,
             ..default()
         },
-        Transform::from_translation(stage + Vec3::new(0.0, 4.6, 0.5)),
+        Transform::from_translation(stage + Vec3::new(0.5, 4.4, 0.5)),
+    ));
+    commands.spawn((
+        HouseCraftEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.90, 0.80),
+            intensity: 110_000.0,
+            range: 20.0,
+            ..default()
+        },
+        Transform::from_translation(stage + Vec3::new(-3.2, 3.2, -1.8)),
     ));
 
     // Cast: Stan, Derek, TJ, Nate, Glenn, Maria, Mike
     let scale = city_body_scale(1.8);
+    let stan_p = stage + Vec3::new(0.4, 0.0, 2.5);
     commands.spawn((
         HouseCraftEntity,
         SceneRoot(asset_server.load("models/plaid_hero.glb#Scene0")),
-        Transform::from_translation(stage + Vec3::new(0.4, 0.0, 2.5))
-            .with_rotation(Quat::from_rotation_y(-0.3))
-            .with_scale(Vec3::splat(scale)),
+        Transform::from_translation(stan_p)
+            .with_rotation(Quat::from_rotation_y(yaw_toward(stan_p, table_c, true)))
+            .with_scale(Vec3::splat(0.96)),
         Visibility::Inherited,
     ));
 
     let derek_mats = make_derek_materials(&mut materials);
+    let derek_p = stage + Vec3::new(3.2, 0.0, 1.5);
     commands
         .spawn((
             HouseCraftEntity,
-            Transform::from_translation(stage + Vec3::new(3.2, 0.0, 1.5))
-                .with_rotation(Quat::from_rotation_y(-1.1))
-                .with_scale(Vec3::splat(scale * 0.85)),
+            Transform::from_translation(derek_p)
+                .with_rotation(Quat::from_rotation_y(yaw_toward(derek_p, table_c, false)))
+                .with_scale(Vec3::splat(0.96)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_derek_rig(p, &mut meshes, &derek_mats, false));
 
+    let tj_p = stage + Vec3::new(-0.9, 0.0, -0.6);
     commands
         .spawn((
             HouseCraftEntity,
-            Transform::from_translation(stage + Vec3::new(-0.9, 0.0, -0.6))
-                .with_rotation(Quat::from_rotation_y(0.4))
-                .with_scale(Vec3::splat(scale * 0.85)),
+            Transform::from_translation(tj_p)
+                .with_rotation(Quat::from_rotation_y(yaw_toward(tj_p, table_c, false)))
+                .with_scale(Vec3::splat(0.96)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_tj_rig(p, &mut meshes, &mut materials, false, false));
 
     let nate_mats = make_nate_materials(&mut materials);
+    let nate_p = stage + Vec3::new(1.8, 0.0, -1.6);
     commands
         .spawn((
             HouseCraftEntity,
-            Transform::from_translation(stage + Vec3::new(1.8, 0.0, -1.6))
-                .with_rotation(Quat::from_rotation_y(-0.2))
-                .with_scale(Vec3::splat(scale * 0.85)),
+            Transform::from_translation(nate_p)
+                .with_rotation(Quat::from_rotation_y(yaw_toward(nate_p, table_c, false)))
+                .with_scale(Vec3::splat(0.96)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_nate_rig(p, &mut meshes, &nate_mats, false));
 
     let glenn_mats = make_glenn_materials(&mut materials);
+    let glenn_p = stage + Vec3::new(3.5, 0.0, -0.8);
     commands
         .spawn((
             HouseCraftEntity,
-            Transform::from_translation(stage + Vec3::new(3.5, 0.0, -0.8))
-                .with_rotation(Quat::from_rotation_y(-0.9))
-                .with_scale(Vec3::splat(scale * 0.89)),
+            Transform::from_translation(glenn_p)
+                .with_rotation(Quat::from_rotation_y(yaw_toward(glenn_p, table_c, false)))
+                .with_scale(Vec3::splat(0.94)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_glenn_rig(p, &mut meshes, &glenn_mats));
@@ -1074,9 +1268,11 @@ fn enter_house_craft_cutscene(
         ))
         .with_children(|p| spawn_mike_rig(p, &mut meshes, &mut materials));
 
+    let init_look = stan_p + Vec3::Y * 1.56;
+    cs.cam_look = init_look;
     if let Ok(mut cam) = cam_q.get_single_mut() {
-        cam.translation = stage + Vec3::new(0.2, 2.4, 6.2);
-        cam.look_at(stage + Vec3::new(0.5, 1.5, 0.0), Vec3::Y);
+        cam.translation = stage + Vec3::new(1.2, 1.68, 1.1);
+        cam.look_at(init_look, Vec3::Y);
     }
 
     spawn_house_craft_overlay(&mut commands);
@@ -1094,18 +1290,18 @@ fn exit_house_craft_cutscene(
     for mut node in &mut hud_q {
         node.display = Display::Flex;
     }
-    play_viking_chant_music();
 }
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn update_house_craft_cutscene(
+    mut commands: Commands,
     time: Res<Time>,
+    art: Option<Res<crate::casino::CasinoArt>>,
     mut cs: ResMut<HouseCraftState>,
-    mut stats: ResMut<PlayerStats>,
-    mut next_state: SceneTransition,
     mut cam_q: Query<&mut Transform, With<Camera3d>>,
     mut spk_q: Query<&mut Text, With<HouseCraftSpeakerText>>,
     mut sub_q: Query<&mut Text, (With<HouseCraftSubText>, Without<HouseCraftSpeakerText>)>,
+    mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
     let dt = time.delta_secs().min(0.05);
     cs.beat_t += dt;
@@ -1115,42 +1311,97 @@ fn update_house_craft_cutscene(
         speak_voice(HOUSE_CRAFT_BEATS[0].1, HOUSE_CRAFT_BEATS[0].2);
     }
 
-    if crate::skip::skipping() {
-        cs.beat = HOUSE_CRAFT_BEATS.len() as u8;
-    } else if (cs.beat as usize) < HOUSE_CRAFT_BEATS.len() {
-        let min_s = HOUSE_CRAFT_BEATS[cs.beat as usize].3;
-        if cs.beat_t >= min_s && !is_voice_speaking() {
-            cs.beat += 1;
-            cs.beat_t = 0.0;
-            if let Some(&(spk, line, voice, _)) = HOUSE_CRAFT_BEATS.get(cs.beat as usize) {
-                if let Ok(mut t) = spk_q.get_single_mut() {
-                    t.0 = spk.to_string();
+    if !cs.choice_shown {
+        if crate::skip::skipping() {
+            cs.beat = HOUSE_CRAFT_BEATS.len() as u8;
+        } else if (cs.beat as usize) < HOUSE_CRAFT_BEATS.len() {
+            let min_s = HOUSE_CRAFT_BEATS[cs.beat as usize].3;
+            if cs.beat_t >= min_s && !is_voice_speaking() {
+                cs.beat += 1;
+                cs.beat_t = 0.0;
+                if let Some(&(spk, line, voice, _)) = HOUSE_CRAFT_BEATS.get(cs.beat as usize) {
+                    if let Ok(mut t) = spk_q.get_single_mut() {
+                        t.0 = spk.to_string();
+                    }
+                    if let Ok(mut t) = sub_q.get_single_mut() {
+                        t.0 = line.to_string();
+                    }
+                    speak_voice(line, voice);
                 }
-                if let Ok(mut t) = sub_q.get_single_mut() {
-                    t.0 = line.to_string();
-                }
-                speak_voice(line, voice);
             }
+        }
+
+        if (cs.beat as usize) >= HOUSE_CRAFT_BEATS.len() {
+            cs.choice_shown = true;
+            if let Ok(mut win) = window_q.get_single_mut() {
+                win.cursor_options.grab_mode = CursorGrabMode::None;
+                win.cursor_options.visible = true;
+            }
+            spawn_house_craft_choice_modal(&mut commands, art.as_deref());
         }
     }
 
     let stage = HOUSE_CRAFT_STAGE;
+    let (target_eye, target_look) = match cs.beat {
+        0 => (stage + Vec3::new(1.25, 1.72, 1.05), stage + Vec3::new(0.4, 1.56, 2.5)),
+        1 => (stage + Vec3::new(1.65, 1.68, 0.90), stage + Vec3::new(3.2, 1.56, 1.5)),
+        2 => (stage + Vec3::new(1.5, 2.35, 3.8), stage + Vec3::new(1.5, 1.45, 0.0)),
+        _ => (stage + Vec3::new(-2.4, 1.78, -1.55), stage + Vec3::new(-5.7, 1.56, -2.5)),
+    };
+    cs.cam_look = cs.cam_look.lerp(target_look, (dt * 4.2).min(1.0));
     if let Ok(mut cam) = cam_q.get_single_mut() {
-        let (eye, look) = match cs.beat {
-            0 => (stage + Vec3::new(0.2, 2.3, 6.2), stage + Vec3::new(0.4, 1.5, 2.2)),
-            1 => (stage + Vec3::new(0.6, 2.1, 3.8), stage + Vec3::new(3.2, 1.6, 1.5)),
-            2 => (stage + Vec3::new(1.5, 2.6, 4.6), stage + Vec3::new(1.4, 1.4, -0.5)),
-            _ => (stage + Vec3::new(-1.5, 2.3, 1.4), stage + Vec3::new(-5.2, 1.8, -2.5)),
-        };
-        cam.translation = cam.translation.lerp(eye, (dt * 3.8).min(1.0));
-        cam.look_at(look, Vec3::Y);
+        cam.translation = cam.translation.lerp(target_eye, (dt * 4.2).min(1.0));
+        cam.look_at(cs.cam_look, Vec3::Y);
+    }
+}
+
+fn handle_house_craft_choice_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    cs: Res<HouseCraftState>,
+    mut stats: ResMut<PlayerStats>,
+    mut next_state: SceneTransition,
+    btn_q: Query<(&Interaction, &HouseCraftChoice), Changed<Interaction>>,
+) {
+    if !cs.choice_shown {
+        return;
     }
 
-    if (cs.beat as usize) >= HOUSE_CRAFT_BEATS.len() {
-        stats.house_craft_return_city = true;
-        stats.hint_text = "Talk to Maria [F/E] -- Order 10 Beers (Casino) or Order 10 Beers & Craft!".to_string();
-        stats.hint_bump = stats.hint_bump.wrapping_add(1);
-        next_state.set(GameState::CityPlay);
+    let mut chosen: Option<HouseCraftChoice> = None;
+    if keys.just_pressed(KeyCode::Digit1) {
+        chosen = Some(HouseCraftChoice::TenBeersCasino);
+    } else if keys.just_pressed(KeyCode::Digit2) || keys.just_pressed(KeyCode::KeyC) {
+        chosen = Some(HouseCraftChoice::TenBeersCraft);
+    } else if keys.just_pressed(KeyCode::Digit3) || keys.just_pressed(KeyCode::Escape) {
+        chosen = Some(HouseCraftChoice::FreeRoamCity);
+    }
+    for (inter, c) in &btn_q {
+        if *inter == Interaction::Pressed {
+            chosen = Some(*c);
+        }
+    }
+
+    let Some(c) = chosen else {
+        return;
+    };
+    match c {
+        HouseCraftChoice::TenBeersCasino => {
+            play_sfx("chip_bet");
+            stats.saved_city_pos = bartender_bar_trigger_pos();
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set(GameState::PubPortalCutscene);
+        }
+        HouseCraftChoice::TenBeersCraft => {
+            play_sfx("portal_warp");
+            stats.saved_city_pos = bartender_bar_trigger_pos();
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set(GameState::BlackHoleCutscene);
+        }
+        HouseCraftChoice::FreeRoamCity => {
+            stats.house_craft_return_city = true;
+            stats.saved_city_pos = bartender_bar_trigger_pos();
+            stats.saved_casino_city_scale = 1.8;
+            next_state.set(GameState::CityPlay);
+        }
     }
 }
 

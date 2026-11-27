@@ -21,10 +21,6 @@ pub struct StartButton;
 #[derive(Component)]
 pub struct FreeModeButton;
 
-/// Start-menu button launching directly into the Black Hole Craft World (`GameState::CraftPlay`).
-#[derive(Component)]
-pub struct CraftModeButton;
-
 /// StageClear "Continue" (post-game free roam) button; shown only after the Lexie win.
 #[derive(Component)]
 pub struct RoamButton;
@@ -910,27 +906,6 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
                         TextColor(Color::WHITE),
                     ));
                 });
-                row.spawn((
-                    CraftModeButton,
-                    Button,
-                    Node {
-                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.48, 0.18, 0.76)),
-                    BorderRadius::all(Val::Px(10.0)),
-                ))
-                .with_children(|btn| {
-                    btn.spawn((
-                        TutorialBtnText,
-                        Text::new("START CRAFTING [C]"),
-                        TextFont {
-                            font_size: 16.0,
-                            ..default()
-                        },
-                        TextColor(Color::WHITE),
-                    ));
-                });
             });
         });
     });
@@ -1300,8 +1275,8 @@ fn hydrate_beaten_free_roam_stats(stats: &mut PlayerStats) {
     }
 }
 
-/// Enters Cedar Rapids Free Roam (Online P2P by default, with Character Select) from the Start Menu
-/// while preserving unfinished campaign progress.
+/// Enters Cedar Rapids Free Roam by playing the Pub 217 reunion cutscene (`HouseCraftCutscene`),
+/// where Maria interactively offers `ORDER 10 BEERS -> CASINO` and `ORDER 10 BEERS & CRAFT`.
 fn enter_free_mode_from_menu(
     stats: &mut PlayerStats,
     next_state: &mut crate::transition::SceneTransition,
@@ -1309,23 +1284,14 @@ fn enter_free_mode_from_menu(
     hydrate_beaten_free_roam_stats(stats);
     crate::audio::net_set_online(true);
     stats.prepare_free_roam();
-    stats.needs_city_char_select = true;
-    next_state.set(GameState::CityPlay);
-}
-
-/// Enters the empty Black Hole Craft World (`GameState::CraftPlay`) directly from the Start Menu.
-fn enter_craft_mode_from_menu(
-    stats: &mut PlayerStats,
-    next_state: &mut crate::transition::SceneTransition,
-) {
-    hydrate_beaten_free_roam_stats(stats);
-    crate::audio::net_set_online(true);
-    stats.prepare_free_roam();
+    stats.max_hearts = 20;
+    stats.hearts = 20;
+    stats.estus_flasks = stats.max_estus_flasks;
     stats.pub_craft_intro_seen = true;
-    stats.craft_world_unlocked = true;
-    stats.saved_city_pos = crate::city::PUB217_ANCHOR + Vec3::new(4.2, 0.0, -4.5);
+    stats.saved_city_pos = crate::pub_portal::bartender_bar_trigger_pos();
     stats.saved_casino_city_scale = 1.8;
-    next_state.set(GameState::CraftPlay);
+    stats.needs_city_char_select = false;
+    next_state.set(GameState::HouseCraftCutscene);
 }
 
 pub fn handle_tutorial_input(
@@ -1334,7 +1300,6 @@ pub fn handle_tutorial_input(
     mut next_state: crate::transition::SceneTransition,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     free_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeButton>)>,
-    craft_q: Query<&Interaction, (Changed<Interaction>, With<CraftModeButton>)>,
 ) {
     // Debug scene skips, only with `?debug=1` in the URL.
     if keys.just_pressed(KeyCode::KeyK) && crate::audio::debug_keys_enabled() {
@@ -1343,11 +1308,6 @@ pub fn handle_tutorial_input(
     }
     if keys.just_pressed(KeyCode::KeyB) && crate::audio::debug_keys_enabled() {
         next_state.set(GameState::BossFight);
-        return;
-    }
-    let craft_clicked = craft_q.iter().any(|i| *i == Interaction::Pressed);
-    if craft_clicked || keys.just_pressed(KeyCode::KeyC) {
-        enter_craft_mode_from_menu(&mut stats, &mut next_state);
         return;
     }
     let free_clicked = free_q.iter().any(|i| *i == Interaction::Pressed);
@@ -1705,7 +1665,14 @@ pub fn handle_restart_input(
         if go_roam {
             // Read by `restart_world_after_stage_clear` while the screen is black.
             stats.free_roam = true;
-            next_state.set(GameState::CityPlay);
+            if !stats.pub_craft_intro_seen {
+                stats.pub_craft_intro_seen = true;
+                stats.saved_city_pos = crate::pub_portal::bartender_bar_trigger_pos();
+                stats.saved_casino_city_scale = 1.8;
+                next_state.set(GameState::HouseCraftCutscene);
+            } else {
+                next_state.set(GameState::CityPlay);
+            }
         } else if go_again {
             stats.free_roam = false;
             next_state.set(GameState::Playing);

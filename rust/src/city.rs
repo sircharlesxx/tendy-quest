@@ -3579,6 +3579,7 @@ pub fn enter_city_play(
     stats.craft_modal_open = false;
     stats.char_select_open = false;
 
+    let fresh_city = existing_city_q.is_empty();
     spawn_nyc_world_if_needed(
         &mut commands,
         &asset_server,
@@ -3759,6 +3760,14 @@ pub fn enter_city_play(
         if !is_titan_preview {
             debug_city_start(&mut stats, &mut orbit, &mut player_q);
         }
+    } else if from_house_craft && fresh_city {
+        stats.max_hearts = 20;
+        stats.hearts = stats.hearts.max(20);
+        orbit.yaw = 0.0;
+        orbit.pitch = 0.36;
+        orbit.distance = 11.2;
+        orbit.current_dist = 11.2;
+        orbit.snap_follow = true;
     }
 
     set_touch_playing(true);
