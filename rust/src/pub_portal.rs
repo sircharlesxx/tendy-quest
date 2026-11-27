@@ -1143,7 +1143,7 @@ fn patron_walk_pose(pi: usize, total_t: f32) -> Option<(Vec3, f32, f32)> {
 /// Builds a sculpted, glamorous woman NPC (`+Z` forward) in one of 4 cocktail-dress styles with
 /// articulated hip pivots (`PatronLeg`) for graceful walking strides into the Women's Bathroom.
 #[allow(clippy::too_many_lines)]
-fn spawn_attractive_woman_rig(
+pub(crate) fn spawn_attractive_woman_rig(
     parent: &mut ChildBuilder,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,

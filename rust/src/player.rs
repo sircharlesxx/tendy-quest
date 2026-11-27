@@ -1299,6 +1299,13 @@ pub fn player_movement(
             }
         }
 
+        if stats.in_craft_level && tf.translation.y <= 0.0 && player.velocity.y <= 0.0 {
+            tf.translation.y = 0.0;
+            player.velocity.y = 0.0;
+            player.grounded = true;
+            player.jumps_used = 0;
+        }
+
         // Solid side-wall pushout against all props, cabinets, walls, and obstacles (2 passes prevent corner-clipping)
         let player_top_y = tf.translation.y + (0.45 * stats.player_scale).max(0.55);
         for _ in 0..2 {

@@ -21,6 +21,10 @@ pub struct StartButton;
 #[derive(Component)]
 pub struct FreeModeButton;
 
+/// Start-menu button launching directly into the Black Hole Craft World (`GameState::CraftPlay`).
+#[derive(Component)]
+pub struct CraftModeButton;
+
 /// StageClear "Continue" (post-game free roam) button; shown only after the Lexie win.
 #[derive(Component)]
 pub struct RoamButton;
@@ -75,6 +79,9 @@ pub struct TutorialControlsText;
 
 #[derive(Component)]
 pub struct TutorialBtnText;
+
+#[derive(Component)]
+pub struct TutorialShowcaseText;
 
 /// Which HUD text a `Text` node shows; `update_hud` fills them all through one query.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -775,130 +782,158 @@ pub fn spawn_tutorial_overlay(mut commands: Commands) {
         Node {
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
+            flex_direction: FlexDirection::Column,
+            justify_content: JustifyContent::SpaceBetween,
             align_items: AlignItems::Center,
             padding: UiRect {
-                top: Val::Px(58.0),
-                bottom: Val::Px(14.0),
-                left: Val::Px(10.0),
-                right: Val::Px(10.0),
+                top: Val::Px(46.0),
+                bottom: Val::Px(16.0),
+                left: Val::Px(12.0),
+                right: Val::Px(12.0),
             },
             ..default()
         },
-        BackgroundColor(Color::srgba(0.05, 0.03, 0.02, 0.28)),
+        BackgroundColor(Color::srgba(0.02, 0.01, 0.03, 0.06)),
     ));
-    root
-        .with_children(|root| {
-            root.spawn((
-                TutorialCard,
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    row_gap: Val::Px(8.0),
-                    padding: UiRect::axes(Val::Px(18.0), Val::Px(14.0)),
-                    width: Val::Percent(92.0),
-                    max_width: Val::Px(540.0),
+    root.with_children(|root| {
+        // Top Pub 217 character showcase badge (kept compact so the 3D close-up fills the screen)
+        root.spawn((
+            Node {
+                padding: UiRect::axes(Val::Px(16.0), Val::Px(7.0)),
+                border: UiRect::all(Val::Px(1.5)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.05, 0.03, 0.06, 0.80)),
+            BorderColor(Color::srgba(1.0, 0.82, 0.24, 0.85)),
+            BorderRadius::all(Val::Px(999.0)),
+        ))
+        .with_children(|pill| {
+            pill.spawn((
+                TutorialShowcaseText,
+                Text::new("PUB 217 -- PLAY AS STAN (THE TENDY HERO)"),
+                TextFont {
+                    font_size: 14.5,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.07, 0.05, 0.03, 0.86)),
-                BorderRadius::all(Val::Px(14.0)),
+                TextColor(Color::srgb(1.0, 0.86, 0.34)),
+            ));
+        });
+
+        // Sleek lower-center Start Menu card leaving the Pub 217 3D character close-ups open above
+        root.spawn((
+            TutorialCard,
+            Node {
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(6.0),
+                padding: UiRect::axes(Val::Px(18.0), Val::Px(12.0)),
+                width: Val::Percent(94.0),
+                max_width: Val::Px(660.0),
+                border: UiRect::all(Val::Px(1.5)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.06, 0.04, 0.03, 0.84)),
+            BorderColor(Color::srgba(1.0, 0.82, 0.24, 0.60)),
+            BorderRadius::all(Val::Px(14.0)),
+        ))
+        .with_children(|card| {
+            card.spawn((
+                TutorialTitleText,
+                Text::new("TENDY QUEST"),
+                TextFont {
+                    font_size: 25.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(1.0, 0.82, 0.22)),
+            ));
+            card.spawn((
+                TutorialBodyText,
+                Text::new("Pub 217 Hangout -- Choose your mode (ESC / H for controls)"),
+                TextFont {
+                    font_size: 13.0,
+                    ..default()
+                },
+                TextColor(Color::srgb(0.95, 0.92, 0.86)),
+            ));
+            card.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    flex_wrap: FlexWrap::Wrap,
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    column_gap: Val::Px(10.0),
+                    row_gap: Val::Px(8.0),
+                    margin: UiRect::top(Val::Px(4.0)),
+                    ..default()
+                },
             ))
-            .with_children(|card| {
-                card.spawn((
-                    TutorialTitleText,
-                    Text::new("TENDY QUEST"),
-                    TextFont {
-                        font_size: 24.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(1.0, 0.82, 0.22)),
-                ));
-                card.spawn((
-                    TutorialBodyText,
-                    Text::new(
-                        "Eat all 12 Golden Tendies to grow from 17cm Toy to 180cm Adult!\nExplore the apartment, dodge Cheese Cups & Controllers, DON'T step on Headphones, and open the Giant Fridge!",
-                    ),
-                    TextFont {
-                        font_size: 13.5,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.95, 0.92, 0.86)),
-                ));
-                card.spawn((
-                    TutorialControlsText,
-                    Text::new(
-                        "- Move: WASD / Arrows or Left Touch Stick\n\
-                         - Jump / Double-Jump: SPACE or JUMP (Dash: SHIFT / DASH)\n\
-                         - Look / Zoom: Mouse + Scroll Wheel (Mobile: Drag + Pinch Zoom)\n\
-                         - Saber fights: tap CLICK / J to slash, hold it to charge a heavy, SHIFT / ROLL dodge roll\n\
-                         - Block: hold RIGHT-CLICK / R / BLOCK / LT (raise it just in time to parry)\n\
-                         - Strafe: hold V / L3 (or while blocking / locked on), Lock-on: TAB / R3, Heal: Q\n\
-                         - Pause menu: ESC / H / START / HELP, Sound: M\n\
-                         - Skip cutscene: hold ENTER / START / SKIP",
-                    ),
-                    TextFont {
-                        font_size: 13.0,
-                        ..default()
-                    },
-                    TextColor(Color::srgb(0.85, 0.95, 1.0)),
-                ));
-                card.spawn((
+            .with_children(|row| {
+                row.spawn((
+                    StartButton,
+                    Button,
                     Node {
-                        flex_direction: FlexDirection::Row,
-                        flex_wrap: FlexWrap::Wrap,
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        column_gap: Val::Px(10.0),
-                        row_gap: Val::Px(8.0),
-                        margin: UiRect::top(Val::Px(4.0)),
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
                         ..default()
                     },
+                    BackgroundColor(Color::srgb(0.84, 0.16, 0.18)),
+                    BorderRadius::all(Val::Px(10.0)),
                 ))
-                .with_children(|row| {
-                    row.spawn((
-                        StartButton,
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(22.0), Val::Px(9.0)),
+                .with_children(|btn| {
+                    btn.spawn((
+                        TutorialBtnText,
+                        Text::new("START QUEST"),
+                        TextFont {
+                            font_size: 16.0,
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.82, 0.14, 0.16)),
-                        BorderRadius::all(Val::Px(10.0)),
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            TutorialBtnText,
-                            Text::new("START QUEST (SPACE / TAP)"),
-                            TextFont {
-                                font_size: 16.5,
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
-                    row.spawn((
-                        FreeModeButton,
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(18.0), Val::Px(9.0)),
+                        TextColor(Color::WHITE),
+                    ));
+                });
+                row.spawn((
+                    FreeModeButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.11, 0.48, 0.76)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        TutorialBtnText,
+                        Text::new("START FREE ROAM [F]"),
+                        TextFont {
+                            font_size: 16.0,
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.11, 0.46, 0.72)),
-                        BorderRadius::all(Val::Px(10.0)),
-                    ))
-                    .with_children(|btn| {
-                        btn.spawn((
-                            Text::new("FREE ROAM [F]"),
-                            TextFont {
-                                font_size: 15.5,
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                        ));
-                    });
+                        TextColor(Color::WHITE),
+                    ));
+                });
+                row.spawn((
+                    CraftModeButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(18.0), Val::Px(10.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.48, 0.18, 0.76)),
+                    BorderRadius::all(Val::Px(10.0)),
+                ))
+                .with_children(|btn| {
+                    btn.spawn((
+                        TutorialBtnText,
+                        Text::new("START CRAFTING [C]"),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
                 });
             });
         });
+    });
 }
 
 pub fn adapt_ui_to_viewport(
@@ -973,49 +1008,47 @@ pub fn adapt_ui_to_viewport(
     if let Ok(mut root) = root_q.get_single_mut() {
         root.padding = if is_short {
             UiRect {
-                top: Val::Px(44.0),
+                top: Val::Px(38.0),
                 bottom: Val::Px(8.0),
                 left: Val::Px(10.0),
                 right: Val::Px(10.0),
             }
         } else {
             UiRect {
-                top: Val::Px(58.0),
-                bottom: Val::Px(14.0),
-                left: Val::Px(10.0),
-                right: Val::Px(10.0),
+                top: Val::Px(46.0),
+                bottom: Val::Px(16.0),
+                left: Val::Px(12.0),
+                right: Val::Px(12.0),
             }
         };
     }
     if let Ok(mut card) = card_q.get_single_mut() {
-        card.max_width = if is_short { Val::Px(640.0) } else { Val::Px(540.0) };
-        card.width = if is_narrow { Val::Percent(94.0) } else { Val::Percent(90.0) };
-        card.padding = if is_short {
-            UiRect::axes(Val::Px(16.0), Val::Px(10.0))
-        } else if is_narrow {
-            UiRect::axes(Val::Px(16.0), Val::Px(14.0))
+        card.max_width = Val::Px(660.0);
+        card.width = Val::Percent(94.0);
+        card.padding = if is_short || is_narrow {
+            UiRect::axes(Val::Px(12.0), Val::Px(8.0))
         } else {
-            UiRect::axes(Val::Px(24.0), Val::Px(20.0))
+            UiRect::axes(Val::Px(18.0), Val::Px(12.0))
         };
         card.row_gap = Val::Px(if is_short {
-            5.0
+            4.0
         } else if is_narrow {
-            8.0
+            5.0
         } else {
-            11.0
+            6.0
         });
     }
     if let Ok(mut tf) = title_q.get_single_mut() {
-        tf.font_size = if is_short { 19.0 } else if is_narrow { 21.0 } else { 27.0 };
+        tf.font_size = if is_short { 19.0 } else if is_narrow { 21.0 } else { 25.0 };
     }
     if let Ok(mut tf) = body_q.get_single_mut() {
-        tf.font_size = if is_short { 12.0 } else if is_narrow { 13.0 } else { 15.0 };
+        tf.font_size = if is_short { 11.5 } else if is_narrow { 12.0 } else { 13.0 };
     }
     if let Ok(mut tf) = ctrl_q.get_single_mut() {
         tf.font_size = if is_short { 11.5 } else if is_narrow { 12.5 } else { 14.0 };
     }
-    if let Ok(mut tf) = btn_q.get_single_mut() {
-        tf.font_size = if is_short { 14.5 } else if is_narrow { 16.0 } else { 18.5 };
+    for mut tf in &mut btn_q {
+        tf.font_size = if is_short { 13.5 } else if is_narrow { 14.0 } else { 16.0 };
     }
     // HUD text: one size per field, a touch smaller on narrow / short viewports.
     let k = if is_short || is_narrow { 0.88 } else { 1.0 };
@@ -1280,13 +1313,28 @@ fn enter_free_mode_from_menu(
     next_state.set(GameState::CityPlay);
 }
 
+/// Enters the empty Black Hole Craft World (`GameState::CraftPlay`) directly from the Start Menu.
+fn enter_craft_mode_from_menu(
+    stats: &mut PlayerStats,
+    next_state: &mut crate::transition::SceneTransition,
+) {
+    hydrate_beaten_free_roam_stats(stats);
+    crate::audio::net_set_online(true);
+    stats.prepare_free_roam();
+    stats.pub_craft_intro_seen = true;
+    stats.craft_world_unlocked = true;
+    stats.saved_city_pos = crate::city::PUB217_ANCHOR + Vec3::new(4.2, 0.0, -4.5);
+    stats.saved_casino_city_scale = 1.8;
+    next_state.set(GameState::CraftPlay);
+}
+
 pub fn handle_tutorial_input(
     keys: Res<ButtonInput<KeyCode>>,
-    touches: Res<Touches>,
     mut stats: ResMut<PlayerStats>,
     mut next_state: crate::transition::SceneTransition,
     btn_q: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     free_q: Query<&Interaction, (Changed<Interaction>, With<FreeModeButton>)>,
+    craft_q: Query<&Interaction, (Changed<Interaction>, With<CraftModeButton>)>,
 ) {
     // Debug scene skips, only with `?debug=1` in the URL.
     if keys.just_pressed(KeyCode::KeyK) && crate::audio::debug_keys_enabled() {
@@ -1297,20 +1345,18 @@ pub fn handle_tutorial_input(
         next_state.set(GameState::BossFight);
         return;
     }
+    let craft_clicked = craft_q.iter().any(|i| *i == Interaction::Pressed);
+    if craft_clicked || keys.just_pressed(KeyCode::KeyC) {
+        enter_craft_mode_from_menu(&mut stats, &mut next_state);
+        return;
+    }
     let free_clicked = free_q.iter().any(|i| *i == Interaction::Pressed);
     if free_clicked || keys.just_pressed(KeyCode::KeyF) {
         enter_free_mode_from_menu(&mut stats, &mut next_state);
         return;
     }
     let clicked = btn_q.iter().any(|i| *i == Interaction::Pressed);
-    if clicked
-        || keys.just_pressed(KeyCode::Space)
-        || keys.just_pressed(KeyCode::Enter)
-        || touches.any_just_pressed()
-        || crate::audio::take_touch_action_tap()
-        || crate::audio::take_touch_jump()
-        || crate::audio::take_touch_help()
-    {
+    if clicked || keys.just_pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Enter) {
         if stats.free_roam {
             next_state.set(GameState::CityPlay);
         } else if stats.boss_mode {

@@ -29,11 +29,11 @@ use crate::scooter::spawn_mike_rig;
 use crate::state::{city_body_scale, CameraOrbit, GameState, LevelEntity, PlatformBox, PlayerStats};
 use crate::tj::spawn_tj_rig;
 use crate::transition::{sim_running, SceneTransition};
-use crate::ui::{gameplay_running, HudOverlay};
+use crate::ui::{gameplay_running, HudOverlay, TutorialShowcaseText};
 
 pub const CRAFT_LEVEL_ORIGIN: Vec3 = Vec3::new(0.0, 0.0, -2400.0);
 pub const CRAFT_WALK_LIMIT: f32 = 28.0;
-pub const CRAFT_SPAWN_POS: Vec3 = Vec3::new(0.0, 0.2, -2386.0);
+pub const CRAFT_SPAWN_POS: Vec3 = Vec3::new(0.0, 0.05, -2386.0);
 pub const CRAFT_PORTAL_POS: Vec3 = Vec3::new(0.0, 0.0, -2380.0);
 
 const PUB217_TARGET_BLOCKS: u32 = 18;
@@ -114,10 +114,20 @@ pub struct CraftPlugin;
 
 impl Plugin for CraftPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HouseCraftState>()
+        app.init_resource::<MenuDioramaState>()
+            .init_resource::<HouseCraftState>()
             .init_resource::<BlackHoleState>()
             .init_resource::<CraftWorldData>()
             .init_resource::<CraftInteractPrompt>()
+            // Start Menu: Pub 217 3D character tease showcase
+            .add_systems(OnEnter(GameState::Tutorial), enter_tutorial_menu_diorama)
+            .add_systems(OnExit(GameState::Tutorial), exit_tutorial_menu_diorama)
+            .add_systems(
+                Update,
+                update_tutorial_menu_diorama
+                    .run_if(in_state(GameState::Tutorial))
+                    .run_if(sim_running),
+            )
             // City triggers & portal back to Craft World
             .add_systems(
                 Update,
@@ -160,6 +170,466 @@ impl Plugin for CraftPlugin {
                     .run_if(in_state(GameState::CraftPlay))
                     .run_if(gameplay_running),
             );
+    }
+}
+
+// =================================================================================================
+// Start Menu Diorama: Pub 217 3D Character Close-Up Tease (`GameState::Tutorial`)
+// =================================================================================================
+
+const MENU_PUB_STAGE: Vec3 = Vec3::new(0.0, 0.0, -1180.0);
+const MENU_TABLE_REL: Vec3 = Vec3::new(0.0, 0.0, 0.4);
+const MENU_SEAT_REL: [Vec3; 5] = [
+    Vec3::new(-1.85, 0.0, 1.35),  // 0: Stan (-Z GLB)
+    Vec3::new(-2.05, 0.0, -0.55), // 1: TJ (+Z)
+    Vec3::new(0.0, 0.0, -1.95),   // 2: Derek (+Z)
+    Vec3::new(2.05, 0.0, -0.55),  // 3: Nate (+Z)
+    Vec3::new(1.85, 0.0, 1.35),   // 4: Glenn (+Z)
+];
+const MENU_SHOT_SECS: f32 = 4.2;
+
+#[derive(Component)]
+struct MenuDioramaEntity;
+
+#[derive(Component)]
+struct MenuDioramaBob {
+    base_y: f32,
+    phase: f32,
+}
+
+#[derive(Resource, Default)]
+struct MenuDioramaState {
+    t: f32,
+    cam_look: Vec3,
+    last_shot: usize,
+    snapped: bool,
+}
+
+#[allow(clippy::too_many_lines)]
+fn enter_tutorial_menu_diorama(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ms: ResMut<MenuDioramaState>,
+    mut cam_q: Query<&mut Transform, With<Camera3d>>,
+    old_q: Query<Entity, With<MenuDioramaEntity>>,
+) {
+    for e in &old_q {
+        commands.entity(e).despawn_recursive();
+    }
+    *ms = MenuDioramaState {
+        t: 0.0,
+        cam_look: Vec3::ZERO,
+        last_shot: usize::MAX,
+        snapped: false,
+    };
+
+    commands.insert_resource(ClearColor(Color::srgb(0.06, 0.04, 0.04)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(1.0, 0.90, 0.80),
+        brightness: 500.0,
+    });
+
+    let stage = MENU_PUB_STAGE;
+    let table_pos = stage + MENU_TABLE_REL;
+    let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
+    let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
+
+    let floor_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.24, 0.14, 0.09),
+        perceptual_roughness: 0.72,
+        ..default()
+    });
+    let brick_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.42, 0.14, 0.12),
+        perceptual_roughness: 0.80,
+        ..default()
+    });
+    let wood_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.24, 0.11, 0.06),
+        perceptual_roughness: 0.34,
+        ..default()
+    });
+    let ceiling_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.11, 0.06, 0.05),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    let booth_red = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.58, 0.10, 0.14),
+        perceptual_roughness: 0.55,
+        ..default()
+    });
+    let gold_neon = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.24),
+        emissive: LinearRgba::rgb(2.4, 1.55, 0.28),
+        unlit: true,
+        ..default()
+    });
+    let amber_neon = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.55, 0.18),
+        emissive: LinearRgba::rgb(2.2, 0.85, 0.18),
+        unlit: true,
+        ..default()
+    });
+
+    // Warm Pub 217 interior room, brick walls, ceiling, neon 217 sign, bar & stools
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(floor_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, -0.1, 1.0)).with_scale(Vec3::new(18.0, 0.2, 20.0)),
+    ));
+    for (p, s) in [
+        (Vec3::new(0.0, 2.8, -6.5), Vec3::new(18.0, 5.6, 0.4)),
+        (Vec3::new(-8.2, 2.8, 1.2), Vec3::new(0.4, 5.6, 20.0)),
+        (Vec3::new(8.2, 2.8, 1.2), Vec3::new(0.4, 5.6, 20.0)),
+        (Vec3::new(0.0, 2.8, 9.2), Vec3::new(18.0, 5.6, 0.4)),
+    ] {
+        commands.spawn((
+            MenuDioramaEntity,
+            bevy::pbr::NotShadowCaster,
+            Mesh3d(unit_box.clone()),
+            MeshMaterial3d(brick_mat.clone()),
+            Transform::from_translation(stage + p).with_scale(s),
+        ));
+    }
+    commands.spawn((
+        MenuDioramaEntity,
+        bevy::pbr::NotShadowCaster,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(ceiling_mat),
+        Transform::from_translation(stage + Vec3::new(0.0, 5.5, 0.0)).with_scale(Vec3::new(18.0, 0.3, 19.0)),
+    ));
+    // Mahogany bar counter, neon Pub 217 wall signs, and cozy side booths
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(wood_mat.clone()),
+        Transform::from_translation(stage + Vec3::new(-5.4, 0.62, -1.6)).with_scale(Vec3::new(1.1, 1.24, 5.6)),
+    ));
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(gold_neon),
+        Transform::from_translation(stage + Vec3::new(0.0, 3.85, -6.22)).with_scale(Vec3::new(3.4, 0.72, 0.12)),
+    ));
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(amber_neon),
+        Transform::from_translation(stage + Vec3::new(-7.9, 3.1, -1.6)).with_scale(Vec3::new(0.12, 0.55, 2.8)),
+    ));
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_box.clone()),
+        MeshMaterial3d(booth_red),
+        Transform::from_translation(stage + Vec3::new(6.8, 0.55, -2.5)).with_scale(Vec3::new(1.8, 1.1, 4.8)),
+    ));
+
+    // Round center hangout table + 7-tier Beer Tower + 8 Bash Lyte cans
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_cyl.clone()),
+        MeshMaterial3d(wood_mat.clone()),
+        Transform::from_translation(table_pos + Vec3::new(0.0, 0.47, 0.0)).with_scale(Vec3::new(0.28, 0.94, 0.28)),
+    ));
+    commands.spawn((
+        MenuDioramaEntity,
+        Mesh3d(unit_cyl),
+        MeshMaterial3d(wood_mat.clone()),
+        Transform::from_translation(table_pos + Vec3::new(0.0, 0.94, 0.0)).with_scale(Vec3::new(1.42, 0.12, 1.42)),
+    ));
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            Transform::from_translation(table_pos + Vec3::new(0.0, 1.00, 0.0)).with_scale(Vec3::splat(0.30)),
+            Visibility::Inherited,
+        ))
+        .with_children(|t| {
+            crate::beer_fx::spawn_pub_beer_tower(t, &mut meshes, &mut materials, Vec3::ZERO);
+        });
+
+    let can_m = meshes.add(crate::beer_fx::can_mesh());
+    let can_mats = crate::beer_fx::can_materials(&mut materials);
+    let can_s = Vec3::splat(0.42);
+    for ci in 0..8_usize {
+        let a = (ci as f32 / 8.0) * TAU + 0.2;
+        let cpos = table_pos + Vec3::new(a.cos() * 1.02, 1.00 + crate::beer_fx::CAN_HALF_H * 0.42, a.sin() * 1.02);
+        commands.spawn((
+            MenuDioramaEntity,
+            Mesh3d(can_m.clone()),
+            MeshMaterial3d(can_mats[ci % can_mats.len()].clone()),
+            Transform::from_translation(cpos)
+                .with_rotation(Quat::from_rotation_y(-a + 0.5))
+                .with_scale(can_s),
+        ));
+    }
+
+    // 5 Wooden Pub Chairs + all 5 Playable Characters seated around the table in Pub 217
+    for rel in MENU_SEAT_REL {
+        let spot = table_pos + rel;
+        let cyaw = yaw_toward(spot, table_pos, false);
+        commands
+            .spawn((
+                MenuDioramaEntity,
+                Transform::from_translation(spot).with_rotation(Quat::from_rotation_y(cyaw)),
+                Visibility::Inherited,
+            ))
+            .with_children(|ch| {
+                ch.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(wood_mat.clone()),
+                    Transform::from_xyz(0.0, 0.48, 0.0).with_scale(Vec3::new(0.54, 0.08, 0.52)),
+                ));
+                ch.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(wood_mat.clone()),
+                    Transform::from_xyz(0.0, 0.88, -0.23).with_scale(Vec3::new(0.52, 0.74, 0.08)),
+                ));
+                for (lx, lz) in [(-0.21, -0.21), (0.21, -0.21), (-0.21, 0.21), (0.21, 0.21)] {
+                    ch.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(wood_mat.clone()),
+                        Transform::from_xyz(lx, 0.24, lz).with_scale(Vec3::new(0.07, 0.48, 0.07)),
+                    ));
+                }
+            });
+    }
+
+    let seat_positions = MENU_SEAT_REL.map(|r| table_pos + r + Vec3::Y * -0.26);
+    commands.spawn((
+        MenuDioramaEntity,
+        MenuDioramaBob { base_y: seat_positions[0].y, phase: 0.0 },
+        SceneRoot(asset_server.load("models/plaid_hero.glb#Scene0")),
+        Transform::from_translation(seat_positions[0])
+            .with_rotation(Quat::from_rotation_y(yaw_toward(seat_positions[0], table_pos, true)))
+            .with_scale(Vec3::splat(0.96)),
+        Visibility::Inherited,
+    ));
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            MenuDioramaBob { base_y: seat_positions[1].y, phase: 1.2 },
+            Transform::from_translation(seat_positions[1])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(seat_positions[1], table_pos, false)))
+                .with_scale(Vec3::splat(0.96)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_tj_rig(p, &mut meshes, &mut materials, false, false));
+
+    let derek_m = make_derek_materials(&mut materials);
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            MenuDioramaBob { base_y: seat_positions[2].y, phase: 2.4 },
+            Transform::from_translation(seat_positions[2])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(seat_positions[2], table_pos, false)))
+                .with_scale(Vec3::splat(0.96)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_derek_rig(p, &mut meshes, &derek_m, false));
+
+    let nate_m = make_nate_materials(&mut materials);
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            MenuDioramaBob { base_y: seat_positions[3].y, phase: 3.6 },
+            Transform::from_translation(seat_positions[3])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(seat_positions[3], table_pos, false)))
+                .with_scale(Vec3::splat(0.96)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_nate_rig(p, &mut meshes, &nate_m, false));
+
+    let glenn_m = make_glenn_materials(&mut materials);
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            MenuDioramaBob { base_y: seat_positions[4].y, phase: 4.8 },
+            Transform::from_translation(seat_positions[4])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(seat_positions[4], table_pos, false)))
+                .with_scale(Vec3::splat(0.94)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_glenn_rig(p, &mut meshes, &glenn_m));
+
+    // Maria tending bar & Mike chilling beside the bar
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            Transform::from_translation(stage + Vec3::new(-6.6, 0.0, -1.6))
+                .with_rotation(Quat::from_rotation_y(FRAC_PI_2))
+                .with_scale(Vec3::splat(PUB217_SCALE)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_bartender_rig(p, &mut meshes, &mut materials));
+    let scale = city_body_scale(1.8);
+    commands
+        .spawn((
+            MenuDioramaEntity,
+            Transform::from_translation(stage + Vec3::new(-4.0, 0.0, 2.4))
+                .with_rotation(Quat::from_rotation_y(yaw_toward(stage + Vec3::new(-4.0, 0.0, 2.4), table_pos, false)))
+                .with_scale(Vec3::splat(scale * 0.85)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_mike_rig(p, &mut meshes, &mut materials));
+
+    // Warm pub chandelier + table rim fill lights so close-up faces pop crisp and inviting
+    commands.spawn((
+        MenuDioramaEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.88, 0.70),
+            intensity: 190_000.0,
+            range: 30.0,
+            ..default()
+        },
+        Transform::from_translation(table_pos + Vec3::new(0.0, 4.4, 0.0)),
+    ));
+    commands.spawn((
+        MenuDioramaEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.94, 0.88),
+            intensity: 130_000.0,
+            range: 24.0,
+            ..default()
+        },
+        Transform::from_translation(table_pos + Vec3::new(0.0, 2.3, 2.6)),
+    ));
+    commands.spawn((
+        MenuDioramaEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.86, 0.72),
+            intensity: 110_000.0,
+            range: 22.0,
+            ..default()
+        },
+        Transform::from_translation(table_pos + Vec3::new(-2.8, 2.5, -2.8)),
+    ));
+
+    // Start frame 1 cleanly framed on Stan's face in Pub 217
+    let stan_spot = table_pos + MENU_SEAT_REL[0];
+    let stan_fwd = Vec3::new(table_pos.x - stan_spot.x, 0.0, table_pos.z - stan_spot.z).normalize_or_zero();
+    let stan_look = stan_spot + Vec3::Y * 1.42;
+    ms.cam_look = stan_look;
+    if let Ok(mut cam) = cam_q.get_single_mut() {
+        cam.translation = stan_spot + Vec3::Y * 1.54 + stan_fwd * 1.52;
+        cam.look_at(stan_look, Vec3::Y);
+    }
+}
+
+fn exit_tutorial_menu_diorama(
+    mut commands: Commands,
+    q: Query<Entity, With<MenuDioramaEntity>>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
+) {
+    for e in &q {
+        commands.entity(e).despawn_recursive();
+    }
+    for mut node in &mut hud_q {
+        node.display = Display::Flex;
+    }
+    // Restore exact Level 1 apartment lighting so START QUEST opens in the bright warm kitchen
+    commands.insert_resource(ClearColor(Color::srgb(0.86, 0.84, 0.76)));
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(1.0, 0.96, 0.90),
+        brightness: 620.0,
+    });
+}
+
+fn update_tutorial_menu_diorama(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut ms: ResMut<MenuDioramaState>,
+    mut cam_q: Query<&mut Transform, (With<Camera3d>, Without<MenuDioramaBob>)>,
+    mut bob_q: Query<(&mut Transform, &MenuDioramaBob), Without<Camera3d>>,
+    mut txt_q: Query<&mut Text, With<TutorialShowcaseText>>,
+    mut hud_q: Query<&mut Node, With<HudOverlay>>,
+) {
+    for mut node in &mut hud_q {
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
+    }
+
+    let dt = time.delta_secs().min(0.05);
+    ms.t += dt;
+
+    for (mut tf, bob) in &mut bob_q {
+        tf.translation.y = bob.base_y + (ms.t * 2.2 + bob.phase).sin() * 0.022;
+    }
+
+    let table_pos = MENU_PUB_STAGE + MENU_TABLE_REL;
+    let total_cycle = MENU_SHOT_SECS * 6.0;
+    let cyc = ms.t % total_cycle;
+    let shot = ((cyc / MENU_SHOT_SECS).floor() as usize).min(5);
+    let shot_u = ((cyc % MENU_SHOT_SECS) / MENU_SHOT_SECS).clamp(0.0, 1.0);
+
+    let (target_eye, target_look, badge_text) = if shot < 5 {
+        let spot = table_pos + MENU_SEAT_REL[shot];
+        let to_tbl = Vec3::new(table_pos.x - spot.x, 0.0, table_pos.z - spot.z).normalize_or_zero();
+        let right = Vec3::Y.cross(to_tbl).normalize_or_zero();
+        let face_y = match shot {
+            0 => 1.50, // Stan
+            1 => 1.51, // TJ
+            2 => 1.43, // Derek
+            3 => 1.41, // Nate
+            _ => 1.45, // Glenn
+        };
+        let pan = (shot_u - 0.5) * 0.36;
+        let eye = spot + Vec3::Y * (face_y + 0.04) + to_tbl * 1.52 + right * pan;
+        // Aim slightly below face_y so the character's head & shoulders sit cleanly above the bottom menu card
+        let look = spot + Vec3::Y * (face_y - 0.08);
+        let label = match shot {
+            0 => "PUB 217 -- PLAY AS STAN (THE TENDY HERO)",
+            1 => "PUB 217 -- PLAY AS TJ (FORMAT CRITIC)",
+            2 => "PUB 217 -- PLAY AS DEREK (MASTER ARCHITECT)",
+            3 => "PUB 217 -- PLAY AS NATE (CEDAR RAPIDS LEGEND)",
+            _ => "PUB 217 -- PLAY AS GLENN (RESTROOM WATCHER)",
+        };
+        (eye, look, label)
+    } else {
+        let ang = -0.35 + shot_u * 1.15;
+        let eye = table_pos + Vec3::new(ang.sin() * 4.4, 2.30, ang.cos() * 4.4);
+        let look = table_pos + Vec3::new(0.0, 1.10, 0.0);
+        (eye, look, "PUB 217 -- PLAY ANY OF THE BOYS IN FREE ROAM & CRAFTING!")
+    };
+
+    if shot != ms.last_shot {
+        ms.last_shot = shot;
+        for mut t in &mut txt_q {
+            if t.0 != badge_text {
+                t.0 = badge_text.to_string();
+            }
+        }
+    }
+
+    if !ms.snapped {
+        ms.snapped = true;
+        commands.insert_resource(ClearColor(Color::srgb(0.06, 0.04, 0.04)));
+        commands.insert_resource(AmbientLight {
+            color: Color::srgb(1.0, 0.90, 0.80),
+            brightness: 500.0,
+        });
+        ms.cam_look = target_look;
+        if let Ok(mut cam) = cam_q.get_single_mut() {
+            cam.translation = target_eye;
+            cam.look_at(ms.cam_look, Vec3::Y);
+        }
+        return;
+    }
+
+    if let Ok(mut cam) = cam_q.get_single_mut() {
+        if cam.translation.distance(target_eye) > 20.0 {
+            ms.cam_look = target_look;
+            cam.translation = target_eye;
+        } else {
+            let lerp_f = (dt * 3.2).min(1.0);
+            ms.cam_look = ms.cam_look.lerp(target_look, lerp_f);
+            cam.translation = cam.translation.lerp(target_eye, lerp_f);
+        }
+        cam.look_at(ms.cam_look, Vec3::Y);
     }
 }
 
@@ -684,11 +1154,29 @@ fn update_house_craft_cutscene(
     }
 }
 
+fn yaw_toward(from: Vec3, target: Vec3, model_neg_z: bool) -> f32 {
+    let dx = target.x - from.x;
+    let dz = target.z - from.z;
+    if model_neg_z {
+        (-dx).atan2(-dz)
+    } else {
+        dx.atan2(dz)
+    }
+}
+
 // =================================================================================================
 // Section C: Cutscene 2 -- The Odyssey + 10,000 Women Black Hole (`GameState::BlackHoleCutscene`)
 // =================================================================================================
 
 const BLACK_HOLE_STAGE: Vec3 = Vec3::new(0.0, 0.0, -1720.0);
+const BH_SEAT_OFFSET: f32 = -0.26;
+const BH_BOY_SEAT_REL: [Vec3; 5] = [
+    Vec3::new(-1.85, 0.0, 1.35),  // 0: Stan (-Z GLB)
+    Vec3::new(1.85, 0.0, 1.35),   // 1: Nate (+Z)
+    Vec3::new(-2.05, 0.0, -0.45), // 2: TJ (+Z)
+    Vec3::new(2.05, 0.0, -0.45),  // 3: Derek (+Z)
+    Vec3::new(0.0, 0.0, 2.35),    // 4: Glenn (+Z)
+];
 
 #[derive(Component)]
 struct BlackHoleCutsceneEntity;
@@ -726,6 +1214,7 @@ pub struct BlackHoleState {
     total_t: f32,
     beat0_spoken: bool,
     boom_played: bool,
+    cam_look: Vec3,
 }
 
 const BLACK_HOLE_BEATS: [(&str, &str, &str, f32); 7] = [
@@ -777,6 +1266,7 @@ const BLACK_HOLE_BEATS: [(&str, &str, &str, f32); 7] = [
 fn enter_black_hole_cutscene(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    art: Option<Res<crate::casino::CasinoArt>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut bh: ResMut<BlackHoleState>,
@@ -790,13 +1280,14 @@ fn enter_black_hole_cutscene(
     set_touch_playing(false);
     play_cutscene_music();
 
-    commands.insert_resource(ClearColor(Color::srgb(0.02, 0.01, 0.05)));
+    commands.insert_resource(ClearColor(Color::srgb(0.03, 0.02, 0.05)));
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.95, 0.88, 1.0),
-        brightness: 420.0,
+        color: Color::srgb(1.0, 0.92, 0.98),
+        brightness: 480.0,
     });
 
     let stage = BLACK_HOLE_STAGE;
+    let table_pos = stage + Vec3::new(0.0, 0.0, 1.4);
     let door_pos = stage + Vec3::new(0.0, 0.0, -6.2);
     let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
     let unit_cyl = meshes.add(Cylinder::new(1.0, 1.0));
@@ -812,8 +1303,15 @@ fn enter_black_hole_cutscene(
         ..default()
     });
     let wood_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.20, 0.09, 0.05),
-        perceptual_roughness: 0.36,
+        base_color: Color::srgb(0.22, 0.10, 0.06),
+        perceptual_roughness: 0.34,
+        ..default()
+    });
+    let gold_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.82, 0.24),
+        emissive: LinearRgba::rgb(1.4, 0.9, 0.18),
+        metallic: 0.65,
+        perceptual_roughness: 0.25,
         ..default()
     });
     let neon_pink = materials.add(StandardMaterial {
@@ -840,30 +1338,53 @@ fn enter_black_hole_cutscene(
         ..default()
     });
 
-    // Pub room + beer table + Women's Restroom doorway (all tagged CityChunk so they get sucked in!)
-    let mut spawn_chunk = |idx: usize, mesh: Handle<Mesh>, mat: Handle<StandardMaterial>, pos: Vec3, scale: Vec3| {
-        commands.spawn((
-            BlackHoleCutsceneEntity,
-            BlackHoleAnim {
-                kind: BlackHoleAnimKind::CityChunk(idx),
-                home_pos: pos,
-                home_scale: scale,
-                phase: idx as f32 * 0.45,
-            },
-            Mesh3d(mesh),
-            MeshMaterial3d(mat),
-            Transform::from_translation(pos).with_scale(scale),
-        ));
-    };
-    spawn_chunk(0, unit_box.clone(), floor_mat, stage + Vec3::new(0.0, -0.1, 0.0), Vec3::new(16.0, 0.2, 16.0));
-    spawn_chunk(1, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(-7.5, 2.8, 0.0), Vec3::new(0.4, 5.6, 16.0));
-    spawn_chunk(2, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(7.5, 2.8, 0.0), Vec3::new(0.4, 5.6, 16.0));
-    spawn_chunk(3, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(-4.5, 2.8, -6.4), Vec3::new(6.2, 5.6, 0.4));
-    spawn_chunk(4, unit_box.clone(), brick_mat, stage + Vec3::new(4.5, 2.8, -6.4), Vec3::new(6.2, 5.6, 0.4));
-    spawn_chunk(5, unit_box.clone(), wood_mat.clone(), stage + Vec3::new(0.0, 0.55, 1.5), Vec3::new(3.2, 1.1, 2.4));
-    spawn_chunk(6, unit_box.clone(), wood_mat, stage + Vec3::new(-5.2, 0.65, -2.2), Vec3::new(1.1, 1.3, 5.2));
-    // "WOMEN'S RESTROOM" neon header above doorway
-    spawn_chunk(7, unit_box.clone(), neon_pink, door_pos + Vec3::new(0.0, 3.3, 0.25), Vec3::new(2.8, 0.65, 0.18));
+    // Pub room + round beer table + Women's Restroom doorway (all tagged CityChunk so they get sucked in!)
+    let mut spawn_chunk =
+        |idx: usize, mesh: Handle<Mesh>, mat: Handle<StandardMaterial>, pos: Vec3, scale: Vec3| {
+            commands.spawn((
+                BlackHoleCutsceneEntity,
+                BlackHoleAnim {
+                    kind: BlackHoleAnimKind::CityChunk(idx),
+                    home_pos: pos,
+                    home_scale: scale,
+                    phase: idx as f32 * 0.45,
+                },
+                Mesh3d(mesh),
+                MeshMaterial3d(mat),
+                Transform::from_translation(pos).with_scale(scale),
+            ));
+        };
+    spawn_chunk(0, unit_box.clone(), floor_mat, stage + Vec3::new(0.0, -0.1, 0.0), Vec3::new(18.0, 0.2, 18.0));
+    spawn_chunk(1, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(-8.2, 2.8, 0.0), Vec3::new(0.4, 5.6, 18.0));
+    spawn_chunk(2, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(8.2, 2.8, 0.0), Vec3::new(0.4, 5.6, 18.0));
+    spawn_chunk(3, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(-4.8, 2.8, -6.4), Vec3::new(6.8, 5.6, 0.4));
+    spawn_chunk(4, unit_box.clone(), brick_mat.clone(), stage + Vec3::new(4.8, 2.8, -6.4), Vec3::new(6.8, 5.6, 0.4));
+    spawn_chunk(5, unit_box.clone(), brick_mat, stage + Vec3::new(0.0, 4.4, -6.4), Vec3::new(2.8, 2.4, 0.4));
+    // Round Pub Table + left Bar counter
+    spawn_chunk(6, unit_cyl.clone(), wood_mat.clone(), table_pos + Vec3::new(0.0, 0.47, 0.0), Vec3::new(0.28, 0.94, 0.28));
+    spawn_chunk(7, unit_cyl.clone(), wood_mat.clone(), table_pos + Vec3::new(0.0, 0.94, 0.0), Vec3::new(1.42, 0.12, 1.42));
+    spawn_chunk(8, unit_box.clone(), wood_mat.clone(), stage + Vec3::new(-6.0, 0.62, -2.2), Vec3::new(1.1, 1.24, 5.4));
+    spawn_chunk(9, unit_box.clone(), gold_mat, stage + Vec3::new(-6.0, 3.8, -6.1), Vec3::new(2.8, 0.65, 0.14));
+
+    // Glowing "WOMEN'S RESTROOM" plaque & pink trim above open doorway
+    if let Some(ref a) = art {
+        let sign_mat = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            base_color_texture: Some(a.womens_sign.clone()),
+            emissive: LinearRgba::rgb(1.4, 1.1, 1.35),
+            emissive_texture: Some(a.womens_sign.clone()),
+            unlit: true,
+            ..default()
+        });
+        spawn_chunk(
+            42,
+            unit_box.clone(),
+            sign_mat,
+            door_pos + Vec3::new(0.0, 3.55, 0.22),
+            Vec3::new(1.75, 0.85, 0.10),
+        );
+    }
+    spawn_chunk(43, unit_box.clone(), neon_pink, door_pos + Vec3::new(0.0, 3.12, 0.20), Vec3::new(2.75, 0.14, 0.12));
 
     // Distant Cedar Rapids buildings + cabs around the exterior ready to get sucked into the vortex!
     let tower_mat = materials.add(StandardMaterial {
@@ -882,58 +1403,120 @@ fn enter_black_hole_cutscene(
         let h = 10.0 + (i % 4) as f32 * 4.5;
         let is_cab = i % 3 == 0;
         let pos = door_pos + Vec3::new(a.cos() * r, if is_cab { 0.6 } else { h * 0.5 }, a.sin() * r);
-        let scale = if is_cab { Vec3::new(2.0, 1.2, 4.0) } else { Vec3::new(4.2, h, 4.2) };
+        let s = if is_cab { Vec3::new(2.0, 1.2, 4.0) } else { Vec3::new(4.2, h, 4.2) };
         spawn_chunk(
             10 + i,
             unit_box.clone(),
             if is_cab { cab_mat.clone() } else { tower_mat.clone() },
             pos,
-            scale,
+            s,
         );
     }
 
-    // 44 stylized women visibly pouring into and overflowing out of the Women's Restroom!
-    let dress_colors = [
-        materials.add(StandardMaterial { base_color: Color::srgb(0.86, 0.12, 0.44), ..default() }),
-        materials.add(StandardMaterial { base_color: Color::srgb(0.14, 0.64, 0.50), ..default() }),
-        materials.add(StandardMaterial { base_color: Color::srgb(0.24, 0.36, 0.88), ..default() }),
-        materials.add(StandardMaterial { base_color: Color::srgb(0.92, 0.66, 0.16), ..default() }),
-    ];
-    let skin_w = materials.add(StandardMaterial { base_color: Color::srgb(0.95, 0.78, 0.68), ..default() });
-    let hair_w = materials.add(StandardMaterial { base_color: Color::srgb(0.18, 0.10, 0.08), ..default() });
-    let head_sphere = meshes.add(Sphere::new(0.18));
-    for wi in 0..44_usize {
-        let row = (wi / 6) as f32;
-        let col = (wi % 6) as f32 - 2.5;
-        let wpos = door_pos + Vec3::new(col * 0.42, (wi % 3) as f32 * 0.22, -0.4 + row * 0.48);
+    // Glowing 7-tier Beer Tower centered atop the pub table!
+    let tower_pos = table_pos + Vec3::new(0.0, 1.00, 0.0);
+    let tower_scale = Vec3::splat(0.32);
+    commands
+        .spawn((
+            BlackHoleCutsceneEntity,
+            BlackHoleAnim {
+                kind: BlackHoleAnimKind::CityChunk(44),
+                home_pos: tower_pos,
+                home_scale: tower_scale,
+                phase: 0.7,
+            },
+            Transform::from_translation(tower_pos).with_scale(tower_scale),
+            Visibility::Inherited,
+        ))
+        .with_children(|t| {
+            crate::beer_fx::spawn_pub_beer_tower(t, &mut meshes, &mut materials, Vec3::ZERO);
+        });
+
+    // 10 Tall-boy Bash Lyte cans around the table rim
+    let single_can = meshes.add(crate::beer_fx::can_mesh());
+    let can_mats = crate::beer_fx::can_materials(&mut materials);
+    let can_scale = Vec3::splat(0.45);
+    for ci in 0..10_usize {
+        let a = (ci as f32 / 10.0) * TAU + 0.15;
+        let cpos = table_pos + Vec3::new(a.cos() * 1.05, 1.00 + crate::beer_fx::CAN_HALF_H * 0.45, a.sin() * 1.05);
+        commands.spawn((
+            BlackHoleCutsceneEntity,
+            BlackHoleAnim {
+                kind: BlackHoleAnimKind::CityChunk(30 + ci),
+                home_pos: cpos,
+                home_scale: can_scale,
+                phase: ci as f32 * 0.55,
+            },
+            Mesh3d(single_can.clone()),
+            MeshMaterial3d(can_mats[ci % can_mats.len()].clone()),
+            Transform::from_translation(cpos)
+                .with_rotation(Quat::from_rotation_y(-a + 0.4))
+                .with_scale(can_scale),
+        ));
+    }
+
+    // Maria behind the bar & Mike nearby
+    let maria_pos = stage + Vec3::new(-7.1, 0.0, -2.2);
+    commands
+        .spawn((
+            BlackHoleCutsceneEntity,
+            BlackHoleAnim {
+                kind: BlackHoleAnimKind::CityChunk(40),
+                home_pos: maria_pos,
+                home_scale: Vec3::splat(PUB217_SCALE),
+                phase: 2.1,
+            },
+            Transform::from_translation(maria_pos)
+                .with_rotation(Quat::from_rotation_y(FRAC_PI_2))
+                .with_scale(Vec3::splat(PUB217_SCALE)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_bartender_rig(p, &mut meshes, &mut materials));
+
+    let mike_pos = stage + Vec3::new(-4.1, 0.0, 2.2);
+    let scale = city_body_scale(1.8);
+    commands
+        .spawn((
+            BlackHoleCutsceneEntity,
+            BlackHoleAnim {
+                kind: BlackHoleAnimKind::CityChunk(41),
+                home_pos: mike_pos,
+                home_scale: Vec3::splat(scale * 0.85),
+                phase: 2.8,
+            },
+            Transform::from_translation(mike_pos)
+                .with_rotation(Quat::from_rotation_y(yaw_toward(mike_pos, table_pos, false)))
+                .with_scale(Vec3::splat(scale * 0.85)),
+            Visibility::Inherited,
+        ))
+        .with_children(|p| spawn_mike_rig(p, &mut meshes, &mut materials));
+
+    // 20 full sculpted glamorous women pouring out of & overflowing the Women's Restroom!
+    let woman_scale = Vec3::splat(0.95);
+    for wi in 0..20_usize {
+        let row = (wi / 5) as f32;
+        let col = (wi % 5) as f32 - 2.0;
+        let stagger = if (wi / 5) % 2 == 1 { 0.18 } else { -0.10 };
+        let x_spread = col * 0.58 + stagger;
+        let z_spill = 1.75 - row * 0.72 + ((wi % 3) as f32 - 1.0) * 0.12;
+        let wpos = door_pos + Vec3::new(x_spread, 0.0, z_spill);
+        let wyaw = col * -0.18 + ((wi % 2) as f32 - 0.5) * 0.22;
         commands
             .spawn((
                 BlackHoleCutsceneEntity,
                 BlackHoleAnim {
                     kind: BlackHoleAnimKind::Woman(wi),
                     home_pos: wpos,
-                    home_scale: Vec3::ONE,
-                    phase: wi as f32 * 0.37,
+                    home_scale: woman_scale,
+                    phase: wi as f32 * 0.43,
                 },
-                Transform::from_translation(wpos),
+                Transform::from_translation(wpos)
+                    .with_rotation(Quat::from_rotation_y(wyaw))
+                    .with_scale(woman_scale),
                 Visibility::Inherited,
             ))
             .with_children(|w| {
-                w.spawn((
-                    Mesh3d(unit_cyl.clone()),
-                    MeshMaterial3d(dress_colors[wi % dress_colors.len()].clone()),
-                    Transform::from_xyz(0.0, 0.68, 0.0).with_scale(Vec3::new(0.24, 1.32, 0.22)),
-                ));
-                w.spawn((
-                    Mesh3d(head_sphere.clone()),
-                    MeshMaterial3d(skin_w.clone()),
-                    Transform::from_xyz(0.0, 1.52, 0.0),
-                ));
-                w.spawn((
-                    Mesh3d(head_sphere.clone()),
-                    MeshMaterial3d(hair_w.clone()),
-                    Transform::from_xyz(0.0, 1.56, -0.06).with_scale(Vec3::new(1.08, 1.25, 1.05)),
-                ));
+                crate::pub_portal::spawn_attractive_woman_rig(w, &mut meshes, &mut materials, wi, wi);
             });
     }
 
@@ -965,25 +1548,56 @@ fn enter_black_hole_cutscene(
         ));
     }
 
-    // Main boys around the table (Stan, Nate, TJ, Derek, Glenn)
-    let scale = city_body_scale(1.8);
-    let boy_spots = [
-        stage + Vec3::new(-1.8, 0.0, 2.2),
-        stage + Vec3::new(1.8, 0.0, 2.2),
-        stage + Vec3::new(-2.1, 0.0, 0.5),
-        stage + Vec3::new(2.1, 0.0, 0.5),
-        stage + Vec3::new(0.0, 0.0, 3.2),
-    ];
+    // 5 Wooden Pub Chairs + Main Boys seated around the Beer Tower table (Stan, Nate, TJ, Derek, Glenn)
+    for (ci, rel) in BH_BOY_SEAT_REL.iter().enumerate() {
+        let spot = table_pos + *rel;
+        let cyaw = yaw_toward(spot, table_pos, false);
+        commands
+            .spawn((
+                BlackHoleCutsceneEntity,
+                BlackHoleAnim {
+                    kind: BlackHoleAnimKind::CityChunk(50 + ci),
+                    home_pos: spot,
+                    home_scale: Vec3::ONE,
+                    phase: 0.9 + ci as f32 * 0.4,
+                },
+                Transform::from_translation(spot).with_rotation(Quat::from_rotation_y(cyaw)),
+                Visibility::Inherited,
+            ))
+            .with_children(|ch| {
+                ch.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(wood_mat.clone()),
+                    Transform::from_xyz(0.0, 0.48, 0.0).with_scale(Vec3::new(0.54, 0.08, 0.52)),
+                ));
+                ch.spawn((
+                    Mesh3d(unit_box.clone()),
+                    MeshMaterial3d(wood_mat.clone()),
+                    Transform::from_xyz(0.0, 0.88, -0.23).with_scale(Vec3::new(0.52, 0.74, 0.08)),
+                ));
+                for (lx, lz) in [(-0.21, -0.21), (0.21, -0.21), (-0.21, 0.21), (0.21, 0.21)] {
+                    ch.spawn((
+                        Mesh3d(unit_box.clone()),
+                        MeshMaterial3d(wood_mat.clone()),
+                        Transform::from_xyz(lx, 0.24, lz).with_scale(Vec3::new(0.07, 0.48, 0.07)),
+                    ));
+                }
+            });
+    }
+
+    let boy_spots: [Vec3; 5] = BH_BOY_SEAT_REL.map(|r| table_pos + r + Vec3::Y * BH_SEAT_OFFSET);
     commands.spawn((
         BlackHoleCutsceneEntity,
         BlackHoleAnim {
             kind: BlackHoleAnimKind::Boy(0),
             home_pos: boy_spots[0],
-            home_scale: Vec3::splat(scale),
+            home_scale: Vec3::splat(0.96),
             phase: 0.0,
         },
         SceneRoot(asset_server.load("models/plaid_hero.glb#Scene0")),
-        Transform::from_translation(boy_spots[0]).with_rotation(Quat::from_rotation_y(-1.2)).with_scale(Vec3::splat(scale)),
+        Transform::from_translation(boy_spots[0])
+            .with_rotation(Quat::from_rotation_y(yaw_toward(boy_spots[0], table_pos, true)))
+            .with_scale(Vec3::splat(0.96)),
         Visibility::Inherited,
     ));
     let nate_m = make_nate_materials(&mut materials);
@@ -993,10 +1607,12 @@ fn enter_black_hole_cutscene(
             BlackHoleAnim {
                 kind: BlackHoleAnimKind::Boy(1),
                 home_pos: boy_spots[1],
-                home_scale: Vec3::splat(scale * 0.85),
+                home_scale: Vec3::splat(0.96),
                 phase: 1.0,
             },
-            Transform::from_translation(boy_spots[1]).with_rotation(Quat::from_rotation_y(-1.8)).with_scale(Vec3::splat(scale * 0.85)),
+            Transform::from_translation(boy_spots[1])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(boy_spots[1], table_pos, false)))
+                .with_scale(Vec3::splat(0.96)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_nate_rig(p, &mut meshes, &nate_m, false));
@@ -1006,10 +1622,12 @@ fn enter_black_hole_cutscene(
             BlackHoleAnim {
                 kind: BlackHoleAnimKind::Boy(2),
                 home_pos: boy_spots[2],
-                home_scale: Vec3::splat(scale * 0.85),
+                home_scale: Vec3::splat(0.96),
                 phase: 2.0,
             },
-            Transform::from_translation(boy_spots[2]).with_rotation(Quat::from_rotation_y(FRAC_PI_2)).with_scale(Vec3::splat(scale * 0.85)),
+            Transform::from_translation(boy_spots[2])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(boy_spots[2], table_pos, false)))
+                .with_scale(Vec3::splat(0.96)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_tj_rig(p, &mut meshes, &mut materials, false, false));
@@ -1020,10 +1638,12 @@ fn enter_black_hole_cutscene(
             BlackHoleAnim {
                 kind: BlackHoleAnimKind::Boy(3),
                 home_pos: boy_spots[3],
-                home_scale: Vec3::splat(scale * 0.85),
+                home_scale: Vec3::splat(0.96),
                 phase: 3.0,
             },
-            Transform::from_translation(boy_spots[3]).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)).with_scale(Vec3::splat(scale * 0.85)),
+            Transform::from_translation(boy_spots[3])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(boy_spots[3], table_pos, false)))
+                .with_scale(Vec3::splat(0.96)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_derek_rig(p, &mut meshes, &derek_m, false));
@@ -1034,23 +1654,46 @@ fn enter_black_hole_cutscene(
             BlackHoleAnim {
                 kind: BlackHoleAnimKind::Boy(4),
                 home_pos: boy_spots[4],
-                home_scale: Vec3::splat(scale * 0.89),
+                home_scale: Vec3::splat(0.94),
                 phase: 4.0,
             },
-            Transform::from_translation(boy_spots[4]).with_rotation(Quat::from_rotation_y(PI)).with_scale(Vec3::splat(scale * 0.89)),
+            Transform::from_translation(boy_spots[4])
+                .with_rotation(Quat::from_rotation_y(yaw_toward(boy_spots[4], table_pos, false)))
+                .with_scale(Vec3::splat(0.94)),
             Visibility::Inherited,
         ))
         .with_children(|p| spawn_glenn_rig(p, &mut meshes, &glenn_m));
 
+    // Warm pub chandelier over the Beer Tower + front face fill + bright Women's Restroom spotlight
     commands.spawn((
         BlackHoleCutsceneEntity,
         PointLight {
-            color: Color::srgb(0.95, 0.82, 1.0),
-            intensity: 95_000.0,
-            range: 34.0,
+            color: Color::srgb(1.0, 0.88, 0.72),
+            intensity: 200_000.0,
+            range: 30.0,
             ..default()
         },
-        Transform::from_translation(stage + Vec3::new(0.0, 5.2, 0.5)),
+        Transform::from_translation(table_pos + Vec3::new(0.0, 4.2, 0.0)),
+    ));
+    commands.spawn((
+        BlackHoleCutsceneEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.94, 0.88),
+            intensity: 120_000.0,
+            range: 24.0,
+            ..default()
+        },
+        Transform::from_translation(table_pos + Vec3::new(0.0, 2.5, 3.8)),
+    ));
+    commands.spawn((
+        BlackHoleCutsceneEntity,
+        PointLight {
+            color: Color::srgb(1.0, 0.94, 0.92),
+            intensity: 195_000.0,
+            range: 20.0,
+            ..default()
+        },
+        Transform::from_translation(door_pos + Vec3::new(0.0, 3.0, 2.8)),
     ));
 
     // Cutscene UI: Top bar + live Women Counter + Bottom subtitle
@@ -1124,9 +1767,11 @@ fn enter_black_hole_cutscene(
             });
         });
 
+    let init_look = table_pos + Vec3::new(0.0, 1.48, 0.0);
+    bh.cam_look = init_look;
     if let Ok(mut cam) = cam_q.get_single_mut() {
-        cam.translation = stage + Vec3::new(0.0, 2.7, 7.2);
-        cam.look_at(stage + Vec3::new(0.0, 1.5, 0.0), Vec3::Y);
+        cam.translation = table_pos + Vec3::new(-0.55, 1.72, 2.25);
+        cam.look_at(init_look, Vec3::Y);
     }
 }
 
@@ -1198,6 +1843,8 @@ fn update_black_hole_cutscene(
     }
 
     let stage = BLACK_HOLE_STAGE;
+    let table_pos = stage + Vec3::new(0.0, 0.0, 1.4);
+    let door_pos = stage + Vec3::new(0.0, 0.0, -6.2);
     let bh_center = stage + Vec3::new(0.0, 1.8, -6.4);
     let women_count: u32 = match bh.beat {
         0 => 18 + (bh.beat_t * 25.0) as u32,
@@ -1240,19 +1887,22 @@ fn update_black_hole_cutscene(
             }
             BlackHoleAnimKind::Woman(idx) => {
                 if bh.beat < 5 {
-                    let jig = (bh.total_t * 4.5 + anim.phase).sin() * 0.08;
-                    let spill = (bh.beat as f32 / 4.0).clamp(0.0, 1.0) * 1.1;
-                    tf.translation = anim.home_pos + Vec3::new(jig, 0.0, spill * ((idx % 4) as f32 * 0.4));
+                    let sway_x = (bh.total_t * 3.8 + anim.phase).sin() * 0.07;
+                    let bob_y = ((bh.total_t * 6.0 + anim.phase).sin().abs()) * 0.04;
+                    let spill = (bh.beat as f32 / 4.0).clamp(0.0, 1.0) * 0.85;
+                    tf.translation = anim.home_pos
+                        + Vec3::new(sway_x, bob_y, spill * ((idx % 4) as f32 * 0.28));
                 } else {
                     let pull = (bh_pull * 1.45).clamp(0.0, 1.0);
                     let ang = bh.total_t * 7.5 + anim.phase;
-                    let orbit = Vec3::new(ang.cos(), (ang * 0.7).sin() * 0.4, ang.sin()) * ((1.0 - pull) * 3.2);
+                    let orbit = Vec3::new(ang.cos(), (ang * 0.7).sin() * 0.4, ang.sin())
+                        * ((1.0 - pull) * 3.2);
                     tf.translation = anim.home_pos.lerp(bh_center, pull) + orbit * pull;
                     tf.rotate_y(8.0 * dt);
-                    tf.scale = Vec3::splat((1.0 - pull * 0.96).max(0.04));
+                    tf.scale = anim.home_scale * (1.0 - pull * 0.95).max(0.04);
                 }
             }
-            BlackHoleAnimKind::CityChunk(_) | BlackHoleAnimKind::Boy(_) => {
+            BlackHoleAnimKind::CityChunk(_) => {
                 if bh.beat >= 6 {
                     let pull = ((bh_pull - 0.42) / 0.58).clamp(0.0, 1.0);
                     let ang = bh.total_t * 5.2 + anim.phase;
@@ -1261,40 +1911,128 @@ fn update_black_hole_cutscene(
                     tf.rotate_y(4.5 * dt);
                     tf.rotate_z(2.8 * dt);
                     tf.scale = anim.home_scale * (1.0 - pull * 0.95).max(0.05);
-                } else if anim.kind == BlackHoleAnimKind::Boy(0) && bh.beat == 3 {
-                    // Stan lunges forward threatening TJ & Derek's ankles
-                    tf.translation = anim.home_pos + Vec3::new(0.45 * (bh.beat_t * 8.0).sin().abs(), 0.0, -0.35);
+                }
+            }
+            BlackHoleAnimKind::Boy(bi) => {
+                if bh.beat >= 6 {
+                    let pull = ((bh_pull - 0.42) / 0.58).clamp(0.0, 1.0);
+                    let ang = bh.total_t * 5.2 + anim.phase;
+                    let swirl = Vec3::new(ang.cos(), 0.35 * ang.sin(), ang.sin()) * (1.0 - pull) * 4.0;
+                    tf.translation = anim.home_pos.lerp(bh_center, pull) + swirl * pull;
+                    tf.rotate_y(4.5 * dt);
+                    tf.rotate_z(2.8 * dt);
+                    tf.scale = anim.home_scale * (1.0 - pull * 0.95).max(0.05);
+                } else {
+                    let speaker_bi: Option<usize> = match bh.beat {
+                        0 => Some(1),
+                        1 => Some(2),
+                        2 => Some(3),
+                        3 => Some(0),
+                        4 => Some(4),
+                        _ => None,
+                    };
+                    let active = speaker_bi == Some(bi);
+                    let bob = if active {
+                        (bh.total_t * 6.5 + anim.phase).sin().abs() * 0.045
+                    } else {
+                        (bh.total_t * 2.2 + anim.phase).sin() * 0.015
+                    };
+                    if bi == 0 && bh.beat == 3 {
+                        // Stan rises & lunges forward threatening TJ & Derek's ankles
+                        let to_tbl = Vec3::new(table_pos.x - anim.home_pos.x, 0.0, table_pos.z - anim.home_pos.z)
+                            .normalize_or_zero();
+                        let lunge = (bh.beat_t * 2.2).clamp(0.0, 0.35);
+                        tf.translation = anim.home_pos + to_tbl * lunge + Vec3::Y * (lunge * 0.65);
+                    } else if bi == 4 && bh.beat >= 4 {
+                        // Glenn jumps out of his chair pointing toward the overflowing Women's Restroom
+                        let rise = ((bh.beat_t - 1.2).max(0.0) * 1.4).clamp(0.0, 1.0);
+                        tf.translation = anim.home_pos + Vec3::Y * (rise * 0.24 + bob);
+                        let y_tbl = yaw_toward(anim.home_pos, table_pos, false);
+                        let y_door = yaw_toward(anim.home_pos, door_pos, false);
+                        let mut diff = (y_door - y_tbl + PI).rem_euclid(TAU) - PI;
+                        diff *= rise;
+                        tf.rotation = Quat::from_rotation_y(y_tbl + diff);
+                    } else {
+                        tf.translation = anim.home_pos + Vec3::Y * bob;
+                    }
                 }
             }
         }
     }
 
-    if let Ok(mut cam) = cam_q.get_single_mut() {
-        let (eye, look) = match bh.beat {
-            0 | 1 | 2 => (stage + Vec3::new(0.2, 2.5, 6.8), stage + Vec3::new(0.0, 1.4, 0.8)),
-            3 => (stage + Vec3::new(-3.2, 2.0, 4.4), stage + Vec3::new(0.0, 1.5, 1.4)),
-            4 => (stage + Vec3::new(2.2, 2.8, 3.6), door_pos_cam(stage)),
-            5 => (stage + Vec3::new(0.0, 2.6, 5.2), bh_center),
-            _ => {
-                let swirl_u = (bh.beat_t / 4.2).clamp(0.0, 1.0);
+    let face_closeup = |bi: usize, dist: f32, pan: f32, elev: f32| -> (Vec3, Vec3) {
+        let spot = table_pos + BH_BOY_SEAT_REL[bi];
+        let to_tbl = Vec3::new(table_pos.x - spot.x, 0.0, table_pos.z - spot.z).normalize_or_zero();
+        let right = Vec3::Y.cross(to_tbl).normalize_or_zero();
+        let face_y = match bi {
+            0 => 1.50, // Stan
+            1 => 1.41, // Nate
+            2 => 1.51, // TJ
+            3 => 1.43, // Derek
+            _ => 1.45, // Glenn
+        };
+        let look = spot + Vec3::Y * face_y;
+        let eye = look + to_tbl * dist + right * pan + Vec3::Y * elev;
+        (eye, look)
+    };
+
+    let (target_eye, target_look) = match bh.beat {
+        // Beat 0: Sweeping hero reveal of the 7-tier Beer Tower & 10 cans -> pan straight into Nate's face!
+        0 => {
+            if bh.beat_t < 1.55 {
+                let u = bh.beat_t / 1.55;
                 (
-                    stage + Vec3::new((bh.total_t * 2.5).sin() * 3.0, 3.4 - swirl_u * 1.4, 9.0 - swirl_u * 8.0),
-                    bh_center,
+                    table_pos + Vec3::new(-0.55 + u * 0.75, 1.72, 2.25 - u * 0.20),
+                    table_pos + Vec3::new(0.0, 1.48, 0.0),
+                )
+            } else {
+                let pan = 0.22 - ((bh.beat_t - 1.55) * 0.14).clamp(0.0, 0.32);
+                face_closeup(1, 1.48, pan, 0.05)
+            }
+        }
+        // Beat 1: Tight panning close-up on TJ's glasses & bearded face!
+        1 => face_closeup(2, 1.48, -0.22 + (bh.beat_t * 0.10).clamp(0.0, 0.40), 0.04),
+        // Beat 2: Tight panning close-up on Derek's face!
+        2 => face_closeup(3, 1.50, 0.24 - (bh.beat_t * 0.10).clamp(0.0, 0.40), 0.04),
+        // Beat 3: Dramatic low-angle close-up on Stan's face as he lunges forward!
+        3 => face_closeup(0, 1.46, -0.14 + (bh.beat_t * 0.08).clamp(0.0, 0.24), -0.04),
+        // Beat 4: Glenn's shocked face close-up -> whip-pan across the sculpted women overflowing out of the Restroom!
+        4 => {
+            if bh.beat_t < 1.9 {
+                face_closeup(4, 1.50, -0.18 + bh.beat_t * 0.15, 0.05)
+            } else {
+                let pan = ((bh.beat_t - 1.9) * 0.34).clamp(0.0, 1.15);
+                (
+                    door_pos + Vec3::new(-0.55 + pan, 1.56, 3.85),
+                    door_pos + Vec3::new(0.0, 1.44, 0.85),
                 )
             }
-        };
-        cam.translation = cam.translation.lerp(eye, (dt * 4.2).min(1.0));
-        cam.look_at(look, Vec3::Y);
+        }
+        // Beat 5: Tense push-in watching the sculpted women spiral into the black hole event horizon
+        5 => (
+            door_pos + Vec3::new(0.35, 2.15, 5.2 - (bh.beat_t * 0.24).clamp(0.0, 1.0)),
+            bh_center,
+        ),
+        // Beat 6: Wide sweeping vortex pulling Beer Tower, 10 cans, boys, cabs & city towers in!
+        _ => {
+            let swirl_u = (bh.beat_t / 4.2).clamp(0.0, 1.0);
+            (
+                stage + Vec3::new((bh.total_t * 2.2).sin() * 3.4, 3.4 - swirl_u * 1.3, 8.8 - swirl_u * 7.6),
+                bh_center,
+            )
+        }
+    };
+
+    bh.cam_look = bh.cam_look.lerp(target_look, (dt * 4.8).min(1.0));
+    if let Ok(mut cam) = cam_q.get_single_mut() {
+        cam.translation = cam.translation.lerp(target_eye, (dt * 4.8).min(1.0));
+        cam.look_at(bh.cam_look, Vec3::Y);
     }
 
     if (bh.beat as usize) >= BLACK_HOLE_BEATS.len() {
         stats.craft_world_unlocked = true;
         next_state.set(GameState::CraftPlay);
     }
-}
-
-fn door_pos_cam(stage: Vec3) -> Vec3 {
-    stage + Vec3::new(0.0, 1.4, -4.5)
 }
 
 // =================================================================================================
@@ -1718,6 +2456,9 @@ fn enter_craft_play(
         MeshMaterial3d(ground_mat),
         Transform::from_translation(CRAFT_LEVEL_ORIGIN + Vec3::new(0.0, -0.5, 0.0))
             .with_scale(Vec3::new(66.0, 1.0, 66.0)),
+        PlatformBox {
+            half_extents: Vec3::new(33.0, 0.5, 33.0),
+        },
     ));
     for z in [-8.0_f32, 8.0] {
         commands.spawn((
@@ -1909,10 +2650,12 @@ fn enter_craft_play(
     ));
 
     // Spawn player at south plaza facing north toward Pub 217 footprint
+    stats.hearts = stats.max_hearts;
     if let Ok((mut p_tf, mut player, mut p_vis)) = player_q.get_single_mut() {
         p_tf.translation = CRAFT_SPAWN_POS;
         player.facing_yaw = 0.0;
         p_tf.rotation = Quat::IDENTITY;
+        p_tf.scale = Vec3::splat(city_body_scale(1.8));
         player.velocity = Vec3::ZERO;
         player.knockback = Vec3::ZERO;
         player.grounded = true;
@@ -1922,6 +2665,7 @@ fn enter_craft_play(
     orbit.pitch = 0.34;
     orbit.distance = 8.2;
     orbit.current_dist = 8.2;
+    orbit.snap_follow = true;
     if let Ok(mut cam_tf) = cam_q.get_single_mut() {
         cam_tf.translation = CRAFT_SPAWN_POS + Vec3::new(0.0, 3.8, 7.6);
         cam_tf.look_at(CRAFT_SPAWN_POS + Vec3::new(0.0, 1.6, 0.0), Vec3::Y);

@@ -207,7 +207,6 @@ fn main() {
                 check_url_test_mode,
                 handle_tutorial_input,
                 animate_player_limbs,
-                update_camera.in_set(CameraSet::Follow),
             )
                 .run_if(in_state(GameState::Tutorial))
                 .run_if(sim_running),

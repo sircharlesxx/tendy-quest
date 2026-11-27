@@ -717,7 +717,7 @@ fn mark_flat_meshes_no_shadow(
 
 fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
     match state {
-        GameState::Tutorial | GameState::Playing | GameState::BossFight => SceneKind::Apartment,
+        GameState::Playing | GameState::BossFight => SceneKind::Apartment,
         GameState::StageClear | GameState::GameOver => {
             if stats.in_city {
                 SceneKind::City
@@ -736,7 +736,8 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         // downtown skyline sit against dusk sky instead of black void. Gameplay impact: visual only.
         | GameState::LexieBattle
         | GameState::LexieVictoryCutscene => SceneKind::City,
-        GameState::Cutscene
+        GameState::Tutorial
+        | GameState::Cutscene
         | GameState::HeadphoneCutscene
         | GameState::MikeCutscene
         | GameState::TjCutscene

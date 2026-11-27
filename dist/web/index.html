@@ -3522,15 +3522,15 @@
     }
     #tutorial-stan-box {
       position: fixed;
-      left: calc(50% - 462px);
-      top: 52%;
+      left: 26px;
+      top: 46%;
       transform: translateY(-50%);
-      width: 172px;
+      width: 196px;
       padding: 6px;
       border-radius: 14px;
       background: rgba(18, 13, 8, 0.86);
-      border: 2px solid rgba(251, 191, 36, 0.72);
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.65);
+      border: 2px solid rgba(251, 191, 36, 0.78);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.72);
       z-index: 18;
       pointer-events: none;
       display: none;
@@ -3544,25 +3544,39 @@
       height: auto;
       border-radius: 10px;
     }
+    #tutorial-stan-caption {
+      font-size: 11px;
+      text-align: center;
+      color: #fbbf24;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      margin-top: 5px;
+    }
     @media (max-width: 959px) {
       #tutorial-stan-box {
-        left: 50%;
-        top: 102px;
-        transform: translateX(-50%);
-        width: 128px;
+        left: 12px;
+        top: 58px;
+        transform: none;
+        width: 108px;
+      }
+      #tutorial-stan-caption {
+        font-size: 9px;
       }
     }
-    @media (max-height: 639px) {
+    @media (max-height: 500px) {
       #tutorial-stan-box {
-        left: 14px;
-        top: auto;
-        bottom: 14px;
+        left: 12px;
+        top: 50px;
+        bottom: auto;
         transform: none;
-        width: 92px;
+        width: 88px;
+      }
+      #tutorial-stan-caption {
+        font-size: 8.5px;
       }
     }
   </style>
-<link rel="modulepreload" href="./tendy-quest-43651029065cfd5b.js" crossorigin="anonymous" integrity="sha384-gb4fwFGTsiej90bSd3IozL8JabxarngzgF1hyCB0sV6MXU8Z/40/sP2DNS0Jr4Uu"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-43651029065cfd5b_bg.wasm" crossorigin="anonymous" integrity="sha384-MNpN7pbT6DrSbpIJR2VuttdgQbN3iKZKSNqb3q/pxEyuwN6NItiLb8CcOxkKeymX" as="fetch" type="application/wasm"></head>
+<link rel="modulepreload" href="./tendy-quest-a880700f349b36d3.js" crossorigin="anonymous" integrity="sha384-JAKeYAs8FUaA1Nj1FQ7NebxPVZU8jB/oLSKon2VE2V2Az7zYU45anNhIYcX/7Tuo"><link rel="modulepreload" href="./snippets/tendy-quest-c026b4135f450439/inline0.js" crossorigin="anonymous" integrity="sha384-CogAU8z8AW1DByI1NNte7ZVW3l/E/hji6RPeeUGBI5oZVqpOj4ZjWta7UlqqlVHC"><link rel="preload" href="./tendy-quest-a880700f349b36d3_bg.wasm" crossorigin="anonymous" integrity="sha384-jJ9v92lHV/U8GzwQ3ZNtJVT61L8OVG5lav5Mk5dmSfRnEHkHOoAtY+gBPeKVKJ2z" as="fetch" type="application/wasm"></head>
 <body>
   <div id="loading">
     <h1>TENDY QUEST</h1>
@@ -3570,6 +3584,7 @@
   </div>
   <div id="tutorial-stan-box" aria-hidden="true">
     <img id="tutorial-stan-gif" src="./assets/sprites/tutorial_stan.gif" alt="Stan dancing in plaid onesie" />
+    <div id="tutorial-stan-caption">STAN IN HIS ONESIE</div>
   </div>
   <div id="uzumaki-overlay" aria-hidden="true">
     <div id="uzumaki-speedlines"></div>
@@ -7276,8 +7291,8 @@
   <!-- ===== END distributed free-roam multiplayer ===== -->
 
 <script type="module">
-import init, * as bindings from './tendy-quest-43651029065cfd5b.js';
-const wasm = await init({ module_or_path: './tendy-quest-43651029065cfd5b_bg.wasm' });
+import init, * as bindings from './tendy-quest-a880700f349b36d3.js';
+const wasm = await init({ module_or_path: './tendy-quest-a880700f349b36d3_bg.wasm' });
 
 
 window.wasmBindings = bindings;
