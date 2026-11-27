@@ -532,6 +532,45 @@ fn spawn_mike_body(m: &mut ChildBuilder, meshes: &mut Assets<Mesh>, unit_box: &H
     ));
 }
 
+pub(crate) fn spawn_mike_rig(
+    parent: &mut ChildBuilder,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let unit_box = meshes.add(Cuboid::from_size(Vec3::ONE));
+    let look = MikeLook {
+        skin: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.90, 0.74, 0.62),
+            ..default()
+        }),
+        beard: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.46, 0.34, 0.24),
+            ..default()
+        }),
+        tee: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.08, 0.08, 0.10),
+            ..default()
+        }),
+        eye_white: materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            ..default()
+        }),
+        eye_pupil: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.04, 0.04, 0.05),
+            ..default()
+        }),
+        cap: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.76, 0.12, 0.14),
+            ..default()
+        }),
+        jeans: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.16, 0.24, 0.42),
+            ..default()
+        }),
+    };
+    spawn_mike_body(parent, meshes, &unit_box, &look);
+}
+
 pub fn spawn_city_mike(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,

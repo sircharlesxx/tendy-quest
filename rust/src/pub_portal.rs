@@ -69,7 +69,7 @@ impl Plugin for PubPortalPlugin {
 // =================================================================================================
 
 /// Shared procedural 3D bartender rig (`+Z` local forward).
-fn spawn_bartender_rig(
+pub(crate) fn spawn_bartender_rig(
     parent: &mut ChildBuilder,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
@@ -369,13 +369,14 @@ struct BartenderTeleportPrompt;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum BartenderAction {
     OrderTenBeers,
+    OrderTenBeersAndCraft,
     BooberEats,
     TeleportEveryone,
     GoAlone,
     Leave,
 }
 
-fn bartender_bar_trigger_pos() -> Vec3 {
+pub(crate) fn bartender_bar_trigger_pos() -> Vec3 {
     PUB217_ANCHOR + Vec3::new(-5.8, 0.0, -0.8) * PUB217_SCALE
 }
 
@@ -560,14 +561,19 @@ pub fn update_pub_bartender(
                 "Hey handsome! Ready to order ten beers for you and the boys?",
                 "bartender",
             );
-            spawn_bartender_ui(&mut commands, &art, boober.on_shift);
+            spawn_bartender_ui(&mut commands, &art, boober.on_shift, stats.lexie_defeated || stats.free_roam);
             return;
         }
     }
     prompt.pressed = false;
 }
 
-fn spawn_bartender_ui(commands: &mut Commands, art: &CasinoArt, boober_on_shift: bool) {
+fn spawn_bartender_ui(
+    commands: &mut Commands,
+    art: &CasinoArt,
+    boober_on_shift: bool,
+    craft_unlocked: bool,
+) {
     commands
         .spawn((
             BartenderUiRoot,
@@ -719,6 +725,28 @@ fn spawn_bartender_ui(commands: &mut Commands, art: &CasinoArt, boober_on_shift:
                             TextColor(Color::WHITE),
                         ));
                     });
+
+                    if craft_unlocked {
+                        row.spawn((
+                            BartenderAction::OrderTenBeersAndCraft,
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.32, 0.14, 0.62)),
+                            BorderColor(Color::srgb(0.42, 0.96, 0.68)),
+                            BorderRadius::all(Val::Px(8.0)),
+                        ))
+                        .with_children(|b| {
+                            b.spawn((
+                                Text::new("ORDER 10 BEERS & CRAFT [C]"),
+                                TextFont { font_size: 14.5, ..default() },
+                                TextColor(Color::WHITE),
+                            ));
+                        });
+                    }
                 });
             });
         });
@@ -748,6 +776,11 @@ fn handle_bartender_modal_input(
         } else {
             action_choice = Some(BartenderAction::OrderTenBeers);
         }
+    } else if keys.just_pressed(KeyCode::KeyC)
+        && teleport_prompt_q.is_empty()
+        && (stats.lexie_defeated || stats.free_roam)
+    {
+        action_choice = Some(BartenderAction::OrderTenBeersAndCraft);
     } else {
         for (inter, act) in &btn_q {
             if *inter == Interaction::Pressed {
@@ -788,6 +821,13 @@ fn handle_bartender_modal_input(
             let in_city_peers = sq[3];
             stats.bartender_open = true;
             spawn_casino_teleport_prompt(&mut commands, in_city_peers, total_squad);
+        }
+        BartenderAction::OrderTenBeersAndCraft => {
+            stop_voice();
+            play_sfx("estus_drink");
+            stats.saved_city_pos = bartender_bar_trigger_pos();
+            stats.saved_casino_city_scale = stats.player_scale;
+            next_state.set(GameState::BlackHoleCutscene);
         }
         BartenderAction::TeleportEveryone => {
             crate::audio::net_event(crate::net::EVENT_CASINO_WARP_ALL, 1);

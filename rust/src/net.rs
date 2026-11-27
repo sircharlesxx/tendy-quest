@@ -286,6 +286,7 @@ fn mp_playable(state: Res<State<GameState>>) -> bool {
             | GameState::CityPlay
             | GameState::CasinoPlay
             | GameState::ClubPlay
+            | GameState::CraftPlay
     )
 }
 
@@ -300,6 +301,7 @@ impl Plugin for NetPlugin {
             GameState::CityPlay,
             GameState::CasinoPlay,
             GameState::ClubPlay,
+            GameState::CraftPlay,
         ] {
             app.add_systems(
                 OnEnter(st),
@@ -589,6 +591,7 @@ fn scene_id_for_state(state: &GameState) -> u8 {
         GameState::CasinoPlay => 4,
         GameState::ClubPlay => 5,
         GameState::LexieBattle => 6,
+        GameState::CraftPlay => 7,
         _ => 0,
     }
 }
@@ -1640,7 +1643,7 @@ fn sync_local_crew_avatar(
     local_crew_q: Query<(Entity, &LocalCrewVisual)>,
     mut vis_q: Query<&mut Visibility, (Without<Player>, Without<LocalCrewVisual>)>,
 ) {
-    let in_city_or_casino = matches!(*state.get(), GameState::CityPlay | GameState::CasinoPlay | GameState::ClubPlay);
+    let in_city_or_casino = matches!(*state.get(), GameState::CityPlay | GameState::CasinoPlay | GameState::ClubPlay | GameState::CraftPlay);
     let want_crew = if in_city_or_casino
         && matches!(net.local_char, CHAR_NATE | CHAR_GLENN | CHAR_TJ | CHAR_DEREK)
     {

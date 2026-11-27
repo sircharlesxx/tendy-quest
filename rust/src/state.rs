@@ -37,6 +37,12 @@ pub enum GameState {
     LexieVictoryCutscene,
     /// Dramatic Pub 217 bar crashout cutscene (`city_events.rs`).
     StanCrashoutCutscene,
+    /// Post-Lexie first Pub 217 reunion cutscene (`craft.rs`).
+    HouseCraftCutscene,
+    /// The Odyssey debate & 10,000 women bathroom black hole cutscene (`craft.rs`).
+    BlackHoleCutscene,
+    /// Level 5: Empty black-hole Cedar Rapids Minecraft/craft rebuild world (`craft.rs`).
+    CraftPlay,
     StageClear,
     GameOver,
 }
@@ -199,6 +205,20 @@ pub struct PlayerStats {
     pub crashout_return_city: bool,
     /// Completed BooberEats deliveries count.
     pub boober_deliveries: u32,
+    /// True after Stan & the boys watch the post-Lexie house-crafting cutscene on entering Pub 217.
+    pub pub_craft_intro_seen: bool,
+    /// True once the black hole sucked Cedar Rapids into Craft World (unlocks bidirectional portal).
+    pub craft_world_unlocked: bool,
+    /// True while inside the standalone Level 5 Voxel Craft World (`GameState::CraftPlay`).
+    pub in_craft_level: bool,
+    /// Restores Stan near Pub 217 when returning from `CraftPlay` via the mysterious portal.
+    pub craft_return_city: bool,
+    /// Restores Stan inside Pub 217 after `HouseCraftCutscene`.
+    pub house_craft_return_city: bool,
+    /// True while a Craft World dialog (Derek/Maria/Mike/Crew) is open.
+    pub craft_modal_open: bool,
+    /// True once Quest 1 (Rebuild Pub 217) is completed inside Craft World.
+    pub craft_pub217_rebuilt: bool,
 }
 
 impl Default for PlayerStats {
@@ -304,6 +324,13 @@ impl Default for PlayerStats {
             grenade_regen_timer: 0.0,
             crashout_return_city: false,
             boober_deliveries: 0,
+            pub_craft_intro_seen: false,
+            craft_world_unlocked: false,
+            in_craft_level: false,
+            craft_return_city: false,
+            house_craft_return_city: false,
+            craft_modal_open: false,
+            craft_pub217_rebuilt: false,
         }
     }
 }
@@ -317,7 +344,7 @@ impl PlayerStats {
     ///   tendies need gentle increments around small counter props while the final 4 tendies
     ///   must rapidly vault Stan to adult height (`6.0`) to reach the refrigerator handle.
     pub fn target_scale(&self) -> f32 {
-        if self.in_casino_level || self.in_club_level {
+        if self.in_casino_level || self.in_club_level || self.in_craft_level {
             return 1.8;
         }
         if self.in_city && self.free_roam {
@@ -470,7 +497,7 @@ impl PlayerStats {
     /// Scale Stan's model is drawn at (and his saber and camera are sized for): `player_scale`
     /// in the apartment, `city_body_scale(player_scale)` in the city & Casino level.
     pub fn body_scale(&self) -> f32 {
-        if self.in_city || self.in_casino_level || self.in_club_level {
+        if self.in_city || self.in_casino_level || self.in_club_level || self.in_craft_level {
             city_body_scale(self.player_scale)
         } else {
             self.player_scale

@@ -8,6 +8,7 @@ mod chillary;
 mod city;
 mod city_events;
 mod controls;
+mod craft;
 mod derek;
 mod enemies;
 mod fentanyl;
@@ -126,6 +127,7 @@ fn main() {
         // The Coin Game-style 3D physics arcade machines: Coin Pusher, Claw Machine, Plinko, Skeeball.
         .add_plugins(casino_arcade::CasinoArcadePlugin)
         .add_plugins(club::ClubPlugin)
+        .add_plugins(craft::CraftPlugin)
         // Pub 217 Maria bartender, "ORDER 10 BEERS" prompt & Women's Bathroom Portal cutscene (pub_portal.rs).
         .add_plugins(pub_portal::PubPortalPlugin)
         // Distributed Free Mode P2P multiplayer (WebRTC mesh via public WebTorrent trackers, inert outside Free Mode; see net.rs).
@@ -462,6 +464,21 @@ fn main() {
                 update_camera.in_set(CameraSet::Follow),
             )
                 .run_if(in_state(GameState::ClubPlay))
+                .run_if(gameplay_running),
+        )
+        .add_systems(
+            OnExit(GameState::CraftPlay),
+            (close_help_overlay, reset_hit_reaction, unlock_cursor),
+        )
+        .add_systems(
+            Update,
+            (
+                camera_mouse_look.in_set(CameraSet::Look),
+                player_movement.in_set(CameraSet::Motion),
+                animate_player_limbs,
+                update_camera.in_set(CameraSet::Follow),
+            )
+                .run_if(in_state(GameState::CraftPlay))
                 .run_if(gameplay_running),
         )
         .add_systems(

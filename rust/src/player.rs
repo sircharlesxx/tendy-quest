@@ -613,7 +613,7 @@ pub fn camera_mouse_look(
     mut orbit: ResMut<CameraOrbit>,
     mut window_q: Query<&mut Window, With<PrimaryWindow>>,
 ) {
-    if stats.club_modal_open {
+    if stats.club_modal_open || stats.craft_modal_open {
         if let Ok(mut window) = window_q.get_single_mut() {
             window.cursor_options.grab_mode = CursorGrabMode::None;
             window.cursor_options.visible = true;
@@ -851,6 +851,7 @@ pub fn player_movement(
         || stats.club_dance_open
         || stats.club_cutscene_open
         || stats.club_modal_open
+        || stats.craft_modal_open
         || stats.club_seated
         // Limp or getting up: `ragdoll::update_ragdoll` owns Stan's position and pose.
         || ragdoll.active()
@@ -1122,7 +1123,7 @@ pub fn player_movement(
         }
         player.velocity.y = 9.2
             + (stats.player_scale - 0.55).max(0.0)
-                * if stats.in_city || stats.in_casino_level || stats.in_club_level { 1.85 } else { 1.55 }
+                * if stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level { 1.85 } else { 1.55 }
             + if stats.enraged && !stats.in_city { 2.2 } else { 0.0 };
         player.grounded = false;
         player.jumps_used += 1;
@@ -1246,12 +1247,12 @@ pub fn player_movement(
         player.knockback = Vec3::ZERO;
     }
 
-    let land_r = if stats.in_city || stats.in_casino_level || stats.in_club_level {
+    let land_r = if stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level {
         (0.38 * stats.player_scale).clamp(0.55, 3.2)
     } else {
         (0.38 * stats.player_scale).clamp(0.38, 0.85)
     };
-    let wall_r = if stats.in_city || stats.in_casino_level || stats.in_club_level {
+    let wall_r = if stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level {
         (0.28 * stats.player_scale).clamp(0.45, 2.8)
     } else {
         (0.28 * stats.player_scale).clamp(0.28, 0.72)
@@ -1385,6 +1386,15 @@ pub fn player_movement(
         tf.translation.z = tf.translation.z.clamp(c.z - lim, c.z + lim);
         if tf.translation.y < -10.0 {
             tf.translation = crate::club::CLUB_SPAWN_POS;
+            respawn_after_fall(&mut player, &mut orbit);
+        }
+    } else if stats.in_craft_level {
+        let c = crate::craft::CRAFT_LEVEL_ORIGIN;
+        let lim = crate::craft::CRAFT_WALK_LIMIT;
+        tf.translation.x = tf.translation.x.clamp(c.x - lim, c.x + lim);
+        tf.translation.z = tf.translation.z.clamp(c.z - lim, c.z + lim);
+        if tf.translation.y < -10.0 {
+            tf.translation = crate::craft::CRAFT_SPAWN_POS;
             respawn_after_fall(&mut player, &mut orbit);
         }
     } else if stats.in_city {
@@ -1682,7 +1692,7 @@ pub fn update_camera(
     // Scale camera pullback with Stan's Katamari growth (linear in city/casino up to 18x kaiju, sqrt in apartment).
     let cam_scale_mul = if stats.driving_car.is_some() {
         0.92
-    } else if stats.in_city || stats.in_casino_level || stats.in_club_level {
+    } else if stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level {
         0.72 + cam_ps * 0.24
     } else {
         0.82 + cam_ps.sqrt() * 0.34
@@ -1695,7 +1705,7 @@ pub fn update_camera(
     if in_pub217 {
         desired_dist = desired_dist.min(4.2 * pub_s);
     }
-    let min_cam_dist = if stats.in_casino_level || stats.in_club_level {
+    let min_cam_dist = if stats.in_casino_level || stats.in_club_level || stats.in_craft_level {
         (2.4 + cam_ps * 0.6).min(desired_dist)
     } else if stats.in_city {
         (2.2 + cam_ps * 1.8).min(desired_dist)
@@ -1723,7 +1733,7 @@ pub fn update_camera(
     let sweep_pad = Vec3::splat(0.22);
     if !(stats.in_city && cam_ps >= 8.0) {
         for (p_tf_box, p_box) in &platform_q {
-            if !stats.in_city && !stats.in_casino_level && !stats.in_club_level && p_tf_box.translation.z > 46.5 {
+            if !stats.in_city && !stats.in_casino_level && !stats.in_club_level && !stats.in_craft_level && p_tf_box.translation.z > 46.5 {
                 continue;
             }
             let is_structural = p_box.half_extents.y >= 2.1
@@ -1761,6 +1771,12 @@ pub fn update_camera(
         (
             Vec3::new(c.x - 29.2, 0.55, c.z - 29.2),
             Vec3::new(c.x + 29.2, 14.2, c.z + 29.2),
+        )
+    } else if stats.in_craft_level {
+        let c = crate::craft::CRAFT_LEVEL_ORIGIN;
+        (
+            Vec3::new(c.x - 34.0, 0.6, c.z - 34.0),
+            Vec3::new(c.x + 34.0, 28.0, c.z + 34.0),
         )
     } else if stats.in_city {
         (

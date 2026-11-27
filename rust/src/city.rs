@@ -3572,8 +3572,11 @@ pub fn enter_city_play(
     }
     stats.sync_tendy_wendies_from_save();
     stats.in_casino_level = false;
+    stats.in_club_level = false;
+    stats.in_craft_level = false;
     stats.casino_open = false;
     stats.bartender_open = false;
+    stats.craft_modal_open = false;
     stats.char_select_open = false;
 
     spawn_nyc_world_if_needed(
@@ -3597,7 +3600,9 @@ pub fn enter_city_play(
         || stats.glenn_return_city
         || stats.chillary_return_city
         || stats.casino_return_city
-        || stats.crashout_return_city;
+        || stats.crashout_return_city
+        || stats.house_craft_return_city
+        || stats.craft_return_city;
     let from_mike = stats.mike_return_city;
     let from_derek = stats.derek_return_city;
     let from_nate = stats.nate_return_city;
@@ -3605,6 +3610,8 @@ pub fn enter_city_play(
     let from_chillary = stats.chillary_return_city;
     let from_casino = stats.casino_return_city;
     let from_crashout = stats.crashout_return_city;
+    let from_house_craft = stats.house_craft_return_city;
+    let from_craft = stats.craft_return_city;
     stats.tj_return_city = false;
     stats.mike_return_city = false;
     stats.derek_return_city = false;
@@ -3613,7 +3620,9 @@ pub fn enter_city_play(
     stats.chillary_return_city = false;
     stats.casino_return_city = false;
     stats.crashout_return_city = false;
-    if from_casino {
+    stats.house_craft_return_city = false;
+    stats.craft_return_city = false;
+    if from_casino || from_house_craft || from_craft {
         stats.player_scale = stats.saved_casino_city_scale.clamp(1.8, 18.0);
     }
     if from_crashout {
@@ -3660,6 +3669,10 @@ pub fn enter_city_play(
             "Back in Pub 217 from Tendy Palace Casino! Your Tendy Wendies (TW) are banked.".to_string()
         } else if from_crashout {
             "STAN CRASHED OUT AT PUB 217! Adrenaline rush +20 TW!".to_string()
+        } else if from_house_craft {
+            "Talk to Maria [F/E] -- Order 10 Beers (Casino) or Order 10 Beers & Craft!".to_string()
+        } else if from_craft {
+            "Back in Cedar Rapids! Step into the Black Hole Portal north of Pub 217 anytime to return!".to_string()
         } else {
             format!("TJ JOINED YOUR SQUAD! {}", crew_line)
         };

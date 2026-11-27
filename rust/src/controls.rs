@@ -31,6 +31,7 @@ pub enum ControlContext {
     Wheel,
     Casino,
     Club,
+    Craft,
 }
 
 impl ControlContext {
@@ -45,6 +46,7 @@ impl ControlContext {
             GameState::CityPlay => Some(Self::CityFoot),
             GameState::CasinoPlay => Some(Self::Casino),
             GameState::ClubPlay => Some(Self::Club),
+            GameState::CraftPlay => Some(Self::Craft),
             _ => None,
         }
     }
@@ -59,6 +61,7 @@ impl ControlContext {
             Self::Wheel => "Riding the Ferris wheel",
             Self::Casino => "Tendy Palace Casino",
             Self::Club => "Velvet Disco Club",
+            Self::Craft => "Voxel Cedar Rapids",
         }
     }
 }
@@ -156,6 +159,17 @@ fn binds(ctx: ControlContext) -> Vec<Bind> {
             bind("SPACE", "A", "Jump", true),
             bind("SHIFT", "B", "Dash", true),
             bind("F / E", "X", "Dance Menu / Casino Portal", true),
+            PAUSE,
+            LOOK,
+            bind("WHEEL", "", "Zoom", false),
+        ],
+        ControlContext::Craft => vec![
+            bind("WASD", "L-STICK", "Move", true),
+            bind("SPACE", "A", "Jump", true),
+            bind("CLICK / J", "RB", "Mine Block", true),
+            bind("R-CLICK / R", "LT", "Place Block", true),
+            bind("1-6 / C", "Y", "Block Slot", true),
+            bind("F / E", "X", "Talk / Portal", true),
             PAUSE,
             LOOK,
             bind("WHEEL", "", "Zoom", false),
@@ -258,6 +272,7 @@ fn update_control_strip(
         && !stats.arcade_open
         && !stats.bartender_open
         && !stats.char_select_open
+        && !stats.craft_modal_open
         && !crate::audio::skip_touch_ui();
     let want = if show { Visibility::Inherited } else { Visibility::Hidden };
     if *vis != want {
@@ -597,6 +612,7 @@ fn update_pause_menu(
             || stats.bartender_open
             || stats.char_select_open
             || stats.club_modal_open
+            || stats.craft_modal_open
             || stats.club_seated
             || stats.casino_esc_grace
         {
@@ -777,6 +793,7 @@ fn update_pause_menu(
                         GameState::CityPlay
                         | GameState::CasinoPlay
                         | GameState::ClubPlay
+                        | GameState::CraftPlay
                         | GameState::LexieBattle
                         | GameState::LexieVictoryCutscene => {
                             crate::ui::save_game_checkpoint("city", &stats);
@@ -898,7 +915,7 @@ fn run_pause_restart(world: &mut World) {
         return;
     };
     let _ = world.try_run_schedule(OnExit(state));
-    if state != GameState::CasinoPlay && state != GameState::ClubPlay {
+    if state != GameState::CasinoPlay && state != GameState::ClubPlay && state != GameState::CraftPlay {
         let _ = world.run_system_once_with((state == GameState::CityPlay, false), restart_world_for_pause);
     }
     let _ = world.try_run_schedule(OnEnter(state));
@@ -954,7 +971,8 @@ impl Plugin for ControlsPlugin {
                             .or(in_state(GameState::BossFight))
                             .or(in_state(GameState::CityPlay))
                             .or(in_state(GameState::CasinoPlay))
-                            .or(in_state(GameState::ClubPlay)),
+                            .or(in_state(GameState::ClubPlay))
+                            .or(in_state(GameState::CraftPlay)),
                     )
                     .run_if(sim_running),
             )
@@ -965,6 +983,7 @@ impl Plugin for ControlsPlugin {
             GameState::CityPlay,
             GameState::CasinoPlay,
             GameState::ClubPlay,
+            GameState::CraftPlay,
         ] {
             app.add_systems(
                 OnTransition {

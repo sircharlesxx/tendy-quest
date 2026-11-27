@@ -490,6 +490,13 @@ pub fn update_hurt_flash(
 
 /// The single "what do I do now" line for the HUD.
 fn objective_line(stats: &PlayerStats) -> String {
+    if stats.in_craft_level {
+        return if stats.craft_pub217_rebuilt {
+            "> CRAFT WORLD: Pub 217 Open! Build Stan's House [L/R-Click] | South Portal -> Cedar Rapids".to_string()
+        } else {
+            "> CRAFT WORLD: Mine Trees/Rubble [L-Click] & Place [R-Click] in Pub 217 Plot | Derek [F/E]".to_string()
+        };
+    }
     if stats.in_club_level {
         return "> VELVET DISCO CLUB: VIP Dances (TW) | Left: Men's Room (Wash Hands = Wish!) & Women's Room | South: Casino"
             .to_string();
@@ -631,13 +638,15 @@ pub fn update_hud(
         border.0 = Color::srgba(1.0, 0.84, 0.32, 0.55 * hint_alpha);
     }
 
-    let unlocked = !stats.in_city || stats.in_casino_level || stats.in_club_level || stats.city_tendies_unlocked();
+    let unlocked = !stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level || stats.city_tendies_unlocked();
     let tags = status_tags(&stats);
     for (mut text, mut color, field) in &mut text_q {
         let new_text = match field {
             HudField::Hearts => format!("{}/{}", stats.hearts.max(0), stats.max_hearts),
             HudField::Tendies => {
-                if stats.in_club_level {
+                if stats.in_craft_level {
+                    "CRAFT WORLD".to_string()
+                } else if stats.in_club_level {
                     "CLUB LEVEL".to_string()
                 } else if stats.in_casino_level {
                     "CASINO LEVEL".to_string()
@@ -653,14 +662,16 @@ pub fn update_hud(
             HudField::Flask => format!("FLASK [Q] {}/{}", stats.estus_flasks, stats.max_estus_flasks),
             // The license is saved with the checkpoint; Tendy Wendies persist across modes.
             HudField::Credits => {
-                if (stats.in_city || stats.in_casino_level || stats.in_club_level) && stats.has_license {
+                if (stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level) && stats.has_license {
                     format!("TW {} | CR {} | LICENSE", stats.tendy_wendies, stats.tendy_credits)
                 } else {
                     format!("TW {} | CR {}", stats.tendy_wendies, stats.tendy_credits)
                 }
             }
             HudField::App => {
-                if stats.in_club_level {
+                if stats.in_craft_level {
+                    "PORTAL: SOUTH".to_string()
+                } else if stats.in_club_level {
                     "CASINO: SOUTH".to_string()
                 } else if stats.in_casino_level {
                     "PORTAL: SOUTH".to_string()
@@ -673,7 +684,9 @@ pub fn update_hud(
             HudField::Objective => objective_line(&stats),
             HudField::Status => tags.join("  "),
             HudField::Score => {
-                if stats.in_club_level {
+                if stats.in_craft_level {
+                    format!("SCORE: {:06}\nVOXEL CEDAR RAPIDS", stats.score)
+                } else if stats.in_club_level {
                     format!("SCORE: {:06}\nVELVET DISCO CLUB", stats.score)
                 } else if stats.in_casino_level {
                     format!("SCORE: {:06}\nTENDY PALACE CASINO", stats.score)
@@ -707,7 +720,7 @@ pub fn update_hud(
 
     for (slot, mut node) in &mut slot_q {
         let show = match slot {
-            HudSlot::CityChip => stats.in_city || stats.in_casino_level || stats.in_club_level,
+            HudSlot::CityChip => stats.in_city || stats.in_casino_level || stats.in_club_level || stats.in_craft_level,
             HudSlot::Status => !tags.is_empty(),
         };
         let want = if show { Display::Flex } else { Display::None };
@@ -731,7 +744,7 @@ pub fn update_hud(
     }
     if let Ok((mut node, mut bg)) = tendy_bar_q.get_single_mut() {
         // Free roam & Casino have no tendies; the bar reads as complete.
-        let frac = if stats.in_casino_level || stats.in_club_level || (stats.in_city && stats.free_roam) {
+        let frac = if stats.in_casino_level || stats.in_club_level || stats.in_craft_level || (stats.in_city && stats.free_roam) {
             1.0
         } else {
             stats.tendies as f32 / stats.total_tendies.max(1) as f32

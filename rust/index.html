@@ -917,6 +917,28 @@
           mkOsc("square", 240, 58, 0.30, 0.24);
           return true;
         }
+        if (name === "block_break") {
+          mkNoise(0.08, 0.26, 950);
+          mkOsc("square", 240, 95, 0.07, 0.16);
+          return true;
+        }
+        if (name === "block_place") {
+          mkNoise(0.05, 0.18, 1450);
+          mkOsc("triangle", 320, 440, 0.055, 0.14);
+          return true;
+        }
+        if (name === "black_hole") {
+          mkNoise(1.4, 0.55, 240);
+          mkOsc("sawtooth", 110, 18, 1.35, 0.45);
+          mkOsc("sine", 54, 15, 1.45, 0.48);
+          return true;
+        }
+        if (name === "portal_warp") {
+          mkOsc("sine", 260, 880, 0.42, 0.24);
+          mkOsc("triangle", 420, 1240, 0.36, 0.18);
+          mkNoise(0.32, 0.20, 2200);
+          return true;
+        }
         // Why: procedural WebAudio body-horror Foley (`flesh_tear`, `wet_squelch`, `bone_crack`,
         // `thing_shriek`), distant industrial fire roar (`fire_roar`), and optional cutscene camera/
         // glitch SFX (`snap_*`, `they_live_*`, `reptile_hiss`) avoid shipping extra audio assets
@@ -3198,6 +3220,14 @@
     #touch-controls.city-weapons.city-grenades #btn-grenade {
       display: flex;
     }
+    #touch-controls.craft-mode #btn-attack,
+    #touch-controls.craft-mode #btn-block,
+    #touch-controls.craft-mode #btn-weapon {
+      display: flex;
+    }
+    #touch-controls.craft-mode #btn-grenade {
+      display: none !important;
+    }
     #mobile-top-btns {
       position: fixed;
       top: 92px;
@@ -4214,6 +4244,22 @@
         }
       }
 
+      function setCraftMode(active) {
+        const on = !!active;
+        if (touchControls) {
+          touchControls.classList.toggle("craft-mode", on);
+        }
+        if (btnAttack) {
+          btnAttack.textContent = on ? "MINE" : "SABER";
+        }
+        if (btnBlock) {
+          btnBlock.textContent = on ? "PLACE" : "BLOCK";
+        }
+        if (btnWeapon) {
+          btnWeapon.textContent = on ? "SLOT" : "WEP";
+        }
+      }
+
       function setUzumakiMode(level) {
         const on = (level | 0) > 0;
         document.body.classList.toggle("uzumaki-mode", on);
@@ -4401,6 +4447,7 @@
         takeGrenade() { const v = grenadeQueued; grenadeQueued = false; return v; },
         takeWeaponCycle() { const v = weaponCycleQueued; weaponCycleQueued = false; return v; },
         setCityWeapons,
+        setCraftMode,
         takeActionTap() { const v = actionTapQueued; actionTapQueued = false; return v; },
         takeHelp() { const v = helpQueued; helpQueued = false; return v; },
         setPlaying,

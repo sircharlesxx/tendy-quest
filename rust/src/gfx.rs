@@ -745,7 +745,10 @@ fn scene_kind(state: GameState, stats: &PlayerStats) -> SceneKind {
         // of `SceneKind::City`'s dusk sunset dome). Gameplay impact: visual lighting/sky only.
         | GameState::ChillaryCutscene
         | GameState::PubPortalCutscene
-        | GameState::StanCrashoutCutscene => SceneKind::Stylized,
+        | GameState::StanCrashoutCutscene
+        | GameState::HouseCraftCutscene
+        | GameState::BlackHoleCutscene
+        | GameState::CraftPlay => SceneKind::Stylized,
         GameState::CasinoPlay | GameState::CoasterCutscene | GameState::ClubPlay => SceneKind::Casino,
     }
 }
